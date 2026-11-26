@@ -3398,3 +3398,314 @@ async fn done_completion_names_the_pull_and_an_omitted_opt_in_stays_silent() {
         }
     }
 }
+
+async fn setup_promoted_queue_fixture(head: &Head) -> Registry {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    registry.service.state.lock().await.settings.profiles =
+        Some(Arc::new(nucleus_store::Profiles::default()));
+
+    let setting = "/v1/settings/dispatch";
+    let dispatch = json_body(get_as(&registry.api, setting, &BOARD_KEY).await).await;
+    let mut value = dispatch["value"].clone();
+    value["globalSlots"] = json!(2);
+    value["projectDefaultSlots"] = json!(1);
+    assert_eq!(
+        put_settings(
+            &registry.api,
+            setting,
+            &BOARD_KEY,
+            &json!({"revision": dispatch["revision"], "value": value})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    for (actor, id) in [("alpha-planner", "alpha-run"), ("beta-planner", "beta-run")] {
+        let mut task = registry.task(actor, id).await;
+        let prior = registry.service.task(id).await.unwrap();
+        occupy_slot(&mut task, head);
+        registry
+            .service
+            .save(&prior, task, &event("occupied"))
+            .await
+            .unwrap();
+        registry.service.state.lock().await.schedule.park(id);
+    }
+
+    for (actor, id, extra) in [
+        ("alpha-planner", "alpha-promoted", "  priority: promoted\n"),
+        ("beta-planner", "beta-normal-old", ""),
+        ("beta-planner", "beta-promoted-mid", ""),
+        (
+            "beta-planner",
+            "beta-promoted-held",
+            "  priority: promoted\n",
+        ),
+        ("beta-planner", "beta-done-prereq", ""),
+        (
+            "beta-planner",
+            "beta-promoted-parked",
+            "  priority: promoted\n  dependsOn: ['beta-done-prereq']\n",
+        ),
+        (
+            "beta-planner",
+            "beta-promoted-new",
+            "  priority: promoted\n",
+        ),
+    ] {
+        let brief = format!("---\nqueue:\n  complexity: low\n{extra}---\n# {id}");
+        let response = caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/planning/tasks",
+            actor,
+            json!({"id": id, "reference": id, "brief": brief}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    registry
+}
+
+async fn verify_promote_command_and_holds(registry: &Registry) {
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/tasks/beta-promoted-mid/commands",
+            "beta-planner",
+            json!({"promote": 99}),
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/tasks/beta-run/commands",
+            "beta-planner",
+            json!({"promote": 2}),
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    let promoted = caller_request(
+        &registry.api,
+        Method::POST,
+        "/v1/tasks/beta-promoted-mid/commands",
+        "beta-planner",
+        json!({"promote": 1}),
+    )
+    .await;
+    assert_eq!(promoted.status(), StatusCode::OK);
+    assert_eq!(json_body(promoted).await["queuePriority"], "promoted");
+    let next = json_body(
+        get_as(
+            &registry.api,
+            "/v1/tasks/beta-promoted-mid/next",
+            &BOARD_KEY,
+        )
+        .await,
+    )
+    .await;
+    assert!(
+        next["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["name"] == "demote")
+    );
+    for (id, reason) in [
+        ("beta-done-prereq", "wait"),
+        ("beta-promoted-held", "pause"),
+    ] {
+        assert_eq!(
+            post_as(
+                &registry.api,
+                &format!("/v1/tasks/{id}/commands"),
+                &BOARD_KEY,
+                &json!({"hold": reason})
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+    }
+    assert!(!registry.service.pass().await.unwrap().is_empty());
+    for id in [
+        "alpha-promoted",
+        "beta-normal-old",
+        "beta-promoted-mid",
+        "beta-promoted-new",
+    ] {
+        assert_eq!(
+            registry.service.task(id).await.unwrap().task.phase(),
+            Phase::Queued
+        );
+    }
+}
+
+async fn verify_promoted_wakeup_skips_full_project(registry: &Registry, head: &Head) {
+    let beta_run = registry.service.task("beta-run").await.unwrap();
+    let mut done_beta = serde_json::to_value(&beta_run.task).unwrap();
+    done_beta["phase"] = json!("done");
+    done_beta["run"] = Value::Null;
+    registry
+        .service
+        .save(
+            &beta_run,
+            serde_json::from_value(done_beta).unwrap(),
+            &event("done"),
+        )
+        .await
+        .unwrap();
+    {
+        let now = tokio::time::Instant::now();
+        let mut state = registry.service.state.lock().await;
+        state.schedule.park("beta-run");
+        assert!(state.schedule.due("beta-promoted-mid").unwrap() <= now);
+        for id in [
+            "alpha-promoted",
+            "beta-normal-old",
+            "beta-promoted-new",
+            "beta-promoted-held",
+            "beta-promoted-parked",
+        ] {
+            assert!(
+                state.schedule.due(id).is_none_or(|due| due > now),
+                "unexpected due schedule for {id}"
+            );
+        }
+    }
+
+    let freed = registry.service.pass().await.unwrap();
+    assert_eq!(freed.len(), 1);
+    assert_eq!(freed[0].task, "beta-promoted-mid");
+    assert!(matches!(
+        freed[0].result,
+        Ok(Action::Advance(Phase::Working))
+    ));
+    for id in ["alpha-promoted", "beta-normal-old", "beta-promoted-new"] {
+        assert_eq!(
+            registry.service.task(id).await.unwrap().task.phase(),
+            Phase::Queued
+        );
+    }
+
+    let mid_row = registry.service.task("beta-promoted-mid").await.unwrap();
+    let mut mid_task = mid_row.task.clone();
+    occupy_slot(&mut mid_task, head);
+    registry
+        .service
+        .save(&mid_row, mid_task, &event("occupied"))
+        .await
+        .unwrap();
+    registry
+        .service
+        .state
+        .lock()
+        .await
+        .schedule
+        .park("beta-promoted-mid");
+}
+
+async fn verify_released_and_unparked_keep_original_order(registry: &Registry) {
+    let (held_order, parked_order, new_order, normal_order) = {
+        let state = registry.service.state.lock().await;
+        (
+            state.store.admission_order("beta-promoted-held").unwrap(),
+            state.store.admission_order("beta-promoted-parked").unwrap(),
+            state.store.admission_order("beta-promoted-new").unwrap(),
+            state.store.admission_order("beta-normal-old").unwrap(),
+        )
+    };
+    assert!(held_order < parked_order && parked_order < new_order);
+
+    assert_eq!(
+        post_as(
+            &registry.api,
+            "/v1/tasks/beta-promoted-held/commands",
+            &BOARD_KEY,
+            &json!("release")
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let prereq_row = registry.service.task("beta-done-prereq").await.unwrap();
+    let mut prereq_done = serde_json::to_value(&prereq_row.task).unwrap();
+    prereq_done["phase"] = json!("done");
+    prereq_done["hold"] = Value::Null;
+    registry
+        .service
+        .save(
+            &prereq_row,
+            serde_json::from_value(prereq_done).unwrap(),
+            &event("done"),
+        )
+        .await
+        .unwrap();
+    registry
+        .service
+        .state
+        .lock()
+        .await
+        .schedule
+        .park("beta-done-prereq");
+
+    let waiters: Vec<(nucleus_core::QueuePriority, i64, String)> = registry
+        .service
+        .state
+        .lock()
+        .await
+        .capacity_waiters
+        .iter()
+        .cloned()
+        .collect();
+    let beta_waiters: Vec<_> = waiters
+        .iter()
+        .filter(|(_, _, id)| id.starts_with("beta-"))
+        .map(|(priority, order, id)| (*priority, *order, id.as_str()))
+        .collect();
+    assert_eq!(
+        beta_waiters,
+        [
+            (
+                nucleus_core::QueuePriority::Promoted,
+                held_order,
+                "beta-promoted-held"
+            ),
+            (
+                nucleus_core::QueuePriority::Promoted,
+                parked_order,
+                "beta-promoted-parked"
+            ),
+            (
+                nucleus_core::QueuePriority::Promoted,
+                new_order,
+                "beta-promoted-new"
+            ),
+            (
+                nucleus_core::QueuePriority::Normal,
+                normal_order,
+                "beta-normal-old"
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn promoted_capacity_waiters_serve_oldest_promoted_with_room_and_keep_order_across_holds_and_parks()
+ {
+    let head: Head = "a".repeat(40).parse().unwrap();
+    let registry = setup_promoted_queue_fixture(&head).await;
+    verify_promote_command_and_holds(&registry).await;
+    verify_promoted_wakeup_skips_full_project(&registry, &head).await;
+    verify_released_and_unparked_keep_original_order(&registry).await;
+}

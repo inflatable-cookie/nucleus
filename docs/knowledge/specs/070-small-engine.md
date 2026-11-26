@@ -756,6 +756,7 @@ Later decisions carry their own attribution.
 | `attempts` | Failed launches or silent ends at the current phase and head. The first observed PR starts a fresh count. |
 | `question` | At most one open question, with its options and the head it was asked at. The planner answers work questions. The operator answers review-entry acceptance in the pinned Inbox. A decline parks the task and notifies its planner once. Observing a new head clears the question. |
 | `hold` | An optional operator or planner hold, with its reason. |
+| `queue_priority` | Queue order (`normal` or `promoted`), defaulting to `normal` for existing rows. |
 
 Anything else is observed, never stored as a record that something must clear.
 History is an append-only event log for display and audit only. The engine never
@@ -898,6 +899,7 @@ warning once per name. It validates the readiness of each recognized command.
 | `cancel` | Ends any live run and sets `cancelled`. Leaves the worktree if it is dirty. |
 | `amend` | Replaces the brief and records the new version. |
 | `hold` / `release` | Pause or unpause one task. |
+| `promote` / `demote` | Move a queued or capacity-waiting task between `promoted` and `normal` order at `--version N`. |
 
 `nucleus next REF` lists the commands available at the current version. For
 prerequisites, use `set-dependencies` before dispatch or `set-prerequisite-wait`

@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use nucleus_core::{Phase, WaitReason};
+use nucleus_core::{Phase, QueuePriority, WaitReason};
 use nucleus_hosts::T3_RETRY_DELAY;
 use nucleus_store::Store;
 use tokio::time::Instant;
@@ -233,7 +233,7 @@ impl Schedule {
         store: &Store,
         now: Instant,
         parenting: bool,
-        capacity_waiters: &mut BTreeSet<(i64, String)>,
+        capacity_waiters: &mut BTreeSet<(QueuePriority, i64, String)>,
     ) -> Result<bool, ServiceError> {
         if now < self.scan_at {
             return Ok(false);
@@ -255,7 +255,7 @@ impl Schedule {
         for seed in ids {
             self.tasks.entry(seed.id.clone()).or_insert_with(|| {
                 if let Some(admitted) = seed.admission_order {
-                    capacity_waiters.insert((admitted, seed.id));
+                    capacity_waiters.insert((seed.queue_priority, admitted, seed.id));
                 }
                 let mut pending = Pending::default();
                 let priority = if seed.closeout {
@@ -440,10 +440,11 @@ mod tests {
                 "missing active task {}",
                 seed.id
             );
-            assert!(
-                capacity_waiters
-                    .contains(&(seed.admission_order.expect("admission order"), seed.id))
-            );
+            assert!(capacity_waiters.contains(&(
+                seed.queue_priority,
+                seed.admission_order.expect("admission order"),
+                seed.id,
+            )));
         }
         assert_eq!(
             schedule

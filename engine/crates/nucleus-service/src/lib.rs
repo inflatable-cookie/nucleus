@@ -46,7 +46,7 @@ use diagnostics::StateMutex;
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Action, Authority, Command, CommandError, Forge, Identity, Observation, Observed,
-    OperatorDecline, Phase, Report, Task, WaitReason, Workspace,
+    OperatorDecline, Phase, QueuePriority, Report, Task, WaitReason, Workspace,
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostCalls, HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
@@ -98,6 +98,8 @@ pub enum ServiceError {
     Project,
     #[error("The task changed or has no mechanical wait to recheck. Read Next again.")]
     RecheckUnavailable,
+    #[error("promote and demote apply only to queued or capacity-waiting tasks")]
+    QueuePriorityUnavailable,
     #[error("The brief changed. Reopen Amend to edit the latest version.")]
     BriefConflict,
     #[error("the controller cannot access this project")]
@@ -294,7 +296,7 @@ struct State {
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
-    capacity_waiters: BTreeSet<(i64, String)>,
+    capacity_waiters: BTreeSet<(QueuePriority, i64, String)>,
     group_waits: BTreeMap<String, profiles::GroupPause>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
@@ -1316,7 +1318,7 @@ impl Service {
         let prior_wait = state.wait_reason(id);
         let changed = state.observe_wait_detail(&row.task, wait, detail)?;
         if owner_action && prior_wait != wait {
-            state.wake_capacity(now);
+            self.wake_capacity(&mut state, now);
             self.wake.notify_one();
         }
         self.desire_title(&mut state, &row.task, row.number);
@@ -1486,6 +1488,48 @@ impl Service {
         state.schedule.recheck(id, Instant::now());
         self.wake.notify_one();
         Ok(row)
+    }
+
+    async fn set_queue_priority(
+        &self,
+        id: &str,
+        version: i64,
+        priority: QueuePriority,
+        authority: &Authority,
+        session: Option<&acp::WriteAccess>,
+        scope: &ControllerScope,
+    ) -> Result<TaskRow, ServiceError> {
+        let _fence = self.command_fence(id, session.is_some()).await?;
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        let prior = self.command_row(&state, id, scope, session)?;
+        let proof = state.command_authority(&prior.task, authority);
+        if matches!(proof, Err(ServiceError::PlannerAuthorityUnknown)) {
+            self.request_planner_check(&mut state, &prior.task);
+        }
+        proof?;
+        if version != prior.version {
+            return Err(StoreError::StaleTask.into());
+        }
+        if !state.can_change_queue_priority(&prior.task) {
+            return Err(ServiceError::QueuePriorityUnavailable);
+        }
+        if prior.task.queue_priority() == priority {
+            return Ok(prior);
+        }
+        let mut task = prior.task.clone();
+        task.set_queue_priority(priority);
+        let kind = if priority.is_promoted() {
+            "queue_promoted"
+        } else {
+            "queue_demoted"
+        };
+        let version = self.commit(&mut state, &prior, &task, &event(kind), None)?;
+        Ok(TaskRow {
+            task,
+            version,
+            number: prior.number,
+        })
     }
 
     /// A missing head is the only preflight result that needs an inline forge read.
@@ -1851,7 +1895,21 @@ impl Service {
         state.forge_requested.remove(id);
         state.activity.remove(id);
         if occupied_slot(&prior.task) && !occupied_slot(task) {
-            state.wake_capacity(Instant::now());
+            self.wake_capacity(state, Instant::now());
+        }
+        if prior.task.queue_priority() != task.queue_priority() && state.remove_capacity_waiter(id)
+        {
+            let _ = state.enqueue_capacity(task);
+        }
+        if task.run().is_none()
+            && task.hold().is_none()
+            && task.question().is_none()
+            && !task.phase().is_terminal()
+            && (prior.task.hold().is_some() || prior.task.question().is_some())
+            && !state.store.dependency_blocked(id).unwrap_or(true)
+            && !state.has_open_usage_decision(task).unwrap_or(true)
+        {
+            let _ = state.enqueue_capacity(task);
         }
         self.wake_task(
             state,
@@ -2193,6 +2251,12 @@ impl State {
             )
     }
 
+    fn can_change_queue_priority(&self, task: &Task) -> bool {
+        !task.phase().is_terminal()
+            && (task.phase() == Phase::Queued
+                || self.wait_reason(&task.identity().id) == Some(WaitReason::Capacity))
+    }
+
     fn wait_reason(&self, id: &str) -> Option<WaitReason> {
         self.waits.get(id).and_then(|wait| wait.reason)
     }
@@ -2201,22 +2265,33 @@ impl State {
         self.waits.get(id).and_then(|wait| wait.detail.as_ref())
     }
 
-    fn enqueue_capacity(&mut self, id: &str) -> Result<(), StoreError> {
+    fn enqueue_capacity(&mut self, task: &Task) -> Result<(), StoreError> {
+        let id = &task.identity().id;
         if !self
             .capacity_waiters
             .iter()
-            .any(|(_, waiting)| waiting == id)
+            .any(|(_, _, waiting)| waiting == id)
         {
-            self.capacity_waiters
-                .insert((self.store.admission_order(id)?, id.into()));
+            self.capacity_waiters.insert((
+                task.queue_priority(),
+                self.store.admission_order(id)?,
+                id.clone(),
+            ));
         }
         Ok(())
+    }
+
+    fn remove_capacity_waiter(&mut self, id: &str) -> bool {
+        let before = self.capacity_waiters.len();
+        self.capacity_waiters
+            .retain(|(_, _, waiting)| waiting != id);
+        self.capacity_waiters.len() != before
     }
 
     fn set_wait(&mut self, id: &str, reason: Option<WaitReason>) -> bool {
         if reason != Some(WaitReason::Capacity) {
             self.group_waits.remove(id);
-            self.capacity_waiters.retain(|(_, waiting)| waiting != id);
+            self.remove_capacity_waiter(id);
         }
         let entry = self.waits.entry(id.into()).or_insert_with(|| TaskWait {
             reason: None,
@@ -2249,7 +2324,7 @@ impl State {
     ) -> Result<bool, StoreError> {
         let id = &task.identity().id;
         if reason == Some(WaitReason::Capacity) && self.wait_reason(id) != reason {
-            self.enqueue_capacity(id)?;
+            self.enqueue_capacity(task)?;
         }
         // The first pass after restart establishes a baseline for a volatile wait.
         let entered = self.wait_label_changed(task, reason, detail.as_ref());
@@ -2311,18 +2386,8 @@ impl State {
         self.schedule.take_ready(
             now,
             visited,
-            self.capacity_waiters.iter().map(|(_, id)| id.as_str()),
+            self.capacity_waiters.iter().map(|(_, _, id)| id.as_str()),
         )
-    }
-
-    fn wake_capacity(&mut self, now: Instant) {
-        if let Some(id) =
-            self.capacity_waiters.iter().map(|(_, id)| id).find(|id| {
-                !self.group_waits.contains_key(*id) && !self.schedule.effect_ready(id, now)
-            })
-        {
-            self.schedule.wake(id, now, Priority::Effect);
-        }
     }
 
     fn command_observation(&self, row: &TaskRow) -> Observation {
@@ -2348,6 +2413,31 @@ fn occupied_slot(task: &Task) -> bool {
 }
 
 impl Service {
+    fn wake_capacity(&self, state: &mut State, now: Instant) {
+        let candidate = state
+            .capacity_waiters
+            .iter()
+            .map(|(_, _, id)| id)
+            .find(|id| {
+                !state.group_waits.contains_key(*id)
+                    && state.store.row(id).ok().flatten().is_some_and(|row| {
+                        row.task.hold().is_none()
+                            && row.task.question().is_none()
+                            && !state.store.dependency_blocked(id).unwrap_or(true)
+                            && !state.has_open_usage_decision(&row.task).unwrap_or(true)
+                            && self
+                                .launch_capacity_in(state, row.task.identity(), false)
+                                .unwrap_or(false)
+                    })
+            })
+            .cloned();
+        if let Some(id) = candidate
+            && !state.schedule.effect_ready(&id, now)
+        {
+            state.schedule.wake(&id, now, Priority::Effect);
+        }
+    }
+
     fn track(&self, state: &mut State, task: &Task) {
         let id = &task.identity().id;
         if !active(task) {

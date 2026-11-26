@@ -161,7 +161,7 @@ impl Service {
         let wait = admission_wait(blocked, requested_permission);
         state.apply_task_wait(&task, wait, true);
         if wait.is_none() && task.first_launch() {
-            state.enqueue_capacity(&task.identity().id)?;
+            state.enqueue_capacity(&task)?;
         }
         if requested_permission {
             self.decision_changed();
@@ -260,7 +260,7 @@ impl Service {
         let wait = admission_wait(blocked, requested_permission);
         state.apply_task_wait(&task, wait, true);
         if wait.is_none() && task.first_launch() {
-            state.enqueue_capacity(&task.identity().id)?;
+            state.enqueue_capacity(&task)?;
         }
         if requested_permission {
             self.decision_changed();
