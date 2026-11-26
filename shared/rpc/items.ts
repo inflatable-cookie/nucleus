@@ -33,6 +33,8 @@ export const itemDetailSchema = z.object({
   state: z.enum(["open", "parked", "promoted", "dropped"]),
   reason: z.string().nullable(),
   disposition: itemDisposition.nullable(),
+  /** A lead's brief complexity as the engine parses it; null for papercuts and undeclared briefs. */
+  briefComplexity: capabilityLevelSchema.nullable(),
   revisitAt: z.string().nullable(),
   taskId: z.string().nullable(),
   version: z.number().int().positive(),
@@ -103,7 +105,10 @@ export const itemPromote = defineRpc({
     .object({
       ...address,
       repository: z.string().min(1).optional(),
-      /** Papercuts only: a lead is admitted with the complexity its brief declares. */
+      /**
+       * The task's complexity. A papercut sends it with the promotion; a lead is admitted
+       * with its own brief, so a different level is first written into the lead's brief.
+       */
       complexity: capabilityLevelSchema.optional(),
     })
     .strict(),

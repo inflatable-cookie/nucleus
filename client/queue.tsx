@@ -877,6 +877,7 @@ export function MainSurface({
                     state={state}
                     stateError={stateQuery.error}
                     inbox={inbox}
+                    scope={selection}
                     view={view}
                     rust={rustView ? {
                       tasks: rustColumns?.[rustView],

@@ -293,10 +293,14 @@ history, and writes through `item.edit`, `item.park`, `item.drop`,
 - **Promote.** The Repository dropdown shows only for an item spanning several
   repositories; an unbound one can be chosen but Promote stays disabled with the
   reason. Promote always names the destination, because the engine defaults one
-  only when the whole project has a single bound repository. Only papercuts get
-  the Complexity dropdown. A lead is admitted with its own brief and the engine
-  refuses a complexity sent beside it, so the panel shows the brief's
-  `queue.complexity` and disables Promote until the brief declares one.
+  only when the whole project has a single bound repository. Both kinds get the
+  Complexity dropdown. A lead's starts at the level its brief declares, which
+  the engine reads with the admission brief policy and serves on the board's
+  item list (`complexity`). The engine admits a lead with its own brief and
+  refuses a complexity sent beside it, so a different level is first saved into
+  the lead's brief through a versioned edit carrying `complexity` (the engine
+  writes `queue.complexity` and keeps the rest of the brief), then the lead is
+  promoted. A papercut's level is sent with the promotion.
 - **Parked.** The revisit date is a `YYYY-MM-DD` field; changing it offers Save,
   which parks again with the same reason. Reopen shows on parked and dropped
   items.
@@ -306,8 +310,9 @@ history, and writes through `item.edit`, `item.park`, `item.drop`,
   ordinary Save is offered over content the operator has not seen. Both kinds
   accept a versioned edit (the store had limited versioned edits to papercuts).
 - **Closed items.** The Leads and Papercuts state filter adds Closed on the Rust
-  board: promoted and dropped items, newest first, read through `item.closed`.
-  All and the menu counts keep the open-plus-parked set. A closed item opens
+  board: promoted and dropped items, newest first, read through `item.closed`
+  and narrowed by the board's project selection like the other rows. All and
+  the menu counts keep the open-plus-parked set. A closed item opens
   this view, so its task card or its outcome and Reopen stay reachable.
 - Age shows the time of the history entry that set the current state, or the
   filing time while open, with the exact times in its tooltip. Activity lists

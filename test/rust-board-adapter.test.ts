@@ -2353,6 +2353,19 @@ test("a fresh Rust board opens promoted and dropped items from the Closed filter
     4000,
     "each project's promoted papercut",
   );
+  assert.equal(ui.all(/^Papercut: /).length, 3);
+  // The project selection scopes the Closed rows and their count like the open cards.
+  await press("Projects, All projects");
+  await press(/^Project Lantern,/);
+  await waitFor(
+    () => ui.all(/^Papercut: /).length === 2 && ui.text().includes("2 items"),
+    4000,
+    "Lantern's closed papercuts only",
+  );
+  assert.equal(ui.all(/^Papercut: Fixed, Status: Promoted$/).length, 1);
+  await press("Projects, Lantern");
+  await press("Clear project selection");
+  await waitFor(() => ui.all(/^Papercut: /).length === 3, 4000, "every project again");
   // The newest closed item leads the list.
   assert.match(
     String(ui.all(/^Papercut: /)[0]?.props.accessibilityLabel),

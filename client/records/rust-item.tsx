@@ -48,21 +48,6 @@ const COMPLEXITY: Array<{ value: CapabilityLevel; label: string }> = [
 
 const DAY_MS = 86_400_000;
 
-const labelOf = (level: CapabilityLevel) => COMPLEXITY.find((entry) => entry.value === level)?.label ?? level;
-
-/**
- * The complexity a lead's brief declares in its front matter (`queue.complexity`).
- * The engine admits a promoted lead with its own brief and refuses a complexity
- * sent beside it, so the view reads the brief instead of offering a choice.
- */
-export function briefComplexity(body: string): CapabilityLevel | null {
-  const front = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(body)?.[1];
-  if (!front) return null;
-  const queue = /^queue:[ \t]*\r?\n((?:[ \t]+.*(?:\r?\n|$))*)/m.exec(front)?.[1] ?? "";
-  const value = /^[ \t]+complexity:[ \t]*["']?([a-z_]+)["']?[ \t]*$/m.exec(queue)?.[1];
-  return COMPLEXITY.find((level) => level.value === value)?.value ?? null;
-}
-
 /** Whether a parked item's revisit day has come. Reaching it never reopens the item. */
 export function revisitDue(revisitAt: string | null, now = Date.now()): boolean {
   return revisitAt !== null && Date.parse(revisitAt) <= now;
@@ -195,7 +180,8 @@ export function RustItemDialog({
   const [disposition, setDisposition] = useState<"completed" | "deprecated">("completed");
   const [dropNote, setDropNote] = useState("");
   const [repository, setRepository] = useState<string | null>(null);
-  const [complexity, setComplexity] = useState<CapabilityLevel>("medium");
+  // Unset follows the item: a lead's brief level, otherwise Medium.
+  const [complexity, setComplexity] = useState<CapabilityLevel | null>(null);
 
   const r = roles(c);
   const word = (item?.kind ?? kind) === "papercut" ? "Papercut" : "Lead";
@@ -280,6 +266,7 @@ export function RustItemDialog({
   const active = item.state === "open" || item.state === "parked";
   const entry = stateEntry(item);
   const address = { id: item.id, project: item.projectKey };
+  const chosenLevel: CapabilityLevel = complexity ?? item.briefComplexity ?? "medium";
   const activity = itemActivity(item);
 
   const age = <ItemAge c={c} item={item} entry={entry} />;
@@ -377,18 +364,14 @@ export function RustItemDialog({
           busy={busy}
           repository={repository}
           setRepository={setRepository}
-          complexity={complexity}
+          complexity={chosenLevel}
           setComplexity={setComplexity}
           onPromote={(origin) => {
             let reference = "";
             void act(async () => {
-              // Leads carry their complexity in the brief; only papercuts send one.
+              // A lead's changed level is written into its brief by the adapter before admission.
               reference = (
-                await promoteItem({
-                  ...address,
-                  repository: origin,
-                  ...(item.kind === "papercut" ? { complexity } : {}),
-                })
+                await promoteItem({ ...address, repository: origin, complexity: chosenLevel })
               ).reference;
               void queryClient.invalidateQueries({ queryKey: rustTaskListKey });
             }).then((ok) => ok && setNotice({ text: `Promoted as ${reference}`, tone: "success" }));
@@ -598,16 +581,13 @@ function PromotePanel({
     item.repositories.find((repo) => repo.bound) ??
     item.repositories[0];
   const lead = item.kind === "lead";
-  const declared = lead ? briefComplexity(item.body) : null;
   const refusal = !chosen
     ? "This project has no repository."
     : !chosen.bound
       ? `Bind ${chosen.origin} to a T3 project before promoting.`
-      : lead && !declared
-        ? "Add queue.complexity to the brief's front matter before promoting."
-        : null;
+      : null;
   const complexityHelp = lead
-    ? "A lead is promoted with its own brief, so its complexity comes from the brief's front matter."
+    ? "Complexity sets how capable a model each run needs. A lead starts at its brief's level; choosing another writes it into the brief when you promote."
     : "Complexity sets how capable a model each run needs.";
   const helpText = several
     ? `Only repositories bound to a T3 project can take the task. ${complexityHelp}`
@@ -638,23 +618,17 @@ function PromotePanel({
             onChange={setRepository}
           />
         )}
-        {lead ? (
-          <Text accessibilityLabel={`Complexity: ${declared ? labelOf(declared) : "not set"}`} style={metaText(c)}>
-            {declared ? `Complexity ${labelOf(declared)}` : "No complexity in the brief"}
-          </Text>
-        ) : (
-          <DropdownSelect
-            c={c}
-            compact
-            hideLabel
-            minWidth={130}
-            label="Complexity"
-            value={complexity}
-            options={COMPLEXITY}
-            disabled={busy}
-            onChange={(value) => setComplexity(COMPLEXITY.find((level) => level.value === value)?.value ?? "medium")}
-          />
-        )}
+        <DropdownSelect
+          c={c}
+          compact
+          hideLabel
+          minWidth={130}
+          label="Complexity"
+          value={complexity}
+          options={COMPLEXITY}
+          disabled={busy}
+          onChange={(value) => setComplexity(COMPLEXITY.find((level) => level.value === value)?.value ?? "medium")}
+        />
         <View style={{ flex: 1 }} />
         <Button
           c={c}

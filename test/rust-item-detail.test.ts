@@ -132,7 +132,7 @@ const panels = (ui: ReturnType<typeof mount>) =>
 const footer = (ui: ReturnType<typeof mount>) =>
   ui.all(/^(Park|Open drop for) (lead|papercut)$/).map((node) => node.props.accessibilityLabel as string);
 
-test("lead · open: promote panel with repository and the brief's complexity; promotes to the chosen repository", async () => {
+test("lead · open: the Complexity picker starts at the brief's level; a new level is written into the brief, then promoted to the chosen repository", async () => {
   const engine = planningEngine();
   engine.seed("acowtancy", lead({ id: "i-offline", title: "Offline marking queue", repositories: ["example/acowtancy-v2", "example/dairy"] }), {
     actor: "planner",
@@ -145,9 +145,7 @@ test("lead · open: promote panel with repository and the brief's complexity; pr
   assert.match(ui.text(), /Acowtancy/);
   assert.match(ui.text(), /Marking Hub for December/);
   assert.match(ui.text(), /example\/acowtancy-v2, example\/dairy/);
-  // A lead takes its complexity from its brief; there is no picker to override it.
-  assert.equal(ui.query(/^Complexity, /), undefined);
-  assert.ok(ui.query("Complexity: High"));
+  assert.match(ui.get(/^Complexity, /).props.accessibilityLabel, /^Complexity, High$/, "the brief declares high");
   // An unbound repository can be chosen but not promoted to.
   ui.press(/^Repository, /);
   ui.press("Repository: example/dairy, Not bound to T3");
@@ -155,26 +153,53 @@ test("lead · open: promote panel with repository and the brief's complexity; pr
   assert.match(ui.text(), /Bind example\/dairy to a T3 project before promoting/);
   ui.press(/^Repository, /);
   ui.press("Repository: example/acowtancy-v2");
+  ui.press(/^Complexity, /);
+  ui.press("Complexity: Low");
   await waitFor(() => ui.get("Promote lead").props.disabled === false, 2000, "bound enables");
+  const version = engine.item("acowtancy", "i-offline").version;
   ui.press("Promote lead");
   await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted");
-  assert.deepEqual(engine.writes.at(-1), {
+  const [edit, promote] = engine.writes.slice(-2);
+  assert.equal(edit?.method, "PUT");
+  assert.equal(edit?.path, "/planning/acowtancy/items/i-offline");
+  assert.equal((edit?.body as { version: number; complexity: string }).version, version);
+  assert.equal((edit?.body as { complexity: string }).complexity, "low");
+  assert.deepEqual(promote, {
     method: "POST",
     path: "/planning/acowtancy/items/i-offline/promote",
     body: { repository: "example/acowtancy-v2" },
   });
+  // The brief keeps everything but its level.
+  const body = engine.item("acowtancy", "i-offline").body;
+  assert.match(body, /complexity: low/);
+  assert.match(body, /Replay in order$/);
   assert.match(ui.text(), /Promoted as acowtancy-v2#1201/);
   assert.deepEqual(footer(ui), [], "a promoted item has no footer");
 });
 
-test("lead · open without a complexity in its brief: Promote waits for the brief", async () => {
+test("lead · open with flow-style front matter: the declared level is read and promoted unchanged", async () => {
+  const engine = planningEngine();
+  engine.seed("acowtancy", lead({ id: "i-flow", title: "Flow lead", body: "---\nqueue: {complexity: medium}\n---\nShip it." }), { actor: "planner", atMs: now - DAY });
+  const { ui } = await open(engine, "i-flow", "acowtancy", "lead");
+  assert.match(ui.get(/^Complexity, /).props.accessibilityLabel, /^Complexity, Medium$/);
+  assert.equal(ui.get("Promote lead").props.disabled, false);
+  ui.press("Promote lead");
+  await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted");
+  assert.deepEqual(
+    engine.writes.map(({ method, path }) => `${method} ${path}`),
+    ["POST /planning/acowtancy/items/i-flow/promote"],
+    "an unchanged level needs no edit",
+  );
+});
+
+test("lead · open with no complexity in its brief: the chosen level is added to the brief before promotion", async () => {
   const engine = planningEngine();
   engine.seed("acowtancy", lead({ id: "i-bare", title: "Bare lead", body: "No front matter yet." }), { actor: "planner", atMs: now - DAY });
   const { ui } = await open(engine, "i-bare", "acowtancy", "lead");
-  assert.ok(ui.query("Complexity: not set"));
-  assert.equal(ui.get("Promote lead").props.disabled, true);
-  assert.match(ui.text(), /Add queue.complexity to the brief's front matter before promoting/);
-  assert.equal(engine.writes.length, 0);
+  assert.match(ui.get(/^Complexity, /).props.accessibilityLabel, /^Complexity, Medium$/);
+  ui.press("Promote lead");
+  await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted");
+  assert.equal(engine.item("acowtancy", "i-bare").body, "---\nqueue:\n  complexity: medium\n---\nNo front matter yet.");
 });
 
 test("papercut naming one repository of a project with several bound ones promotes to it", async () => {

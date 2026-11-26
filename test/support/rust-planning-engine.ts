@@ -59,10 +59,31 @@ export const planningProjects: Record<string, { name: string; archived: boolean;
   },
 };
 
-/** The brief's declared `queue.complexity`, as the service's brief policy reads it. */
+/**
+ * The brief's declared `queue.complexity`, block or flow YAML, standing in for the
+ * service's brief policy (`BriefPolicy::submitted`), which the real engine runs.
+ */
 function declaredComplexity(body: string): string | null {
   const front = /^---\n([\s\S]*?)\n---/.exec(body)?.[1] ?? "";
+  const flow = /^queue:[ \t]*\{([^}]*)\}/m.exec(front)?.[1];
+  if (flow !== undefined) return /(?:^|,)\s*complexity:\s*([a-z_]+)/.exec(flow)?.[1] ?? null;
   return /^queue:\n(?:[ \t]+.*\n)*?[ \t]+complexity:[ \t]*([a-z_]+)/m.exec(front + "\n")?.[1] ?? null;
+}
+
+/** `BriefPolicy::with_complexity`: set `queue.complexity`, keeping the rest of the brief. */
+function withComplexity(body: string, complexity: string): string {
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(body);
+  if (!match) return `---\nqueue:\n  complexity: ${complexity}\n---\n${body}`;
+  const front = match[1]!;
+  const rest = body.slice(match[0].length);
+  const next = declaredComplexity(body)
+    ? front.replace(/complexity:\s*[a-z_]+/, `complexity: ${complexity}`)
+    : /^queue:[ \t]*\{/m.test(front)
+      ? front.replace(/^queue:[ \t]*\{/m, `queue: {complexity: ${complexity}, `)
+      : /^queue:[ \t]*$/m.test(front)
+        ? front.replace(/^queue:[ \t]*$/m, `queue:\n  complexity: ${complexity}`)
+        : `${front}\nqueue:\n  complexity: ${complexity}`;
+  return `---\n${next}\n---\n${rest}`;
 }
 
 const snapshot = (value: unknown) => ({ value, revision: "1", configured: true });
@@ -117,7 +138,14 @@ export function planningEngine(now: () => number = Date.now) {
   const withTimes = (project: string, id: string) => {
     const entry = items.get(key(project, id))!;
     const own = history.filter((row) => row.project === project && row.id === id);
-    return { ...entry.item, version: own.at(-1)!.sequence, createdAtMs: entry.createdAtMs, updatedAtMs: own.at(-1)!.atMs };
+    const complexity = entry.item.kind === "lead" ? declaredComplexity(entry.item.body) : null;
+    return {
+      ...entry.item,
+      version: own.at(-1)!.sequence,
+      createdAtMs: entry.createdAtMs,
+      updatedAtMs: own.at(-1)!.atMs,
+      ...(complexity ? { complexity } : {}),
+    };
   };
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -187,7 +215,8 @@ export function planningEngine(now: () => number = Date.now) {
       default: {
         if (method !== "PUT") return json({ error: "method" }, 405);
         if (!(body.version > 0) || body.version !== withTimes(project, id).version) return conflict();
-        entry.item = { ...current, title: body.title, body: body.body, lanes: body.lanes };
+        const text = body.complexity ? withComplexity(body.body, body.complexity) : body.body;
+        entry.item = { ...current, title: body.title, body: text, lanes: body.lanes };
         record(project, id, "operator", at, "edit", entry.item);
         return json(withTimes(project, id));
       }

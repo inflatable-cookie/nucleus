@@ -5,7 +5,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
-use nucleus_core::{Authority, ReportArtifact, profiles::Complexity};
+use nucleus_core::{
+    Authority, ReportArtifact,
+    profiles::{BriefPolicy, Complexity},
+};
 use nucleus_store::planning::{
     Decision, DecisionAnswerInput, DecisionInput, History, Horizon, Item, ItemContent,
     ItemDisposition, ItemKind, ItemState, ItemWithTimes, Lane, LaneDisposition, LaneDocument,
@@ -283,9 +286,12 @@ async fn items(
         .await?;
     let store = &state.store;
     if session.is_some() {
-        let items = store
+        let items: Vec<BoardItem> = store
             .items_with_times(&project)
-            .map_err(ServiceError::from)?;
+            .map_err(ServiceError::from)?
+            .into_iter()
+            .map(BoardItem::from)
+            .collect();
         Ok(Json(items).into_response())
     } else {
         let items = store.items(&project).map_err(ServiceError::from)?;
@@ -326,9 +332,32 @@ async fn add_item(
     Ok((StatusCode::CREATED, Json(item)))
 }
 
+/// A board item with the complexity its brief declares, read by the same brief
+/// policy admission uses. Only a lead's body is its task brief.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardItem {
+    #[serde(flatten)]
+    item: ItemWithTimes,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    complexity: Option<Complexity>,
+}
+
+impl From<ItemWithTimes> for BoardItem {
+    fn from(item: ItemWithTimes) -> Self {
+        let complexity = (item.item.kind == ItemKind::Lead)
+            .then(|| BriefPolicy::submitted(&item.item.content.body).ok())
+            .flatten()
+            .and_then(|policy| policy.complexity);
+        Self { item, complexity }
+    }
+}
+
 #[derive(Deserialize)]
 struct ItemEdit {
     version: Option<i64>,
+    /// Writes `queue.complexity` into the body's front matter, keeping the rest.
+    complexity: Option<Complexity>,
     #[serde(flatten)]
     content: ItemContent,
 }
@@ -342,9 +371,13 @@ async fn edit_item(
     Extension(caller): Extension<Authority>,
     input: Result<Json<ItemEdit>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let input = body(input)?;
+    let mut input = body(input)?;
     if session.is_some() && input.version.is_none_or(|version| version <= 0) {
         return Err(ApiError::Invalid);
+    }
+    if let Some(complexity) = input.complexity {
+        input.content.body = BriefPolicy::with_complexity(&input.content.body, complexity)
+            .map_err(ServiceError::from)?;
     }
     let (mut state, resolved) = api
         .service

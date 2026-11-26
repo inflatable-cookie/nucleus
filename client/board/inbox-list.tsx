@@ -291,6 +291,8 @@ export type InboxListProps = {
   state: UiQueueState | undefined;
   stateError: unknown;
   inbox: InboxBoard;
+  /** The selected project keys; empty shows every project. Closed rows follow it like the cards. */
+  scope?: readonly string[];
   view: Exclude<BoardView, "planning">;
   rust?: {
     tasks: RustTask[] | undefined;
@@ -351,6 +353,7 @@ export function InboxList({
   state,
   stateError,
   inbox,
+  scope = [],
   view,
   rust,
   leadsLoading,
@@ -406,6 +409,10 @@ export function InboxList({
     queryFn: () => readClosed({ kind: closedKind }),
     enabled: closedFilter,
   });
+  const closedItems = useMemo(
+    () => closedQuery.data?.filter((item) => scope.length === 0 || scope.includes(item.projectKey)),
+    [closedQuery.data, scope],
+  );
   const sections = legacyView
     ? inboxSections(board, legacyView, triageView ? triageFilters[triageView] : undefined)
     : [];
@@ -700,9 +707,9 @@ export function InboxList({
     : rust && view === "needs" && state && !decisions
       ? (decisionsError ? "failed" : "loading")
       : legacyView ? boardRead : "loaded";
-  const closedCount = closedQuery.data?.length ?? 0;
+  const closedCount = closedItems?.length ?? 0;
   const countText = closedFilter
-    ? closedQuery.data
+    ? closedItems
       ? `${closedCount} item${closedCount === 1 ? "" : "s"}`
       : closedQuery.error
         ? "Not loaded"
@@ -799,7 +806,7 @@ export function InboxList({
           {closedFilter && (
             // Closed has no board cards (triageCards returns none), so these rows are the list.
             <View style={{ gap: space.xxs }}>
-              {(closedQuery.data ?? []).map((item) => {
+              {(closedItems ?? []).map((item) => {
                 const word = item.kind === "papercut" ? "Papercut" : "Lead";
                 const status =
                   item.state === "promoted"
@@ -898,9 +905,9 @@ export function InboxList({
         </BoardCardVariantContext.Provider>
         {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
         {closedFilter ? (
-          closedQuery.data && closedCount === 0 ? (
+          closedItems && closedCount === 0 ? (
             <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>Nothing here.</Text>
-          ) : !closedQuery.data && !closedQuery.error ? (
+          ) : !closedItems && !closedQuery.error ? (
             <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>Loading…</Text>
           ) : null
         ) : ((!rust && boardRead !== "loaded") || (readState === "loaded" && total === 0 && !rust?.tasks?.length)) && (
