@@ -6,7 +6,7 @@ use nucleus_forge::Branches;
 use nucleus_store::{
     StoreError, TaskAdmissionFacts, TaskRow,
     planning::{
-        Decision, DecisionAnswerInput, DecisionInput, DecisionKind, ItemKind, ItemSource,
+        Decision, DecisionAnswerInput, DecisionInput, DecisionKind, Item, ItemKind, ItemSource,
         ItemState, USAGE_APPROVE, UsagePermission, WriteAt, valid_key,
     },
 };
@@ -38,6 +38,29 @@ pub(crate) struct TaskAdmission {
     pub review: Option<PullRequest>,
     #[serde(rename = "planningCommit")]
     pub planning_commit: Option<Head>,
+}
+
+enum AdmissionSource<'a> {
+    Direct,
+    Item {
+        source: &'a ItemSource,
+        item: &'a Item,
+    },
+}
+
+struct Admission<'a> {
+    project: Option<&'a str>,
+    repository: Option<&'a str>,
+    route: PlanningRepository,
+    identity: Identity,
+    brief: String,
+    review: Option<PullRequest>,
+    planning_commit: Option<Head>,
+    policy: BriefPolicy,
+    lane: Option<String>,
+    source: AdmissionSource<'a>,
+    caller: &'a Authority,
+    scope: &'a ControllerScope,
 }
 
 impl State {
@@ -122,56 +145,23 @@ impl Service {
             ));
         }
         drop(state);
-        let task = if let Some(lane) = &lane {
-            let head = self
-                .capture_report_base(&identity, input.planning_commit.as_ref())
-                .await?;
-            Task::new_report_only(
+        let (_, row) = self
+            .publish_admission(Admission {
+                project,
+                repository: input.repository.as_deref(),
+                route,
                 identity,
-                input.brief,
-                route.project_id.clone(),
-                lane.clone(),
-                head,
-            )
-        } else {
-            Task::new(identity, input.brief, input.review)
-        };
-        let affected_tests = self.affected_tests(&task, route.checkout.clone()).await;
-        let mut state = self.state.lock().await;
-        if self.planning_repository(&mut state, scope, project, input.repository.as_deref())?
-            != route
-        {
-            return Err(ServiceError::Project);
-        }
-        if let Some(lane) = &lane {
-            require_report_lanes(&state, &route, &policy, &[], lane)?;
-        }
-        let permission = usage_permission(&state, &route.project_id, &policy);
-        let requested_permission = permission.is_some();
-        let mut admitted = event("admitted");
-        admitted.detail = stamp(caller).actor.into();
-        let (prerequisites, blocked) =
-            self.resolve_dependencies(&state, task.identity(), &policy.depends_on, scope)?;
-        let facts = TaskAdmissionFacts {
-            prerequisites: &prerequisites,
-            usage_permission: permission,
-            affected_tests,
-        };
-        let number = state.store.create_with_facts(&task, &admitted, facts)?;
-        let wait = admission_wait(blocked, requested_permission);
-        state.apply_task_wait(&task, wait, true);
-        if wait.is_none() && task.first_launch() {
-            state.enqueue_capacity(&task)?;
-        }
-        if requested_permission {
-            self.decision_changed();
-        }
-        self.wake_task(&mut state, &task.identity().id, 1, Priority::Wake);
-        Ok(TaskRow {
-            task,
-            version: 1,
-            number: Some(number),
-        })
+                brief: input.brief,
+                review: input.review,
+                planning_commit: input.planning_commit,
+                policy,
+                lane,
+                source: AdmissionSource::Direct,
+                caller,
+                scope,
+            })
+            .await?;
+        Ok(row)
     }
 
     pub(crate) async fn promote_planning_item(
@@ -215,8 +205,48 @@ impl Service {
             require_report_lanes(&state, &route, &policy, attached, lane)?;
         }
         drop(state);
+        self.publish_admission(Admission {
+            project,
+            repository,
+            route,
+            identity,
+            brief,
+            review: None,
+            planning_commit: None,
+            policy,
+            lane,
+            source: AdmissionSource::Item {
+                source: &source,
+                item: &item,
+            },
+            caller,
+            scope,
+        })
+        .await
+    }
+
+    async fn publish_admission(
+        &self,
+        admission: Admission<'_>,
+    ) -> Result<(bool, TaskRow), ServiceError> {
+        let Admission {
+            project,
+            repository,
+            route,
+            identity,
+            brief,
+            review,
+            planning_commit,
+            policy,
+            lane,
+            source,
+            caller,
+            scope,
+        } = admission;
         let task = if let Some(lane) = &lane {
-            let head = self.capture_report_base(&identity, None).await?;
+            let head = self
+                .capture_report_base(&identity, planning_commit.as_ref())
+                .await?;
             Task::new_report_only(
                 identity,
                 brief,
@@ -225,23 +255,34 @@ impl Service {
                 head,
             )
         } else {
-            Task::new(identity, brief, None)
+            Task::new(identity, brief, review)
         };
         let affected_tests = self.affected_tests(&task, route.checkout.clone()).await;
         let mut state = self.state.lock().await;
         if self.planning_repository(&mut state, scope, project, repository)? != route {
             return Err(ServiceError::Project);
         }
-        if state.store.item(&route.project_id, id)?.as_ref() != Some(&item) {
-            return Err(StoreError::PlanningConflict.into());
-        }
+        let attached = match &source {
+            AdmissionSource::Direct => &[][..],
+            AdmissionSource::Item { source, item } => {
+                if let Some(row) = self.existing_promotion(&state, source, item)? {
+                    return Ok((false, row));
+                }
+                &item.content.lanes
+            }
+        };
         if let Some(lane) = &lane {
             require_report_lanes(&state, &route, &policy, attached, lane)?;
         }
         let permission = usage_permission(&state, &route.project_id, &policy);
         let requested_permission = permission.is_some();
         let mut admitted = event("admitted");
-        admitted.detail = serde_json::to_string(&source).map_err(StoreError::from)?;
+        admitted.detail = match &source {
+            AdmissionSource::Direct => stamp(caller).actor.into(),
+            AdmissionSource::Item { source, .. } => {
+                serde_json::to_string(source).map_err(StoreError::from)?
+            }
+        };
         let (prerequisites, blocked) =
             self.resolve_dependencies(&state, task.identity(), &policy.depends_on, scope)?;
         let facts = TaskAdmissionFacts {
@@ -249,14 +290,22 @@ impl Service {
             usage_permission: permission,
             affected_tests,
         };
-        let (_, number) = state.store.promote_item_with_facts(
-            &source,
-            &item.content.body,
-            &task,
-            &admitted,
-            stamp(caller),
-            facts,
-        )?;
+        let number = match source {
+            AdmissionSource::Direct => state.store.create_with_facts(&task, &admitted, facts)?,
+            AdmissionSource::Item { source, item } => {
+                state
+                    .store
+                    .promote_item_with_facts(
+                        source,
+                        &item.content.body,
+                        &task,
+                        &admitted,
+                        stamp(caller),
+                        facts,
+                    )?
+                    .1
+            }
+        };
         let wait = admission_wait(blocked, requested_permission);
         state.apply_task_wait(&task, wait, true);
         if wait.is_none() && task.first_launch() {
@@ -274,6 +323,27 @@ impl Service {
                 number: Some(number),
             },
         ))
+    }
+
+    fn existing_promotion(
+        &self,
+        state: &State,
+        source: &ItemSource,
+        item: &Item,
+    ) -> Result<Option<TaskRow>, ServiceError> {
+        let current = state.store.item(&source.project_id, &source.item_id)?;
+        if current.as_ref() == Some(item) {
+            return Ok(None);
+        }
+        if let Some(Item {
+            state: ItemState::Promoted { task_id },
+            ..
+        }) = current
+            && state.store.task_source(&task_id)?.as_ref() == Some(source)
+        {
+            return Ok(Some(self.lookup(state, &task_id)?));
+        }
+        Err(StoreError::PlanningConflict.into())
     }
 
     /// Read the same project decisions used by the operator Inbox.

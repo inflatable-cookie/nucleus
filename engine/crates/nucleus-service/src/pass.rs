@@ -532,6 +532,10 @@ impl Service {
         route: &ProjectRoute,
     ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
         let mut limited = None;
+        // Only a continuing worker reuses a parent turn that may already have ended.
+        let reuses_parent =
+            self.acp_provider().is_some() && nucleus_hosts::retained_worker_continuation(run);
+        let mut unproven = false;
         let (state, activity, error, active_child) = match host.observe_run(run, now_ms()).await {
             Ok(seen) => {
                 if run.launch().role == Role::Worker
@@ -552,6 +556,14 @@ impl Service {
                         }));
                     }
                 }
+                unproven = reuses_parent
+                    && matches!(
+                        &seen.host,
+                        Host::Current {
+                            state: RunState::Running,
+                            ..
+                        }
+                    );
                 (
                     Observed::Known(seen.host),
                     seen.activity,
@@ -574,6 +586,10 @@ impl Service {
         self.observe_activity(row, activity).await?;
         if let Some(child) = active_child {
             self.reenter_active_parent(row, route, &child).await?;
+        } else if crate::schedule::reentry_recheck_due(unproven, run.last_send_at_ms(), now_ms()) {
+            // The continuation's native run may not be visible yet. Look again
+            // soon instead of waiting for the live check that may come after it ends.
+            self.recheck_reentry(row).await;
         }
         Ok((limited.unwrap_or(state), error))
     }
@@ -3554,7 +3570,10 @@ mod tests {
         drop(service);
         let settings =
             nucleus_store::SettingsFile::open(&home.path().canonicalize().unwrap()).unwrap();
-        let service = Service::open(
+        // The continuation is reused under the ACP parent, which is what the recheck guards.
+        let mut project = project;
+        project.acp_provider = Some("fixture-acp".into());
+        let mut service = Service::open(
             &settings,
             project,
             host,
@@ -3568,6 +3587,19 @@ mod tests {
             advance(&service).await.unwrap(),
             Action::Wait(WaitReason::Running)
         );
+        // The continued run is not yet proven on its parent. The next look is a
+        // Decision wake, so a fresh running hint cannot defer it past the live check.
+        let recheck = service
+            .state
+            .lock()
+            .await
+            .schedule
+            .due_at("worker", crate::schedule::Priority::Decision);
+        assert!(recheck.is_some_and(|due| {
+            due <= tokio::time::Instant::now() + crate::schedule::REENTRY_CHECK
+        }));
+        // The rest of this fixture models the no-ACP path; the probe above was the ACP case.
+        service.fixture_mut().acp_provider = None;
 
         crate::tests::git(&owned, &["reset", "--hard", new_head.as_str()]);
         published.store(true, Ordering::Relaxed);
