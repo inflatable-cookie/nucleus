@@ -538,7 +538,9 @@ export function RustTaskDialog({
         }}
         action={
           (offered("amend") || amending) && !finished ? (
-            <QuietButton c={c} text={amending ? "Done" : "Amend"} label="Amend" disabled={busy && !amending}
+            // Never disabled: the brief save is version-checked, and a control that re-enables
+            // after a command can drop the first click before its responder updates.
+            <QuietButton c={c} text={amending ? "Done" : "Amend"} label="Amend"
               onPress={() => setAmending(!amending)} />
           ) : undefined
         }
