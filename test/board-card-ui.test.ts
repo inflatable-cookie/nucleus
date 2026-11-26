@@ -7,6 +7,7 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
+import { observeIntersections } from "./support/intersection";
 import {
   acrossViews,
   openPlanning,
@@ -243,16 +244,21 @@ function controlledQueuedPages(queue: TaskSummary[]) {
   };
 }
 
-/** The list's one ScrollView, whose layout, content-size and scroll events drive its paging. */
-function listScroll(tree: ReturnType<typeof mountBoard>) {
-  const list = tree.raw
-    .ofType("ScrollView")
-    .find((node) => node.props.onScroll);
-  assert.ok(
-    list,
-    "the list exposes its layout, content-size and scroll events",
-  );
-  return list;
+/**
+ * The list's page sentinel, observed for one test (nucleus#1608). `scrollToEnd` scrolls the
+ * list's end into view, as a reader does; `fillTall` scrolls until no page is left, as a
+ * tall pane does.
+ */
+function pagingObserver(t: { after(fn: () => void): void }) {
+  const io = observeIntersections(t);
+  const sentinel = (tree: ReturnType<typeof mountBoard>) =>
+    tree.raw.query(/^Show \d+ more /);
+  return {
+    scrollToEnd: (tree: ReturnType<typeof mountBoard>) => io.enter(sentinel(tree)),
+    fillTall(tree: ReturnType<typeof mountBoard>) {
+      for (let step = 0; step < 20 && sentinel(tree); step++) io.enter(sentinel(tree));
+    },
+  };
 }
 
 /** Board fixtures: one card per state the card renders, from checked task data and board summaries. */
@@ -1156,8 +1162,9 @@ test("a long shell command card keeps elapsed time accessible and the command pr
 });
 
 // nucleus#1532: the Queue list's own page read shows its loading and failure states in the list.
-test("the Queue list shows its held-back page loading, then a retry row when the read fails", async () => {
+test("the Queue list shows its held-back page loading, then a retry row when the read fails", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
@@ -1171,9 +1178,7 @@ test("the Queue list shows its held-back page loading, then a retry row when the
     let tree = mounted;
     await settle(() => Boolean(tree.query("Queue, 12")));
     openView(tree, "Queue");
-    const list = listScroll(tree);
-    list.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
-    list.props.onContentSizeChange(390, 200);
+    pager.fillTall(tree);
     await settle(() => tree.raw.text().includes("Loading queued tasks…"));
     mounted.update(h("View", null));
 
@@ -1186,9 +1191,7 @@ test("the Queue list shows its held-back page loading, then a retry row when the
     tree = mounted;
     await settle(() => Boolean(tree.query("Queue, 12")));
     openView(tree, "Queue");
-    const failed = listScroll(tree);
-    failed.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
-    failed.props.onContentSizeChange(390, 200);
+    pager.fillTall(tree);
     await settle(() =>
       Boolean(tree.raw.query("Could not load queued tasks. Try again.")),
     );
@@ -1348,8 +1351,9 @@ test("a long papercut and a long lead render as three-line rows with a one-line 
   }
 });
 
-test("Papercuts load the next page near the end and keep the real total", async () => {
+test("Papercuts load the next page near the end and keep the real total", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     mounted = mountBoard(
@@ -1364,19 +1368,7 @@ test("Papercuts load the next page near the end and keep the real total", async 
     openView(tree, "Papercuts");
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 25);
     assert.equal(tree.raw.text().includes("…and 5 more"), false);
-    const list = tree.raw
-      .ofType("ScrollView")
-      .find((node) => node.props.onScroll);
-    assert.ok(list, "the list exposes its real scroll event");
-    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
-    list.props.onContentSizeChange(390, 1500);
-    list.props.onScroll({
-      nativeEvent: {
-        contentOffset: { y: 700 },
-        contentSize: { height: 1500, width: 390 },
-        layoutMeasurement: { height: 400, width: 390 },
-      },
-    });
+    pager.scrollToEnd(tree);
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 30);
     assert.ok(tree.query("Papercuts, 30"), "the header keeps the real total");
   } finally {
@@ -1384,8 +1376,9 @@ test("Papercuts load the next page near the end and keep the real total", async 
   }
 });
 
-test("Leads load the next page near the end and keep the real total", async () => {
+test("Leads load the next page near the end and keep the real total", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = Array.from({ length: 30 }, (_, index) =>
@@ -1399,19 +1392,7 @@ test("Leads load the next page near the end and keep the real total", async () =
     openView(tree, "Leads");
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 25);
     assert.equal(tree.raw.text().includes("…and 5 more"), false);
-    const list = tree.raw
-      .ofType("ScrollView")
-      .find((node) => node.props.onScroll);
-    assert.ok(list, "the list exposes its real scroll event");
-    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
-    list.props.onContentSizeChange(390, 1500);
-    list.props.onScroll({
-      nativeEvent: {
-        contentOffset: { y: 700 },
-        contentSize: { height: 1500, width: 390 },
-        layoutMeasurement: { height: 400, width: 390 },
-      },
-    });
+    pager.scrollToEnd(tree);
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 30);
     assert.ok(tree.query("Leads, 30"), "the header keeps the real total");
   } finally {
@@ -1419,8 +1400,9 @@ test("Leads load the next page near the end and keep the real total", async () =
   }
 });
 
-test("Leads fill a tall pane, and changing the tag or view resets the page", async () => {
+test("Leads fill a tall pane, and changing the tag or view resets the page", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -1444,32 +1426,11 @@ test("Leads fill a tall pane, and changing the tag or view resets the page", asy
       25,
       "the Leads list starts at one page",
     );
-    const list = tree.raw
-      .ofType("ScrollView")
-      .find((node) => node.props.onScroll);
-    assert.ok(list, "the list exposes its layout and content-size events");
-    list.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
-    list.props.onContentSizeChange(390, 450);
-    assert.equal(tree.raw.all(/^(?:Lead|Papercut): /).length, 50);
-    const filledList = tree.raw
-      .ofType("ScrollView")
-      .find((node) => node.props.onScroll);
-    assert.ok(filledList);
-    filledList.props.onContentSizeChange(390, 900);
+    // A tall pane reads the end as it comes into view, page after page.
+    pager.fillTall(tree);
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): /).length, 60);
-
-    const listAfterFill = tree.raw
-      .ofType("ScrollView")
-      .find((node) => node.props.onScroll);
-    assert.ok(listAfterFill);
-    listAfterFill.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
     tree.press("Filter leads by tag, All tags (60)");
     tree.press("Filter leads by tag: idea (30)");
-    const filteredList = tree.raw
-      .ofType("ScrollView")
-      .find((node) => node.props.onScroll);
-    assert.ok(filteredList);
-    filteredList.props.onContentSizeChange(390, 900);
     await settle(() => tree.raw.all(/^(?:Lead|Papercut): Idea /).length === 25);
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 25);
     openView(tree, "Papercuts");
@@ -1484,8 +1445,9 @@ test("Leads fill a tall pane, and changing the tag or view resets the page", asy
   }
 });
 
-test("switching views at a tall viewport fills a short list without a new layout", async () => {
+test("switching views at a tall viewport fills a short list without a new layout", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const leads = [
@@ -1501,26 +1463,15 @@ test("switching views at a tall viewport fills a short list without a new layout
     await settle(() => Boolean(tree.query("Leads, 30")));
     // A tall pane measured on Papercuts: the whole short list fits at once.
     openView(tree, "Papercuts");
-    const papercutList = tree.raw
-      .ofType("ScrollView")
-      .find((node) => node.props.onScroll);
-    assert.ok(papercutList);
-    papercutList.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
-    papercutList.props.onContentSizeChange(390, 400);
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 10);
-    // Switching views does not resize the ScrollView, so no layout event fires.
-    // The Leads list starts at one page; its content size alone must fill it.
+    // The Leads list starts at one page; its sentinel, once in view, reads the rest.
     openView(tree, "Leads");
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Idea /).length, 25);
-    const leadsList = tree.raw
-      .ofType("ScrollView")
-      .find((node) => node.props.onScroll);
-    assert.ok(leadsList);
-    leadsList.props.onContentSizeChange(390, 900);
+    pager.fillTall(tree);
     assert.equal(
       tree.raw.all(/^(?:Lead|Papercut): Idea /).length,
       30,
-      "the kept viewport height fills the short list on its content size",
+      "a short list fills on its page sentinel",
     );
   } finally {
     mounted?.update(h("View", null));
@@ -1627,8 +1578,9 @@ test("the Leads tag filter narrows the list; papercuts have no filter and the me
 });
 
 // #1042 review, nucleus#1532: the Leads filter and the Queue's held-back pages persist; triage pages reset.
-test("the Leads tag and the queue's held-back pages survive view changes while triage pages reset", async () => {
+test("the Leads tag and the queue's held-back pages survive view changes while triage pages reset", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
@@ -1652,22 +1604,10 @@ test("the Leads tag and the queue's held-back pages survive view changes while t
         Boolean(tree.query("Papercuts, 10")) && Boolean(tree.query("Queue, 3")),
     );
     openView(tree, "Papercuts");
-    const papercutList = listScroll(tree);
-    papercutList.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
-    papercutList.props.onContentSizeChange(390, 1500);
-    papercutList.props.onScroll({
-      nativeEvent: {
-        contentOffset: { y: 700 },
-        contentSize: { height: 1500, width: 390 },
-        layoutMeasurement: { height: 400, width: 390 },
-      },
-    });
     assert.equal(tree.raw.all(/^(?:Lead|Papercut): Papercut /).length, 10);
     // A short queue in a tall pane fills itself, reading its one held-back page.
     openView(tree, "Queue");
-    const queueList = listScroll(tree);
-    queueList.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
-    queueList.props.onContentSizeChange(390, 200);
+    pager.fillTall(tree);
     await settle(() => tree.raw.text().includes("Held two"));
     openPlanning(tree);
     await settle(() => !tree.raw.query("Queue list"));
@@ -1703,8 +1643,9 @@ test("the Leads tag and the queue's held-back pages survive view changes while t
 });
 
 // nucleus#1532: held-back queued tasks are ordinary cards in the one list, at every layout.
-test("held-back queued tasks render as ordinary cards in compact and wide board layouts", async () => {
+test("held-back queued tasks render as ordinary cards in compact and wide board layouts", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   for (const compact of [true, false]) {
     const makeTask = boardTasks();
     let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1725,9 +1666,7 @@ test("held-back queued tasks render as ordinary cards in compact and wide board 
       await settle(() => Boolean(tree.query("Queue, 3")));
       openView(tree, "Queue");
       // A tall pane fills itself, so the held-back cards show without a scroll.
-      const list = listScroll(tree);
-      list.props.onLayout({ nativeEvent: { layout: { height: 900 } } });
-      list.props.onContentSizeChange(390, 200);
+      pager.fillTall(tree);
       await settle(() => tree.raw.text().includes("Held two"));
       const label = compact ? "compact" : "wide";
       assert.ok(
@@ -1750,8 +1689,9 @@ test("held-back queued tasks render as ordinary cards in compact and wide board 
 });
 
 // nucleus#1532: a project's held-back tasks follow its shipped queued cards, in queue order.
-test("the Queue appends each project's held-back tasks after its shipped cards, in queue order", async () => {
+test("the Queue appends each project's held-back tasks after its shipped cards, in queue order", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
@@ -1806,9 +1746,6 @@ test("the Queue appends each project's held-back tasks after its shipped cards, 
     assert.equal(reads.length, 0, "menu totals do not require a queue page");
     openView(tree, "Queue");
     // A list that scrolls waits for the scroll: the pane is shorter than its content.
-    const list = listScroll(tree);
-    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
-    list.props.onContentSizeChange(390, 1500);
     assert.equal(
       tree.raw.text().includes("A three"),
       false,
@@ -1816,13 +1753,7 @@ test("the Queue appends each project's held-back tasks after its shipped cards, 
     );
     assert.equal(tree.raw.text().includes("…and"), false, "no expander row");
     assert.equal(tree.raw.all("Previous").length, 0, "no pager buttons");
-    list.props.onScroll({
-      nativeEvent: {
-        contentOffset: { y: 700 },
-        contentSize: { height: 1500, width: 390 },
-        layoutMeasurement: { height: 400, width: 390 },
-      },
-    });
+    pager.scrollToEnd(tree);
     await settle(
       () =>
         tree.raw.text().includes("A six") && tree.raw.text().includes("O four"),
@@ -1862,15 +1793,7 @@ test("the Queue appends each project's held-back tasks after its shipped cards, 
     );
     // The end of every project's queue asks for nothing more.
     const before = reads.length;
-    const settled = listScroll(tree);
-    settled.props.onScroll({
-      nativeEvent: {
-        contentOffset: { y: 700 },
-        contentSize: { height: 1500, width: 390 },
-        layoutMeasurement: { height: 400, width: 390 },
-      },
-    });
-    settled.props.onContentSizeChange(390, 1500);
+    pager.scrollToEnd(tree);
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(
       reads.length,
@@ -1883,8 +1806,9 @@ test("the Queue appends each project's held-back tasks after its shipped cards, 
 });
 
 // nucleus#1532 review finding: a scroll while a page is on its way must not read again.
-test("a multi-page Queue waits while a page is on its way instead of reading it twice", async () => {
+test("a multi-page Queue waits while a page is on its way instead of reading it twice", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
@@ -1902,26 +1826,14 @@ test("a multi-page Queue waits while a page is on its way instead of reading it 
     const tree = mounted;
     await settle(() => Boolean(tree.query("Queue, 30")));
     openView(tree, "Queue");
-    const nearEnd = {
-      nativeEvent: {
-        contentOffset: { y: 700 },
-        contentSize: { height: 1500, width: 390 },
-        layoutMeasurement: { height: 400, width: 390 },
-      },
-    };
     // A tick, for the assertions that no further read started.
     const quiet = () => new Promise((resolve) => setTimeout(resolve, 20));
+    // Scrolls repeated while a page is on its way find no sentinel to read from.
     const scroll = () => {
-      const list = listScroll(tree);
-      list.props.onScroll(nearEnd);
-      list.props.onScroll(nearEnd);
-      list.props.onContentSizeChange(390, 1500);
-      return list;
+      pager.scrollToEnd(tree);
+      pager.scrollToEnd(tree);
     };
-    let list = listScroll(tree);
-    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
-    list.props.onContentSizeChange(390, 1500);
-    list.props.onScroll(nearEnd);
+    pager.scrollToEnd(tree);
     await settle(() => paging.log.length === 1);
     // Repeated scrolls while the first page is on its way read nothing more.
     scroll();
@@ -1969,8 +1881,9 @@ test("a multi-page Queue waits while a page is on its way instead of reading it 
 });
 
 // nucleus#1532 review finding: a failed page keeps the cards read and waits at the retry row.
-test("a failed Queue page keeps the cards already read and stops reads at the retry row", async () => {
+test("a failed Queue page keeps the cards already read and stops reads at the retry row", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
@@ -2008,21 +1921,11 @@ test("a failed Queue page keeps the cards already read and stops reads at the re
     const tree = mounted;
     await settle(() => Boolean(tree.query("Queue, 30")));
     openView(tree, "Queue");
-    const nearEnd = {
-      nativeEvent: {
-        contentOffset: { y: 700 },
-        contentSize: { height: 1500, width: 390 },
-        layoutMeasurement: { height: 400, width: 390 },
-      },
-    };
     const quiet = () => new Promise((resolve) => setTimeout(resolve, 20));
-    const list = listScroll(tree);
-    list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
-    list.props.onContentSizeChange(390, 1500);
-    list.props.onScroll(nearEnd);
+    pager.scrollToEnd(tree);
     await settle(() => tree.raw.text().includes("Task 25"));
     // The second page's read fails: the cards read so far stay, and the list ends there.
-    listScroll(tree).props.onScroll(nearEnd);
+    pager.scrollToEnd(tree);
     await settle(() =>
       Boolean(tree.raw.query("Could not load queued tasks. Try again.")),
     );
@@ -2036,10 +1939,8 @@ test("a failed Queue page keeps the cards already read and stops reads at the re
       "the retry row stands alone",
     );
     const reads = log.length;
-    const failed = listScroll(tree);
-    failed.props.onScroll(nearEnd);
-    failed.props.onScroll(nearEnd);
-    failed.props.onContentSizeChange(390, 1500);
+    pager.scrollToEnd(tree);
+    pager.scrollToEnd(tree);
     await quiet();
     assert.equal(log.length, reads, "a failed read waits for the retry row");
     // The retry reads the page again, and the queue reaches its end.
@@ -2062,9 +1963,7 @@ test("a failed Queue page keeps the cards already read and stops reads at the re
       "the retry row clears once the page reads",
     );
     const ended = log.length;
-    const done = listScroll(tree);
-    done.props.onScroll(nearEnd);
-    done.props.onContentSizeChange(390, 1500);
+    pager.scrollToEnd(tree);
     await quiet();
     assert.equal(log.length, ended, "the end of the queue reads nothing");
   } finally {
@@ -2073,8 +1972,9 @@ test("a failed Queue page keeps the cards already read and stops reads at the re
 });
 
 // nucleus#1532: a short queue fills a tall pane without a scroll, and a failed page read offers a retry.
-test("a short queue fills a tall pane and a failed page read ends it with a retry row", async () => {
+test("a short queue fills a tall pane and a failed page read ends it with a retry row", async (t) => {
   await load();
+  const pager = pagingObserver(t);
   const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
@@ -2096,9 +1996,7 @@ test("a short queue fills a tall pane and a failed page read ends it with a retr
     const tree = mounted;
     await settle(() => Boolean(tree.query("Queue, 4")));
     openView(tree, "Queue");
-    const list = listScroll(tree);
-    list.props.onLayout({ nativeEvent: { layout: { height: 1200 } } });
-    list.props.onContentSizeChange(390, 200);
+    pager.fillTall(tree);
     await settle(() =>
       Boolean(tree.raw.query("Could not load queued tasks. Try again.")),
     );
@@ -2122,8 +2020,7 @@ test("a short queue fills a tall pane and a failed page read ends it with a retr
     );
     // The whole queue fits the tall pane, and its end asks for nothing more.
     const before = reads.length;
-    const filled = listScroll(tree);
-    filled.props.onContentSizeChange(390, 900);
+    pager.fillTall(tree);
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(
       reads.length,

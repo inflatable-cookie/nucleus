@@ -1,0 +1,1 @@
+- Board card lists load their next page as their end comes into view, instead of waiting for a "Show more" click. This covers the Queue, Working, Review, History and Needs you lists, Leads and Papercuts, and the lane task and finished-work lists.
