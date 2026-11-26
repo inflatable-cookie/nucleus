@@ -226,6 +226,16 @@ fn outcome_text(outcome: &Outcome, answer: Option<&str>) -> String {
             }
             line
         }
+        Outcome::ProviderLimit { cause, group, .. } => cause
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+            .map_or_else(
+                || match group.as_deref() {
+                    Some(group) => format!("Provider usage limit for subscription group {group}."),
+                    None => "Provider usage limit.".into(),
+                },
+                str::to_owned,
+            ),
     }
 }
 
@@ -414,5 +424,24 @@ mod tests {
                 ),
             );
         }
+    }
+
+    #[test]
+    fn provider_limit_card_keeps_prior_status() {
+        let run: RoleCard = serde_json::from_value(json!({
+            "instance":"fixture-limit","role":"worker","purpose":"Fixture work","ended":true,
+            "outcome":Outcome::ProviderLimit {
+                group: Some("shared".into()),
+                reset_at_ms: Some(90_000),
+                cause: None,
+            }
+        }))
+        .unwrap();
+        let card = Card::from_run(&run, None);
+        assert_eq!(card.status, "completed");
+        assert_eq!(
+            card.body.as_deref(),
+            Some("Provider usage limit for subscription group shared."),
+        );
     }
 }

@@ -425,28 +425,19 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     assert_worker_detail(&detail, &list, thread);
 }
 
+fn without_transcript(lifecycle: &Value) -> serde_json::Map<String, Value> {
+    let mut map = lifecycle.as_object().unwrap().clone();
+    map.remove("transcript");
+    map
+}
+
 fn assert_worker_detail(detail: &Value, list: &Value, thread: &str) {
     let lifecycle = &detail["lifecycle"];
     assert!(list[0]["lifecycle"].get("transcript").is_none());
-    let detail_steps = lifecycle["steps"].as_array().unwrap();
-    let list_steps = list[0]["lifecycle"]["steps"].as_array().unwrap();
-    assert_eq!(detail_steps.len(), list_steps.len());
-    for (detail_step, list_step) in detail_steps.iter().zip(list_steps.iter()) {
-        for key in [
-            "key",
-            "label",
-            "state",
-            "tone",
-            "note",
-            "roundLabel",
-            "elapsedMs",
-            "activeSinceMs",
-        ] {
-            assert_eq!(detail_step[key], list_step[key]);
-        }
-        assert!(detail_step["visits"].is_array());
-    }
-    assert_eq!(list[0]["lifecycle"]["worker"], lifecycle["worker"]);
+    assert_eq!(
+        list[0]["lifecycle"],
+        Value::Object(without_transcript(lifecycle))
+    );
     assert_eq!(
         lifecycle["transcript"]["cards"].as_array().unwrap().len(),
         1
