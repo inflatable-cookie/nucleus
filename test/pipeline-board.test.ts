@@ -704,7 +704,7 @@ test("026-13 the inbox menu has no Lanes or QA destination; Planning holds the l
   // A lane opened from Planning's lane search keeps the plan and lane panes.
   assert.match(
     ui,
-    /const selectPlanningLane = \(key: string, project\?: string\) => \{[\s\S]*?setPlanningPin\(key\);/,
+    /const selectPlanningLane = \(key: string, project\?: string\) => \{\s*if \(!project\) \{\s*setError\("Select a project before opening this lane\."\);\s*return;\s*\}\s*setPlanningPin\(key\);/,
   );
   assert.doesNotMatch(ui, /setPipelineTarget/);
   // The menu counts and every list read one derivation, then the Leads tag filter narrows a copy.
@@ -749,7 +749,7 @@ test("026-15 an accepted submission shows queued as submitting until its task ap
   assert.equal(replaced.counts.Queued, 1);
 });
 
-test("026-15a inbox cards open a record modal or the detail pane and carry no action buttons", () => {
+test("026-15a inbox cards open details and eligible tasks offer priority actions", () => {
   const ui = boardSource();
   // The inbox list lives in its own module, which the shell mounts (Tom, 2026-11-21).
   const pipeline = readFileSync(
@@ -771,6 +771,13 @@ test("026-15a inbox cards open a record modal or the detail pane and carry no ac
   assert.doesNotMatch(pipeline, /text="Drop"/);
   assert.doesNotMatch(pipeline, /text="Check again"/);
   assert.doesNotMatch(pipeline, /actionsLabel/);
+  // Only eligible Rust tasks have a card action, and it is the one priority button.
+  assert.equal((pipeline.match(/\bactions=\{/g) ?? []).length, 1);
+  assert.match(pipeline, /const canPrioritize = task\.phase === "queued" \|\| task\.wait === "capacity";/);
+  assert.match(
+    pipeline,
+    /actions=\{canPrioritize && rust\.onCommand \? \(\s*<View style=\{\{ \.\.\.row, gap: space\.xs \}\}>\s*<Button\s+small\s+c=\{c\}\s+disabled=\{rust\.busy\}\s+text=\{promoted \? "Demote" : "Promote"\}\s+label=\{`\$\{promoted \? "Demote" : "Promote"\} \$\{reference\}`\}\s+onPress=\{\(\) => rust\.onCommand\?\.\(task\.identity\.id, promoted \? \{ demote: task\.version \} : \{ promote: task\.version \}\)\}\s*\/>\s*<\/View>\s*\) : undefined\}/,
+  );
   assert.match(triageLeadCard, /onSelectPapercut\(lead\.id\)/);
   assert.match(triageLeadCard, /onSelectLead\(lead\.id\)/);
   assert.match(
