@@ -1,0 +1,1 @@
+Rebuild the Rust task details view as one scrolling view: an attention panel only when someone must act, a timeline with a segment per round and durations everywhere, a pull request card with the latest findings, recent activity, the brief, and footer actions with Cancel apart and confirmed.

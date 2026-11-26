@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs } from "./support/render";
 import { planningFixture } from "./support/planning-fixture";
+import { cardTitleColor } from "../client/design";
 
 useNativeStubs();
 const h = React.createElement;
@@ -101,7 +102,7 @@ test("1546 the Planning menu entry counts the open lanes in scope", async () => 
       1,
       "a non-zero Planning count never dims",
     );
-    // The count reads in the dark theme, in the same muted text as the rest.
+    // The count uses the same resting title tint as other menu text.
     const entry = ui.get("Planning, 6 open lanes");
     const count = (
       entry.children as Array<{ type?: string; children?: unknown[] } | string>
@@ -114,8 +115,8 @@ test("1546 the Planning menu entry counts the open lanes in scope", async () => 
     assert.ok(count, "Planning draws its count as text");
     assert.equal(
       count.props.style.color,
-      dark.foregroundMuted,
-      "the count reads muted in the dark theme",
+      cardTitleColor(c, false),
+      "the count reads in the shared card title tint",
     );
     // The entry opens Planning like every other entry opens its view.
     ui.press(/^Planning, \d+ open lanes$/);

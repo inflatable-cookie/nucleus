@@ -430,6 +430,8 @@ export function MainSurface({
   const detail = rustTaskId && rustBoard ? (
     <RustTaskDialog key={`rust:${rustTaskId}`} id={rustTaskId}
       summary={rustTasks.data?.find(({ identity }) => identity.id === rustTaskId)}
+      project={rustListProps.project}
+      onOpenTask={selectRustTask}
       inline={inlineDetail} compact={compact} c={c}
       onClose={() => setRustTaskId(null)} invalidate={rustBoard} />
   ) : task ? (
@@ -622,6 +624,9 @@ export function MainSurface({
                   width: menuWidth,
                   minHeight: 0,
                   backgroundColor: navigationFill,
+                  ...(wide
+                    ? { borderRightWidth: 1, borderColor: roles(c).hairline }
+                    : {}),
                 }}
               >
                 {menu}
@@ -829,6 +834,8 @@ export function MainSurface({
                           width: inboxListWidth,
                           minHeight: 0,
                           backgroundColor: listFill,
+                          borderRightWidth: 1,
+                          borderColor: roles(c).hairline,
                         }
                       : {
                           flex: 1,

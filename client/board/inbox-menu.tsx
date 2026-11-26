@@ -6,6 +6,7 @@ import { useFocusVisible } from "../focus-modality";
 import type { Colors } from "../controls";
 import type { RustExtraView } from "../web/rust-board";
 import {
+  cardTitleColor,
   hoverSurface,
   navigationTextOpacity,
   radius,
@@ -22,7 +23,6 @@ export type BoardView = InboxView | RustExtraView;
 /**
  * One menu entry (nucleus#1528): the same sidebar hover as a list row — a dimmed
  * background on hover and keyboard focus, the selected surface when selected.
- * Themed navigation also marks selection with a foreground bar.
  */
 function MenuEntry({
   c,
@@ -41,7 +41,6 @@ function MenuEntry({
   onPress: () => void;
   options: {
     icon?: string;
-    hot?: boolean;
     dimmed?: boolean;
     countNoun?: string;
   };
@@ -57,14 +56,15 @@ function MenuEntry({
       ? navigationTint(hoverSurface(c), wash.hover)
       : "transparent";
   // Keep zero-count labels quieter without fading the entire interaction fill.
-  const labelColor = on
-    ? c.foreground
-    : navigationTint(
-        c.foregroundMuted,
-        options.dimmed
-          ? navigationTextOpacity.dimmed
-          : navigationTextOpacity.normal,
-      );
+  const emphasized = on || hovered || focus.visible;
+  const labelColor =
+    options.dimmed && themedNavigation && !emphasized
+      ? toneSurface(
+          c.foreground,
+          c.foreground,
+          navigationTextOpacity.dimmed,
+        )
+      : cardTitleColor(c, emphasized);
   return (
     <Pressable
       accessibilityRole="tab"
@@ -92,20 +92,6 @@ function MenuEntry({
         opacity: options.dimmed && !on && !themedNavigation ? 0.55 : 1,
       }}
     >
-      {on && themedNavigation && (
-        <View
-          pointerEvents="none"
-          style={{
-            position: "absolute",
-            start: space.xxs,
-            top: space.xs,
-            bottom: space.xs,
-            width: space.xxs / 2,
-            borderRadius: radius.full,
-            backgroundColor: c.foreground,
-          }}
-        />
-      )}
       {options.icon && (
         <Icon
           name={options.icon}
@@ -123,39 +109,16 @@ function MenuEntry({
       >
         {label}
       </Text>
-      {value !== null &&
-        loaded &&
-        (options.hot && value > 0 ? (
-          <View
-            style={{
-              minWidth: 20,
-              paddingHorizontal: space.xs,
-              borderRadius: radius.panel,
-              backgroundColor: c.accent,
-              alignItems: "center",
-            }}
-          >
-            <Text
-              style={{
-                color: c.accentForeground,
-                fontSize: typeScale.metadata.fontSize,
-                lineHeight: 18,
-                fontWeight: "600",
-              }}
-            >
-              {value}
-            </Text>
-          </View>
-        ) : (
-          <Text
-            style={{
-              color: themedNavigation ? labelColor : c.foregroundMuted,
-              fontSize: typeScale.metadata.fontSize,
-            }}
-          >
-            {value}
-          </Text>
-        ))}
+      {value !== null && loaded && (
+        <Text
+          style={{
+            color: labelColor,
+            fontSize: typeScale.metadata.fontSize,
+          }}
+        >
+          {value}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -250,7 +213,6 @@ export function InboxMenu({
             () => onSelect(entry.id),
             {
               icon: entry.icon,
-              hot: entry.id === "needs",
               // Planning names its unit, so the count reads as open lanes.
               countNoun: entry.id === "planning" ? "open lanes" : undefined,
               // An unloaded entry's hidden count never dims; a loaded zero does.

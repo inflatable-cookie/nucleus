@@ -902,7 +902,7 @@ export function RustListRows({ c, rust, view }: {
             />
           </View>
         ) : undefined}
-        progress={<RustTaskProgress progress={task.lifecycle} c={c} compact barsOnly />}
+        progress={<RustTaskProgress task={task} c={c} />}
         selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
     })}
     <PageSentinel c={c} more={remaining > 0} page={limit}

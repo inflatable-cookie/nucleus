@@ -2435,7 +2435,8 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   );
   ui.press("lantern#2, Lantern work");
   await visible("Task detail");
-  assert.match(ui.text(), /lantern#2 · Lantern work/);
+  assert.match(ui.text(), /lantern#2/);
+  assert.match(ui.text(), /Lantern work/);
   ui.query("Close task")!.props.onPress();
   const laneQueries = client
     .getQueryCache()

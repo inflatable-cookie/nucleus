@@ -52,6 +52,7 @@
   "test/queued-more.test.ts",
   "test/rust-board-adapter.test.ts",
   "test/rust-task-board.test.ts",
+  "test/rust-task-detail.test.ts",
   "test/schema-ownership.test.ts",
   "test/scratch-root.test.ts",
   "test/settings-hosts.test.ts",

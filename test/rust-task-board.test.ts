@@ -733,7 +733,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   await eventually(() => text().includes(activity), "initial activity");
   const detail = dom.window.document.querySelector('[aria-label="Task detail"]');
   assert.ok(detail);
-  assert.ok(detail.querySelector('[aria-label="Step Working: current · 13m 51s"]'));
+  assert.ok(detail.querySelector('[aria-label="Step Working: current · 13m"]'));
   assert.match(text(), /fixture-worker-model/);
   assert.match(text(), /fixture-review-model/);
   assert.ok(detail.querySelector('[aria-label="Step Review: todo · Round 2"]'));
@@ -773,18 +773,17 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   assert.ok(reads("/api/engine/tasks/running") >= beforeDetail + 2);
   assert.ok(reads("/api/engine/tasks/running/next") >= beforeNext + 2);
 
-  await click("Activity");
+  // One scrolling view: activity loads beside the overview, with no tab to open.
   await eventually(
-    () => text().includes("Checking round 1"),
+    () => text().includes("Reviewer started"),
     "paged history is visible",
   );
   assert.doesNotMatch(text(), /run ticket material/);
   await eventually(
-    () => text().includes("Lease is never released"),
-    "routing and the review outcome are visible",
+    () => text().includes("Changes requested"),
+    "the review outcome is visible",
   );
-  assert.match(text(), /Routed to fixture-model/);
-  assert.match(text(), /Review: changes requested/);
+  assert.match(text(), /Pull request opened/);
   assert.doesNotMatch(text(), /invalid response/);
   const beforeReconnect = {
     list: reads("/api/engine/tasks"),
@@ -803,7 +802,6 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     7000,
   );
 
-  await click("Overview");
   await click("Move, Move");
   await click("Move: Reviewing");
   await eventually(
@@ -853,7 +851,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   await click("Amend");
   await click("Needs you, 2");
   await click("Blocked task, The worker could not finish. Try again?");
-  await click("Answer");
+  await click("Try again");
   await eventually(
     () => posts.some(({ path }) => path === "/api/engine/tasks/blocked/commands"),
     "answer posted",
@@ -1462,7 +1460,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.ok(workingCard.parentElement?.lastElementChild?.contains(cardStrip), "the strip is at the bottom of the card");
   assert.equal(cardStrip.children.length, 5, "one bar per code task step");
   assert.equal(cardStrip.textContent, "", "card bars have no visible text");
-  assert.match(cardStrip.getAttribute("aria-label") ?? "", /Working \(current, 13m 51s\).*Review \(todo, Round 2 · 7m 10s\)/);
+  assert.match(cardStrip.getAttribute("aria-label") ?? "", /Working \(current, 13m 51s\).*Review \(todo, Round 2 · 7m\)/);
   const footer = cardStrip.parentElement!;
   const body = workingCard.firstElementChild!;
   const tile = body.firstElementChild!;
@@ -1473,7 +1471,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     assert.equal(style(segment.firstElementChild!).height, "2px");
 
   const tooltip = () => dom.window.document.querySelector('[role="tooltip"]');
-  for (const [index, text] of [[1, "Working · 13m 51s"], [2, "Review · round 2 · 7m 10s"], [3, "Merge · not started"]] as const) {
+  for (const [index, text] of [[1, "Working · 13m 51s"], [2, "Review · Round 2 · 7m"], [3, "Merge · not started"]] as const) {
     const segment = cardStrip.children[index]!;
     segment.dispatchEvent(new dom.window.PointerEvent("pointerenter", { pointerType: "mouse" }));
     await eventually(() => tooltip()?.textContent === text, "hover shows " + text);
@@ -1482,23 +1480,28 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   }
 
   await click("#80, Standalone task");
-  const detailProgress = () => selector("Task detail")?.querySelector('[aria-label^="Progress:"]');
-  await eventually(() => Boolean(detailProgress()?.textContent?.includes("13m 51s")),
+  const detailStep = (name: string) => selector("Task detail")?.querySelector(`[aria-label^="Step ${name}:"]`);
+  await eventually(() => Boolean(detailStep("Working")?.textContent?.includes("13m 51s")),
     "the selected task displays its run duration in the timeline");
-  const fullStrip = detailProgress()!;
   assert.equal(style(title).fontWeight, "400");
   assert.equal(style(title).color, "rgb(245, 245, 245)");
   const taskHeading = selector("Task detail")?.querySelector('[role="heading"]');
-  assert.match(taskHeading?.textContent ?? "", /board-fixture#80 · Standalone task/);
+  assert.equal(taskHeading?.textContent, "Standalone task");
   assert.notEqual(style(taskHeading!).whiteSpace, "nowrap");
+  assert.match(selector("Task detail")?.textContent ?? "", /board-fixture#80/);
   assert.match(selector("Task detail")?.textContent ?? "", /Wait before dispatching again\./);
-  assert.match(fullStrip.textContent ?? "", /Queued.*Working.*13m 51s.*Review.*Round 2.*Merge.*Close/);
+  assert.match(detailStep("Review")?.textContent ?? "", /Review.*Round 2/);
+  // The first bar of each detail step: step > bar row > segment > bar.
+  const detailColours = ["Queued", "Working", "Review", "Merge", "Close"].map((name) =>
+    dom.window.getComputedStyle(detailStep(name)!.firstElementChild!.firstElementChild!.firstElementChild!).backgroundColor);
   const colours = (strip: Element) => Array.from(strip.children, (step) => {
     assert.ok(step.firstElementChild);
     return dom.window.getComputedStyle(step.firstElementChild).backgroundColor;
   });
   assert.equal(new Set(colours(cardStrip)).size, 3, "done, current and future bars have different colours");
-  assert.deepEqual(colours(cardStrip), colours(fullStrip), "card and detail use the same step colours");
+  const cardColours = colours(cardStrip);
+  for (const index of [0, 3, 4])
+    assert.equal(detailColours[index], cardColours[index], "card and detail use the same done and future colours");
   const beforeClock = requests.length;
   clock += 2000;
   await eventually(() => text().includes("13m 53s"), "run duration ticks locally");
