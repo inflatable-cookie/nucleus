@@ -446,7 +446,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       json({
         profiles: { ...snapshot({ profiles: [], pausedGroups: [] }), effectiveGroups: {} },
         dispatch: snapshot({ usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 4,
-          projectSlotOverrides: {}, providerLimitCooldownSeconds: 300, mode: "running" }),
+          projectSlotOverrides: {}, mode: "running" }),
         projects: { settings: snapshot({ projects: {} }), resolvedPlanners: {} },
         hosts: { settings: snapshot({ t3: null }), active: { endpoint: "", status: "reachable" } },
         storage: { settings: snapshot({ enabled: true, workRoot: null, logRoot: null, scratchRoot: null,
@@ -1034,15 +1034,15 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
     projectSlotOverrides: {},
-    providerLimitCooldownSeconds: 300, mode: "running",
+    mode: "running",
   };
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   let closeStream: (() => void) | undefined;
   const snap = <T>(value: T, revision: string) => ({ value, revision, configured: true });
   let fixtureOrigin = "example/board-fixture";
   const fixtureProject = () => ({ name: "Fixture project", archived: projectArchived, repositories: [
-    { origin: fixtureOrigin, path: "/work/fixture", base: "main", hungToolMinutes: 30 },
-    { origin: boundRepository, path: "/work/bound", base: "main", hungToolMinutes: 30,
+    { origin: fixtureOrigin, path: "/work/fixture", base: "main" },
+    { origin: boundRepository, path: "/work/bound", base: "main",
       hostProject: "fixture-bound", hostProjectTitle: boundTitle },
   ] });
   const scratchOverride = "/custom/run-scratch";

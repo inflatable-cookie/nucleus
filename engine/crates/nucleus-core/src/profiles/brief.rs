@@ -27,7 +27,8 @@ pub struct BriefPolicy {
     pub lane_documents: Vec<String>,
     #[serde(deserialize_with = "lane_keys")]
     pub depends_on: Vec<String>,
-    interactive: bool,
+    #[serde(default, deserialize_with = "present")]
+    interactive: Option<()>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -98,6 +99,7 @@ fn text_scalar<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::
 pub enum BriefPolicyError {
     UnclosedFrontmatter,
     RetiredProfile,
+    RetiredInteractive,
     InvalidFrontmatter(yaml_serde::Error),
     UnjustifiedRequest(Role),
     ReportPolicy(&'static str),
@@ -107,6 +109,7 @@ impl fmt::Display for BriefPolicyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RetiredProfile => f.write_str("queue.preferredProfileId is retired; use queue.profileRequests.worker with profileId and reason (required: true to require it)"),
+            Self::RetiredInteractive => f.write_str("queue.interactive is retired; submit the work as a normal brief"),
             Self::UnclosedFrontmatter => {
                 f.write_str("brief frontmatter is missing its closing delimiter")
             }
@@ -131,6 +134,9 @@ impl BriefPolicy {
         let policy = Self::parse(brief)?;
         if policy.preferred_profile_id.is_some() {
             return Err(BriefPolicyError::RetiredProfile);
+        }
+        if policy.interactive.is_some() {
+            return Err(BriefPolicyError::RetiredInteractive);
         }
         Ok(policy)
     }
@@ -198,11 +204,6 @@ impl BriefPolicy {
             ));
         }
         if policy.report_only == Some(true) {
-            if policy.interactive {
-                return Err(BriefPolicyError::ReportPolicy(
-                    "queue.reportOnly cannot be combined with queue.interactive",
-                ));
-            }
             if policy.lane.is_some() && policy.lanes.is_some() {
                 return Err(BriefPolicyError::ReportPolicy(
                     "provide queue.lane or queue.lanes, not both",
@@ -270,6 +271,18 @@ mod submission_tests {
                 .unwrap_err()
                 .to_string()
                 .contains("queue.profileRequests.worker")
+        );
+    }
+
+    #[test]
+    fn retired_interactive_only_refuses_new_or_amended_input() {
+        let brief = "---\nqueue:\n  interactive: true\n---\nHeld work";
+        assert!(BriefPolicy::parse(brief).is_ok());
+        assert!(
+            BriefPolicy::submitted(brief)
+                .unwrap_err()
+                .to_string()
+                .contains("queue.interactive is retired")
         );
     }
 }

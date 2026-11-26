@@ -20,8 +20,8 @@ use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
 use nucleus_hosts::T3;
 use nucleus_service::{
-    Controller, DependencyCommand, MAX_BRIEF_BYTES, Project, ReportTicket, Service,
-    check_brief_size, router_with_board_and_t3_callers, router_with_t3_callers,
+    Controller, DependencyCommand, MAX_BRIEF_BYTES, ReportTicket, Service, check_brief_size,
+    router_with_board_and_t3_callers, router_with_t3_callers,
 };
 use nucleus_store::{EngineSettings, Hosts, SettingsFile, StoragePlacement};
 use reqwest::{Client, Method, RequestBuilder, header};
@@ -66,13 +66,6 @@ enum Action {
     Serve {
         #[arg(long)]
         home: Option<PathBuf>,
-        /// Keep running a legacy single-repository pilot or fixture.
-        #[arg(
-            long,
-            conflicts_with = "acp_provider",
-            required_unless_present = "acp_provider"
-        )]
-        project: Option<PathBuf>,
         /// Use this T3 ACP provider for tasks in the Projects registry.
         #[arg(long)]
         acp_provider: Option<String>,
@@ -300,7 +293,6 @@ async fn main() -> Result<()> {
         Action::Configure(args) => configure(&args),
         Action::Serve {
             home,
-            project,
             acp_provider,
             t3,
             actor,
@@ -313,14 +305,11 @@ async fn main() -> Result<()> {
             } else {
                 Authority::Operator { actor }
             };
-            let routing = match project.as_deref() {
-                Some(file) => Routing::Legacy(file),
-                None => Routing::Registry(acp_provider.ok_or("supply the T3 ACP provider")?),
-            };
+            let provider = acp_provider.ok_or("supply the T3 ACP provider")?;
             serve(
                 endpoint,
                 home.as_deref(),
-                routing,
+                provider,
                 t3.as_deref(),
                 authority,
                 fixture_origin_thread,
@@ -383,11 +372,6 @@ fn open_settings(home: Option<&Path>) -> Result<SettingsFile> {
     Ok(home.map_or_else(SettingsFile::open_default, SettingsFile::open)?)
 }
 
-enum Routing<'a> {
-    Legacy(&'a Path),
-    Registry(String),
-}
-
 fn configured_host(settings: &SettingsFile, host: Option<&str>) -> Result<T3> {
     let saved_host = if host.is_none() {
         settings.read::<Hosts>()?.value.t3
@@ -409,7 +393,7 @@ fn configured_host(settings: &SettingsFile, host: Option<&str>) -> Result<T3> {
 async fn serve(
     endpoint: SocketAddr,
     home: Option<&Path>,
-    routing: Routing<'_>,
+    provider: String,
     host: Option<&str>,
     authority: Authority,
     fixture_origin_thread: Option<String>,
@@ -426,18 +410,13 @@ async fn serve(
     let host = configured_host(&settings, host)?;
     let forge = GitHub::new(&secret("NUCLEUS_ENGINE_GITHUB_TOKEN")?)?;
     let credential = control_key(CONTROL_KEY)?;
-    let t3_caller_key = if matches!(routing, Routing::Registry(_)) {
-        if !matches!(authority, Authority::Operator { .. }) || fixture_origin_thread.is_some() {
-            return Err("use the T3 caller credential with the Projects registry".into());
-        }
-        let key = control_key(T3_CALLER_KEY)?;
-        if key == credential {
-            return Err("supply a distinct T3 caller credential".into());
-        }
-        Some(key)
-    } else {
-        None
-    };
+    if !matches!(authority, Authority::Operator { .. }) || fixture_origin_thread.is_some() {
+        return Err("use the T3 caller credential with the Projects registry".into());
+    }
+    let t3_caller_key = control_key(T3_CALLER_KEY)?;
+    if t3_caller_key == credential {
+        return Err("supply a distinct T3 caller credential".into());
+    }
     let mut controllers = vec![Controller {
         credential,
         authority,
@@ -454,15 +433,7 @@ async fn serve(
     }
     let callback = endpoint;
     let command = env::current_exe()?.canonicalize()?;
-    let service = match routing {
-        Routing::Legacy(file) => {
-            let project: Project = from_reader(File::open(file)?)?;
-            Service::open(&settings, project, host, forge, callback, command)?
-        }
-        Routing::Registry(provider) => {
-            Service::open_projects(&settings, provider, host, forge, callback, command)?
-        }
-    };
+    let service = Service::open_projects(&settings, provider, host, forge, callback, command)?;
     let service = service.with_inbox_from_env()?;
     let service = Arc::new(service);
     let api = match board_assets {
@@ -470,9 +441,9 @@ async fn serve(
             Arc::clone(&service),
             controllers,
             path,
-            t3_caller_key,
+            Some(t3_caller_key),
         )?,
-        None => router_with_t3_callers(Arc::clone(&service), controllers, t3_caller_key),
+        None => router_with_t3_callers(Arc::clone(&service), controllers, Some(t3_caller_key)),
     };
     let tcp = TcpListener::bind(endpoint).await?;
     let watch = Arc::clone(&service);
@@ -720,7 +691,7 @@ fn command_path(
 fn control_caller() -> Result<([u8; 32], Option<String>)> {
     let actor = env::var("T3CODE_THREAD_ID").unwrap_or_default();
     let host = env::var("T3CODE_DESKTOP_HOST_SCOPE").unwrap_or_default();
-    // The legacy pilot predates the machine-local T3 caller credential.
+    // Without the machine-local T3 caller credential, the control key identifies the caller.
     if env::var_os(T3_CALLER_KEY).is_none() || (actor.trim().is_empty() && host.trim().is_empty()) {
         return Ok((control_key(CONTROL_KEY)?, None));
     }

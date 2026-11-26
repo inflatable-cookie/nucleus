@@ -34,30 +34,30 @@ export type StoredItem = {
 
 type History = { sequence: number; actor: string; atMs: number; action: string; snapshot: unknown };
 
-type Repository = { origin: string; path: string; base: string; hungToolMinutes: number; hostProject?: string };
+type Repository = { origin: string; path: string; base: string; hostProject?: string };
 
 export const planningProjects: Record<string, { name: string; archived: boolean; repositories: Repository[] }> = {
   nucleus: {
     name: "Nucleus",
     archived: false,
     repositories: [
-      { origin: "example/nucleus", path: "/work/nucleus", base: "main", hungToolMinutes: 30, hostProject: "t3-nucleus" },
+      { origin: "example/nucleus", path: "/work/nucleus", base: "main", hostProject: "t3-nucleus" },
     ],
   },
   acowtancy: {
     name: "Acowtancy",
     archived: false,
     repositories: [
-      { origin: "example/acowtancy-v2", path: "/work/acowtancy-v2", base: "main", hungToolMinutes: 30, hostProject: "t3-acowtancy" },
-      { origin: "example/dairy", path: "/work/dairy", base: "main", hungToolMinutes: 30 },
+      { origin: "example/acowtancy-v2", path: "/work/acowtancy-v2", base: "main", hostProject: "t3-acowtancy" },
+      { origin: "example/dairy", path: "/work/dairy", base: "main" },
     ],
   },
   orchard: {
     name: "Orchard",
     archived: false,
     repositories: [
-      { origin: "example/orchard-api", path: "/work/orchard-api", base: "main", hungToolMinutes: 30, hostProject: "t3-orchard-api" },
-      { origin: "example/orchard-web", path: "/work/orchard-web", base: "main", hungToolMinutes: 30, hostProject: "t3-orchard-web" },
+      { origin: "example/orchard-api", path: "/work/orchard-api", base: "main", hostProject: "t3-orchard-api" },
+      { origin: "example/orchard-web", path: "/work/orchard-web", base: "main", hostProject: "t3-orchard-web" },
     ],
   },
 };
@@ -99,7 +99,6 @@ const settings = () => ({
     globalSlots: 4,
     projectDefaultSlots: 2,
     projectSlotOverrides: {},
-    providerLimitCooldownSeconds: 300,
     mode: "running",
   }),
   projects: { settings: snapshot({ projects: planningProjects }), resolvedPlanners: {} },

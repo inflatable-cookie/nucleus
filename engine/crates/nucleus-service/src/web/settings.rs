@@ -179,10 +179,6 @@ impl RuntimeSettings {
             .ok_or(ServiceError::Project)
     }
 
-    pub(crate) const fn uses_project_registry(&self) -> bool {
-        self.projects.is_some()
-    }
-
     pub(crate) fn planning_project_id<'a>(&'a self, binding: &'a Project) -> &'a str {
         self.fixture_project(binding)
             .map_or(binding.host_project.as_str(), |(id, _, _)| id)
@@ -840,7 +836,6 @@ fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), S
                 {
                     return Err(changed_route());
                 }
-                repo.hung_tool_minutes = edit.hung_tool_minutes;
             }
             project.repositories.extend(edits.repositories);
         } else {

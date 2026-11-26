@@ -112,8 +112,6 @@ pub struct DispatchSettings {
     pub thread_retention_days: u32,
     #[serde(default = "default_thread_retention_interval_hours")]
     pub thread_retention_interval_hours: u32,
-    #[serde(default = "default_provider_limit_cooldown_seconds")]
-    pub provider_limit_cooldown_seconds: u32,
     #[serde(default)]
     pub mode: DispatchMode,
 }
@@ -146,10 +144,6 @@ impl DispatchMode {
     }
 }
 
-const fn default_provider_limit_cooldown_seconds() -> u32 {
-    300
-}
-
 const fn default_project_slots() -> u32 {
     5
 }
@@ -172,7 +166,6 @@ impl Default for DispatchSettings {
             project_slot_overrides: BTreeMap::new(),
             thread_retention_days: default_thread_retention_days(),
             thread_retention_interval_hours: default_thread_retention_interval_hours(),
-            provider_limit_cooldown_seconds: default_provider_limit_cooldown_seconds(),
             mode: DispatchMode::Running,
         }
     }
@@ -212,6 +205,8 @@ impl SettingsValue for DispatchSettings {
                 "hostConcurrency",
                 "host_concurrency",
                 "legacyLimitsImported",
+                "providerLimitCooldownSeconds",
+                "provider_limit_cooldown_seconds",
             ] {
                 fields.remove(key);
             }
@@ -236,11 +231,6 @@ impl SettingsValue for DispatchSettings {
             "use 1–90 retention days and 1–168 hours between sweeps",
         )?;
         check(
-            self.provider_limit_cooldown_seconds > 0,
-            "providerLimitCooldownSeconds",
-            "the provider limit cooldown must be positive",
-        )?;
-        check(
             self.usage_until_ms.is_none()
                 || (self.usage_until_ms != Some(0)
                     && matches!(
@@ -261,15 +251,13 @@ pub struct RepositorySettings {
     pub path: PathBuf,
     pub base: String,
     /// T3 project registered at this repository's exact checkout root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub host_project: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub host_project_title: Option<String>,
     /// Exact T3 callers enrolled for this route.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub planner_threads: Vec<String>,
-    #[serde(default = "default_hung_tool_minutes")]
-    pub hung_tool_minutes: u32,
 }
 
 impl<'de> Deserialize<'de> for RepositorySettings {
@@ -288,8 +276,9 @@ impl<'de> Deserialize<'de> for RepositorySettings {
             planner_threads: Vec<String>,
             #[serde(default, rename = "requiredChecks")]
             _retired_required_checks: Option<serde::de::IgnoredAny>,
-            #[serde(default = "default_hung_tool_minutes")]
-            hung_tool_minutes: u32,
+            // The hung-tool limit is retired. A stored value loads and the next save drops it.
+            #[serde(default, rename = "hungToolMinutes")]
+            _retired_hung_tool_minutes: Option<serde::de::IgnoredAny>,
         }
         let saved = SavedRepository::deserialize(deserializer)?;
         Ok(Self {
@@ -299,13 +288,8 @@ impl<'de> Deserialize<'de> for RepositorySettings {
             host_project: saved.host_project,
             host_project_title: saved.host_project_title,
             planner_threads: saved.planner_threads,
-            hung_tool_minutes: saved.hung_tool_minutes,
         })
     }
-}
-
-const fn default_hung_tool_minutes() -> u32 {
-    30
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -444,10 +428,9 @@ impl SettingsValue for Projects {
                         && branch(&repo.base)
                         && repo.host_project.as_deref().is_none_or(|id| {
                             text(id) && id.trim() == id && host_projects.insert(id)
-                        })
-                        && repo.hung_tool_minutes > 0,
+                        }),
                     "repository",
-                    "each repository needs a unique GitHub origin, absolute path, base and positive hung-tool limit",
+                    "each repository needs a unique GitHub origin, absolute path and base",
                 )?;
                 check(
                     repo.planner_threads.iter().all(|id| {
@@ -593,5 +576,25 @@ mod dispatch_mode_tests {
         }))
         .expect("dispatch settings");
         assert_eq!(stopped.mode, DispatchMode::Stopped);
+    }
+}
+
+#[cfg(test)]
+mod retired_repository_tests {
+    use super::Projects;
+
+    #[test]
+    fn a_saved_repository_drops_the_retired_hung_tool_limit() {
+        let saved: Projects = serde_json::from_value(serde_json::json!({
+            "projects": {"alpha": {"name": "Alpha", "repositories": [{
+                "origin": "example/alpha", "path": "/work/alpha", "base": "main",
+                "hungToolMinutes": 30
+            }]}}
+        }))
+        .expect("a retired hung-tool limit still loads");
+        let saved = serde_json::to_value(saved).expect("current projects");
+        let repository = &saved["projects"]["alpha"]["repositories"][0];
+        assert_eq!(repository["origin"], "example/alpha");
+        assert!(repository.get("hungToolMinutes").is_none());
     }
 }

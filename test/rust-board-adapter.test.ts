@@ -58,7 +58,6 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     globalSlots: 4,
     projectDefaultSlots: 2,
     projectSlotOverrides: { Orbit_Main: 3, lantern: 1 },
-    providerLimitCooldownSeconds: 300,
     mode: "running",
   };
   let t3Settings: { endpoint: string; credentialRef: string } | null = {
@@ -98,14 +97,12 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
             origin: "example/orbit",
             path: "/work/orbit",
             base: "main",
-            hungToolMinutes: 30,
             hostProjectTitle: "Orbit",
           },
           {
             origin: "example/orbit-docs",
             path: "/work/orbit-docs",
             base: "main",
-            hungToolMinutes: 30,
             hostProject: "t3-orbit-docs",
           },
         ],
@@ -118,7 +115,6 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
             origin: "example/lantern",
             path: "/work/lantern",
             base: "main",
-            hungToolMinutes: 30,
           },
         ],
       },
@@ -280,7 +276,6 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
         origin: string;
         path: string;
         base: string;
-        hungToolMinutes: number;
         hostProject?: string;
         hostProjectTitle?: string;
       };
@@ -697,35 +692,6 @@ test("Rust Settings opens an adapter project without requesting owner candidates
     ui.update(React.createElement(React.Fragment));
     client.clear();
   }
-});
-
-test("Projects reads and writes the full positive Rust hung-tool range", async () => {
-  const fake = engine();
-  const adapter = createRustAdapter(createRustApi(fake.fetcher));
-  for (const minutes of [1, 241, 1441, 0xffff_ffff]) {
-    const saved = await adapter.rpc(api.repositorySet, {
-      repository: "example/orbit",
-      toolQuietLimitMinutes: minutes,
-    });
-    assert.equal(saved.toolQuietLimitMinutes, minutes);
-    const repositories = await adapter.rpc(api.repositories, {});
-    assert.equal(repositories.length, 3);
-    assert.equal(repositories[0]?.toolQuietLimitMinutes, minutes);
-  }
-  assert.equal(
-    api.repositorySet.input.safeParse({
-      repository: "example/orbit",
-      toolQuietLimitMinutes: 0,
-    }).success,
-    false,
-  );
-  assert.equal(
-    api.repositorySet.input.safeParse({
-      repository: "example/orbit",
-      toolQuietLimitMinutes: 2 ** 32,
-    }).success,
-    false,
-  );
 });
 
 test("the board identifies malformed projects and profiles without losing healthy siblings", async () => {

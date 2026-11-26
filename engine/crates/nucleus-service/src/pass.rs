@@ -451,11 +451,7 @@ impl Service {
                 let configured = state.settings.profiles.is_some();
                 drop(state);
                 if !configured {
-                    let Some(fixture) = self
-                        .project
-                        .as_ref()
-                        .filter(|project| project.mode == crate::ProjectMode::Fixture)
-                    else {
+                    let Some(fixture) = self.project.as_ref() else {
                         return Ok(Action::Wait(WaitReason::Capacity));
                     };
                     let catalog = host.profile_catalog().await?;

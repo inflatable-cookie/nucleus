@@ -16,7 +16,7 @@ use nucleus_hosts::{
 };
 use nucleus_store::{DispatchMode, NamedProfile, Profiles, SubscriptionPause, TaskRow};
 
-use crate::{ProjectMode, Service, ServiceError, State, now_ms};
+use crate::{Service, ServiceError, State, now_ms};
 
 #[cfg(test)]
 mod tests;
@@ -123,7 +123,6 @@ impl Service {
                 let project = self
                     .project
                     .as_ref()
-                    .filter(|project| project.mode == ProjectMode::Fixture)
                     .ok_or(ServiceError::ProfileConfiguration)?;
                 let group = &project.profile(role).instance_id;
                 if let Some(pause) = state.group_pause(group, now_ms())? {
