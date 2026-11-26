@@ -19,6 +19,8 @@ use rusqlite::Connection;
 mod numbers;
 #[path = "store/planning.rs"]
 mod planning;
+#[path = "store/publication.rs"]
+mod publication;
 
 fn fixture_storage(home: &Path) -> EngineStorage {
     let settings = SettingsFile::open(home).expect("open fixture settings");
@@ -869,7 +871,7 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
          DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
          DROP TABLE planning_items; DROP TABLE planning_lanes; DROP TABLE planning_plans;
          DROP TABLE task_titles; DROP TABLE inbox_bindings; DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
-         DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; DROP TABLE parent_deliveries; PRAGMA user_version = 2;",
+         DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; DROP TABLE review_publications; DROP TABLE parent_deliveries; PRAGMA user_version = 2;",
     )
     .expect("restore version two schema");
     let store = Store::open(&storage).expect("migrate version two");
@@ -908,7 +910,7 @@ fn migrating_version_nine_preserves_assigned_numbers_and_the_allocator() {
         "ALTER TABLE tasks DROP COLUMN report_task;
          ALTER TABLE tasks DROP COLUMN work_continuation;
          DROP TABLE inbox_titles;
-         DROP TABLE parent_deliveries; PRAGMA user_version = 9;",
+         DROP TABLE review_publications; DROP TABLE parent_deliveries; PRAGMA user_version = 9;",
     )
     .expect("restore version nine schema with the allocator in place");
     drop(db);
@@ -932,7 +934,7 @@ fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
     store.create(&task, &event("admitted")).unwrap();
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; PRAGMA user_version = 10;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE review_publications; DROP TABLE parent_deliveries; PRAGMA user_version = 10;")
         .unwrap();
     drop(db);
 
@@ -996,7 +998,7 @@ fn dependency_tables_open_from_the_previous_live_schema() {
          DROP TABLE project_tell_deliveries; DROP TABLE project_tell_requests;
          DROP INDEX planning_usage_permission;
          ALTER TABLE tasks DROP COLUMN report_task; DROP TABLE inbox_titles;
-         DROP TABLE parent_deliveries; PRAGMA user_version = 9;",
+         DROP TABLE review_publications; DROP TABLE parent_deliveries; PRAGMA user_version = 9;",
     )
     .unwrap();
     let version: i32 = db
@@ -1596,8 +1598,10 @@ fn schema_twelve_preserves_existing_snooze_ownership() {
 
 fn revert_parent_schema(storage: &EngineStorage) {
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("DROP TABLE parent_deliveries; PRAGMA user_version=11;")
-        .unwrap();
+    db.execute_batch(
+        "DROP TABLE review_publications; DROP TABLE parent_deliveries; PRAGMA user_version=11;",
+    )
+    .unwrap();
 }
 
 #[test]

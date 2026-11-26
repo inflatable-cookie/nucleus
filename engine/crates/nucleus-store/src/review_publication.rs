@@ -1,12 +1,17 @@
 use std::{num::NonZeroU64, time::SystemTime};
 
 use nucleus_core::{Head, Review};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 use crate::{EventDraft, Store, StoreError, append};
 
 const EVENT: &str = "review_publication";
+pub(super) const SCHEMA: &str = "CREATE TABLE review_publications (
+    task_id TEXT NOT NULL REFERENCES tasks(id), instance TEXT NOT NULL,
+    at INTEGER NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)),
+    PRIMARY KEY (task_id, instance)
+) STRICT";
 
 /// The immutable GitHub write authorized by one authenticated reviewer run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,7 +102,7 @@ impl Store {
             response: None,
             recorded_at: at,
         };
-        append(&tx, task, &audit(&pending, at)?)?;
+        save(&tx, task, &pending)?;
         tx.commit()?;
         Ok(Some(outcome))
     }
@@ -144,18 +149,15 @@ impl Store {
             (Submitted(sent), Verified(verified)) if sent == verified => {}
             _ => return Err(StoreError::ReviewPublicationConflict),
         }
-        append(
+        save(
             &tx,
             task,
-            &audit(
-                &ReviewPublication {
-                    intent: intent.clone(),
-                    outcome,
-                    response: response.map(str::to_owned),
-                    recorded_at: at,
-                },
-                at,
-            )?,
+            &ReviewPublication {
+                intent: intent.clone(),
+                outcome,
+                response: response.map(str::to_owned),
+                recorded_at: at,
+            },
         )?;
         tx.commit()?;
         Ok(())
@@ -168,11 +170,10 @@ fn read(
     instance: &str,
 ) -> Result<Option<ReviewPublication>, StoreError> {
     let mut query = connection.prepare_cached(
-        "SELECT at, detail FROM events WHERE task_id = ?1 AND kind = ?2
-         AND json_extract(detail, '$.intent.instance') = ?3 ORDER BY sequence DESC LIMIT 1",
+        "SELECT at, record FROM review_publications WHERE task_id = ?1 AND instance = ?2",
     )?;
     let row: Option<(i64, String)> = query
-        .query_row(params![task, EVENT, instance], |row| {
+        .query_row(params![task, instance], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
         .optional()?;
@@ -184,10 +185,69 @@ fn read(
     .transpose()
 }
 
-fn audit(publication: &ReviewPublication, at: i64) -> Result<EventDraft, StoreError> {
-    Ok(EventDraft {
-        at,
+fn save(
+    tx: &Transaction<'_>,
+    task: &str,
+    publication: &ReviewPublication,
+) -> Result<(), StoreError> {
+    let audit = EventDraft {
+        at: publication.recorded_at,
         kind: EVENT.into(),
         detail: serde_json::to_string(publication)?,
-    })
+    };
+    set_current(
+        tx,
+        task,
+        &publication.intent.instance,
+        audit.at,
+        &audit.detail,
+    )?;
+    append(tx, task, &audit)?;
+    Ok(())
+}
+
+fn set_current(
+    tx: &Transaction<'_>,
+    task: &str,
+    instance: &str,
+    at: i64,
+    record: &str,
+) -> rusqlite::Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO review_publications(task_id,instance,at,record) VALUES (?1,?2,?3,?4)
+        ON CONFLICT(task_id,instance) DO UPDATE SET at=excluded.at,record=excluded.record",
+    )?
+    .execute(params![task, instance, at, record])?;
+    Ok(())
+}
+
+pub(super) fn migrate(tx: &Transaction<'_>) -> Result<(), StoreError> {
+    tx.execute_batch(SCHEMA)?;
+    let mut stmt = tx
+        .prepare("SELECT sequence,task_id,at,detail FROM events WHERE kind=?1 ORDER BY sequence")?;
+    let mut rows = stmt.query([EVENT])?;
+    while let Some(row) = rows.next()? {
+        let sequence = row.get(0)?;
+        let task: String = row.get(1)?;
+        let raw: String = row.get(3)?;
+        let invalid = || StoreError::InvalidPublicationEvent {
+            task: task.clone(),
+            sequence,
+        };
+        let record: ReviewPublication = serde_json::from_str(&raw).map_err(|_| invalid())?;
+        if record.intent.instance.is_empty()
+            || record.intent.body_digest.len() != 64
+            || !record
+                .intent
+                .body_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || read(tx, &task, &record.intent.instance)?
+                .is_some_and(|last| last.intent != record.intent)
+        {
+            return Err(invalid());
+        }
+        set_current(tx, &task, &record.intent.instance, row.get(2)?, &raw)?;
+    }
+    Ok(())
 }

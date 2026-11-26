@@ -24,7 +24,7 @@ fn a_restored_unnumbered_repository_fences_admission_without_changing_runs() {
 
     let db = Connection::open(storage.database().path().join("engine.sqlite")).expect("fixture");
     db.execute_batch(
-        "DROP TABLE task_numbers; DROP TABLE task_number_counters; DROP TABLE parent_deliveries; PRAGMA user_version = 8;",
+        "DROP TABLE task_numbers; DROP TABLE task_number_counters; DROP TABLE review_publications; DROP TABLE parent_deliveries; PRAGMA user_version = 8;",
     )
     .expect("recreate version eight");
     let snapshot = || {

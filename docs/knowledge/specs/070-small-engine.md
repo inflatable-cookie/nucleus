@@ -537,6 +537,10 @@ Later decisions carry their own attribution.
       Nucleus verifies the review ID, author, head, state and body
       before applying the verdict, and rechecks a published approval before
       merging. Previously applied approvals keep their original exact-head gate.
+      Upgrading first verifies a schema backup, then reads publication events by
+      sequence to restore one current record per task and reviewer instance.
+      A corrupt record stops the upgrade. Subsequent writes update the current
+      record and append the audit event in the same transaction.
     - An account is added through an OAuth sign-in from Settings, and its token
       is stored in the platform keychain through Longhorn's credential store.
       Tokens never appear in settings files, logs or prompts.

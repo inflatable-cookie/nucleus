@@ -73,7 +73,7 @@ fn schema_seven_migrates_in_place() {
         "DROP TABLE task_numbers; DROP TABLE task_number_counters;
          DROP TABLE planning_record_clocks; DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
          DROP TABLE planning_items; DROP TABLE planning_lanes; DROP TABLE planning_plans;
-         DROP TABLE parent_deliveries; PRAGMA user_version = 7;",
+         DROP TABLE review_publications; DROP TABLE parent_deliveries; PRAGMA user_version = 7;",
     ).expect("restore version seven schema");
     let store = Store::open(&storage).expect("migrate version seven");
     assert_eq!(

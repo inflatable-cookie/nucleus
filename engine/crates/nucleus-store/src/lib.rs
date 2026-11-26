@@ -54,7 +54,7 @@ pub use usage::{ProfileUsage, SubscriptionPause, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 12;
+const SCHEMA_VERSION: i32 = 13;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation";
@@ -96,6 +96,8 @@ pub enum StoreError {
     StaleTask,
     #[error("review publication journal does not match the outstanding intent")]
     ReviewPublicationConflict,
+    #[error("invalid review publication for task {task} at event {sequence}")]
+    InvalidPublicationEvent { task: String, sequence: i64 },
     #[error("dependency change would create a cycle")]
     DependencyCycle,
     #[error("planning record was not found")]
@@ -277,6 +279,7 @@ impl Store {
                 tx.execute_batch(planning::SCHEMA)?;
                 tx.execute_batch(numbers::SCHEMA)?;
                 tx.execute_batch(include_str!("parent_delivery.sql"))?;
+                tx.execute_batch(review_publication::SCHEMA)?;
                 tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
@@ -316,8 +319,11 @@ impl Store {
                         [],
                     )?;
                 }
-                tx.execute_batch(include_str!("parent_delivery.sql"))?;
-                tx.execute_batch(include_str!("parent_delivery_legacy.sql"))?;
+                if version < 12 {
+                    tx.execute_batch(include_str!("parent_delivery.sql"))?;
+                    tx.execute_batch(include_str!("parent_delivery_legacy.sql"))?;
+                }
+                review_publication::migrate(tx)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             _ => {
@@ -327,7 +333,10 @@ impl Store {
                 });
             }
         }
-        // This independent table is additive to every supported task schema.
+        Self::prepare_additive_tables(tx)
+    }
+
+    fn prepare_additive_tables(tx: &Transaction<'_>) -> Result<(), StoreError> {
         usage::prepare_pauses(tx)?;
         tx.execute(LEGACY_PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
