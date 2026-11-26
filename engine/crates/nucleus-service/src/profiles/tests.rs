@@ -347,6 +347,26 @@ async fn measure_overlap(service: &Service, traffic: &NativeTraffic) {
     );
 }
 
+async fn assert_limit_fact(service: &Service) {
+    let state = service.state.lock().await;
+    let events = state
+        .store
+        .lifecycle_events(IDS[0])
+        .expect("lifecycle facts");
+    let fact = events
+        .iter()
+        .find(|event| event.content.kind == "provider_limit")
+        .expect("limit event");
+    let detail: Value = serde_json::from_str(&fact.content.detail).unwrap();
+    assert_eq!(detail["providerLimit"]["group"], "shared");
+    assert_eq!(detail["providerLimit"]["resetAtMs"], RESET_MS);
+    assert!(
+        detail["providerLimit"]["instance"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+}
+
 #[tokio::test]
 async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() {
     let (forge, forge_server) = serve_forge(Router::new().route(
@@ -389,6 +409,7 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
         Ok(Action::Wait(WaitReason::Capacity))
     ));
     let limited = service.task(IDS[0]).await.expect("settled limit");
+    assert_limit_fact(&service).await;
     assert_eq!(limited.task.phase(), Phase::Working);
     assert!(limited.task.run().is_none() && limited.task.question().is_none());
     assert_eq!(limited.task.attempts(), 1);
