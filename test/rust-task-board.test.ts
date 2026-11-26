@@ -389,6 +389,34 @@ test("the paired Board tracks Rust task changes and uses the next command contra
             },
           ],
         },
+        {
+          // The engine's serialized presentation: routing, a review outcome,
+          // and a record kind from a newer engine that the board must skip.
+          sequence: 5,
+          content: { at: 1_699_999_000_000 },
+          presentation: [
+            {
+              kind: "run_routing",
+              instance: "finished",
+              providerInstance: "claude-fixture",
+              provider: "claude",
+              model: "fixture-model",
+            },
+            {
+              kind: "run_reported",
+              instance: "finished",
+              sentAtMs: 1_699_999_000_000,
+              outcome: {
+                kind: "review",
+                decision: "changes",
+                summary: "Retry drops the lease.",
+                finding_titles: ["Lease is never released"],
+                change_url: null,
+              },
+            },
+            { kind: "future_board_record", instance: "finished" },
+          ],
+        },
       ]);
       return;
     }
@@ -535,6 +563,13 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "paged history is visible",
   );
   assert.doesNotMatch(text(), /run ticket material/);
+  await eventually(
+    () => text().includes("Lease is never released"),
+    "routing and the review outcome are visible",
+  );
+  assert.match(text(), /Routed to fixture-model/);
+  assert.match(text(), /Review: changes requested/);
+  assert.doesNotMatch(text(), /invalid response/);
   const beforeReconnect = {
     list: reads("/api/engine/tasks"),
     detail: reads("/api/engine/tasks/running"),
