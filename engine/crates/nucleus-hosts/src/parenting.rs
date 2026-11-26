@@ -49,11 +49,13 @@ impl ActiveChild {
     /// Prefix of the owned parent commands for this exact child launch.
     #[must_use]
     pub fn parent_command_prefix(&self) -> String {
-        let thread = parent_thread(Path::new(&self.binding.worktree_path));
-        format!(
-            "{thread}-hold-acp-child-{:x}",
-            Sha256::digest(&self.instance)
-        )
+        Self::command_prefix(Path::new(&self.binding.worktree_path), &self.instance)
+    }
+
+    #[must_use]
+    pub fn command_prefix(checkout: &Path, instance: &str) -> String {
+        let thread = parent_thread(checkout);
+        format!("{thread}-hold-acp-child-{:x}", Sha256::digest(instance))
     }
 }
 
@@ -117,8 +119,23 @@ pub struct ParentWrite {
     delivery: Option<Box<ParentDelivery>>,
     owned_snoozes: Vec<u64>,
     reentry: Option<Box<ActiveChild>>,
+    child_evidence: Option<String>,
+    ended_hold: Option<Box<EndedHold>>,
     runtime: Option<String>,
 }
+
+/// Readback of an exact prior re-entry hold, before choosing whether to send.
+pub struct EndedHold {
+    pub command: String,
+    pub evidence: String,
+    pub unchanged: bool,
+    pub breaker: bool,
+    pub retry_at_ms: Option<u64>,
+}
+
+const INSTANT_HOLD_MS: u64 = 1_000;
+const HOLD_BACKOFF_MS: u64 = 3_000;
+const INSTANT_HOLD_LIMIT: u8 = 3;
 
 /// Immutable inputs to a parent mutation. Live authorization is prepared separately.
 #[derive(Serialize, Deserialize)]
@@ -127,6 +144,8 @@ pub struct FrozenParentWrite {
     method: Method,
     payload: Value,
     provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    child_thread: Option<String>,
 }
 
 impl FrozenParentWrite {
@@ -143,6 +162,11 @@ impl FrozenParentWrite {
             self.payload["text"].as_str()
         }
     }
+
+    #[must_use]
+    pub fn child_thread(&self) -> Option<&str> {
+        self.child_thread.as_deref()
+    }
 }
 
 struct ParentDelivery {
@@ -158,13 +182,21 @@ impl ParentWrite {
                 method,
                 payload,
                 provider: provider.into(),
+                child_thread: None,
             },
             idle_at: None,
             delivery: None,
             owned_snoozes: Vec::new(),
             reentry: None,
+            child_evidence: None,
+            ended_hold: None,
             runtime: None,
         }
+    }
+
+    #[must_use]
+    pub fn ended_hold(&self) -> Option<&EndedHold> {
+        self.ended_hold.as_deref()
     }
 
     #[must_use]
@@ -774,7 +806,14 @@ impl T3 {
     /// A bound child is active only on positive run or background evidence.
     #[must_use]
     pub fn bound_child_active(&self, thread: &str, checkout: &Path) -> bool {
-        self.held_child_active(thread, checkout, None)
+        self.held_child(thread, checkout, None).is_some()
+    }
+
+    /// Compare role activity on shell deltas without a native request.
+    #[must_use]
+    pub fn child_activity_hint(&self, thread: &str) -> Option<String> {
+        let row = self.rpc.thread_row(thread)?;
+        child_activity(&row, row["activeRunId"].as_str()).then(|| activity_digest(&row))
     }
 
     #[must_use]
@@ -796,28 +835,33 @@ impl T3 {
         thread: String,
         instance: String,
     ) -> Result<Option<ActiveChild>, HostError> {
+        let mut child = ActiveChild {
+            binding,
+            thread,
+            instance,
+            native: None,
+        };
+        // Background-only custody is already established by the bound shell.
+        if self.active_child_in_shell(&child) {
+            return Ok(Some(child));
+        }
         let Some(projection) = self
-            .read_thread(&binding, &thread, ThreadRead::Observation)
+            .read_thread(&child.binding, &child.thread, ThreadRead::Observation)
             .await?
         else {
             return Ok(None);
         };
-        let message = if crate::child_origin_instance(&thread) == Some(instance.as_str()) {
-            format!("message:delegated-task:{instance}")
-        } else {
-            message_id(&instance)
-        };
-        let native = projection.owned_active_run(&message).map(str::to_owned);
-        let child = ActiveChild {
-            binding,
-            thread,
-            instance,
-            native,
-        };
+        let message =
+            if crate::child_origin_instance(&child.thread) == Some(child.instance.as_str()) {
+                format!("message:delegated-task:{}", child.instance)
+            } else {
+                message_id(&child.instance)
+            };
+        child.native = projection.owned_active_run(&message).map(str::to_owned);
         Ok(self.active_child_in_shell(&child).then_some(child))
     }
 
-    /// Prepare the first hold for this child or one new hold after an exact ended turn.
+    /// Prepare a hold and attach readback of any exact prior ended hold.
     /// A bounded read can confirm a matching command, but cannot authorize a new ID
     /// solely from the absence of the prior command.
     ///
@@ -831,6 +875,13 @@ impl T3 {
         prior: Option<&str>,
     ) -> Result<Option<ParentWrite>, HostError> {
         let binding = &child.binding;
+        let Some(child_row) = self.held_child(
+            &child.thread,
+            Path::new(&binding.worktree_path),
+            Some(child),
+        ) else {
+            return Ok(None);
+        };
         let thread = parent_thread(Path::new(&binding.worktree_path));
         let Some(row) = self.rpc.thread_row(&thread) else {
             return Ok(None);
@@ -850,7 +901,12 @@ impl T3 {
         {
             return Err(HostError::Binding);
         }
-        let (projection, _) = self.observe_parent(binding, &thread).await?;
+        // Only an idle shell can reach this read. Reuse the corresponding
+        // projection until the parent row changes, including a waiting parent
+        // whose own background list still shows its child.
+        let (projection, _) = self
+            .observe_thread(binding, &thread, ThreadRead::Inbox)
+            .await?;
         let Some(projection) = projection else {
             return Ok(None);
         };
@@ -860,50 +916,90 @@ impl T3 {
             return Ok(None);
         }
         let ended_owned = prior
-            .and_then(|command| projection.ended_run_for_message(&message_id(command)))
+            .and_then(|command| {
+                projection
+                    .ended_run_for_message(&message_id(command))
+                    .map(|run| (run, command))
+            })
             .or_else(|| {
-                latest.filter(|run| {
-                    projection
-                        .ended_parent_message(run)
-                        .and_then(|message| message.strip_suffix("-message"))
-                        .is_some_and(|command| child_reentry_command(command, &prefix))
-                })
+                let run = latest?;
+                let command = projection
+                    .ended_parent_message(run)?
+                    .strip_suffix("-message")?;
+                child_reentry_command(command, &prefix).then_some((run, command))
             });
+        let evidence = activity_digest(&child_row);
+        let mut ended_hold = None;
         let command = match (prior, ended_owned) {
             (Some(prior), _) if !projection.has_delivery(&message_id(prior)) => prior.to_owned(),
-            (_, Some(native)) => format!("{prefix}-after-{:x}:{provider}", Sha256::digest(native)),
-            (None, None) => format!("{prefix}:{provider}"),
+            (_, Some((native, command))) => {
+                let timing = (latest == Some(native))
+                    .then(|| instant_hold_end(&row))
+                    .flatten();
+                let recorded = hold_evidence(command, &prefix);
+                let count = timing.map_or(0, |_| recorded.map_or(1, |(_, count)| count + 1));
+                let unchanged = recorded.is_some_and(|(prior, _)| prior == evidence);
+                ended_hold = Some(Box::new(EndedHold {
+                    command: command.into(),
+                    evidence: evidence.clone(),
+                    unchanged,
+                    breaker: count >= INSTANT_HOLD_LIMIT,
+                    retry_at_ms: timing.map(|end| end.saturating_add(HOLD_BACKOFF_MS)),
+                }));
+                if unchanged {
+                    command.to_owned()
+                } else {
+                    let count = if count >= INSTANT_HOLD_LIMIT {
+                        0
+                    } else {
+                        count
+                    };
+                    format!(
+                        "{prefix}-after-{:x}-{evidence}-{count}:{provider}",
+                        Sha256::digest(native)
+                    )
+                }
+            }
+            (None, None) => format!("{prefix}-after-start-{evidence}-0:{provider}"),
             (Some(_), None) => return Ok(None),
         };
         let mut write = parent_hold(binding, &thread, provider, &command, prompt);
+        write.wire.child_thread = Some(child.thread.clone());
         write.reentry = Some(Box::new(child.clone()));
+        // Uncertain delivery keeps its original command even if the activity
+        // changed. A new command must still cover the activity seen at prep.
+        if prior != Some(command.as_str()) {
+            write.child_evidence = Some(evidence);
+        }
+        write.ended_hold = ended_hold;
         Ok(Some(write))
     }
 
     pub(crate) fn active_child_in_shell(&self, child: &ActiveChild) -> bool {
-        self.held_child_active(
+        self.held_child(
             &child.thread,
             Path::new(&child.binding.worktree_path),
             Some(child),
         )
+        .is_some()
     }
 
-    fn held_child_active(
+    fn held_child(
         &self,
         thread: &str,
         checkout: &Path,
         exact: Option<&ActiveChild>,
-    ) -> bool {
-        self.rpc.thread_row(thread).is_some_and(|row| match exact {
+    ) -> Option<Arc<Value>> {
+        self.rpc.thread_row(thread).filter(|row| match exact {
             Some(child) => {
                 row["projectId"] == child.binding.project_id
                     && row["worktreePath"] == child.binding.worktree_path
                     && row["branch"] == child.binding.branch
-                    && child_activity(&row, child.native.as_deref())
+                    && child_activity(row, child.native.as_deref())
             }
             None => {
                 row["worktreePath"].as_str().map(Path::new) == Some(checkout)
-                    && child_activity(&row, row["activeRunId"].as_str())
+                    && child_activity(row, row["activeRunId"].as_str())
             }
         })
     }
@@ -938,11 +1034,34 @@ impl T3 {
         Ok(())
     }
 
+    fn check_reentry(
+        &self,
+        child: &ActiveChild,
+        evidence: Option<&str>,
+        parent: &Value,
+    ) -> Result<(), HostError> {
+        let current = self.held_child(
+            &child.thread,
+            Path::new(&child.binding.worktree_path),
+            Some(child),
+        );
+        if parent_accepts_reentry(parent)
+            && current
+                .is_some_and(|row| evidence.is_none_or(|prior| prior == activity_digest(&row)))
+        {
+            return Ok(());
+        }
+        Err(HostError::Uncertain)
+    }
+
     /// Send a verified parent effect and require the native sequence for any turn.
     ///
     /// # Errors
     /// Returns an error when the write is vetoed or native acceptance is uncertain.
     pub async fn write_parent(&self, write: ParentWrite) -> Result<(), ParentSendError> {
+        if write.ended_hold().is_some_and(|ended| ended.unchanged) {
+            return Err(ParentSendError::NotSent(HostError::Uncertain));
+        }
         self.check_unarchive(&write)
             .await
             .map_err(ParentSendError::NotSent)?;
@@ -1002,10 +1121,8 @@ impl T3 {
                         {
                             return Err(HostError::Binding);
                         }
-                        if let Some(child) = &write.reentry
-                            && (!self.active_child_in_shell(child) || !parent_accepts_reentry(&row))
-                        {
-                            return Err(HostError::Uncertain);
+                        if let Some(child) = &write.reentry {
+                            self.check_reentry(child, write.child_evidence.as_deref(), &row)?;
                         }
                         crate::task_row::check_delivery_snooze(&row, &write.owned_snoozes)?;
                     }
@@ -1084,6 +1201,46 @@ fn child_activity(row: &Value, native: Option<&str>) -> bool {
         && (ShellCustody(row).background() == Some(true)
             || (native.is_some_and(|run| row["activeRunId"] == run)
                 && matches!(row["status"].as_str(), Some("running" | "waiting"))))
+}
+
+fn activity_digest(row: &Value) -> String {
+    let mut background: Vec<_> = row["pendingBackgroundTasks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|task| json!([task["kind"], task["taskId"], task["awaited"]]).to_string())
+        .collect();
+    background.sort_unstable();
+    background.dedup();
+    let activity = json!([
+        row["status"],
+        row["activeRunId"],
+        row["latestRunId"],
+        row["latestRunStartedAt"],
+        row["latestRunCompletedAt"],
+        row["latestUserMessageAt"],
+        row["pendingRuntimeRequest"]["id"],
+        background,
+    ]);
+    format!("{:x}", Sha256::digest(activity.to_string()))
+}
+
+fn hold_evidence<'a>(command: &'a str, prefix: &str) -> Option<(&'a str, u8)> {
+    let (suffix, _) = command
+        .strip_prefix(prefix)?
+        .strip_prefix("-after-")?
+        .split_once(':')?;
+    let mut fields = suffix.rsplitn(3, '-');
+    let count = fields.next()?.parse::<u8>().ok()?.min(INSTANT_HOLD_LIMIT);
+    let evidence = fields.next()?;
+    fields.next()?;
+    Some((evidence, count))
+}
+
+fn instant_hold_end(row: &Value) -> Option<u64> {
+    let start = crate::task_row::timestamp_ms(row["latestRunStartedAt"].as_str()?).ok()?;
+    let end = crate::task_row::timestamp_ms(row["latestRunCompletedAt"].as_str()?).ok()?;
+    (end.checked_sub(start)? <= INSTANT_HOLD_MS && end <= clock_ms().ok()?).then_some(end)
 }
 
 fn parent_accepts_reentry(row: &Value) -> bool {

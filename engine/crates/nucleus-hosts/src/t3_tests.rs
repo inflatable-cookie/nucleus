@@ -1336,10 +1336,6 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
     let (host, native) = server(vec![
         (
             "orchestration.subscribeThread",
-            Response::ParentSnapshot(first.clone()),
-        ),
-        (
-            "orchestration.subscribeThread",
             Response::ParentSnapshot(first),
         ),
         (
@@ -1358,13 +1354,18 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(first.command_id(), Some(first_id.as_str()));
+    assert!(
+        first
+            .command_id()
+            .unwrap()
+            .starts_with(&format!("{prefix}-after-start-"))
+    );
     let retry = host
         .prepare_parent_reentry(&child, "fixture-acp", "Fixture", Some(&first_id))
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(retry.command_id(), first.command_id());
+    assert_eq!(retry.command_id(), Some(first_id.as_str()));
 
     parent["latestRunId"] = json!("unrelated-latest");
     host.rpc
@@ -1396,7 +1397,7 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
         host.write_parent(next).await,
         Err(crate::ParentSendError::NotSent(HostError::Uncertain))
     ));
-    assert_eq!(native.await.unwrap().len(), 3);
+    assert_eq!(native.await.unwrap().len(), 2);
 }
 
 #[tokio::test]
