@@ -37,6 +37,7 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   ```
 
   Set `queue.notifyOriginOnCloseout: true` on admission or amend for a completion notice.
+  Set `queue.priority: promoted` under `queue` at admission only to dispatch ahead of normal tasks when slots free (brief amendments cannot change `queue.priority`; use `promote` or `demote` instead).
   Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
   `task.add` resolves those references before dispatch can start.
 
@@ -63,7 +64,8 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   See the [prerequisite commands](https://github.com/inflatable-cookie/nucleus/blob/main/docs/knowledge/specs/070-small-engine.md#commands)
   for references and how to clear a wait. `move`, `answer`, `cancel`, `amend`,
   `hold` and `release` act on the task. After a repair, use `recheck REF --version N`
-  when Next offers it. The task's planner answers its work and
+  when Next offers it. Use `promote REF --version N` or `demote REF --version N`
+  on a queued or capacity-waiting task to move it between Promoted and Normal order. The task's planner answers its work and
   retry questions and approves allowance extensions by default, including
   beyond twice the original allowance. The planner uses `complete` to accept
   the exact report version and lane artifact. The operator owns review-entry

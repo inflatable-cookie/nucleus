@@ -206,7 +206,7 @@ fn preview(
         if !task.phase().is_terminal() || live(&task) {
             tasks.push(RemovalTask {
                 task_id: task.identity().id.clone(),
-                version: row.get(17)?,
+                version: row.get(18)?,
                 label: task.identity().reference.clone(),
             });
         }

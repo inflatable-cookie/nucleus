@@ -275,6 +275,24 @@ export function RustTaskDialog({
                         onPress={() => run({ recheck: commands.version })}
                       />
                     )}
+                    {commands && offered("promote") && (
+                      <Button
+                        c={c}
+                        small
+                        text="Promote"
+                        disabled={busy || section === "amend"}
+                        onPress={() => run({ promote: commands.version })}
+                      />
+                    )}
+                    {commands && offered("demote") && (
+                      <Button
+                        c={c}
+                        small
+                        text="Demote"
+                        disabled={busy || section === "amend"}
+                        onPress={() => run({ demote: commands.version })}
+                      />
+                    )}
                     {offered("hold") && (
                       <Button
                         c={c}
