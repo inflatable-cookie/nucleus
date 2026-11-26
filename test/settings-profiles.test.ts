@@ -313,6 +313,7 @@ test("Settings Profiles creates a profile from the host catalog and shows the un
       /Routing still reads Paseo|Available on this host|Profile notes|Changes save automatically|Feature values come from one project directory/,
     );
     await settle(() => state.catalogReads.some((read) => read.cwd === "/app"));
+    await settle(() => Boolean(ui.query("Imported Sol: Unavailable")));
     assert.equal(
       ui.get("Imported Sol: Unavailable").props.accessibilityHint,
       "Unavailable",
