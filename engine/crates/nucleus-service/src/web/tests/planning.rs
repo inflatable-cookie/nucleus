@@ -596,15 +596,10 @@ async fn reopen_items_preserves_history_and_rejects_stale_versions() {
         )
         .await;
         let id = created["id"].as_str().unwrap();
-        let listed = json_body(get_as(&api, &items, &PLANNER_KEY).await).await;
-        let version = listed
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["id"] == id)
-            .unwrap()["version"]
-            .as_i64()
-            .unwrap();
+        let history =
+            json_body(get_as(&api, &format!("{PROJECT}/history/item/{id}"), &PLANNER_KEY).await)
+                .await;
+        let version = history[0]["sequence"].as_i64().unwrap();
         assert_eq!(
             post_as(&api, &format!("{items}/{id}/{action}"), &PLANNER_KEY, &body)
                 .await
