@@ -130,7 +130,10 @@ Replaces the Plan column in Spec 026's Planning tab.
   as a bar by phase with the counts in words and the finished count, and "Done
   when" (a `now` or `next` card without one says it is not set). The roadmap's
   Focus is the first Now lane's aim (Tom: "Just go with first lane"). Spec 026's
-  "Planning tab" owns the rest of the read view. Reading shows no controls. **Edit plan** opens a draft, the only place that
+  "Planning tab" owns the rest of the read view. Side by side (`planningRead.columnsMin`
+  and wider) the header and Focus stay in place, each column scrolls its own lanes
+  under its heading, and the finished lanes and triage sit in a capped scroll below;
+  stacked, the pane scrolls as one (nucleus#1599). Reading shows no controls. **Edit plan** opens a draft, the only place that
   reorders steps or changes a horizon: accessible Up and Down, Move to Now /
   Next / Later, Add to plan for unplanned lanes, a visible draft with Save plan
   and Cancel (Tom, 2026-11-07: no drag-only ordering). A save writes a plan
