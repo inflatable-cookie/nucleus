@@ -395,12 +395,6 @@ export function MainSurface({
     setView(next);
     setMenuOpen(false);
   };
-  /** The drained-lane card's press opens its lane in Planning (nucleus#1511). */
-  const openLaneInPlanning = (key: string, project?: string) => {
-    openView("planning");
-    selectPlanningLane(key, project);
-  };
-
   const laneName = (key: string) =>
     lanes.find((lane) => lane.key === key)?.title ?? key;
   /** A project's T3 badge, from its first repository with one. */
@@ -703,7 +697,6 @@ export function MainSurface({
                   return {
                     project,
                     latest,
-                    triage: latest?.triage,
                     saved: latest
                       ? { ...latest, entries: latest.savedEntries }
                       : undefined,
@@ -897,11 +890,9 @@ export function MainSurface({
                     onSelectDecision={selectDecision}
                     onSelectLead={selectLead}
                     onSelectPapercut={selectPapercut}
-                    onOpenLane={openLaneInPlanning}
                     busy={busy}
                     act={act}
                     pipeline={pipeline}
-                    plans={planQuery.data ?? []}
                   />
                 </View>
                 {wide && detailPane}

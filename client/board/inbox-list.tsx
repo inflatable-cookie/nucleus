@@ -1,4 +1,3 @@
-import { laneProjects } from "../../shared/lane-finder";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
@@ -7,8 +6,6 @@ import {
   type DecisionView,
   type BoardLead,
   type BoardLeadLink,
-  type LaneView,
-  type ProjectPlan,
   type TaskSummary,
   type UiQueueState,
 } from "../../shared/contracts";
@@ -50,7 +47,6 @@ import {
   TaskCard,
   DecisionCard,
   HoldPromptCard,
-  LaneDrainCard,
 } from "./cards";
 import { LeadProjectEyebrow, TriageLeadCard } from "./triage-lead-card";
 import { PageSentinel, pageLabel } from "./page-sentinel";
@@ -203,7 +199,6 @@ export function useInboxBoard({
     () =>
       pipelineBoard({
         projects: state?.projects ?? [],
-        lanes: lanes ?? [],
         selection,
         leads: boardLeads,
         linkedLeads: leadLinks,
@@ -323,9 +318,7 @@ export type InboxListProps = {
   onSelectLead: (id: string, lane: null, project?: string) => void;
   onSelectPapercut: (id: string, project?: string) => void;
   /** Opens a lane in the plan view, the drained-lane card's press (nucleus#1511). */
-  onOpenLane: (key: string, project?: string) => void;
   /** Every project plan, so the drained lane's mark-done confirmation names each plan that lists it. */
-  plans?: ProjectPlan[];
   busy: boolean;
   act: BoardAct;
   /** The list's view state the shell keeps across views (`usePipelineState`). */
@@ -370,15 +363,11 @@ export function InboxList({
   onSelectDecision,
   onSelectLead,
   onSelectPapercut,
-  onOpenLane,
   busy,
   act,
   pipeline,
-  plans = [],
 }: InboxListProps) {
   const setTask = useRpc(api.taskControl);
-  const changeLaneStatus = useRpc(api.laneStatus);
-  const keepLaneRpc = useRpc(api.laneKeep);
   const {
     queuedPages,
     queuedTasks,
@@ -496,21 +485,6 @@ export function InboxList({
         reason,
       }),
     );
-  // Close finishes the drained step; Keep records the operator's reason and ends the episode.
-  const drainedLaneProject = (lane: LaneView) => {
-    const owners = laneProjects(lane, state?.projects ?? []);
-    return owners.length === 1 ? owners[0]?.key : undefined;
-  };
-  const closeDrainedLane = (lane: LaneView, note: string) =>
-    void act(async () => {
-      const project = drainedLaneProject(lane);
-      if (!project) throw new Error("Select a project before closing this lane.");
-      return changeLaneStatus({ key: lane.key, project, status: "done", note });
-    });
-  const keepDrainedLane = (lane: LaneView, reason: string) =>
-    void act(() =>
-      keepLaneRpc({ key: lane.key, reason, author: "operator (board)" }),
-    );
   const decisionTitle = (task: TaskSummary) => {
     const id = task.waitState?.decisionId;
     if (!id) return null;
@@ -560,31 +534,6 @@ export function InboxList({
             c={c}
             selected={selected === card.id}
             onPress={() => onSelectTask(card.id)}
-          />
-        );
-      case "lane_drain":
-        return (
-          <LaneDrainCard
-            key={key}
-            lane={card.value}
-            c={c}
-            busy={busy}
-            selected={false}
-            onPress={() => onOpenLane(card.value.key, drainedLaneProject(card.value))}
-            project={
-              card.value.repositories.length ? (
-                <LeadProjectEyebrow
-                  repositories={card.value.repositories}
-                  projectForRepository={projectForRepository}
-                  repositoryBadges={state?.repositoryBadges}
-                  c={c}
-                />
-              ) : undefined
-            }
-            onClose={(note) => closeDrainedLane(card.value, note)}
-            onKeep={(reason) => keepDrainedLane(card.value, reason)}
-            projects={state?.projects ?? []}
-            plans={plans}
           />
         );
       case "task":

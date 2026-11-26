@@ -55,11 +55,6 @@ const lead = (id: string, lanes: string[]) => ({
 function boardInput(extra: Partial<Input> = {}): Input {
   return {
     projects: [project],
-    lanes: [
-      lane("first"),
-      lane("second"),
-      lane("empty"),
-    ] as unknown as Input["lanes"],
     selection: ["app"],
     leads: [],
     tasks: [],
@@ -277,12 +272,6 @@ test("026-14b two selected projects share one pipeline; none means all", () => {
     primary: thirdRepo,
     drain: null,
   };
-  const lanes = [
-    lane("first"),
-    lane("second"),
-    { ...lane("third"), repositories: [otherRepo] },
-    { ...lane("fourth"), repositories: [thirdRepo] },
-  ] as unknown as Input["lanes"];
   const tasks = [
     task("app-task", ["first"]),
     {
@@ -298,7 +287,6 @@ test("026-14b two selected projects share one pipeline; none means all", () => {
   ] as Input["tasks"];
   const input = {
     projects: [project, otherProject, thirdProject],
-    lanes,
     tasks,
   };
   assert.deepEqual(

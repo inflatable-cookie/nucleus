@@ -39,12 +39,6 @@ const CLASSES: readonly StorageClass[] = [
     help: "Nucleus writes and rotates its verified store snapshots here. Snapshots still in the retired queue/backups location are listed until you move or remove them.",
   },
   {
-    field: "projectQaRoot",
-    setting: "projectQaRoot",
-    noun: "QA history",
-    help: "Legacy milestone QA results and step logs. History in the retired queue/project-qa location stays readable.",
-  },
-  {
     field: "scratchRoot",
     setting: "scratchRoot",
     noun: "Run scratch",
@@ -364,7 +358,6 @@ export function StoragePanel({
               {[
                 state.retired.worktreesRoot,
                 state.retired.backupRoot,
-                state.retired.projectQaRoot,
               ]
                 .filter(Boolean)
                 .join(" · ")}

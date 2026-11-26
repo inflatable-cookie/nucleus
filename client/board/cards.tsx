@@ -24,9 +24,7 @@ import {
   type DecisionView,
   taskNumberLabel,
   type HoldKind,
-  type LaneView,
   type Project,
-  type ProjectPlan,
   type Task,
   type TaskSummary,
 } from "../../shared/contracts";
@@ -62,7 +60,6 @@ import {
   longShellCommandStart,
 } from "./text";
 import { useTick } from "../use-tick";
-import { MarkDoneConfirm } from "../lane-mark-done";
 import {
   HoldBadge,
   PullRequestBadge,
@@ -1191,125 +1188,5 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
         }
       />
     </View>
-  );
-});
-/**
- * Spec 041: a drained lane that outlived its escalation timer is the operator's to answer.
- * Mark done finishes the step (lane.status done), always asking first; Keep records a
- * reason and ends the episode.
- * The lane's aim is in the plan view the row opens.
- */
-export const LaneDrainCard = React.memo(function LaneDrainCard({
-  lane,
-  selected,
-  onPress,
-  c,
-  board = true,
-  busy,
-  onClose,
-  onKeep,
-  project,
-  projects = [],
-  plans = [],
-}: {
-  lane: LaneView;
-  selected: boolean;
-  onPress: () => void;
-  c: Colors;
-  board?: boolean;
-  busy: boolean;
-  onClose: (note: string) => void;
-  onKeep: (reason: string) => void;
-  /** Line 1's project: the lane's projects with their badges; the lane key when it has none. */
-  project?: React.ReactNode;
-  /** Every project and plan, so the mark-done confirmation names each plan that lists the lane. */
-  projects?: Project[];
-  plans?: ProjectPlan[];
-}) {
-  useTick(lane.drain?.escalatedAt ? 30_000 : null);
-  const laneStatus: CardStatus = {
-    tone: "success",
-    state: "Drained",
-    detail: "plan owner has not answered",
-  };
-  const [keeping, setKeeping] = useState(false),
-    [reason, setReason] = useState("");
-  // Marking the drained lane done always asks first (nucleus#1536).
-  const [confirmingDone, setConfirmingDone] = useState(false);
-  return (
-    <BoardCard
-      label={`Drained lane: ${lane.title}, ${statusLabel(laneStatus)}`}
-      onPress={onPress}
-      selected={selected}
-      c={c}
-      board={board}
-      kind="lane"
-      meta="Lane drained"
-      project={project ?? <CardProject name={lane.key} c={c} />}
-      age={lane.drain?.escalatedAt ? decisionAge(lane.drain.escalatedAt) : null}
-      title={`${lane.title} has drained`}
-      status={laneStatus}
-      actions={
-        <View style={{ gap: space.xs }}>
-          <View style={{ ...row, gap: space.xs }}>
-            <Button
-              small
-              c={c}
-              disabled={busy}
-              text="Mark done"
-              label={plainCardText(`Mark drained lane ${lane.key} done`)}
-              onPress={() => setConfirmingDone(true)}
-            />
-            <Button
-              small
-              c={c}
-              disabled={busy}
-              text="Keep"
-              selected={keeping}
-              label={plainCardText(`Keep drained lane ${lane.key}`)}
-              onPress={() => setKeeping(!keeping)}
-            />
-          </View>
-          {keeping && (
-            <View style={{ gap: space.xs }}>
-              <Field
-                c={c}
-                label={`Why keep ${lane.title} (required)`}
-                value={reason}
-                onChange={setReason}
-              />
-              <Button
-                small
-                c={c}
-                disabled={busy || !reason.trim()}
-                text="Keep lane"
-                label={plainCardText(
-                  `Confirm keep for drained lane ${lane.key}`,
-                )}
-                onPress={() => {
-                  onKeep(reason.trim());
-                  setKeeping(false);
-                  setReason("");
-                }}
-              />
-            </View>
-          )}
-          {confirmingDone && (
-            <MarkDoneConfirm
-              c={c}
-              lane={lane}
-              projects={projects}
-              plans={plans}
-              busy={busy}
-              onConfirm={(note) => {
-                setConfirmingDone(false);
-                onClose(note);
-              }}
-              onCancel={() => setConfirmingDone(false)}
-            />
-          )}
-        </View>
-      }
-    />
   );
 });
