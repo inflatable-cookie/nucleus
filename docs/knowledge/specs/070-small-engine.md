@@ -198,7 +198,9 @@ Later decisions carry their own attribution.
     a conflict or a read verifies that the base moved at the approved head.
     The ordinary readback after a refused merge can supply that evidence.
     Confirmed required check failures return with the check names GitHub marks
-    required at that head. Pending and unreported checks wait. Incomplete
+    required at that head. Pending checks wait. Non-required check failures do
+    not block merge when GitHub reports the PR mergeable; there is no
+    Nucleus-side checks list (ruling 53). Incomplete
     evidence and unrelated branch protection keep their own gates.
     Recovery retires the old merge authority and freezes the instruction in
     the retained worker's next run. It uses the same provider and model and
@@ -745,6 +747,8 @@ Later decisions carry their own attribution.
 
 51. **Step up a tier when every eligible profile is paused.** On 2026-11-26, 15 tasks waited until 5 December because the only eligible reviewer or worker profiles at their tier were in a paused subscription group. Tom was asked: “How should Nucleus handle 'every eligible profile is paused'?” He chose “Step up one tier (Recommended)”: when every eligible profile for a role is paused, use the next tier up, still with a different model from the author. It reverts automatically when the group unpauses. A required profile in the brief still waits. A task waiting on a paused group shows “paused” with the group and its reset, not “capacity”.
 
+    Tom, 2026-11-26: When a retained worker or reviewer would continue on a paused group, including an operator pause, select again under the usual profile rules and start a fresh role thread with the existing review and continuation context. A brief-required profile still waits for its group.
+
 52. **Decision answers notify the asking planner.** Planner ruling, 2026-11-26: when an operator answers a decision from the board, the Inbox or the CLI, Nucleus records one notice in the same store transaction for the planner message queue (`tell`) to the decision's asking planner thread (or the task's origin thread for a task-linked decision). The notice states the decision ID, brief question, chosen option label and ID, any note, and the answer time, with no reply route, and is exempt from the 20-per-hour direct `tell` recipient cap so an operator answer always commits, wakes any linked task, and queues its notice even when the planner thread is at the cap. If the asking thread is archived or gone, delivery falls back to the project's planner under rulings 40 and 41. Uncertain delivery never resends, replaying the same answer sends nothing more, and a task-linked decision still wakes its task.
 
 53. **Retired concepts stay out of the Rust port.** Tom, 2026-11-26, after profile roles and scopes (retired by Spec 053 on 2026-10-21) turned up gating selection again: "Those concepts should never have made it into the rust port." He answered four questions about other leftovers, choosing the planner's recommendation each time. Remove the per-repository "Hung tool limit" ("Remove it"). The merge gate uses only the checks GitHub marks required on the branch, with no Nucleus-side checks list ("GitHub's only"). Hide the Default host picker until a second host is registered ("Hide until Orca"; Default host itself stays, as recorded above). Remove pilot mode, `serve --project` and its planner registration ("Remove pilot mode"). Interactive tasks (ruling 28) are rejected on submission like `queue.preferredProfileId`. The unused provider-limit cooldown setting goes. Board code that only served the TypeScript engine is deleted.
@@ -1236,14 +1240,14 @@ During cutover, the offline `item.import` command copied the retained Planning
 items and profile settings from a fenced TypeScript backup. The active CLI
 retires this command in milestone 4.
 
-Older Rust Profiles JSON still allows both roles and enables profiles by
-default. Dispatch checks the imported enabled flag and role list for each new
-reservation. Scopes and coordinator membership are available in Settings for
-reference. The T3 adapter translates canonical mode, effort and options against
-the matching provider instance and model. It uses the same thinking carrier
-precedence as the [TypeScript adapter](t3code-host-adapter.md#model-options) and
-leaves canonical feature defaults to the provider. A profile with an option the
-adapter or model cannot express stays out of dispatch.
+A stored profile with no enabled flag defaults to enabled. Dispatch checks the
+flag for each new reservation and uses the demand and capability rules in
+[Spec 053](053-demand-based-selection.md). The T3 adapter translates canonical
+mode, effort and options against the matching provider instance and model. It
+uses the same thinking carrier precedence as the
+[TypeScript adapter](t3code-host-adapter.md#model-options) and leaves canonical
+feature defaults to the provider. A profile with an option the adapter or model
+cannot express stays out of dispatch.
 
 ## Out of scope until milestone 3
 

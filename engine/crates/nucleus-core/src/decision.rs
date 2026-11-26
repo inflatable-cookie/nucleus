@@ -107,7 +107,6 @@ impl Forge {
 pub enum CheckState {
     Unknown,
     Pending,
-    Unreported,
     Blocked,
     Conflict,
     BaseMoved,
@@ -162,7 +161,6 @@ pub enum WaitReason {
     WorkspaceUnknown,
     WorkspaceBlocked,
     ChecksPending,
-    ChecksUnreported,
     Prerequisite,
     Capacity,
     AssignmentTooLarge,
@@ -545,10 +543,6 @@ fn merge_signal(task: &Task, observation: &Observation) -> Signal {
             checks: CheckState::Pending,
             ..
         }) => Signal::Wait(WaitReason::ChecksPending),
-        Observed::Known(Forge::Open {
-            checks: CheckState::Unreported,
-            ..
-        }) => Signal::Wait(WaitReason::ChecksUnreported),
         Observed::Known(Forge::Open {
             pr,
             checks: CheckState::Ready,

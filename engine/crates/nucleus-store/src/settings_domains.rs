@@ -5,10 +5,7 @@ use std::{
 };
 
 use longhorn_config::{DomainIssue, StorageClass};
-use nucleus_core::{
-    Role,
-    profiles::{Profile, UsageLevel},
-};
+use nucleus_core::profiles::{Profile, UsageLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::{Host, Url};
@@ -24,10 +21,6 @@ pub struct NamedProfile {
     pub group: Option<String>,
     #[serde(default = "enabled_by_default", skip_serializing_if = "enabled")]
     pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub roles: Option<Vec<PoolRole>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub scopes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_instance_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -52,30 +45,6 @@ const fn enabled(value: &bool) -> bool {
     *value
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PoolRole {
-    Worker,
-    Reviewer,
-    Coordinator,
-}
-
-impl NamedProfile {
-    #[must_use]
-    pub fn eligible_for(&self, role: Role) -> bool {
-        let role = match role {
-            Role::Worker => PoolRole::Worker,
-            Role::Reviewer => PoolRole::Reviewer,
-        };
-        self.enabled
-            && !self.selection.model.is_empty()
-            && self
-                .roles
-                .as_ref()
-                .is_none_or(|roles| roles.contains(&role))
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Profiles {
@@ -88,6 +57,15 @@ impl SettingsValue for Profiles {
     const ID: &'static str = "nucleus.engine.profiles";
     const FILE: &'static str = "profiles.json";
     const CLASS: StorageClass = StorageClass::UserConfig;
+
+    fn discard_retired_fields(value: &mut Value) {
+        if let Some(profiles) = value.get_mut("profiles").and_then(Value::as_array_mut) {
+            for profile in profiles.iter_mut().filter_map(Value::as_object_mut) {
+                profile.remove("roles");
+                profile.remove("scopes");
+            }
+        }
+    }
 
     fn validate(&self) -> Result<(), DomainIssue> {
         let mut ids = std::collections::BTreeSet::new();
@@ -223,15 +201,22 @@ impl SettingsValue for DispatchSettings {
     const ID: &'static str = "nucleus.engine.dispatch";
     const FILE: &'static str = "dispatch.json";
     const CLASS: StorageClass = StorageClass::UserConfig;
-    const RETIRED_KEYS: &'static [&'static str] = &[
-        "maxLoad",
-        "max_load",
-        "allowanceMinutes",
-        "allowance_minutes",
-        "hostConcurrency",
-        "host_concurrency",
-        "legacyLimitsImported",
-    ];
+
+    fn discard_retired_fields(value: &mut Value) {
+        if let Some(fields) = value.as_object_mut() {
+            for key in [
+                "maxLoad",
+                "max_load",
+                "allowanceMinutes",
+                "allowance_minutes",
+                "hostConcurrency",
+                "host_concurrency",
+                "legacyLimitsImported",
+            ] {
+                fields.remove(key);
+            }
+        }
+    }
 
     fn validate(&self) -> Result<(), DomainIssue> {
         check(self.global_slots > 0, "dispatch", "use positive slots")?;
@@ -268,8 +253,8 @@ impl SettingsValue for DispatchSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RepositorySettings {
     /// Canonical GitHub repository identity, such as `owner/repo`.
     pub origin: String,
@@ -283,10 +268,40 @@ pub struct RepositorySettings {
     /// Exact T3 callers enrolled for this route.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub planner_threads: Vec<String>,
-    #[serde(default)]
-    pub required_checks: Vec<String>,
     #[serde(default = "default_hung_tool_minutes")]
     pub hung_tool_minutes: u32,
+}
+
+impl<'de> Deserialize<'de> for RepositorySettings {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct SavedRepository {
+            origin: String,
+            path: PathBuf,
+            base: String,
+            #[serde(default)]
+            host_project: Option<String>,
+            #[serde(default)]
+            host_project_title: Option<String>,
+            #[serde(default)]
+            planner_threads: Vec<String>,
+            #[serde(default, rename = "requiredChecks")]
+            _retired_required_checks: Option<serde::de::IgnoredAny>,
+            #[serde(default = "default_hung_tool_minutes")]
+            hung_tool_minutes: u32,
+        }
+        let saved = SavedRepository::deserialize(deserializer)?;
+        Ok(Self {
+            origin: saved.origin,
+            path: saved.path,
+            base: saved.base,
+            host_project: saved.host_project,
+            host_project_title: saved.host_project_title,
+            planner_threads: saved.planner_threads,
+            hung_tool_minutes: saved.hung_tool_minutes,
+        })
+    }
 }
 
 const fn default_hung_tool_minutes() -> u32 {
@@ -443,17 +458,6 @@ impl SettingsValue for Projects {
                     }),
                     "routing",
                     "a planner binding requires its native project",
-                )?;
-                check(
-                    repo.required_checks.iter().all(|name| text(name))
-                        && repo
-                            .required_checks
-                            .iter()
-                            .collect::<std::collections::BTreeSet<_>>()
-                            .len()
-                            == repo.required_checks.len(),
-                    "checks",
-                    "GitHub check names must be nonempty and unique",
                 )?;
             }
         }

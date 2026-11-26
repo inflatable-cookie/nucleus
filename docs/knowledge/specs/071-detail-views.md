@@ -167,6 +167,24 @@ Changed:
 
 Both bugs are briefed as their own fix ahead of the rebuild.
 
+### Built (nucleus#1603)
+
+The Rust board's task view follows this layout. Elements still marked
+**engine** below render only once the engine serves them: the task thread
+button, the checks list, the forge's blocking reason and the explicit
+answerer. Until then the eyebrow reads the answerer from the state label
+("· Tom", "· planner", "· declined"), and a step or round time the journal
+never recorded shows as "—" rather than a partial sum. The PR pill states only
+the committed verdict; reported review rounds stay evidence beneath it. The
+timeline ticks only while the engine reports an active run, and a cancelled
+task's timeline stops at the step it was cancelled from. The wait line names the
+engine's wait when it sends no sentence, and Recheck shows wherever preflight
+offers it. A round whose earlier attempt has no recorded time keeps its total
+unknown and shows the live attempt's time as "attempt". Prerequisite Edit takes
+references separated by spaces, commas or new lines, saves at the task version
+it opened at (so the engine refuses a stale list) and keeps the draft, even
+when a refresh empties the list, until the save succeeds or the editor closes.
+
 ### Data mapping
 
 "Board-only" means the engine already serves the field and the board's zod
@@ -206,7 +224,7 @@ schema needs to read it. "Engine" means it needs engine data.
 | Activity | history `presentation[]` | exists (after the `run_routing` fix) |
 | Brief, Amend | `brief.text`, `brief.version`, `amend` | exists |
 | Move, Hold, Cancel | `next.commands` (`move` carries `phase`) | exists |
-| Promoted toggle | ruling 50 command | **engine** (not in the command list yet) |
+| Promoted toggle | `next.commands` `promote` / `demote` (ruling 50) | exists |
 | Report (report-only) | `report.delivery`, `complete`, `move_work` | exists |
 | Cancelled: when, from where | history `finished.phase`, `previous_phase` | board-only (`previous_phase` dropped) |
 

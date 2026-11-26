@@ -2323,8 +2323,7 @@ impl State {
                 Some(
                     WaitReason::WorkspaceBlocked
                     | WaitReason::ExternalMergeBlocked
-                    | WaitReason::ReviewPublicationBlocked
-                    | WaitReason::ChecksUnreported,
+                    | WaitReason::ReviewPublicationBlocked,
                 ) => true,
                 Some(WaitReason::HostObservationBlocked) => {
                     matches!(self.wait_detail(id), Some(WaitDetail::Blocked(_)))

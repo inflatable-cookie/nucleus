@@ -1,12 +1,6 @@
 import { legacyWeightStop } from "./capability";
 
 /**
- * The two field renames the stored and wire records still carry, applied at the
- * one read or import boundary that needs them. A record carrying both spellings
- * is refused rather than guessed, and stored bytes never change here.
- */
-
-/**
  * Rename one legacy record key to its current spelling at a read or import
  * boundary. A record carrying both spellings is refused rather than guessed, and
  * the returned record is a shallow copy: stored bytes never change here.
@@ -24,10 +18,10 @@ export function submissionRecordFromLegacy(raw: unknown, where = "submission"): 
   return renameLegacyKey(raw as Record<string, unknown>, "capability", "scope", where);
 }
 
-/** Stored or wire pool entries before the `capabilities` → `scopes` rename parse through here. */
-export function poolRecordFromLegacy(raw: unknown, where = "pool entry"): unknown {
+/** Pool entries with legacy ratings or weights parse through here. */
+export function poolRecordFromLegacy(raw: unknown): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
-  return retiredCostAndNumericWeight(withoutRetiredPoolFields(renameLegacyKey(raw as Record<string, unknown>, "capabilities", "scopes", where)));
+  return retiredCostAndNumericWeight(withoutRetiredPoolFields(raw as Record<string, unknown>));
 }
 
 /**

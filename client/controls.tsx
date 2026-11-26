@@ -2091,6 +2091,8 @@ export function Dialog({
   wide = false,
   backdropLabel,
   inline = false,
+  heading,
+  headerActions,
 }: {
   c: Colors;
   title: string;
@@ -2106,6 +2108,10 @@ export function Dialog({
   backdropLabel?: string;
   /** Render the frame in place, filling its container (the inbox detail pane); no modal or scrim. */
   inline?: boolean;
+  /** Replaces the title and eyebrow with a composed heading; `title` stays the fallback name. */
+  heading?: React.ReactNode;
+  /** Controls beside Close in the title row. */
+  headerActions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const r = roles(c);
@@ -2133,8 +2139,8 @@ export function Dialog({
               backgroundColor: r.section,
             }}
           >
-            <View style={{ ...row, flexWrap: "nowrap" }}>
-              <View style={{ flex: 1, minWidth: 0 }}>
+            <View style={{ ...row, flexWrap: "nowrap", alignItems: heading ? "flex-start" : undefined }}>
+              {heading ? <View style={{ flex: 1, minWidth: 0 }}>{heading}</View> : <View style={{ flex: 1, minWidth: 0 }}>
                 <Text
                   accessibilityRole="header"
                   numberOfLines={wrapTitle ? undefined : 2}
@@ -2148,7 +2154,8 @@ export function Dialog({
                   {title}
                 </Text>
                 {eyebrow}
-              </View>
+              </View>}
+              {headerActions}
               <ActionButton
                 c={c}
                 action="close"

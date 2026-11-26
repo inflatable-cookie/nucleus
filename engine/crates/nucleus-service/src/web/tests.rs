@@ -2678,10 +2678,9 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
         saved["resolvedPlanners"],
         json!({"alpha": null, "beta": null})
     );
-    assert_eq!(
-        saved["settings"]["value"]["projects"]["alpha"]["repositories"][0]["hungToolMinutes"],
-        30
-    );
+    let alpha_repo = &saved["settings"]["value"]["projects"]["alpha"]["repositories"][0];
+    assert_eq!(alpha_repo["hungToolMinutes"], 30);
+    assert!(alpha_repo.get("requiredChecks").is_none());
 
     assert_eq!(
         reads.load(Ordering::Relaxed),
@@ -2715,10 +2714,9 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     .await;
     let projects = &moved["settings"]["value"]["projects"];
     assert_eq!(projects["alpha"]["repositories"], json!([]));
-    assert_eq!(
-        projects["beta"]["repositories"][0]["requiredChecks"],
-        json!(["CI"])
-    );
+    let beta_repo = &projects["beta"]["repositories"][0];
+    assert_eq!(beta_repo["origin"], json!(REPOSITORY));
+    assert!(beta_repo.get("requiredChecks").is_none());
     assert_eq!(
         post_as(
             &api,

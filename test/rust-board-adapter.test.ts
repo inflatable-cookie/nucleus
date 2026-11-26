@@ -98,7 +98,6 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
             origin: "example/orbit",
             path: "/work/orbit",
             base: "main",
-            requiredChecks: ["ci"],
             hungToolMinutes: 30,
             hostProjectTitle: "Orbit",
           },
@@ -106,7 +105,6 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
             origin: "example/orbit-docs",
             path: "/work/orbit-docs",
             base: "main",
-            requiredChecks: [],
             hungToolMinutes: 30,
           },
         ],
@@ -119,7 +117,6 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
             origin: "example/lantern",
             path: "/work/lantern",
             base: "main",
-            requiredChecks: [],
             hungToolMinutes: 30,
           },
         ],
@@ -491,8 +488,8 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
     lantern: 1,
   });
   assert.deepEqual(
-    board.pool.map((entry) => [entry.profileId, entry.group, entry.roles]),
-    [["w", "team", ["worker", "reviewer"]]],
+    board.pool.map((entry) => [entry.profileId, entry.group]),
+    [["w", "team"]],
   );
   assert.deepEqual(fake.reads, ["GET /settings", "GET /session"]);
   const storage = await adapter.rpc(api.workStorage, {});
@@ -710,10 +707,8 @@ test("a profile write keeps the engine's fields this client does not know", asyn
     profileId: "w",
     enabled: true,
     group: "team-b",
-    roles: ["worker"],
     capability: "heavyweight",
     weight: "more",
-    scopes: ["general"],
   });
   assert.equal(result.entry?.group, "team-b");
   const written = fake.writes[0]!.body.value as {
@@ -1129,6 +1124,10 @@ test("profile identity and pool saves persist independently through the paired s
   });
   const { id } = created.profile;
   assert.notEqual(id, "w");
+  const stored = (await adapter.rust.storedProfiles()).value.profiles.at(-1);
+  assert.ok(stored && stored.selection.id === id);
+  assert.equal(Object.hasOwn(stored, "roles"), false);
+  assert.equal(Object.hasOwn(stored, "scopes"), false);
   const [saved] = await Promise.all([
     adapter.rpc(api.updateNucleusProfile, {
       id,
@@ -1143,10 +1142,8 @@ test("profile identity and pool saves persist independently through the paired s
       profileId: id,
       group: "synthetic team",
       enabled: true,
-      roles: ["reviewer"],
       capability: "heavyweight",
       weight: "more",
-      scopes: ["general"],
     }),
   ]);
   const reloaded = createRustAdapter(createRustApi(fake.fetcher));
@@ -1162,10 +1159,8 @@ test("profile identity and pool saves persist independently through the paired s
       profileId: id,
       group: "synthetic team",
       enabled: true,
-      roles: ["reviewer"],
       capability: "heavyweight",
       weight: "more",
-      scopes: ["general"],
     },
   );
   assert.deepEqual(
@@ -2445,7 +2440,8 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   );
   ui.press("lantern#2, Lantern work");
   await visible("Task detail");
-  assert.match(ui.text(), /lantern#2 · Lantern work/);
+  assert.match(ui.text(), /lantern#2/);
+  assert.match(ui.text(), /Lantern work/);
   ui.query("Close task")!.props.onPress();
   const laneQueries = client
     .getQueryCache()

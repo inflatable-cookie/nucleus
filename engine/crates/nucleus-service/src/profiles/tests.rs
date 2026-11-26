@@ -4,14 +4,24 @@ use std::{
     time::Instant,
 };
 
-use axum::{Json, Router, routing::get};
-use nucleus_core::{Authority, Entry, Forge, Identity, Launch, Observed, Phase, Workspace};
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
+use nucleus_core::{
+    Authority, CheckState, Command, Entry, Forge, Host, Identity, Launch, LaunchInputs, Observed,
+    Phase, PullRequest, Report, RetainedThread, Review, RunState, Workspace, decide,
+    profiles::Profile,
+};
 use serde_json::{Value, json};
 
 use super::*;
 use crate::{
     schedule::Priority,
-    tests::{NativeTraffic, REPOSITORY, fixture, native_fixture_with_traffic, serve_forge},
+    tests::{
+        NativeTraffic, REPOSITORY, create_fixture_commit, fixture, forge_checks, forge_pull, git,
+        native_fixture_with_traffic, serve_forge,
+    },
 };
 use nucleus_store::DispatchSettings;
 
@@ -19,7 +29,7 @@ const IDS: [&str; 3] = ["overlap-a", "overlap-b", "overlap-c"];
 const RESET_MS: u64 = 4_070_908_800_000;
 
 #[tokio::test]
-async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() {
+async fn worker_launches_exclude_disabled_and_unavailable_profiles() {
     let (forge, forge_server) = serve_forge(Router::new()).await;
     let (_home, mut service) = fixture(forge);
     let (host, native_server) = native_fixture_with_traffic(
@@ -37,11 +47,9 @@ async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() 
     service.state.lock().await.settings.profiles = Some(Arc::new(serde_json::from_value(json!({
         "profiles": [
             {"name":"Disabled","enabled":false,"selection":{"id":"disabled","provider":"codex","model":"first"}},
-            {"name":"Review","roles":["reviewer"],"selection":{"id":"review","provider":"codex","model":"first"}},
-            {"name":"Coordinator","roles":["coordinator"],"selection":{"id":"coordinator","provider":"codex","model":"first"}},
             {"name":"Missing instance","providerInstanceId":"unavailable","selection":{"id":"missing-instance","provider":"codex","model":"first"}},
             {"name":"Missing model","providerInstanceId":"codex","selection":{"id":"missing-model","provider":"codex","model":"other"}},
-            {"name":"Worker","roles":["worker"],"modeId":"supervised",
+            {"name":"Worker","modeId":"supervised",
              "featureValues":{"speed":"priority"},
              "selection":{"id":"worker","provider":"codex","model":"second"}}
         ]
@@ -55,8 +63,6 @@ async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() 
     for request in [
         None,
         Some(("disabled", true)),
-        Some(("review", true)),
-        Some(("coordinator", true)),
         Some(("missing-instance", true)),
         Some(("missing-model", true)),
         Some(("missing-instance", false)),
@@ -108,6 +114,123 @@ async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() 
             _ => panic!("unexpected eligibility result for {request:?}"),
         }
     }
+    native_server.abort();
+    forge_server.abort();
+}
+
+fn read_legacy_profile_fixture(service: &Service) -> Arc<Profiles> {
+    let config = service.settings.home().join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("profiles.json"), json!({
+        "domain": "nucleus.engine.profiles", "schemaVersion": 1,
+        "value": {"profiles": [
+            {"name":"Sol heavyweight","roles":["reviewer"],"scopes":["mechanical"],
+             "selection":{"id":"sol","provider":"codex","model":"first","capability":"heavyweight"}},
+            {"name":"Sol alternate","selection":{"id":"sol-alternate","provider":"codex","model":"first","capability":"heavyweight"}},
+            {"name":"Sonnet heavyweight","roles":["worker"],"scopes":["complex"],
+             "selection":{"id":"sonnet","provider":"claude","model":"other","capability":"heavyweight"}},
+            {"name":"Astra frontier","roles":["coordinator"],
+             "selection":{"id":"astra","provider":"codex","model":"second","capability":"frontier"}}
+        ]}
+    }).to_string()).unwrap();
+    Arc::new(service.settings.read::<Profiles>().unwrap().value)
+}
+
+#[tokio::test]
+async fn legacy_profile_membership_does_not_gate_work_review_or_groups() {
+    let (forge, forge_server) = serve_forge(Router::new()).await;
+    let (_home, mut service) = fixture(forge);
+    let (host, native_server) = crate::tests::native_fixture(|request| {
+        native_response(
+            request,
+            std::path::Path::new("/fixture"),
+            &mut NativeRuns::default(),
+        )
+    })
+    .await;
+    service.host = host;
+    let profiles = read_legacy_profile_fixture(&service);
+    service.state.lock().await.settings.profiles = Some(Arc::clone(&profiles));
+    let host = service.host.fixture_pass();
+    let mut observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(Workspace::Absent),
+    };
+    let mut task = Task::new(
+        Identity {
+            id: "fixture".into(),
+            reference: "fixture".into(),
+            repository: REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        "---\nqueue:\n  complexity: very_high\n  profileRequests:\n    worker: {profileId: sol, reason: build, required: true}\n    reviewer: {profileId: sol-alternate, reason: review}\n---\nFixture brief".into(),
+        None,
+    );
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    let LaunchSelection::Profile(worker) = service
+        .select_launch(&task, &observation, Role::Worker, &host)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a worker");
+    };
+    assert_eq!(worker.intent.profile().id, "sol");
+    assert_eq!(
+        service.effective_profile_groups(&profiles)["astra"],
+        "codex"
+    );
+    let instance = worker.intent.instance().to_owned();
+    let bearer = task
+        .reserve_profile_launch(
+            &observation,
+            LaunchInputs {
+                scratch: None,
+                thread: "worker-fixture".into(),
+                input: "fixture wire".into(),
+                started_at: 1,
+            },
+            &[7; 32],
+            worker.intent,
+        )
+        .unwrap();
+    task.record_send(&instance, 2).unwrap();
+    let pr = PullRequest {
+        url: format!("https://github.com/{REPOSITORY}/pull/1"),
+        head: service.fixture().start.clone(),
+    };
+    task.record_report(
+        &instance,
+        bearer.as_bytes(),
+        Report::Work(pr.clone().into()),
+    )
+    .unwrap();
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: RunState::Ended,
+    });
+    observation.workspace = Observed::Known(Workspace::Clean(pr.head.clone()));
+    observation.forge = Observed::Known(Forge::Open {
+        pr,
+        checks: CheckState::Ready,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Reviewing)
+    );
+    let LaunchSelection::Profile(reviewer) = service
+        .select_launch(&task, &observation, Role::Reviewer, &host)
+        .await
+        .unwrap()
+    else {
+        panic!("expected an independent reviewer");
+    };
+    assert_eq!(reviewer.intent.profile().id, "sonnet");
     native_server.abort();
     forge_server.abort();
 }
@@ -486,7 +609,7 @@ async fn a_stored_subscription_pause_reserves_the_next_tier_and_records_the_reas
         state.settings.profiles = Some(Arc::new(serde_json::from_value(json!({
             "profiles": [
                 {"name":"Mechanic","group":"shared","selection":{"id":"mechanic","provider":"codex","model":"first","capability":"mechanical"}},
-                {"name":"Reviewer","roles":["reviewer"],"selection":{"id":"review","provider":"codex","model":"second","capability":"mechanical"}},
+                {"name":"Second mechanic","group":"shared","selection":{"id":"second","provider":"codex","model":"second","capability":"mechanical"}},
                 {"name":"Worker","group":"other","selection":{"id":"worker","provider":"claude","model":"other","capability":"worker"}}
             ]
         })).expect("profile settings")));
@@ -541,4 +664,304 @@ async fn a_stored_subscription_pause_reserves_the_next_tier_and_records_the_reas
     );
     native_server.abort();
     forge_server.abort();
+}
+
+fn finish_profile_run(
+    task: &mut Task,
+    observation: &mut Observation,
+    (profile, group, thread): (&Profile, &str, &str),
+    report: Report,
+    expected: Phase,
+) {
+    let intent = decide_profile_launch(
+        task,
+        observation,
+        &LaunchPolicy {
+            usage: UsageLevel::Normal,
+            candidates: &[Candidate {
+                profile,
+                enabled: true,
+                available: true,
+                group_available: true,
+                supported_efforts: &[],
+                counts: RotationCounts::default(),
+            }],
+            planner_brief: true,
+            author_models: &[],
+        },
+    )
+    .unwrap()
+    .unwrap();
+    let instance = intent.instance().to_owned();
+    let credential = task
+        .reserve_grouped_launch(
+            observation,
+            LaunchInputs {
+                thread: thread.into(),
+                started_at: 1,
+                input: "fixture wire".into(),
+                scratch: None,
+            },
+            &[7; 32],
+            Some(intent),
+            group.into(),
+        )
+        .unwrap();
+    task.record_send(&instance, 2).unwrap();
+    if let Report::Work(work) = &report {
+        observation.forge = Observed::Known(Forge::Open {
+            pr: work.pull_request.clone(),
+            checks: CheckState::Ready,
+        });
+        observation.workspace = Observed::Known(Workspace::Clean(work.pull_request.head.clone()));
+    }
+    task.record_report(&instance, credential.as_bytes(), report)
+        .unwrap();
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: RunState::Ended,
+    });
+    assert_eq!(task.reconcile(observation), Action::Advance(expected));
+}
+
+fn retained_role_task(
+    service: &Service,
+    id: &str,
+    author: &Profile,
+    reviewer: &Profile,
+    role: Role,
+    required: bool,
+) -> (Task, nucleus_hosts::Binding) {
+    let head = service.fixture().start.clone();
+    let pr = PullRequest {
+        url: format!("https://github.com/{REPOSITORY}/pull/1"),
+        head: head.clone(),
+    };
+    let worktrees = service.worktrees().unwrap();
+    let checkout = worktrees
+        .checkout(&service.fixture().checkout, REPOSITORY, id)
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    let binding = service.binding(&checkout).unwrap();
+    let brief = if required {
+        "---\nqueue: {complexity: low, profileRequests: {reviewer: {profileId: review, reason: fixture, required: true}}}\n---\nFix a typo."
+    } else {
+        "---\nqueue: {complexity: low}\n---\nFix a typo."
+    };
+    let mut task = Task::new(
+        Identity {
+            id: id.into(),
+            reference: id.into(),
+            repository: REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        brief.into(),
+        None,
+    );
+    let mut observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(Workspace::Clean(head.clone())),
+    };
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    finish_profile_run(
+        &mut task,
+        &mut observation,
+        (author, "author", "thread:worker"),
+        Report::Work(pr.clone().into()),
+        Phase::Reviewing,
+    );
+    finish_profile_run(
+        &mut task,
+        &mut observation,
+        (reviewer, "review", "thread:reviewer"),
+        Report::Review {
+            head,
+            decision: Review::Changes,
+            summary: "Fix the spelling.".into(),
+            finding_titles: vec![],
+        },
+        Phase::Working,
+    );
+    let mut published = pr;
+    if role == Role::Reviewer {
+        create_fixture_commit(checkout.path(), "revision");
+        published.head = git(checkout.path(), &["rev-parse", "HEAD"])
+            .parse()
+            .unwrap();
+        observation.host = Observed::Known(Host::Retained {
+            thread: "thread:worker".into(),
+            state: RetainedThread::Queueable,
+        });
+        finish_profile_run(
+            &mut task,
+            &mut observation,
+            (author, "author", "thread:worker"),
+            Report::Work(published.clone().into()),
+            Phase::Reviewing,
+        );
+    } else {
+        task.command(
+            Command::MoveWork {
+                instruction: "Rebase before revising.".into(),
+            },
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            &observation,
+        )
+        .unwrap();
+    }
+    let thread = task.threads().get(role).unwrap();
+    observation.host = Observed::Known(Host::Retained {
+        thread: thread.into(),
+        state: RetainedThread::Queueable,
+    });
+    assert_eq!(
+        decide(&task, &observation),
+        Action::Launch {
+            role,
+            via: Launch::Continue {
+                thread: thread.into()
+            }
+        }
+    );
+
+    (task, binding)
+}
+
+async fn retained_role_endpoints(
+    service: &mut Service,
+    published: &PullRequest,
+    binding: nucleus_hosts::Binding,
+    thread: &'static str,
+) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
+    let branch = binding.branch;
+    let owned = binding.worktree_path;
+    let mut pull = forge_pull(&published.head);
+    pull["head"]["ref"] = json!(branch);
+    let checks = forge_checks(&published.head);
+    let (forge, forge_server) = serve_forge(
+        Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async { Json(pull) }),
+            )
+            .route("/graphql", post(move || async { Json(checks) })),
+    )
+    .await;
+    service.forge = forge;
+    let root = service.fixture().checkout.clone();
+    let (host, native_server) = native_fixture_with_traffic(move |request| {
+        if request["tag"] == "orchestration.subscribeThread" {
+            assert_eq!(request["payload"]["threadId"], thread);
+            return json!({"_tag":"Chunk","requestId":request["id"],"values":[
+                {"kind":"snapshot","snapshotSequence":1,"projection":{
+                    "thread":{"id":thread,"projectId":"local-fixture","worktreePath":owned,"branch":branch},
+                    "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[]
+                }},{"kind":"synchronized"}
+            ]});
+        }
+        native_response(request, &root, &mut NativeRuns::default())
+    }, None).await;
+    service.host = host;
+    (native_server, forge_server)
+}
+
+#[tokio::test]
+async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_wait() {
+    let profiles: Profiles = serde_json::from_value(json!({
+        "profiles": [
+            {"name":"Author as reviewer","group":"decoy","selection":{"id":"decoy","provider":"codex","model":"first","capability":"mechanical"}},
+            {"name":"Author","group":"author","selection":{"id":"author","provider":"codex","model":"first","capability":"mechanical"}},
+            {"name":"Reviewer","group":"review","selection":{"id":"review","provider":"codex","model":"second","capability":"mechanical"}},
+            {"name":"Replacement","group":"other","selection":{"id":"replacement","provider":"claude","model":"other","capability":"worker"}}
+        ]
+    })).unwrap();
+    let author = &profiles.profiles[1].selection;
+    let reviewer = &profiles.profiles[2].selection;
+    for (role, required, manual) in [
+        (Role::Reviewer, false, false),
+        (Role::Worker, false, false),
+        (Role::Worker, false, true),
+        (Role::Reviewer, true, false),
+    ] {
+        let (_home, mut service) = fixture(nucleus_forge::GitHub::new("fixture").unwrap());
+        let id = "retained-pause";
+        let (thread, groups): (&str, &[&str]) = match role {
+            Role::Worker => ("thread:worker", &["author", "decoy", "review"]),
+            Role::Reviewer if required => ("thread:reviewer", &["review", "decoy"]),
+            Role::Reviewer => ("thread:reviewer", &["review"]),
+        };
+        let (task, binding) = retained_role_task(&service, id, author, reviewer, role, required);
+        let (native_server, forge_server) =
+            retained_role_endpoints(&mut service, task.pull_request().unwrap(), binding, thread)
+                .await;
+        {
+            let mut state = service.state.lock().await;
+            let mut settings = profiles.clone();
+            for &group in groups {
+                if manual {
+                    settings.paused_groups.insert(group.into());
+                } else {
+                    service
+                        .record_subscription_pause(&state, group, RESET_MS, now_ms())
+                        .unwrap();
+                }
+            }
+            state.settings.profiles = Some(Arc::new(settings));
+            state.store.create(&task, &crate::event("fixture")).unwrap();
+        }
+        let row = service.task(id).await.unwrap();
+        assert_eq!(row.task.threads().get(role), Some(thread));
+        let actual = service
+            .advance(&row, &service.host.fixture_pass())
+            .await
+            .unwrap();
+        let next = service.task(id).await.unwrap();
+        if required {
+            assert_eq!(actual, Action::Wait(WaitReason::Capacity));
+            assert!(next.task.run().is_none());
+            service
+                .schedule_result(&row, &Ok(actual), Priority::Wake)
+                .await
+                .unwrap();
+            let state = service.state.lock().await;
+            let wait = &state.waits[id];
+            assert_eq!(
+                crate::titles::task_state_label(&next.task, wait.reason, wait.detail.as_ref()),
+                "Reviewing · paused"
+            );
+            assert!(matches!(
+                &wait.detail,
+                Some(crate::WaitDetail::Blocked(cause))
+                    if cause == &format!("Paused: subscription group review resets at {}.", snooze_deadline(RESET_MS))
+            ));
+        } else {
+            assert_eq!(
+                actual,
+                Action::Launch {
+                    role,
+                    via: Launch::Create
+                }
+            );
+            let launch = next.task.run().unwrap().launch();
+            assert_ne!(launch.thread, thread);
+            assert_eq!(launch.profile().unwrap().id, "replacement");
+            assert_eq!(launch.subscription_group(), Some("other"));
+            if role == Role::Worker {
+                let wire: Value = serde_json::from_str(&launch.input).unwrap();
+                let prompt = wire["payload"]["initialMessage"]["text"].as_str().unwrap();
+                assert!(prompt.contains("Rebase before revising."));
+                assert!(prompt.contains("Fix the spelling."));
+            }
+        }
+        native_server.abort();
+        forge_server.abort();
+    }
 }

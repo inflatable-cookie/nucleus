@@ -205,9 +205,9 @@ export function RepositoryFields({
     );
   };
   const hasMerge = Boolean(mergeCommand.trim());
-  // Rust engine (Spec 070 ruling 8): the repository keeps its base branch, the
-  // GitHub checks a merge waits for, and the hung-tool limit. QA (ruling 12),
-  // host choice (ruling 5) and merge commands (ruling 13) are retired.
+  // Rust engine (Spec 070 rulings 8, 53): the repository keeps its base branch
+  // and the hung-tool limit. Required checks come from GitHub only; QA
+  // (ruling 12), host choice (ruling 5) and merge commands (ruling 13) are retired.
   if (features.engine === "rust")
     return (
       <RustRepositoryFields
@@ -361,38 +361,18 @@ function RustRepositoryFields({
   save: (field: string, value: Omit<RepositorySetInput, "repository">, delay: number) => void;
   flush: () => void;
 }) {
-  const [checks, setChecks] = useState((settings?.requiredChecks ?? []).join(", "));
   const [hung, setHung] = useState(settings?.toolQuietLimitMinutes ?? DEFAULT_TOOL_QUIET_LIMIT_MINUTES);
   return (
     <View style={{ gap: space.sm }}>
-      <Pair>
-        <View style={{ gap: space.xxs }}>
-          <FieldCaption c={c} text="Base branch" />
-          <Text
-            accessibilityLabel={`Base branch for ${label}`}
-            style={{ color: c.foreground, fontSize: type.body.fontSize }}
-          >
-            {settings?.base ?? "Unresolved"}
-          </Text>
-        </View>
-        <Field
-          c={c}
-          label="Checks"
-          a11yLabel={`Required GitHub checks for ${label}`}
-          placeholder="ci, lint"
-          value={checks}
-          disabled={disabled}
-          onChange={(next) => {
-            setChecks(next);
-            save(
-              "requiredChecks",
-              { requiredChecks: [...new Set(next.split(",").map((name) => name.trim()).filter(Boolean))] },
-              600,
-            );
-          }}
-          onBlur={flush}
-        />
-      </Pair>
+      <View style={{ gap: space.xxs }}>
+        <FieldCaption c={c} text="Base branch" />
+        <Text
+          accessibilityLabel={`Base branch for ${label}`}
+          style={{ color: c.foreground, fontSize: type.body.fontSize }}
+        >
+          {settings?.base ?? "Unresolved"}
+        </Text>
+      </View>
       <View style={{ gap: space.xxs }}>
         <FieldCaption c={c} text="Hung tool limit" />
         <View style={{ flexDirection: "row" }}>
