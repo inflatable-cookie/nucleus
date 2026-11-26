@@ -362,7 +362,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       const usage = await rust.profileUsage();
       return {
         ...boardProfileUsage(usage),
-        availability: boardSubscriptionAvailability([], usage.limitedGroups ?? {}),
+        availability: boardSubscriptionAvailability([], usage.limitedGroups ?? {}, usage.fallbackGroups),
       };
     },
     "queue.capacity-state": async () => {
