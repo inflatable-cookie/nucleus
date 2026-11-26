@@ -35,7 +35,6 @@ import {
   stopBadgeLabel,
   budgetFields,
   budgetSummary,
-  interactiveBadgeLabel,
   elapsedRun,
 } from "./text";
 import {
@@ -371,23 +370,6 @@ export function BudgetBadge({
       a11y={exhausted ? `${label}, reached` : label}
     />
   );
-}
-export function InteractiveBadge({
-  task,
-  c,
-}: {
-  task: Pick<TaskSummary, "interactive" | "stopRecord" | "phase">;
-  c: Colors;
-}) {
-  const label = interactiveBadgeLabel(task);
-  return label ? (
-    <Badge
-      label={label}
-      tone={task.stopRecord?.reason === "interactive" ? "warning" : "accent"}
-      c={c}
-      a11y={label}
-    />
-  ) : null;
 }
 export function HeavyRunStatus({
   run,

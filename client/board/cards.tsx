@@ -58,7 +58,6 @@ import {
   prerequisiteLine,
   holdReasonPreview,
   budgetFields,
-  interactiveBadgeLabel,
   elapsedRun,
   longShellCommandStart,
 } from "./text";
@@ -70,7 +69,6 @@ import {
   Badge,
   RecordChips,
   BudgetBadge,
-  InteractiveBadge,
 } from "./badges";
 import {
   cardLabelColor,
@@ -339,7 +337,7 @@ export const BoardCard = React.memo(function BoardCard({
   status?: CardStatus | null;
   /** The task timeline bars below the card body. */
   progress?: React.ReactNode;
-  /** Exceptions only (holds, parked, interactive, budget, the PR); a normal task has none. */
+  /** Exceptions only (holds, parked, budget, the PR); a normal task has none. */
   flags?: React.ReactNode;
   /**
    * The card's own controls, drawn inside the row's frame below its content
@@ -736,7 +734,6 @@ export const TaskCard = React.memo(function TaskCard({
     .join("");
   const stopLabel = stopBadgeLabel(task.stop);
   const stopRecord = task.stopRecord;
-  const interactiveLabel = interactiveBadgeLabel(task);
   // The live dispatch hold is the wait; the stored reason may still name a cleared cause.
   const dispatchWait = dispatchWaitFence(task);
   // Whether a recorded stop is a wait or a hold is the stop owner's answer, not the card's.
@@ -889,11 +886,10 @@ export const TaskCard = React.memo(function TaskCard({
   const flagHoldKinds = allHoldKinds.filter(
     (kind) => !status.holds?.includes(kind),
   );
-  // The approved exception set (nucleus#1515): holds, parked, interactive, budget and
+  // The approved exception set (nucleus#1515): holds, parked, budget and
   // the PR. Stop categories, a paused stop and linked decisions are in the task detail.
   const hasFlags = Boolean(
     task.parked ||
-      interactiveLabel ||
       flagHoldKinds.length ||
       budgetExhausted ||
       task.prUrl,
@@ -949,7 +945,7 @@ export const TaskCard = React.memo(function TaskCard({
   const reference = taskNumberLabel(task, false) || null;
   return (
     <BoardCard
-      label={`${project}${hostChip}, ${task.title}, ${plainCardText(`${phaseLabel(task)}${interactiveLabel ? `, ${interactiveLabel}` : ""}${accessibleHold}${holdOwnerA11y}${accessibleWait}${fullHoldReasonA11y}${stopLabel && !stopWait && !stopHeld ? `, ${stopLabel}` : ""}${!accessibleWait && stopA11y ? `, ${stopA11y}` : ""}, ${statusLabel(status)}`)}, Action: open task details`}
+      label={`${project}${hostChip}, ${task.title}, ${plainCardText(`${phaseLabel(task)}${accessibleHold}${holdOwnerA11y}${accessibleWait}${fullHoldReasonA11y}${stopLabel && !stopWait && !stopHeld ? `, ${stopLabel}` : ""}${!accessibleWait && stopA11y ? `, ${stopA11y}` : ""}, ${statusLabel(status)}`)}, Action: open task details`}
       onPress={onPress}
       selected={selected}
       c={c}
@@ -978,7 +974,6 @@ export const TaskCard = React.memo(function TaskCard({
                 a11y="Parked (no slot held)"
               />
             )}
-            <InteractiveBadge task={task} c={c} />
             {budgetExhausted && <BudgetBadge task={task} c={c} />}
             {task.prUrl && (
               <PullRequestBadge task={task} state={prState} c={c} small flag />

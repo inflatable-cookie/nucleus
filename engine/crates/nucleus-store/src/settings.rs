@@ -864,6 +864,7 @@ mod tests {
                 "projectSlotOverrides": {"product": 8},
                 "mode": "paused",
                 "legacyLimitsImported": true,
+                "providerLimitCooldownSeconds": 300,
             }
         });
         std::fs::write(config.join(DispatchSettings::FILE), document.to_string())
@@ -882,6 +883,7 @@ mod tests {
         assert!(saved.get("allowanceMinutes").is_none());
         assert!(saved.get("hostConcurrency").is_none());
         assert!(saved.get("legacyLimitsImported").is_none());
+        assert!(saved.get("providerLimitCooldownSeconds").is_none());
     }
 
     #[test]

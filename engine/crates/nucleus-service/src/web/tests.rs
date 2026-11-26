@@ -2691,7 +2691,10 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
         json!({"alpha": null, "beta": null})
     );
     let alpha_repo = &saved["settings"]["value"]["projects"]["alpha"]["repositories"][0];
-    assert_eq!(alpha_repo["hungToolMinutes"], 30);
+    assert!(
+        alpha_repo.get("hungToolMinutes").is_none(),
+        "the retired hung-tool limit is dropped on save"
+    );
     assert!(alpha_repo.get("requiredChecks").is_none());
 
     assert_eq!(

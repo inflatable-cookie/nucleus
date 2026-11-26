@@ -70,7 +70,6 @@ pub(super) fn fixture_with_volume(
         options: Vec::new(),
     };
     let project = Project {
-        mode: ProjectMode::Fixture,
         repository: REPOSITORY.into(),
         checkout,
         base: "main".into(),
@@ -80,7 +79,6 @@ pub(super) fn fixture_with_volume(
         reviewer: profile,
         acp_provider: None,
         launch_budget: LaunchBudget { slots: 1 },
-        agents: Vec::new(),
     };
     let host = T3::new("http://127.0.0.1:9", "unused-fixture-key")
         .expect("no native host for the service fixture");

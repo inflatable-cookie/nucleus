@@ -17,8 +17,6 @@ import {
   type ProjectRepository,
 } from "../project-helpers";
 import {
-  DEFAULT_TOOL_QUIET_LIMIT_MINUTES,
-  MAX_TOOL_QUIET_LIMIT_MINUTES,
   PROJECT_QA_DEFAULT_MAX_OUTPUT_BYTES,
   VALIDATION_TIMEOUT_MAX_MS,
   type RepositorySetInput,
@@ -205,8 +203,7 @@ export function RepositoryFields({
     );
   };
   const hasMerge = Boolean(mergeCommand.trim());
-  // Rust engine (Spec 070 rulings 8, 53): the repository keeps its base branch
-  // and the hung-tool limit. Required checks come from GitHub only; QA
+  // Rust engine (Spec 070 rulings 8, 53): the repository keeps its base branch. QA
   // (ruling 12), host choice (ruling 5) and merge commands (ruling 13) are retired.
   if (features.engine === "rust")
     return (
@@ -361,7 +358,6 @@ function RustRepositoryFields({
   save: (field: string, value: Omit<RepositorySetInput, "repository">, delay: number) => void;
   flush: () => void;
 }) {
-  const [hung, setHung] = useState(settings?.toolQuietLimitMinutes ?? DEFAULT_TOOL_QUIET_LIMIT_MINUTES);
   return (
     <View style={{ gap: space.sm }}>
       <View style={{ gap: space.xxs }}>
@@ -372,25 +368,6 @@ function RustRepositoryFields({
         >
           {settings?.base ?? "Unresolved"}
         </Text>
-      </View>
-      <View style={{ gap: space.xxs }}>
-        <FieldCaption c={c} text="Hung tool limit" />
-        <View style={{ flexDirection: "row" }}>
-          <NumberStepper
-            c={c}
-            a11yLabel={`Hung tool limit for ${label}`}
-            unit="min"
-            value={hung}
-            min={1}
-            max={MAX_TOOL_QUIET_LIMIT_MINUTES}
-            disabled={disabled}
-            onChange={(next) => {
-              setHung(next);
-              save("toolQuietLimitMinutes", { toolQuietLimitMinutes: next }, 600);
-            }}
-            onCommit={flush}
-          />
-        </View>
       </View>
     </View>
   );

@@ -17,21 +17,10 @@ use crate::{Service, ServiceError, State};
 
 const FIXTURE_REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 
-/// A legacy serve file must explicitly opt into non-fixture dispatch.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectMode {
-    #[default]
-    Fixture,
-    Project,
-}
-
-/// The legacy single-repository serve configuration.
+/// The single-repository fixture configuration that tests build in memory.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Project {
-    #[serde(default)]
-    pub mode: ProjectMode,
     pub repository: String,
     pub checkout: PathBuf,
     pub base: String,
@@ -44,22 +33,6 @@ pub struct Project {
     pub acp_provider: Option<String>,
     #[serde(default, deserialize_with = "read_launch_budget")]
     pub launch_budget: LaunchBudget,
-    #[serde(default)]
-    pub agents: Vec<RegisteredAgent>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RegisteredAgent {
-    pub thread: String,
-    pub role: RegisteredRole,
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RegisteredRole {
-    Planner,
-    Agent,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -87,11 +60,7 @@ fn read_launch_budget<'de, D: Deserializer<'de>>(
 
 impl Project {
     pub(crate) fn verify(&self, policy: &LocalGit) -> Result<(), ServiceError> {
-        let allowed = match self.mode {
-            ProjectMode::Fixture => self.repository == FIXTURE_REPOSITORY,
-            ProjectMode::Project => self.acp_provider.is_some(),
-        };
-        if !allowed
+        if self.repository != FIXTURE_REPOSITORY
             || self.launch_budget.slots == 0
             || self.host_project.trim().is_empty()
             || self
@@ -394,7 +363,6 @@ pub(super) fn discover_repository(
         host_project: None,
         host_project_title: None,
         planner_threads: Vec::new(),
-        hung_tool_minutes: 30,
     })
 }
 
@@ -517,16 +485,11 @@ mod tests {
     };
 
     #[test]
-    fn fixture_files_keep_their_scope_and_project_mode_verifies_both_remotes() {
+    fn fixture_files_keep_their_scope_and_both_remotes_must_name_the_repository() {
         let (_home, service) = fixture(GitHub::new("unused-fixture").expect("forge"));
         let mut legacy = serde_json::to_value(service.fixture()).expect("fixture configuration");
-        legacy
-            .as_object_mut()
-            .expect("project object")
-            .remove("mode");
         legacy["launchBudget"]["maxLoad"] = json!(18);
         let mut project: Project = serde_json::from_value(legacy).expect("old serve file");
-        assert_eq!(project.mode, ProjectMode::Fixture);
         assert_eq!(
             serde_json::to_value(&project.launch_budget).expect("current budget"),
             json!({"slots": 1})
@@ -535,9 +498,19 @@ mod tests {
             .verify(&service.git)
             .expect("old fixture is still accepted");
 
+        // A Project serves only the fixture repository. The remote checks run on the
+        // same repository verification that the registry route uses.
         project.repository = "example/greeter".into();
+        assert!(matches!(
+            project.verify(&service.git),
+            Err(ServiceError::Project)
+        ));
+        let (checkout, base) = (project.checkout.clone(), project.base.clone());
+        let check = |git_policy: &LocalGit| {
+            verify_repository("example/greeter", &checkout, &base, git_policy)
+        };
         git(
-            &project.checkout,
+            &checkout,
             &[
                 "remote",
                 "set-url",
@@ -545,23 +518,10 @@ mod tests {
                 "ssh://git@github.com/example/greeter.git",
             ],
         );
-        assert!(matches!(
-            project.verify(&service.git),
-            Err(ServiceError::Project)
-        ));
-
-        project.mode = ProjectMode::Project;
-        assert!(matches!(
-            project.verify(&service.git),
-            Err(ServiceError::Project)
-        ));
-        project.acp_provider = Some("fixture-acp".into());
-        project
-            .verify(&service.git)
-            .expect("explicit repository mode");
+        check(&service.git).expect("origin names the repository");
 
         git(
-            &project.checkout,
+            &checkout,
             &[
                 "remote",
                 "set-url",
@@ -570,12 +530,9 @@ mod tests {
                 "git@github.com:example/other.git",
             ],
         );
-        assert!(matches!(
-            project.verify(&service.git),
-            Err(ServiceError::Project)
-        ));
+        assert!(matches!(check(&service.git), Err(ServiceError::Project)));
         git(
-            &project.checkout,
+            &checkout,
             &[
                 "remote",
                 "set-url",
@@ -584,11 +541,9 @@ mod tests {
                 "git@github.com:EXAMPLE/greeter.git",
             ],
         );
-        project
-            .verify(&service.git)
-            .expect("both GitHub remotes identify the bound repository");
+        check(&service.git).expect("both GitHub remotes identify the bound repository");
         git(
-            &project.checkout,
+            &checkout,
             &[
                 "remote",
                 "set-url",
@@ -596,16 +551,12 @@ mod tests {
                 "https://github.com/example/other.git",
             ],
         );
-        assert!(matches!(
-            project.verify(&service.git),
-            Err(ServiceError::Project)
-        ));
+        assert!(matches!(check(&service.git), Err(ServiceError::Project)));
     }
 
     #[tokio::test]
     async fn native_write_gate_requires_the_explicit_project_at_its_registered_checkout() {
         let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("forge"));
-        service.fixture_mut().mode = ProjectMode::Project;
         service.fixture_mut().repository = "example/greeter".into();
         service.fixture_mut().host_project = "greeter-project".into();
         service.fixture_mut().acp_provider = Some("fixture-acp".into());

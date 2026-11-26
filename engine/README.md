@@ -3,8 +3,7 @@
 The Rust engine runs approved tasks on T3 and serves the local web board.
 [Spec 070](../docs/knowledge/specs/070-small-engine.md) owns its model and
 authority rules. See [staging](#stage-an-engine-release), [T3 setup](#set-up-t3)
-and [board pairing](#board) to operate an installation. Fixture mode scopes
-dispatch to its configured repository.
+and [board pairing](#board) to operate an installation.
 
 A missing review checkout is recovered at the verified PR head before
 reserving a run. If recovery fails, the task waits for another check.
@@ -631,8 +630,7 @@ Housekeeping is complete when all its known threads are archived, deleted
 or absent. A later listed thread is eligible again.
 
 Pass the registered T3 ACP provider for the Rust `nucleus acp` agent to
-`serve --acp-provider`. A legacy serve file supplies it as `acpProvider`.
-Configure the provider's
+`serve --acp-provider`. Configure the provider's
 `NUCLEUS_ACP_BINDINGS` to the service's binding directory. The scheduler supplies
 a read-only binding when no session has been minted. Keep an existing writable
 binding so the planner can use the task's commands. Standalone roles remain
@@ -689,7 +687,7 @@ callbacks.
 
 The fixture uses the `nucleus` binary. Run `configure --home <profile>
 --enable` with an existing fixture directory. Start `serve` with
-that profile, a project file for the authorized fixture, and the local T3
+that profile, the registered `--acp-provider`, and the local T3
 endpoint. Set the control key, T3 bearer and GitHub token in the environment.
 The CLI's `admit`, `task`, `next`, `history` and task commands use the loopback
 API. Every route requires the configured loopback Host and a same-origin Origin
@@ -707,8 +705,8 @@ Remove inside the editor.
 | Group | Longhorn file in the portable profile | Settings |
 | --- | --- | --- |
 | Profiles | `config/profiles.json` | Name, optional subscription group, canonical selection with stable ID, capability, weight, provider, model and effort, and the operator's `pausedGroups` list. |
-| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, default slots per project, per-project overrides and `providerLimitCooldownSeconds` (default 300). |
-| Projects | `state/projects.json` | Name, archival, discovered repository routes, required check names and hung-tool limit. The limit defaults to 30 minutes. Planners appear from verified live bindings. |
+| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, default slots per project, per-project overrides and the dispatch mode. |
+| Projects | `state/projects.json` | Name, archival, discovered repository routes and required check names. Planners appear from verified live bindings. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
 | Storage | `state/engine.json` | Optional volume pin, work, scratch and log roots, verified Longhorn config archives and retention. |
 
@@ -751,8 +749,6 @@ independent reviewer. An unavailable profile leaves the task waiting.
 Provider usage pauses follow [Spec 070](../docs/knowledge/specs/070-small-engine.md#rulings).
 The T3 adapter reads the exact run's structured
 [`error.failure` item](https://github.com/pingdotgg/t3code/blob/1368854828e259fe6e9539239b36dbf71b50301c/packages/contracts/src/orchestrationV2.ts).
-Fixture serve files without a Profiles domain keep their static worker and
-reviewer settings.
 
 ## Milestone 1 proof
 
@@ -800,11 +796,7 @@ read. A project’s slots cover all its routed repositories. New and amended bri
 profile ID, reason and `required: true` for a required worker profile. A non-fixture
 launch uses the Profiles domain and the head of the verified local base.
 
-For single-repository pilot and fixture compatibility, `serve --project` pins
-one GitHub repository, canonical local checkout,
-base branch and T3 project ID. Existing files default to fixture mode. Set
-`"mode": "project"` explicitly for a real project and name its Rust ACP provider
-in `acpProvider`. Real dispatch waits for configured profiles.
+Until the Profiles domain is configured, dispatch waits.
 
 The native write gate compares the prepared destination with the current
 repository binding, verifies both origin remotes and confirms that the exact

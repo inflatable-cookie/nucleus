@@ -86,7 +86,6 @@ export function boardRepositorySettings(
     checksPolicy: null,
     hostKind: null,
     workspaceProvider: null,
-    toolQuietLimitMinutes: repo.hungToolMinutes,
     note: "",
     updatedAt: "",
     revision: 0,
@@ -520,7 +519,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "repository.set": async (input: {
       repository: string;
-      toolQuietLimitMinutes?: number | null;
     }) => {
       let updated: RustRepository | undefined;
       await editProjects((value) => ({
@@ -534,9 +532,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
                   return repo;
                 updated = {
                   ...repo,
-                  ...(input.toolQuietLimitMinutes
-                    ? { hungToolMinutes: input.toolQuietLimitMinutes }
-                    : {}),
                 };
                 return updated;
               }),

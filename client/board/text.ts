@@ -91,9 +91,6 @@ export const budgetSummary = (budget: BudgetDisplay) => {
   const fields = budgetFields(budget);
   return `${fields.effectiveTokens.evidence === "none" ? "tokens not reported" : `${budgetCount(fields.effectiveTokens.used)} / ${budgetCount(fields.effectiveTokens.limit)} tokens`} · ${budgetDuration(fields.wallMs.used)} / ${budgetDuration(fields.wallMs.limit)}`;
 };
-/** Spec 051: an interactive task says so on its card, and says when it is waiting on you. */
-export const interactiveBadgeLabel = (task: Pick<TaskSummary, "interactive" | "stopRecord" | "phase">) =>
-  !task.interactive || ["done", "cancelled"].includes(task.phase) ? null : task.stopRecord?.reason === "interactive" ? "Interactive · your turn" : "Interactive";
 export function elapsedRun(at: string) {
   const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(at)) / 60000));
   return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;

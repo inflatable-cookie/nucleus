@@ -66,7 +66,7 @@ pub use dependencies::{
     PrerequisiteWaitView,
 };
 pub use native_inbox::native_inbox_directory;
-pub use project::{LaunchBudget, Project, ProjectMode, RegisteredAgent, RegisteredRole};
+pub use project::{LaunchBudget, Project};
 pub use ticket::ReportTicket;
 use web::ControllerScope;
 pub use web::{
@@ -367,10 +367,11 @@ pub struct PassOutcome {
 }
 
 impl Service {
-    /// Open the enabled engine on its pinned volume and claim its write lock.
+    /// Open the enabled engine on its pinned volume with one fixture project.
     ///
     /// # Errors
     /// Returns an error if configuration, storage, or project scope is invalid.
+    #[cfg(test)]
     pub fn open(
         settings: &SettingsFile,
         project: Project,
@@ -451,10 +452,7 @@ impl Service {
             runtime_settings.projects = Some(store.clean_removed_projects(settings)?.value);
         }
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
-        if project
-            .as_ref()
-            .is_none_or(|project| project.mode != ProjectMode::Fixture)
-        {
+        if project.is_none() {
             host.use_held_shell();
         }
         let github_accounts = Arc::new(github_accounts::GitHubAccounts::new(settings.clone()));

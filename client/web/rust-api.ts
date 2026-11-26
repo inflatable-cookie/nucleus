@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { repositoryToolQuietLimitSchema } from "../../shared/schema/projects";
 import type { CapabilityLevel } from "../../shared/contracts";
 import { capabilityLevels } from "../../shared/schema/settings/capability";
 import {
@@ -65,7 +64,6 @@ const dispatch = z
     globalSlots: integer,
     projectDefaultSlots: integer,
     projectSlotOverrides: z.record(z.string(), integer),
-    providerLimitCooldownSeconds: integer.optional(),
     mode: dispatchMode.default("running"),
   })
   .loose();
@@ -74,7 +72,6 @@ const repository = z
     origin: z.string(),
     path: z.string(),
     base: z.string(),
-    hungToolMinutes: repositoryToolQuietLimitSchema,
     hostProject: z.string().optional(),
     hostProjectTitle: z.string().optional(),
     plannerThreads: z.array(z.string()).optional(),

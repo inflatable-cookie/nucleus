@@ -394,7 +394,6 @@ fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
                         host_project: None,
                         host_project_title: None,
                         planner_threads: Vec::new(),
-                        hung_tool_minutes: 30,
                     })
                     .collect(),
             },

@@ -9,9 +9,7 @@ use nucleus_store::{TaskRow, ThreadProvenance};
 use tokio::time::Instant;
 
 use crate::pass::{DispatchPermit, DispatchTarget};
-use crate::{
-    RegisteredRole, Service, ServiceError, State, event, project::ProjectRoute, schedule::Priority,
-};
+use crate::{Service, ServiceError, State, event, project::ProjectRoute, schedule::Priority};
 
 pub(super) struct PlannerAuthority {
     thread: String,
@@ -382,14 +380,11 @@ impl Service {
     ) -> Result<Vec<(u8, Reverse<String>, PlannerThread)>, ServiceError> {
         let threads = self.host.planner_threads().await?;
         let ids: Vec<_> = threads.iter().map(|thread| thread.id.as_str()).collect();
-        let (provenance, use_fixture_registrations) = {
+        let provenance = {
             let state = self.state.lock().await;
-            (
-                state
-                    .store
-                    .routing_provenance(&task.identity().repository, &ids)?,
-                !state.settings.uses_project_registry(),
-            )
+            state
+                .store
+                .routing_provenance(&task.identity().repository, &ids)?
         };
         let mut ranked = Vec::new();
         for thread in threads {
@@ -405,21 +400,9 @@ impl Service {
             }
             // Titles carry no authority. Registered roles and task provenance set
             // rank, with project membership as the last candidate source.
-            let registered = self
-                .project
-                .iter()
-                .flat_map(|project| &project.agents)
-                .filter(|agent| use_fixture_registrations && agent.thread == thread.id)
-                .map(|agent| match agent.role {
-                    RegisteredRole::Planner => 0,
-                    RegisteredRole::Agent => 1,
-                })
-                .min();
-            let rank = registered
-                .or_else(|| {
-                    (provenance.get(&thread.id) == Some(&ThreadProvenance::Dispatcher)).then_some(2)
-                })
-                .or_else(|| (thread.project_id == route.host_project).then_some(3));
+            let rank = (provenance.get(&thread.id) == Some(&ThreadProvenance::Dispatcher))
+                .then_some(0)
+                .or_else(|| (thread.project_id == route.host_project).then_some(1));
             if let Some(rank) = rank {
                 let interaction = thread.latest_user_message_at.clone().map_or_else(
                     || thread.updated_at.clone(),
@@ -547,19 +530,6 @@ mod tests {
                 native_fixture(move |request| snapshot_reply(request, strongest, &checkout)).await;
             service.host = host;
             service.fixture_mut().acp_provider = Some("fixture-acp".into());
-            service.fixture_mut().agents = [
-                (strongest, RegisteredRole::Planner),
-                ("planner-other", RegisteredRole::Planner),
-                ("registered-agent", RegisteredRole::Agent),
-                ("task-session", RegisteredRole::Planner),
-                ("role-child", RegisteredRole::Planner),
-            ]
-            .into_iter()
-            .map(|(thread, role)| crate::RegisteredAgent {
-                thread: thread.into(),
-                role,
-            })
-            .collect();
             let task = Task::new(
                 Identity {
                     id: "notice".into(),
