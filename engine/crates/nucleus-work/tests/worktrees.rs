@@ -3,7 +3,7 @@ use std::{fs, path::Path, process::Command};
 use longhorn_git_workspace::{GitCredential, GitFailure, GitPolicy};
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Workspace};
-use nucleus_store::{EngineSettings, PinnedVolume, SettingsFile};
+use nucleus_store::{EngineSettings, SettingsFile};
 use nucleus_work::{Retirement, WorkError, Worktrees};
 
 struct LocalGit;
@@ -41,7 +41,6 @@ fn worktrees_with_policy<'a>(
     settings
         .save(&EngineSettings {
             enabled: true,
-            work_volume: Some(PinnedVolume::detect(home).expect("fixture volume")),
             ..EngineSettings::default()
         })
         .expect("save fixture settings");

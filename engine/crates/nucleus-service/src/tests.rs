@@ -30,6 +30,13 @@ pub(super) const REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 const PR: &str = "https://github.com/inflatable-cookie/nucleus-fixture/pull/1";
 
 pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
+    fixture_with_volume(forge, None)
+}
+
+pub(super) fn fixture_with_volume(
+    forge: GitHub,
+    work_volume: Option<PinnedVolume>,
+) -> (tempfile::TempDir, Service) {
     let home = tempfile::tempdir().expect("fixture volume directory");
     let root = home.path().canonicalize().expect("portable root");
     let checkout = root.join("repo");
@@ -52,7 +59,7 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     settings
         .save(&EngineSettings {
             enabled: true,
-            work_volume: Some(PinnedVolume::detect(&root).expect("fixture volume")),
+            work_volume,
             ..EngineSettings::default()
         })
         .expect("enable fixture");
