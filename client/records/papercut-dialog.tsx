@@ -24,7 +24,7 @@ import {
 } from "../task/parts";
 import { ModalAction, RecordModal } from "./record-modal";
 import { useEngineFeatures } from "../engine-features";
-import { ParkedNote, ParkPanel } from "../park-controls";
+import { ParkPanel } from "../park-controls";
 import { type as typeScale, space } from "../design";
 
 const papercutPromoteReason = (cut: Papercut) =>
@@ -70,7 +70,7 @@ export function PapercutDialog({
     promotePapercut = useRpc(api.papercutPromoteTask),
     closePapercut = useRpc(api.papercutClose);
   const parkLead = useRpc(api.leadPark),
-    unparkLead = useRpc(api.leadUnpark);
+    reopenLead = useRpc(api.leadReopen);
   const [closeNote, setCloseNote] = useState("");
   // Spec 053: a promoted papercut names its complexity; nothing is preselected.
   const [papercutComplexity, setPapercutComplexity] =
@@ -359,9 +359,7 @@ export function PapercutDialog({
                   >
                     Parking
                   </Text>
-                  {rust && papercutDetail.parked ? (
-                    <ParkedNote c={c} parked={papercutDetail.parked} recheck={papercutDetail.recheck ?? null} />
-                  ) : (
+                  {
                     <ParkPanel
                       c={c}
                       busy={busy}
@@ -387,16 +385,16 @@ export function PapercutDialog({
                           setRecordNotice({
                             kind: "ok",
                             text: revisitAt
-                              ? "Parked. It moves back to Open on its recheck date."
+                              ? "Parked. It will show as due on its recheck date."
                               : "Parked.",
                           });
                         }, "record")
                       }
                       onUnpark={() =>
                         void act(async () => {
-                          await unparkLead({
-                            id: papercutDetail.id,
-                            version: papercutDetail.version,
+                          await reopenLead({
+                            ...scope, id: papercutDetail.id,
+                            version: papercutDetail.version, author: "operator (board)",
                           });
                           setRecordNotice({
                             kind: "ok",
@@ -405,7 +403,8 @@ export function PapercutDialog({
                         }, "record")
                       }
                     />
-                  )}
+                  }
+                  {papercutDetail.state === "closed" && <ModalAction text="Reopen" busy={busy} c={c} onPress={() => void act(async () => { await reopenLead({ ...scope, id: papercutDetail.id, version: papercutDetail.version, author: "operator (board)" }); setRecordNotice({ kind: "ok", text: "Reopened." }); }, "record")} />}
                 </View>
                 {papercutDetail.state === "open" && (
                   <View style={{ gap: space.xs, paddingTop: space.xxs }}>

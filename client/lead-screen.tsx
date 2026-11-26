@@ -311,7 +311,6 @@ export function LeadScreen({
     onDrop,
     onReopen,
     onPark,
-    onUnpark,
     onPromoteTo,
   } = actions ?? unloaded;
   const {
@@ -321,7 +320,6 @@ export function LeadScreen({
     reopen: reopenReason,
     promoteTo: promoteToReason,
     park: parkReason,
-    unpark: unparkReason,
   } = lead.actions;
 
   const checkBody = () => {
@@ -490,15 +488,15 @@ export function LeadScreen({
                 <Button
                   small
                   c={c}
-                  text={running === "unpark" ? "Returning…" : "Unpark"}
+                  text={running === "reopen" ? "Reopening…" : "Reopen"}
                   label="Return the lead to the to-do list"
-                  disabled={blocked || Boolean(unparkReason)}
-                  hint={unparkReason ?? undefined}
-                  onPress={() => void run("unpark", onUnpark)}
+                  disabled={blocked || Boolean(reopenReason)}
+                  hint={reopenReason ?? undefined}
+                  onPress={() => void run("reopen", () => onReopen(""))}
                 />
               </View>
             )}
-            <NoticeLine notice={notices.unpark} label="Unpark" c={c} />
+            <NoticeLine notice={notices.reopen} label="Reopen" c={c} />
           </View>
         )}
         <View style={row}>
@@ -720,7 +718,7 @@ export function LeadScreen({
             <View style={{ gap: space.xxs }}>
               <Field
                 c={c}
-                label="Reopen reason"
+                label="Reopen note (optional)"
                 value={reopen}
                 onChange={setReopen}
                 disabled={blocked || Boolean(reopenReason)}
@@ -731,7 +729,7 @@ export function LeadScreen({
                   c={c}
                   text={running === "reopen" ? "Reopening…" : "Reopen lead"}
                   label="Reopen the lead"
-                  disabled={blocked || Boolean(reopenReason) || !reopen.trim()}
+                  disabled={blocked || Boolean(reopenReason)}
                   hint={reopenReason ?? undefined}
                   onPress={() => void run("reopen", () => onReopen(reopen))}
                 />

@@ -18,7 +18,7 @@ import { space, type as typeScale } from "./design";
 
 /** Nucleus#1543: what parking does, in the `?` popover so the fields keep one label each. */
 const PARK_HELP =
-  "Parking takes the lead off the to-do list with the reason you give. It stays open and comes back on its recheck day, when the planner is told once. Editing, promoting or dropping it brings it back at once.";
+  "Parking takes the lead off the to-do list with the reason you give. It shows as due on its recheck day. Reopen it when you are ready.";
 
 function ParkHelp({ c }: { c: Colors }) {
   const [open, setOpen] = useState(false);
@@ -155,7 +155,7 @@ export function ParkPanel({
           <Button
             small
             c={c}
-            text="Unpark"
+            text="Reopen"
             label="Return the lead to the to-do list"
             disabled={busy || Boolean(unparkReason)}
             hint={unparkReason ?? undefined}

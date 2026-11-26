@@ -572,3 +572,66 @@ async fn admission_rechecks_scope_after_git_consultation() {
     let state = service.state.lock().await;
     assert!(state.capacity_waiters.is_empty());
 }
+
+#[tokio::test]
+async fn reopen_items_preserves_history_and_rejects_stale_versions() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let api = router(
+        Arc::new(service),
+        [planner_controller(PLANNER_KEY, "planner")],
+    );
+    let items = format!("{PROJECT}/items");
+    for (action, body) in [
+        ("park", json!({"reason":"Later", "revisitAt":"2026-01-01"})),
+        ("drop", json!({"reason":"Done", "disposition":"completed"})),
+    ] {
+        let created = json_body(
+            post_as(
+                &api,
+                &items,
+                &PLANNER_KEY,
+                &json!({"kind":"papercut", "title":action, "body":"Body"}),
+            )
+            .await,
+        )
+        .await;
+        let id = created["id"].as_str().unwrap();
+        let listed = json_body(get_as(&api, &items, &PLANNER_KEY).await).await;
+        let version = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap()["version"]
+            .as_i64()
+            .unwrap();
+        assert_eq!(
+            post_as(&api, &format!("{items}/{id}/{action}"), &PLANNER_KEY, &body)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let reopen = format!("{items}/{id}/reopen");
+        assert_eq!(
+            post_as(
+                &api,
+                &reopen,
+                &PLANNER_KEY,
+                &json!({"version":version, "note":"Again"})
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        let result =
+            json_body(post_as(&api, &reopen, &PLANNER_KEY, &json!({"note":"Again"})).await).await;
+        assert_eq!(result["state"], "open");
+        let history =
+            json_body(get_as(&api, &format!("{PROJECT}/history/item/{id}"), &PLANNER_KEY).await)
+                .await;
+        assert_eq!(history[2]["snapshot"]["note"], "Again");
+        if action == "drop" {
+            assert_eq!(history[1]["snapshot"]["disposition"], "completed");
+        }
+    }
+}

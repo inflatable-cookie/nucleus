@@ -1179,7 +1179,7 @@ The board and `item.drop --disposition completed|deprecated` preserve the closin
 disposition and the separate reason. Older dropped records and calls that omit
 the disposition default to deprecated.
 
-**Verbs:** `plan.get` and `plan.set`; `lane.put` and `lane.status`; `item.add`, `item.edit`, `item.park`, `item.drop` and `item.promote`; `task.add`; `decision.add` and `decision.answer`.
+**Verbs:** `plan.get` and `plan.set`; `lane.put` and `lane.status`; `item.add`, `item.edit`, `item.park`, `item.drop`, `item.reopen` and `item.promote`; `task.add`; `decision.add` and `decision.answer`.
 
 **What gets simpler**
 

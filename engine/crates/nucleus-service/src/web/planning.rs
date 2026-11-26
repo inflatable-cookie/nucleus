@@ -111,6 +111,7 @@ pub(super) fn project_routes() -> Router<Api> {
         .route("/items/{id}", put(edit_item))
         .route("/items/{id}/park", post(park_item))
         .route("/items/{id}/drop", post(drop_item))
+        .route("/items/{id}/reopen", post(reopen_item))
         .route("/items/{id}/promote", post(promote))
         .route("/tasks", post(add_task))
         .route("/decisions", get(decisions).post(add_decision))
@@ -430,6 +431,40 @@ async fn drop_item(
                 reason,
                 disposition,
             },
+            stamp(&caller),
+        )
+        .map_err(ServiceError::from)?;
+    api.service.planning_changes.send_replace(());
+    Ok(Json(saved))
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReopenItem {
+    note: Option<String>,
+    version: Option<i64>,
+}
+
+async fn reopen_item(
+    State(api): State<Api>,
+    Extension(scope): Extension<ControllerScope>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(RecordPath { id }): Path<RecordPath>,
+    Extension(caller): Extension<Authority>,
+    input: Result<Json<ReopenItem>, JsonRejection>,
+) -> Result<Json<Item>, ApiError> {
+    let input = body(input)?;
+    let (mut state, project) = api
+        .service
+        .planning_state_in_scope(project.as_deref(), &scope)
+        .await?;
+    let saved = state
+        .store
+        .reopen_item(
+            &project,
+            &id,
+            input.version,
+            input.note.as_deref(),
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;

@@ -125,7 +125,7 @@ export function boardItem(
     tags: item.kind === "papercut" ? ["papercut"] : [],
     papercutArea: null,
     state: "open",
-    version: 1,
+    version: item.version ?? 1,
     check: null,
     approved: false,
     targets: [],
@@ -217,7 +217,7 @@ export function boardLeadRecord(item: RustItem, project: RustProject) {
         : item.state === "dropped"
           ? ("dropped" as const)
           : ("open" as const),
-    version: 1,
+    version: item.version ?? 1,
     check: null,
     checkOperationId: null,
     approval: null,
@@ -249,9 +249,9 @@ function leadDetail(item: RustItem, project: RustProject) {
       check: RUST_ONLY,
       approve: RUST_ONLY,
       drop: open || item.state === "parked" ? null : "Only an open item can be dropped.",
-      reopen: RUST_ONLY,
+      reopen: item.state === "parked" || item.state === "dropped" ? null : "Only parked or dropped items can be reopened.",
       park: open ? null : "Only an open item can be parked.",
-      unpark: RUST_ONLY,
+      unpark: item.state === "parked" ? null : "Only parked items can be reopened.",
       promoteTo: RUST_ONLY,
       promote: repositories(project, item.repositories).map((repo) => ({
         origin: repo.origin,
@@ -655,6 +655,11 @@ export function createRustPlanning(
     "lead.park": async (input: { project?: string; id: string; reason: string; revisitAt?: string | null }) => {
       const { row } = await recordOwner("items", item, input.id, input.project);
       const saved = await rust.parkItem(row.id, input.id, { reason: input.reason, revisitAt: input.revisitAt ?? null });
+      return boardLeadRecord(saved, row.project);
+    },
+    "lead.reopen": async (input: { project?: string; id: string; reason?: string; version?: number }) => {
+      const { row } = await recordOwner("items", item, input.id, input.project);
+      const saved = await rust.reopenItem(row.id, input.id, { note: input.reason || undefined, version: input.version });
       return boardLeadRecord(saved, row.project);
     },
     "lead.drop": async (input: { project?: string; id: string; reason: string }) => {

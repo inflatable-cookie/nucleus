@@ -379,6 +379,8 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         planning(project, `/items/${encodeURIComponent(id)}/park`),
         json("POST", value),
       ),
+    reopenItem: (project: string, id: string, value: { note?: string; version?: number }) =>
+      board.read(item, planning(project, `/items/${encodeURIComponent(id)}/reopen`), json("POST", value)),
     dropItem: (project: string, id: string, reason: string | null, disposition?: RustItem["disposition"]) =>
       board.read(
         item,

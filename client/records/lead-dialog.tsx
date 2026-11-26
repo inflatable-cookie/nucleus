@@ -109,8 +109,10 @@ export function LeadDialog({
         onReopen: (reason) =>
           leadAct(async () => {
             await reopenLead({
+              ...scope,
               id: leadDetail.id,
               reason,
+              version: leadDetail.version,
               author: "operator (board)",
             });
             return "Reopened.";
@@ -126,7 +128,7 @@ export function LeadDialog({
               author: "operator (board)",
             });
             return revisitAt
-              ? "Parked. It moves back to Open on its recheck date."
+              ? "Parked. It will show as due on its recheck date."
               : "Parked.";
           }),
         onUnpark: () =>

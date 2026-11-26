@@ -139,7 +139,9 @@ export const leadReopen = defineRpc({
   input: z
     .object({
       id: z.string().min(1),
-      reason: z.string().trim().min(1).max(4000),
+      project: z.string().min(1).optional(),
+      reason: z.string().trim().max(4000).optional(),
+      version: z.number().int().positive().optional(),
       author: z.string().min(1),
     })
     .strict(),
