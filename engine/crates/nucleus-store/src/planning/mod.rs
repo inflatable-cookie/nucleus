@@ -324,9 +324,9 @@ impl Store {
         version: Option<i64>,
         note: Option<&str>,
         stamp: WriteAt<'_>,
-    ) -> Result<Item, StoreError> {
+    ) -> Result<ItemWithTimes, StoreError> {
         let tx = self.planning_write()?;
-        let saved = tx
+        let mut saved = tx
             .prepare_cached(&format!("{ITEM_VIEW} WHERE i.project = ?1 AND i.id = ?2"))?
             .query_row([project, id], item_view)
             .optional()?
@@ -339,19 +339,20 @@ impl Store {
         {
             return Err(StoreError::PlanningConflict);
         }
-        let mut item = saved.item;
-        item.state = ItemState::Open;
-        save(&tx, ItemRecord, project, id, "reopen", &item, stamp)?;
+        saved.item.state = ItemState::Open;
+        save(&tx, ItemRecord, project, id, "reopen", &saved.item, stamp)?;
+        saved.version = tx.last_insert_rowid();
+        saved.updated_at_ms = i64::try_from(stamp.at_ms).ok();
         if let Some(note) = note {
-            let mut snapshot = serde_json::to_value(&item)?;
+            let mut snapshot = serde_json::to_value(&saved.item)?;
             snapshot["note"] = note.into();
             tx.execute(
                 "UPDATE planning_history SET snapshot=?1 WHERE sequence=?2",
-                params![snapshot.to_string(), tx.last_insert_rowid()],
+                params![snapshot.to_string(), saved.version],
             )?;
         }
         tx.commit()?;
-        Ok(item)
+        Ok(saved)
     }
 
     /// Admit the task, link its source and record the item's promotion together.

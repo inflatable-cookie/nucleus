@@ -66,7 +66,10 @@ async function mountLead(detail: LeadDetail) {
     onApprove: async () => "Approved.",
     onPromote: async () => "Promoted",
     onDrop: async () => "Dropped.",
-    onReopen: async () => { calls.push("reopen"); return "Reopened."; },
+    onReopen: async () => {
+      calls.push("reopen");
+      return "Reopened.";
+    },
     onPark: async (reason, revisitAt) => {
       calls.push(`park:${reason}:${revisitAt === null ? "none" : "dated"}`);
       return "Parked.";
@@ -136,9 +139,17 @@ test("1543-10 a due recheck names its reason; Park is refused for a day that is 
 });
 
 test("a past revisit date shows as due while the item remains parked", async () => {
-  const { ui } = await mountLead(lead({ actions: { reopen: null }, parked: {
-    reason: "Waiting", revisitAt: "2020-01-01T09:00:00Z", by: "planner", at: "2019-01-01T09:00:00Z",
-  } }));
+  const { ui } = await mountLead(
+    lead({
+      actions: { reopen: null },
+      parked: {
+        reason: "Waiting",
+        revisitAt: "2020-01-01T09:00:00Z",
+        by: "planner",
+        at: "2019-01-01T09:00:00Z",
+      },
+    }),
+  );
   assert.match(ui.text(), /Parked · Waiting · revisit due/);
   assert.ok(ui.query("Return the lead to the to-do list"));
 });

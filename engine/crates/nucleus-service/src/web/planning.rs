@@ -8,8 +8,8 @@ use axum::{
 use nucleus_core::{Authority, ReportArtifact, profiles::Complexity};
 use nucleus_store::planning::{
     Decision, DecisionAnswerInput, DecisionInput, History, Horizon, Item, ItemContent,
-    ItemDisposition, ItemKind, ItemState, Lane, LaneDisposition, LaneDocument, MAX_TEXT_BYTES,
-    Plan, RecordKind,
+    ItemDisposition, ItemKind, ItemState, ItemWithTimes, Lane, LaneDisposition, LaneDocument,
+    MAX_TEXT_BYTES, Plan, RecordKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -452,7 +452,7 @@ async fn reopen_item(
     Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<ReopenItem>, JsonRejection>,
-) -> Result<Json<Item>, ApiError> {
+) -> Result<Json<ItemWithTimes>, ApiError> {
     let input = body(input)?;
     let (mut state, project) = api
         .service

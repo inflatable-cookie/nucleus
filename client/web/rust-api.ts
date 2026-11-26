@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { repositoryToolQuietLimitSchema } from "../../shared/schema/projects";
 import type { CapabilityLevel } from "../../shared/contracts";
-import { CANONICAL_PROVIDERS, THINKING_LEVELS } from "../../shared/profile-vocabulary";
+import {
+  CANONICAL_PROVIDERS,
+  THINKING_LEVELS,
+} from "../../shared/profile-vocabulary";
 import { createRustBoardTransport } from "./rust-board";
 
 /**
@@ -56,45 +59,67 @@ const profiles = z
     pausedGroups: z.array(z.string()).optional(),
   })
   .loose();
-const dispatch = z.object({
-  usage,
-  usageUntilMs: integer.nullable(),
-  globalSlots: integer,
-  projectDefaultSlots: integer,
-  projectSlotOverrides: z.record(z.string(), integer),
-  providerLimitCooldownSeconds: integer.optional(),
-  mode: dispatchMode.default("running"),
-}).loose();
-const repository = z.object({
-  origin: z.string(),
-  path: z.string(),
-  base: z.string(),
-  requiredChecks: z.array(z.string()),
-  hungToolMinutes: repositoryToolQuietLimitSchema,
-  hostProject: z.string().optional(),
-  hostProjectTitle: z.string().optional(),
-  plannerThreads: z.array(z.string()).optional(),
-}).loose();
-export const project = z.object({
-  plannerClaim: z.object({ thread: z.string(), occurrence: z.string(), replaced: z.string().optional() }).optional(),
-  name: z.string(),
-  archived: z.boolean(),
-  repositories: z.array(repository),
-}).loose();
+const dispatch = z
+  .object({
+    usage,
+    usageUntilMs: integer.nullable(),
+    globalSlots: integer,
+    projectDefaultSlots: integer,
+    projectSlotOverrides: z.record(z.string(), integer),
+    providerLimitCooldownSeconds: integer.optional(),
+    mode: dispatchMode.default("running"),
+  })
+  .loose();
+const repository = z
+  .object({
+    origin: z.string(),
+    path: z.string(),
+    base: z.string(),
+    requiredChecks: z.array(z.string()),
+    hungToolMinutes: repositoryToolQuietLimitSchema,
+    hostProject: z.string().optional(),
+    hostProjectTitle: z.string().optional(),
+    plannerThreads: z.array(z.string()).optional(),
+  })
+  .loose();
+export const project = z
+  .object({
+    plannerClaim: z
+      .object({
+        thread: z.string(),
+        occurrence: z.string(),
+        replaced: z.string().optional(),
+      })
+      .optional(),
+    name: z.string(),
+    archived: z.boolean(),
+    repositories: z.array(repository),
+  })
+  .loose();
 const projects = z.object({ projects: z.record(z.string(), project) }).loose();
-const host = z.object({ endpoint: z.string(), credentialRef: z.string() }).loose();
+const host = z
+  .object({ endpoint: z.string(), credentialRef: z.string() })
+  .loose();
 const hosts = z.object({ t3: host.nullable() }).loose();
-const storage = z.object({
-  enabled: z.boolean(),
-  // Ruling 19 (2026-11-24): an opt-in Barge placement replaces the pinned volume.
-  workVolume: z.object({ volumeId: z.string(), mount: z.string() }).nullable().optional(),
-  placement: z.enum(["internal", "barge"]).optional(),
-  buildsRoot: z.string().nullable().optional(),
-  workRoot: z.string().nullable(),
-  scratchRoot: z.string().nullable(),
-  logRoot: z.string().nullable(),
-  retention: z.object({ keepNewest: integer, maxAgeDays: integer.nullable() }),
-}).loose();
+const storage = z
+  .object({
+    enabled: z.boolean(),
+    // Ruling 19 (2026-11-24): an opt-in Barge placement replaces the pinned volume.
+    workVolume: z
+      .object({ volumeId: z.string(), mount: z.string() })
+      .nullable()
+      .optional(),
+    placement: z.enum(["internal", "barge"]).optional(),
+    buildsRoot: z.string().nullable().optional(),
+    workRoot: z.string().nullable(),
+    scratchRoot: z.string().nullable(),
+    logRoot: z.string().nullable(),
+    retention: z.object({
+      keepNewest: integer,
+      maxAgeDays: integer.nullable(),
+    }),
+  })
+  .loose();
 
 function snapshot<T>(value: z.ZodType<T>) {
   return z.object({ value, revision: z.string(), configured: z.boolean() });
@@ -124,23 +149,25 @@ const backupInventory = z.object({
 });
 export const storageView = z.object({
   settings: snapshot(storage),
-  active: z.object({
-    databaseRoot: z.string(),
-    workRoot: z.string(),
-    backupRoot: z.string(),
-    scratchRoot: z.string(),
-    logRoot: z.string(),
-    home: z.string().optional(),
-    placement: z.enum(["internal", "barge"]).optional(),
-    buildsRoot: z.string().optional(),
-    bargePaths: z
-      .object({
-        worktrees: z.string().optional(),
-        scratch: z.string().optional(),
-        builds: z.string().optional(),
-      })
-      .optional(),
-  }).loose(),
+  active: z
+    .object({
+      databaseRoot: z.string(),
+      workRoot: z.string(),
+      backupRoot: z.string(),
+      scratchRoot: z.string(),
+      logRoot: z.string(),
+      home: z.string().optional(),
+      placement: z.enum(["internal", "barge"]).optional(),
+      buildsRoot: z.string().optional(),
+      bargePaths: z
+        .object({
+          worktrees: z.string().optional(),
+          scratch: z.string().optional(),
+          builds: z.string().optional(),
+        })
+        .optional(),
+    })
+    .loose(),
   backups: backupInventory.optional(),
   configBackups: backupInventory.optional(),
 });
@@ -155,7 +182,9 @@ export const allSettings = z.object({
 // decode the individual records so one invalid row can be reported in place.
 const boardSettings = allSettings.extend({
   projects: projectsView.extend({
-    settings: snapshot(projects.extend({ projects: z.record(z.string(), z.unknown()) })),
+    settings: snapshot(
+      projects.extend({ projects: z.record(z.string(), z.unknown()) }),
+    ),
   }),
   profiles: profilesSnapshot.extend({
     value: profiles.extend({ profiles: z.array(z.unknown()) }),
@@ -175,7 +204,11 @@ const cachedCatalog = z.object({
   status: z.enum(["pending", "current", "stale"]),
 });
 const countMap = z.record(z.string(), integer);
-const usageWindow = z.object({ counts: countMap, groups: countMap, sample: integer });
+const usageWindow = z.object({
+  counts: countMap,
+  groups: countMap,
+  sample: integer,
+});
 const profileUsage = z.object({
   recent: usageWindow,
   worker: usageWindow,
@@ -279,7 +312,9 @@ export type SettingsDomain =
 function shareRead<T>(read: () => Promise<T>) {
   let pending: Promise<T> | undefined;
   return () => {
-    pending ??= read().finally(() => { pending = undefined; });
+    pending ??= read().finally(() => {
+      pending = undefined;
+    });
     return pending;
   };
 }
@@ -305,9 +340,17 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
       revision: string,
       value: unknown,
     ) =>
-      board.read(schema, `/settings/${domain}`, json("PUT", { revision, value })),
-    clearPlanner: (id: string, revision: string) => board.read(projectsView,
-      `/settings/projects/${encodeURIComponent(id)}/clear-planner`, json("POST", { revision })),
+      board.read(
+        schema,
+        `/settings/${domain}`,
+        json("PUT", { revision, value }),
+      ),
+    clearPlanner: (id: string, revision: string) =>
+      board.read(
+        projectsView,
+        `/settings/projects/${encodeURIComponent(id)}/clear-planner`,
+        json("POST", { revision }),
+      ),
     reassign: (revision: string, origin: string, toProject: string) =>
       board.read(
         projectsView,
@@ -315,25 +358,44 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         json("POST", { revision, origin, toProject }),
       ),
     previewProjectRemoval: (id: string) =>
-      board.read(z.object({
-        project, digest: z.string(),
-        tasks: z.array(z.object({ taskId: z.string(), version: integer, label: z.string() })),
-      }), `/settings/projects/${encodeURIComponent(id)}/removal`),
+      board.read(
+        z.object({
+          project,
+          digest: z.string(),
+          tasks: z.array(
+            z.object({
+              taskId: z.string(),
+              version: integer,
+              label: z.string(),
+            }),
+          ),
+        }),
+        `/settings/projects/${encodeURIComponent(id)}/removal`,
+      ),
     removeProject: (id: string, input: { digest: string; reason: string }) =>
-      board.read(z.object({
-        repositories: z.array(z.object({ origin: z.string(), path: z.string() })),
-        removedAtMs: integer,
-      }),
-        `/settings/projects/${encodeURIComponent(id)}/removal`, json("POST", input)),
+      board.read(
+        z.object({
+          repositories: z.array(
+            z.object({ origin: z.string(), path: z.string() }),
+          ),
+          removedAtMs: integer,
+        }),
+        `/settings/projects/${encodeURIComponent(id)}/removal`,
+        json("POST", input),
+      ),
     theme: () => board.read(themeInputs, "/theme"),
     catalog: shareRead(() => board.read(cachedCatalog, "/profiles/catalog")),
     storage: shareRead(() => board.read(storageView, "/settings/storage")),
-    storedProfiles: shareRead(() => board.read(profilesSnapshot, "/settings/profiles")),
-    profileUsage: () => board.read(profileUsage, "/profiles/usage"),
-    clearFallbackPause: (group: string, untilMs: number) => board.read(
-      z.object({ ok: z.literal(true) }), `/profiles/pauses/${encodeURIComponent(group)}/clear`,
-      json("POST", { untilMs }),
+    storedProfiles: shareRead(() =>
+      board.read(profilesSnapshot, "/settings/profiles"),
     ),
+    profileUsage: () => board.read(profileUsage, "/profiles/usage"),
+    clearFallbackPause: (group: string, untilMs: number) =>
+      board.read(
+        z.object({ ok: z.literal(true) }),
+        `/profiles/pauses/${encodeURIComponent(group)}/clear`,
+        json("POST", { untilMs }),
+      ),
     plan: (project: string) => board.read(planView, planning(project, "/plan")),
     setPlan: (project: string, value: RustPlan) =>
       board.read(plan, planning(project, "/plan"), json("PUT", value)),
@@ -379,17 +441,37 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         planning(project, `/items/${encodeURIComponent(id)}/park`),
         json("POST", value),
       ),
-    reopenItem: (project: string, id: string, value: { note?: string; version?: number }) =>
-      board.read(item, planning(project, `/items/${encodeURIComponent(id)}/reopen`), json("POST", value)),
-    dropItem: (project: string, id: string, reason: string | null, disposition?: RustItem["disposition"]) =>
+    reopenItem: (
+      project: string,
+      id: string,
+      value: { note?: string; version?: number },
+    ) =>
+      board.read(
+        item.extend({ version: z.number().int().positive() }),
+        planning(project, `/items/${encodeURIComponent(id)}/reopen`),
+        json("POST", value),
+      ),
+    dropItem: (
+      project: string,
+      id: string,
+      reason: string | null,
+      disposition?: RustItem["disposition"],
+    ) =>
       board.read(
         item,
         planning(project, `/items/${encodeURIComponent(id)}/drop`),
         json("POST", { reason, disposition }),
       ),
-    promoteItem: (project: string, id: string, value: { repository?: string; complexity?: CapabilityLevel }) =>
+    promoteItem: (
+      project: string,
+      id: string,
+      value: { repository?: string; complexity?: CapabilityLevel },
+    ) =>
       board.read(
-        z.object({ identity: z.object({ id: z.string() }), reference: z.string() }),
+        z.object({
+          identity: z.object({ id: z.string() }),
+          reference: z.string(),
+        }),
         planning(project, `/items/${encodeURIComponent(id)}/promote`),
         json("POST", value),
       ),

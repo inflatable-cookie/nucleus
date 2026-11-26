@@ -541,16 +541,17 @@ export function LeadScreen({
             );
           })}
         </View>
-        {planningCeremony && [
-          checkReason && `Check: ${checkReason}`,
-          approveReason && `Approve: ${approveReason}`,
-        ]
-          .filter(Boolean)
-          .map((reason) => (
-            <Text key={reason} style={meta}>
-              {reason}
-            </Text>
-          ))}
+        {planningCeremony &&
+          [
+            checkReason && `Check: ${checkReason}`,
+            approveReason && `Approve: ${approveReason}`,
+          ]
+            .filter(Boolean)
+            .map((reason) => (
+              <Text key={reason} style={meta}>
+                {reason}
+              </Text>
+            ))}
         {lead.repositories.map((repo) => {
           const reason = lead.actions.promote.find(
             (item) => item.origin === repo.origin,
@@ -619,7 +620,9 @@ export function LeadScreen({
           </View>
         </View>
 
-        {(planningCeremony || checkView.kind !== "none" || approvalView.kind !== "none") && (
+        {(planningCeremony ||
+          checkView.kind !== "none" ||
+          approvalView.kind !== "none") && (
           <View accessibilityLabel="Check result and approval" style={column}>
             <Text accessibilityRole="header" style={sectionHeader}>
               Check

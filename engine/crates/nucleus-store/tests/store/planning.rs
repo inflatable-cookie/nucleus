@@ -514,6 +514,7 @@ fn reopen_retains_history_and_fences_stale_versions() {
             store
                 .reopen_item("project", id, Some(version), Some("Again"), STAMP)
                 .unwrap()
+                .item
                 .state,
             ItemState::Open
         );

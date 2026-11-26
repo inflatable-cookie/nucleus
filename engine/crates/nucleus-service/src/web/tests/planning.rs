@@ -624,7 +624,16 @@ async fn reopen_items_preserves_history_and_rejects_stale_versions() {
         let history =
             json_body(get_as(&api, &format!("{PROJECT}/history/item/{id}"), &PLANNER_KEY).await)
                 .await;
+        assert_eq!(result["version"], history[2]["sequence"]);
         assert_eq!(history[2]["snapshot"]["note"], "Again");
+        let edit =
+            json!({"version":result["version"], "title":"Updated", "body":"Body", "lanes":[]});
+        assert_eq!(
+            put_as(&api, &format!("{items}/{id}"), &PLANNER_KEY, &edit)
+                .await
+                .status(),
+            StatusCode::OK
+        );
         if action == "drop" {
             assert_eq!(history[1]["snapshot"]["disposition"], "completed");
         }

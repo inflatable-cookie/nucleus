@@ -91,7 +91,9 @@ export const leadEdit = defineRpc({
 
 export const leadGet = defineRpc({
   name: "lead.get",
-  input: z.object({ id: z.string().min(1), project: z.string().min(1).optional() }).strict(),
+  input: z
+    .object({ id: z.string().min(1), project: z.string().min(1).optional() })
+    .strict(),
   output: leadDetailSchema,
 });
 
@@ -181,18 +183,6 @@ export const leadPark = defineRpc({
   output: leadSchema,
 });
 
-/** Nucleus#1543: return a parked lead to the to-do list now. The version guard is the same as lead.park. */
-export const leadUnpark = defineRpc({
-  name: "lead.unpark",
-  input: z
-    .object({
-      id: z.string().min(1),
-      version: z.number().int().positive(),
-    })
-    .strict(),
-  output: leadSchema,
-});
-
 /** Hand promotion to a question or knowledge change; task and draft targets arrive with one-step promotion. */
 export const leadPromote = defineRpc({
   name: "lead.promote",
@@ -238,13 +228,17 @@ export const leadApprove = defineRpc({
 
 export const leadPromoteTask = defineRpc({
   name: "lead.promote-task",
-  input: sourcePromotionInputSchema.extend({ project: z.string().min(1).optional() }),
+  input: sourcePromotionInputSchema.extend({
+    project: z.string().min(1).optional(),
+  }),
   output: sourcePromotionOutputSchema,
 });
 
 export const papercutPromoteTask = defineRpc({
   name: "papercut.promote-task",
-  input: sourcePromotionInputSchema.extend({ project: z.string().min(1).optional() }),
+  input: sourcePromotionInputSchema.extend({
+    project: z.string().min(1).optional(),
+  }),
   output: sourcePromotionOutputSchema,
 });
 
@@ -281,9 +275,16 @@ export const leadBoard = defineRpc({
       cards: z.array(boardLeadSchema),
       links: z.array(boardLeadLinkSchema),
       // The Rust adapter derives these from the planning items it already read.
-      activity: z.array(z.object({
-        project: z.string(), id: z.string(), at: z.string().nullable(), taskIds: z.array(z.string()),
-      })).optional(),
+      activity: z
+        .array(
+          z.object({
+            project: z.string(),
+            id: z.string(),
+            at: z.string().nullable(),
+            taskIds: z.array(z.string()),
+          }),
+        )
+        .optional(),
     })
     .strict(),
 });
