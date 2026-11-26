@@ -301,7 +301,7 @@ test("the default host picker lives here and saves through the Settings capacity
   }
 });
 
-test("Rust default host choices are registered hosts plus Planner's host", async () => {
+test("Rust default host choices use registered hosts (second-host case uses a fixture)", async () => {
   const oneHost = { ...LIST, hosts: [LIST.hosts[2]!] };
   const single = await mountHosts(
     {
@@ -319,6 +319,7 @@ test("Rust default host choices are registered hosts plus Planner's host", async
     single.done();
   }
 
+  // The Rust Hosts domain currently models T3; this fixture covers a later ADE.
   const withSecondHost = {
     ...LIST,
     hosts: [LIST.hosts[2]!, LIST.hosts[1]!],
