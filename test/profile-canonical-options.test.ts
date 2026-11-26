@@ -23,7 +23,7 @@ const astra = nucleusProfileSchema.parse({
   id: "astra",
   name: "Astra",
   provider: "codex",
-  model: "gpt-6.2-astra",
+  model: "gpt-6-luna",
   modeId: "full-access",
   thinkingOptionId: "high",
   featureValues: {},
@@ -54,8 +54,6 @@ test("a speed T3 can't express excludes the profile from T3 selection with a per
   assert.equal(t3!.available, false, "selection excludes it on T3");
   assert.equal(t3!.problem, "T3Code can't express speed Ultrafast for codex");
 
-  // A model the table can carry but that does not offer the value is the same
-  // canonical fact on that host, named in the operator's words.
 });
 
 test("the editor shows one Speed control from the T3 catalog and choosing it clears host spellings", () => {
@@ -74,19 +72,18 @@ test("the editor shows one Speed control from the T3 catalog and choosing it cle
     terraModel.features.map((feature) => [feature.id, feature.label]),
     [
       ["speed", "Speed"],
-      ["plan-mode", "Plan mode"],
       ["cyber-access", "Cyber access"],
     ],
-    "no service_tier, serviceTier, plan_mode or cyberAccessProgram",
+    "no host-specific speed or cyber-access option names",
   );
-  const astraModel = codex.models.find(
-    (model) => model.id === "gpt-6.2-astra",
+  const lunaModel = codex.models.find(
+    (model) => model.id === "gpt-6-luna",
   )!;
   assert.deepEqual(
-    astraModel.features.map((feature) => feature.id),
-    ["speed", "plan-mode"],
+    lunaModel.features.map((feature) => feature.id),
+    ["speed", "cyber-access"],
   );
-  const speed = astraModel.features[0]!;
+  const speed = lunaModel.features[0]!;
   assert.equal(speed.type, "select");
   assert.deepEqual(
     speed.type === "select"
@@ -115,11 +112,20 @@ test("the editor shows one Speed control from the T3 catalog and choosing it cle
   assert.deepEqual(
     withCanonicalOption(
       "codex",
-      { service_tier: "turbo", plan_mode: false },
+      { service_tier: "turbo", fast_mode: true, plan_mode: false },
       "speed",
       "priority",
     ),
     { plan_mode: false, speed: "priority" },
+  );
+  assert.deepEqual(
+    withCanonicalOption(
+      "codex",
+      { plan_mode: false, speed: "priority" },
+      "plan-mode",
+      true,
+    ),
+    { speed: "priority", "plan-mode": true },
   );
 });
 

@@ -36,7 +36,7 @@ test("folder imports match the known violations; remove resolved edges, never ad
 test("folder rules cover processes, public host indexes and host SDK confinement", () => {
   for (const [from, to, specifier, expected] of [
     [
-      "hosts/example/plugin/forwarder.ts",
+      "hosts/paseo/plugin/forwarder.ts",
       "service/example.ts",
       "../../../service/example",
       "plugin-forwarder",
@@ -49,45 +49,45 @@ test("folder rules cover processes, public host indexes and host SDK confinement
     ],
     ["shared/rpc.ts", "core/store/index.ts", "../core/store", "shared-neutral"],
     [
-      "hosts/example/plugin/forwarder.ts",
+      "hosts/paseo/plugin/forwarder.ts",
       "core/store/index.ts",
       "../../../core/store",
       "plugin-forwarder",
     ],
     [
-      "hosts/example/adapter/client.ts",
+      "hosts/paseo/adapter/client.ts",
       "core/store/index.ts",
       "../../../core/store",
       "host-interface",
     ],
     [
-      "hosts/example/adapter/client.ts",
+      "hosts/paseo/adapter/client.ts",
       "core/example.ts",
       "../../../core/example",
       "host-interface",
     ],
     [
       "service/runtime/index.ts",
-      "hosts/example/adapter/client.ts",
-      "../../hosts/example/adapter/client",
+      "hosts/paseo/adapter/client.ts",
+      "../../hosts/paseo/adapter/client",
       "host-public-index",
     ],
     [
       "service/runtime/index.ts",
-      "hosts/example/index.ts",
-      "../../hosts/example",
+      "hosts/paseo/index.ts",
+      "../../hosts/paseo",
       null,
     ],
     [
       "service/example.ts",
-      "hosts/example/index.mjs",
-      "../../hosts/example/index.mjs",
+      "hosts/paseo/index.mjs",
+      "../../hosts/paseo/index.mjs",
       null,
     ],
     [
       "client/board/card.tsx",
-      "hosts/example/index.ts",
-      "../../hosts/example",
+      "hosts/paseo/index.ts",
+      "../../hosts/paseo",
       "client-neutral",
     ],
     [
@@ -102,7 +102,7 @@ test("folder rules cover processes, public host indexes and host SDK confinement
       "@getpaseo/client",
       "host-sdk-location",
     ],
-    ["hosts/example/index.ts", "@getpaseo/client", "@getpaseo/client", null],
+    ["hosts/paseo/index.ts", "@getpaseo/client", "@getpaseo/client", null],
     ["core/review/report.ts", "shared/rpc.ts", "../../shared/rpc", null],
     ["client/board/card.tsx", "client/shell/index.ts", "../shell", null],
   ] as const)
@@ -140,12 +140,12 @@ test("declaration modules enforce type boundaries and resolve declaration target
   const files = {
     "shared/legacy.d.ts": "import type { Core } from '../core/types';",
     "shared/module.d.mts":
-      "export type { Host } from '../hosts/example/types.mjs';",
+      "export type { Host } from '../hosts/paseo/types.mjs';",
     "shared/common.d.cts": "import Core = require('../core/common.cjs');",
     "core/types.d.ts": "export interface Core {}",
     "core/common.d.cts": "export interface Core {}",
     "core/sdk.d.mts": "export type Client = import('@getpaseo/client').Client;",
-    "hosts/example/types.d.mts": "export interface Host {}",
+    "hosts/paseo/types.d.mts": "export interface Host {}",
     "shared/allowed.d.mts": "export type { Neutral } from './neutral.mjs';",
     "shared/neutral.d.mts": "export interface Neutral {}",
   };
@@ -157,7 +157,7 @@ test("declaration modules enforce type boundaries and resolve declaration target
     "host-sdk-location: core/sdk.d.mts -> @getpaseo/client [@getpaseo/client]",
     "shared-neutral: shared/common.d.cts -> ../core/common.cjs [core/common.d.cts]",
     "shared-neutral: shared/legacy.d.ts -> ../core/types [core/types.d.ts]",
-    "shared-neutral: shared/module.d.mts -> ../hosts/example/types.mjs [hosts/example/types.d.mts]",
+    "shared-neutral: shared/module.d.mts -> ../hosts/paseo/types.mjs [hosts/paseo/types.d.mts]",
   ]);
 });
 
@@ -170,15 +170,15 @@ test("host environment gate rejects planted core literals and confines each host
   mkdirSync(join(fixture, "core"));
   writeFileSync(
     join(fixture, "core", "planted.ts"),
-    "export const planted = 'T3_PLANTED';",
+    "export const planted = 'PASEO_PLANTED';",
   );
   assert.deepEqual(checkHostEnvironment(fixture), [
-    "core/planted.ts: host environment T3_PLANTED belongs in its host integration (1 occurrences)",
+    "core/planted.ts: host environment PASEO_PLANTED belongs in its host integration (1 occurrences)",
   ]);
   assert.deepEqual(
     hostEnvironmentNames(
-      "hosts/example/environment.mjs",
-      "const id = process.env.T3_AGENT_ID;",
+      "hosts/paseo/environment.mjs",
+      "const id = process.env.PASEO_AGENT_ID;",
     ),
     [],
   );
@@ -191,7 +191,7 @@ test("host environment gate rejects planted core literals and confines each host
   );
   assert.deepEqual(
     hostEnvironmentNames(
-      "hosts/example/environment.mjs",
+      "hosts/paseo/environment.mjs",
       "const id = process.env.T3_THREAD_ID;",
     ),
     ["T3_THREAD_ID"],
@@ -204,14 +204,14 @@ test("host environment gate rejects planted core literals and confines each host
     [],
   );
   assert.deepEqual(
-    hostEnvironmentNames("core/escaped.ts", "const key = 'T3_\\u0041GENT_ID';"),
-    ["T3_AGENT_ID"],
+    hostEnvironmentNames("core/escaped.ts", "const key = 'PASEO_\\u0041GENT_ID';"),
+    ["PASEO_AGENT_ID"],
   );
   assert.deepEqual(
     hostEnvironmentNames(
       "core/env.ts",
-      '// T3_AGENT_ID must stay in its host\nconst x = { T3_HOME: "x" };',
+      '// PASEO_AGENT_ID must stay in its host\nconst x = { PASEO_HOME: "x" };',
     ),
-    ["T3_AGENT_ID", "T3_HOME"],
+    ["PASEO_AGENT_ID", "PASEO_HOME"],
   );
 });

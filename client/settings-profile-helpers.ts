@@ -23,8 +23,17 @@ import {
   isCanonicalOption,
   isCanonicalProvider,
   thinkingCarriers,
+  type CanonicalOption,
 } from "../shared/profile-vocabulary";
 import { HOST_VOCABULARIES } from "../hosts/vocabularies";
+
+/** Legacy provider option keys removed when the canonical option is edited. */
+const LEGACY_OPTION_KEYS: Readonly<
+  Partial<Record<CanonicalOption, readonly string[]>>
+> = {
+  speed: ["service_tier", "fast_mode"],
+  "plan-mode": ["plan_mode"],
+};
 
 /** The five rotation-weight stops and the plain words each reads as; Default is the centre (Spec 053). */
 export const WEIGHT_STOP_LABELS: Record<api.ProfileWeight, string> = {
@@ -179,8 +188,8 @@ export function hiddenThinkingValues(
 
 /**
  * Feature values with one canonical option set (nucleus#1386): any host's own
- * spelling of that option for this provider (`service_tier`, `serviceTier`) a
- * migration left behind goes, so the editor's one control is the only value.
+ * spelling or known legacy spelling of that option goes, so the editor's one
+ * control is the only value.
  */
 export function withCanonicalOption(
   provider: string,
@@ -191,10 +200,13 @@ export function withCanonicalOption(
   if (!isCanonicalOption(option) || !isCanonicalProvider(provider))
     return { ...featureValues, [option]: value };
   const carriers = new Set(
-    Object.values(HOST_VOCABULARIES).flatMap((vocabulary) => {
-      const carrier = vocabulary.providers[provider]?.options?.[option];
-      return carrier ? [carrier.id] : [];
-    }),
+    [
+      ...(LEGACY_OPTION_KEYS[option] ?? []),
+      ...Object.values(HOST_VOCABULARIES).flatMap((vocabulary) => {
+        const carrier = vocabulary.providers[provider]?.options?.[option];
+        return carrier ? [carrier.id] : [];
+      }),
+    ],
   );
   return {
     ...Object.fromEntries(
