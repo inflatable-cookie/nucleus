@@ -89,9 +89,7 @@ impl PublicationError {
             Self::AccountUnavailable => {
                 blocked("Check the reviewer account in Settings, then hold and release the task.")
             }
-            Self::AccessRefused => blocked(
-                "GitHub refused access to publish the review. Check repository access for the reviewer account, then use Move to review.",
-            ),
+            Self::AccessRefused => blocked(PublicationBlock::AccessRefused.wait_cause()),
             Self::Blocked {
                 error,
                 pull_url,
@@ -100,15 +98,11 @@ impl PublicationError {
                 "{} Last review POST to {pull_url}: {response}",
                 error.wait_cause()
             )),
-            Self::Refused => blocked(
-                "GitHub refused the review. Inspect the pull request, then use Move to review.",
-            ),
+            Self::Refused => blocked(PublicationBlock::Refused.wait_cause()),
             Self::Unverified => blocked(
                 "The recorded review could not be verified. Inspect the pull request, then use Move to review if needed.",
             ),
-            Self::AttemptsExhausted => blocked(
-                "GitHub has not confirmed the review after three attempts. Inspect the pull request, then use Move to review.",
-            ),
+            Self::AttemptsExhausted => blocked(PublicationBlock::AttemptsExhausted.wait_cause()),
             Self::UnknownDelivery => (
                 WaitReason::ForgeUnknown,
                 WaitDetail::ConfirmingDelivery("Checking GitHub for the original review."),
