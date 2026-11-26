@@ -1,8 +1,8 @@
 use nucleus_core::{
     Action, Answer, Authority, CallbackCredential, CheckState, CloseWorkspace, Command,
     CommandError, Entry, Forge, Head, Host, Identity, Launch, LaunchInputs, Observation, Observed,
-    Phase, PullRequest, Question, Repair, Report, RetainedThread, Review, Role, RunState, Task,
-    Verdict, WaitReason, Workspace, decide,
+    Phase, PullRequest, Question, QueuePriority, Repair, Report, RetainedThread, Review, Role,
+    RunState, Task, Verdict, WaitReason, Workspace, decide,
 };
 
 const SEED: [u8; 32] = [7; 32];
@@ -1302,4 +1302,68 @@ fn a_legacy_merge_blocked_answer_uses_the_code_owner_continuation() {
         decide(&ready_for_merge(), &gate),
         Action::Wait(WaitReason::ChecksUnreported)
     );
+}
+
+#[test]
+fn amend_rejects_a_changed_queue_priority_while_allowing_unrelated_amendments() {
+    let obs = observation();
+    let mut normal = task(Entry::Brief);
+    for priority in ["promoted", "normal"] {
+        assert_eq!(
+            normal.command(
+                Command::Amend(format!(
+                    "---\nqueue:\n  complexity: low\n  priority: {priority}\n---\n# Body"
+                )),
+                &planner(),
+                &obs,
+            ),
+            Err(CommandError::QueuePriorityChanged)
+        );
+    }
+    assert_eq!(normal.brief().version, 1);
+    assert_eq!(normal.queue_priority(), QueuePriority::Normal);
+
+    // Command-driven promotion survives a prose amendment that omits queue.priority.
+    normal.set_queue_priority(QueuePriority::Promoted);
+    normal
+        .command(Command::Amend("Updated greeting".into()), &planner(), &obs)
+        .expect("prose-only amend keeps command priority");
+    assert_eq!(normal.brief().version, 2);
+    assert_eq!(normal.queue_priority(), QueuePriority::Promoted);
+
+    let mut promoted = Task::new(
+        normal.identity().clone(),
+        "---\nqueue:\n  complexity: low\n  priority: promoted\n---\n# Promoted".into(),
+        None,
+    );
+    assert_eq!(promoted.queue_priority(), QueuePriority::Promoted);
+    assert_eq!(
+        promoted.command(
+            Command::Amend("---\nqueue:\n  complexity: low\n---\n# Dropped".into()),
+            &planner(),
+            &obs,
+        ),
+        Err(CommandError::QueuePriorityChanged)
+    );
+    assert_eq!(
+        promoted.command(
+            Command::Amend(
+                "---\nqueue:\n  complexity: low\n  priority: normal\n---\n# Demoted".into()
+            ),
+            &planner(),
+            &obs,
+        ),
+        Err(CommandError::QueuePriorityChanged)
+    );
+    promoted
+        .command(
+            Command::Amend(
+                "---\nqueue:\n  complexity: low\n  priority: promoted\n---\n# Clarified".into(),
+            ),
+            &planner(),
+            &obs,
+        )
+        .expect("keeping queue.priority allows amend");
+    assert_eq!(promoted.brief().version, 2);
+    assert_eq!(promoted.queue_priority(), QueuePriority::Promoted);
 }

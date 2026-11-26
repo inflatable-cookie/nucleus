@@ -37,7 +37,7 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   ```
 
   Set `queue.notifyOriginOnCloseout: true` on admission or amend for a completion notice.
-  Set `queue.priority: promoted` under `queue` to dispatch ahead of normal tasks when slots free.
+  Set `queue.priority: promoted` under `queue` at admission only to dispatch ahead of normal tasks when slots free (brief amendments cannot change `queue.priority`; use `promote` or `demote` instead).
   Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
   `task.add` resolves those references before dispatch can start.
 
