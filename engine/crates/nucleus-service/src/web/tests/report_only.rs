@@ -396,7 +396,7 @@ async fn report_only_ticket_revision_and_historical_owner_acceptance() {
     let observe = |row: &Value| {
         fixture.service.host.fixture_held_shell(&json!({
             "kind":"snapshot","snapshot":{"projects":[],"threads":[row],"snapshotSequence":9}
-        }))
+        }));
     };
     observe(&worker);
     assert_eq!(
