@@ -1202,27 +1202,7 @@ async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
         assert_eq!(row["lanes"], json!(["delivery", "release", "shared"]));
     }
 
-    let added = caller_request(
-        &api,
-        Method::POST,
-        "/v1/planning/product/items",
-        "alpha-planner",
-        json!({"kind":"papercut","title":"Fixture issue","body":"Use the selected repository.","lanes":[]}),
-    )
-    .await;
-    assert_eq!(added.status(), StatusCode::CREATED);
-    let item = json_body(added).await;
-    let id = item["id"].as_str().unwrap();
-    let promoted = caller_request(
-        &api,
-        Method::POST,
-        &format!("/v1/planning/product/items/{id}/promote"),
-        "alpha-planner",
-        json!({"complexity":"medium","repository":BETA_REPO}),
-    )
-    .await;
-    assert_eq!(promoted.status(), StatusCode::CREATED);
-    let promoted = json_body(promoted).await;
+    let (_, promoted) = promote_fixture_papercut(&api, BETA_REPO).await;
     assert_eq!(promoted["identity"]["repository"], BETA_REPO);
     assert_eq!(promoted["reference"], "second#2");
     assert_eq!(promoted["title"], "Fixture issue");
@@ -1242,6 +1222,78 @@ async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
             .unwrap()
             .ends_with("Use the selected repository.")
     );
+}
+
+async fn promote_fixture_papercut(api: &Router, repository: &str) -> (String, Value) {
+    let added = caller_request(
+        api,
+        Method::POST,
+        "/v1/planning/product/items",
+        "alpha-planner",
+        json!({"kind":"papercut","title":"Fixture issue","body":"Use the selected repository.","lanes":[]}),
+    )
+    .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+    let item = json_body(added).await;
+    let id = item["id"].as_str().unwrap();
+    let promoted = caller_request(
+        api,
+        Method::POST,
+        &format!("/v1/planning/product/items/{id}/promote"),
+        "alpha-planner",
+        json!({"complexity":"medium","repository":repository}),
+    )
+    .await;
+    assert_eq!(promoted.status(), StatusCode::CREATED);
+    let promoted = json_body(promoted).await;
+    (id.to_owned(), promoted)
+}
+
+#[tokio::test]
+async fn finished_card_reads_the_updated_source_title() {
+    let registry = registry_with_options(BETA_REPO, true).await;
+    registry.enroll("alpha-planner").await;
+    let api = registry_board_api(&registry);
+    let operator = pair_board(&api, &BOARD_KEY).await;
+    let (id, promoted) = promote_fixture_papercut(&api, ALPHA_REPO).await;
+    let task = promoted["identity"]["id"].as_str().unwrap();
+    registry
+        .service
+        .command(
+            task,
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            Command::Cancel,
+        )
+        .await
+        .unwrap();
+    let card = async || {
+        let list = read_paired_task(&api, "/api/engine/tasks", &operator).await;
+        list.as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["identity"]["id"] == task)
+            .unwrap()
+            .clone()
+    };
+    let prior = card().await;
+    assert_eq!(prior["phase"], "cancelled");
+    assert_eq!(prior["title"], "Fixture issue");
+    let edit = caller_request(
+        &api,
+        Method::PUT,
+        &format!("/v1/planning/product/items/{id}"),
+        "alpha-planner",
+        json!({"title":"Renamed issue","body":"Use the selected repository.","lanes":[]}),
+    )
+    .await;
+    assert_eq!(edit.status(), StatusCode::OK);
+    let refreshed = card().await;
+    let detail = read_paired_task(&api, &format!("/api/engine/tasks/{task}"), &operator).await;
+    assert_eq!(refreshed["version"], prior["version"]);
+    assert_eq!(detail["title"], "Renamed issue");
+    assert_eq!(refreshed["title"], detail["title"]);
 }
 
 #[tokio::test]
