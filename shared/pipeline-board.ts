@@ -6,7 +6,6 @@ import type {
   Project,
   TaskSummary,
 } from "./contracts";
-import type { LaneView } from "./contracts";
 import { effectiveSelection } from "./project-scope";
 import { taskAttention } from "./task-attention";
 
@@ -33,7 +32,6 @@ export type PipelineCard =
     }
   | { kind: "decision"; id: string; lanes: string[]; value: DecisionView }
   | { kind: "raised"; id: string; lanes: string[]; value: TaskSummary }
-  | { kind: "lane_drain"; id: string; lanes: string[]; value: LaneView }
   /** Tom, 2026-11-01: a milestone QA run is its own card, not a task. It carries no lanes. */
   | { kind: "task"; id: string; lanes: string[]; value: TaskSummary };
 
@@ -209,11 +207,9 @@ function taskCardColumn(task: TaskSummary): PipelineColumn {
 export function pipelineColumn(card: PipelineCard): PipelineColumn {
   if (card.kind === "lead") return "Triage";
   // Spec 032: the Decisions column holds agent decisions and Queue-raised work.
-  // Spec 041: a drained lane that outlived its escalation timer joins them.
   if (
     card.kind === "decision" ||
-    card.kind === "raised" ||
-    card.kind === "lane_drain"
+    card.kind === "raised"
   )
     return "Decisions";
   // Spec 026: an accepted submission shows queued until its task exists.
@@ -235,8 +231,6 @@ export type PipelineScope = {
   /** Spec 032: open decisions; the caller filters by status. */
   decisions?: readonly DecisionView[];
   pendingSubmissions?: PendingSubmission[];
-  /** Spec 041: drained lanes and boards escalate into the decisions view. */
-  lanes?: readonly LaneView[];
   /** Promoted leads outside the card set, carried so an open decision they link keeps its lanes and scoping. */
   linkedLeads?: readonly BoardLeadLink[];
 };
@@ -363,21 +357,6 @@ function collectPipelineCards(input: PipelineScope): PipelineCard[] {
         };
         return [card];
       }),
-  );
-  // Spec 041: a drained lane whose escalation timer passed is the plan owner's unanswered
-  // prompt; it joins the decisions view with the merge holds. A drained board never joins:
-  // it is not an operator decision (Tom, 2026-10-15).
-  const laneInScope = (lane: LaneView) =>
-    lane.repositories.some((repo) => inScope(repo.origin, repo.path));
-  cards.push(
-    ...(input.lanes ?? [])
-      .filter((lane) => lane.drain?.escalatedAt && laneInScope(lane))
-      .map((value) => ({
-        kind: "lane_drain" as const,
-        id: `lane-drain:${value.key}`,
-        lanes: [value.key],
-        value,
-      })),
   );
   return cards;
 }

@@ -1,0 +1,1 @@
+- Upgrade saved settings to version 2 at startup with verified backups, remove retired settings, and report unknown fields by file and key. Saved project filters in the old format ask for a fresh selection.

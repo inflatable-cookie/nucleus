@@ -65,8 +65,6 @@ export function needsActionAt(card: PipelineCard): number {
   const at =
     card.kind === "decision"
       ? card.value.createdAt
-      : card.kind === "lane_drain"
-        ? (card.value.drain?.escalatedAt ?? card.value.drain?.since)
         : card.kind === "task" || card.kind === "raised"
           ? card.value.hold?.since
           : undefined;

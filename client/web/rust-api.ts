@@ -125,7 +125,6 @@ export const profilesSnapshot = snapshot(profiles).extend({
 });
 export const dispatchSnapshot = snapshot(dispatch);
 export const projectsView = z.object({
-  legacyScopeKeys: z.record(z.string(), z.string()).optional(),
   settings: snapshot(projects),
   verifiedPlanners: z.record(z.string(), z.array(z.string())).optional(),
   resolvedPlanners: z.record(z.string(), z.string().nullable()),

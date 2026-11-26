@@ -2674,8 +2674,7 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
         "revision": starting["settings"]["revision"],
         "value": {"projects": {
             "alpha": {"name": "Alpha", "repositories": [{
-                "origin": REPOSITORY, "path": service.fixture().checkout, "base": service.fixture().base,
-                "requiredChecks": ["CI"]
+                "origin": REPOSITORY, "path": service.fixture().checkout, "base": service.fixture().base
             }]},
             "beta": {"name": "Beta"},
         }},
@@ -2690,13 +2689,6 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
         saved["resolvedPlanners"],
         json!({"alpha": null, "beta": null})
     );
-    let alpha_repo = &saved["settings"]["value"]["projects"]["alpha"]["repositories"][0];
-    assert!(
-        alpha_repo.get("hungToolMinutes").is_none(),
-        "the retired hung-tool limit is dropped on save"
-    );
-    assert!(alpha_repo.get("requiredChecks").is_none());
-
     assert_eq!(
         reads.load(Ordering::Relaxed),
         0,
@@ -2731,7 +2723,6 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     assert_eq!(projects["alpha"]["repositories"], json!([]));
     let beta_repo = &projects["beta"]["repositories"][0];
     assert_eq!(beta_repo["origin"], json!(REPOSITORY));
-    assert!(beta_repo.get("requiredChecks").is_none());
     assert_eq!(
         post_as(
             &api,
