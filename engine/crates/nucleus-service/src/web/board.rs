@@ -333,10 +333,15 @@ async fn pair(
         .remove(&link)
         .filter(|grant| grant.expires > now)
         .ok_or(ApiError::Unauthorized)?;
-    grants
+    let evicted = grants
         .sessions
         .insert(&session, grant.authority, grant.scope, now_ms(), MAX_GRANTS)
         .map_err(|_| ApiError::BoardUnavailable)?;
+    if evicted > 0 {
+        // An evicted session must not keep its open event stream. Streams that
+        // are still paired reconnect with their cookies.
+        board.revocations.send_replace(());
+    }
     Ok((
         StatusCode::NO_CONTENT,
         [(SET_COOKIE, session_cookie(&session)?)],
