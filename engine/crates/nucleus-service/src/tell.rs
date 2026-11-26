@@ -584,16 +584,22 @@ impl Service {
             member.direct.is_none()
                 && claimed_thread(state, &member.to_project) != Some(&planner.identity.id)
         });
-        let text = notice_text(
-            &row.from_project,
-            &names,
-            &row.text,
-            &handle,
-            fallback,
-            row.gone_sender
-                .as_ref()
-                .map(|_| project_name(state, &row.to_project)),
-        );
+        let gone = row
+            .gone_sender
+            .as_ref()
+            .map(|_| project_name(state, &row.to_project));
+        let text = if row.request_key.starts_with("decision-") {
+            decision_notice_text(&row.text, gone)
+        } else {
+            notice_text(
+                &row.from_project,
+                &names,
+                &row.text,
+                &handle,
+                fallback,
+                gone,
+            )
+        };
         Ok(PlannedTell {
             handle,
             planner: planner.clone(),
@@ -790,6 +796,15 @@ fn notice_text(
     format!(
         "Nucleus message from project {from}{recipients}\n\n{text}\n{routing}\nInformation only. Only this thread can use the reply route for seven days. It reaches the sender, or their project planner if the sender is gone.\nReply: nucleus tell '{{\"to\":{{\"reply\":\"{handle}\"}}}}' 'YOUR MESSAGE'"
     )
+}
+
+fn decision_notice_text(text: &str, gone: Option<&str>) -> String {
+    match gone {
+        Some(project) => {
+            format!("{text}\n\nFallback delivery. The asking planner of project {project} is gone.")
+        }
+        None => text.to_owned(),
+    }
 }
 
 fn tell_projects<'a>(

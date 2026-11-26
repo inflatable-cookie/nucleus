@@ -855,3 +855,658 @@ fn fixture_inbox_thread(step: usize) -> Value {
 fn success(request: &Value, value: &Value) -> Value {
     json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":value}})
 }
+
+struct DecisionNoticeFixture {
+    _home: tempfile::TempDir,
+    service: Arc<Service>,
+    api: axum::Router,
+    sends: Arc<Mutex<Vec<Value>>>,
+    lost_next: Arc<AtomicBool>,
+    started: Arc<AtomicBool>,
+    archived: Arc<AtomicBool>,
+    server: tokio::task::JoinHandle<()>,
+}
+
+const T3_KEY: [u8; 32] = [8; 32];
+const OPERATOR_KEY: [u8; 32] = [9; 32];
+
+impl Drop for DecisionNoticeFixture {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+
+#[derive(Clone)]
+struct NoticeHostState {
+    sends: Arc<Mutex<Vec<Value>>>,
+    lost_next: Arc<AtomicBool>,
+    started: Arc<AtomicBool>,
+    archived: Arc<AtomicBool>,
+    checkout: std::path::PathBuf,
+}
+
+fn decision_notice_host_reply(request: &Value, state: &NoticeHostState) -> Value {
+    let value = match request["tag"].as_str() {
+        Some("orchestration.subscribeShell") => json!({
+            "kind": "snapshot",
+            "snapshot": {"projects": [
+                {"id": "alpha-native", "workspaceRoot": state.checkout, "title": "Exact T3 Alpha"}
+            ], "threads": []}
+        }),
+        Some("orchestration.subscribeThread") => {
+            let id = request["payload"]["threadId"].as_str().unwrap();
+            let sends = state.sends.lock().unwrap();
+            let latest = sends
+                .iter()
+                .rev()
+                .find(|send| send["threadId"] == id && send["accepted"] == true);
+            let (messages, runs) = if state.started.load(Ordering::Relaxed)
+                && let Some(msg) = latest
+            {
+                let mid = &msg["messageId"];
+                (
+                    json!([{"id": mid, "runId": "notice-run"}]),
+                    json!([{"id": "notice-run", "userMessageId": mid, "status": "running", "startedAt": "2026-11-26T11:47:00Z"}]),
+                )
+            } else {
+                (
+                    json!(
+                        latest
+                            .map(|msg| json!({"id": msg["messageId"]}))
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                    ),
+                    json!([]),
+                )
+            };
+            json!({
+                "kind": "snapshot", "snapshotSequence": 16,
+                "projection": {
+                    "thread": {
+                        "id": id,
+                        "projectId": "alpha-native",
+                        "archivedAt": (id == "alpha-planner" && state.archived.load(Ordering::Relaxed))
+                            .then_some("2026-11-26T11:45:00Z"),
+                    },
+                    "messages": messages,
+                    "runs": runs,
+                }
+            })
+        }
+        Some("orchestration.dispatchCommand") => {
+            let mut payload = request["payload"].clone();
+            assert_eq!(payload["type"], "message.dispatch");
+            let is_uncertain = state.lost_next.swap(false, Ordering::Relaxed);
+            payload["accepted"] = json!(true);
+            let command = payload["commandId"].clone();
+            state.sends.lock().unwrap().push(payload);
+            if is_uncertain {
+                return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Failure","cause":[
+                    {"_tag":"Fail","error":{
+                        "_tag":"OrchestrationV2DispatchCommandError",
+                        "commandId": command, "commandType": "message.dispatch",
+                        "cause":{"name":"UnknownError","commandId":command,"commandType":"message.dispatch","message":"fixture"}
+                    }}
+                ]}});
+            }
+            return success(request, &json!({"sequence": 17}));
+        }
+        _ => panic!("unexpected T3 request {request}"),
+    };
+    json!({"_tag":"Chunk","requestId":request["id"],"values":[value,{"kind":"synchronized"}]})
+}
+
+impl DecisionNoticeFixture {
+    async fn open() -> Self {
+        let (home, legacy) = fixture(GitHub::new("unused").unwrap());
+        let checkout = legacy.fixture().checkout.clone();
+        crate::tests::git(
+            &checkout,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+        let settings = legacy.settings.clone();
+        drop(legacy);
+
+        let sends = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let lost_next = Arc::new(AtomicBool::new(false));
+        let started = Arc::new(AtomicBool::new(false));
+        let archived = Arc::new(AtomicBool::new(false));
+        let host_state = NoticeHostState {
+            sends: Arc::clone(&sends),
+            lost_next: Arc::clone(&lost_next),
+            started: Arc::clone(&started),
+            archived: Arc::clone(&archived),
+            checkout: checkout.clone(),
+        };
+        let (host, server) =
+            native_fixture(move |request| decision_notice_host_reply(request, &host_state)).await;
+
+        host.fixture_project_shell(
+            &json!({"projects": [{"id": "alpha-native", "workspaceRoot": checkout, "title": "Exact T3 Alpha"}], "threads": []}),
+            PROVIDER,
+        );
+        let mut service = Service::open_projects(
+            &settings,
+            PROVIDER.into(),
+            host,
+            GitHub::new("unused").unwrap(),
+            "127.0.0.1:9".parse().unwrap(),
+            std::env::current_exe().unwrap(),
+        )
+        .unwrap();
+        service.native_inbox = Some(NativeInbox::open(&service).unwrap());
+        observe_pinned_inbox(service.native_inbox.as_ref().unwrap(), None);
+        let service = Arc::new(service);
+        let api = crate::web::router_with_t3_callers(
+            Arc::clone(&service),
+            [crate::Controller {
+                credential: OPERATOR_KEY,
+                authority: Authority::Operator {
+                    actor: "operator".into(),
+                },
+            }],
+            Some(T3_KEY),
+        );
+
+        Self {
+            _home: home,
+            service,
+            api,
+            sends,
+            lost_next,
+            started,
+            archived,
+            server,
+        }
+    }
+
+    async fn enroll(&self, actor: &str) {
+        {
+            let mut state = self.service.state.lock().await;
+            assert!(matches!(
+                self.service.request_enrollment(&mut state, actor),
+                ServiceError::PlannerEnrollmentPending(_)
+            ));
+        }
+        assert_eq!(self.service.take_enrollment().await.as_deref(), Some(actor));
+        self.service.complete_enrollment(actor).await;
+    }
+
+    async fn project_id(&self, actor: &str) -> String {
+        self.service
+            .state
+            .lock()
+            .await
+            .live_planner_project(actor)
+            .unwrap()
+            .to_owned()
+    }
+
+    async fn t3_post(&self, actor: &str, path: &str, body: Value) -> Value {
+        use tower::ServiceExt as _;
+        let request = axum::http::Request::builder()
+            .method(Method::POST)
+            .uri(path)
+            .header(axum::http::header::HOST, "127.0.0.1:9")
+            .header("authorization", format!("Bearer {}", hex::encode(T3_KEY)))
+            .header("x-nucleus-t3-caller", actor)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let response = self.api.clone().oneshot(request).await.unwrap();
+        assert!(response.status().is_success(), "{}", response.status());
+        json_body(response).await
+    }
+
+    async fn answer_via_inbox(&self, project: &str, decision_id: &str, option_id: &str) {
+        let key = self.service.native_inbox.as_ref().unwrap().credential;
+        self.service
+            .answer_inbox(
+                &key,
+                InboxAnswer {
+                    field: inbox_field(project, decision_id),
+                    option_id: option_id.into(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn advance_tell(&self) -> Result<(), ServiceError> {
+        let row = self
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .next_tell()?
+            .expect("queued tell");
+        self.service.advance_tell(&row).await
+    }
+
+    async fn has_pending_tell(&self) -> bool {
+        self.service
+            .state
+            .lock()
+            .await
+            .store
+            .next_tell()
+            .unwrap()
+            .is_some()
+    }
+}
+
+fn decision_input(question: &str) -> DecisionInput {
+    DecisionInput {
+        question: question.into(),
+        options: vec![
+            DecisionOption {
+                id: "ship".into(),
+                label: "Ship now".into(),
+            },
+            DecisionOption {
+                id: "hold".into(),
+                label: "Hold release".into(),
+            },
+        ],
+    }
+}
+
+async fn check_inbox_and_replay(fixture: &DecisionNoticeFixture, project: &str) {
+    let alpha = Authority::Planner {
+        actor: "alpha-planner".into(),
+    };
+    let operator = Authority::Operator {
+        actor: "operator".into(),
+    };
+    let first = fixture
+        .service
+        .add_decision(
+            project,
+            decision_input("Ship the fixture   release?"),
+            &alpha,
+        )
+        .await
+        .unwrap();
+    fixture.answer_via_inbox(project, &first.id, "ship").await;
+    fixture.lost_next.store(true, Ordering::Relaxed);
+    assert!(matches!(
+        fixture.advance_tell().await,
+        Err(ServiceError::Host(_))
+    ));
+    assert!(matches!(
+        fixture
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .next_tell()
+            .unwrap()
+            .unwrap()
+            .state,
+        nucleus_store::TellState::InFlight(_)
+    ));
+    fixture.started.store(true, Ordering::Relaxed);
+    fixture.advance_tell().await.unwrap();
+    assert!(!fixture.has_pending_tell().await);
+    {
+        let sends = fixture.sends.lock().unwrap();
+        assert_eq!(sends.len(), 1);
+        assert_eq!(sends[0]["threadId"], "alpha-planner");
+        let text = sends[0]["text"].as_str().unwrap();
+        assert!(text.contains(&first.id));
+        assert!(text.contains("Ship the fixture release?"));
+        assert!(text.contains("Ship now (ship)"));
+        assert!(text.contains("UTC"));
+        assert!(!text.contains("Reply: nucleus tell"));
+    }
+
+    // Replaying the same answer sends nothing more; changing option or note sends once.
+    fixture
+        .service
+        .answer_decision(
+            project,
+            &first.id,
+            DecisionAnswerInput {
+                option_id: "ship".into(),
+                note: None,
+            },
+            &operator,
+        )
+        .await
+        .unwrap();
+    assert!(!fixture.has_pending_tell().await);
+    for note in ["Wait for CI", "  Wait for CI  "] {
+        fixture
+            .service
+            .answer_decision(
+                project,
+                &first.id,
+                DecisionAnswerInput {
+                    option_id: "hold".into(),
+                    note: Some(note.into()),
+                },
+                &operator,
+            )
+            .await
+            .unwrap();
+    }
+    fixture.advance_tell().await.unwrap();
+    fixture.advance_tell().await.unwrap();
+    assert!(!fixture.has_pending_tell().await);
+    let sends = fixture.sends.lock().unwrap();
+    assert_eq!(sends.len(), 2);
+    let text = sends[1]["text"].as_str().unwrap();
+    assert!(text.contains("Hold release (hold)"));
+    assert!(text.contains("Note: Wait for CI"));
+}
+
+async fn check_gone_author_fallback(fixture: &DecisionNoticeFixture, project: &str) {
+    let alpha = Authority::Planner {
+        actor: "alpha-planner".into(),
+    };
+    let second = fixture
+        .service
+        .add_decision(project, decision_input("Fallback question?"), &alpha)
+        .await
+        .unwrap();
+    fixture.archived.store(true, Ordering::Relaxed);
+    fixture.answer_via_inbox(project, &second.id, "ship").await;
+    fixture.advance_tell().await.unwrap();
+    fixture.advance_tell().await.unwrap();
+    fixture.advance_tell().await.unwrap();
+    assert!(!fixture.has_pending_tell().await);
+    let sends = fixture.sends.lock().unwrap();
+    assert_eq!(sends.len(), 3);
+    assert_eq!(sends[2]["threadId"], "next-planner");
+    let text = sends[2]["text"].as_str().unwrap();
+    assert!(text.contains(&second.id));
+    assert!(text.contains("Ship now (ship)"));
+    assert!(text.contains("Fallback delivery."));
+    assert!(!text.contains("alpha-planner"));
+}
+
+async fn check_task_linked_wake_and_notify(fixture: &DecisionNoticeFixture, project: &str) {
+    fixture.service.state.lock().await.settings.dispatch = Some(DispatchSettings {
+        usage: nucleus_core::profiles::UsageLevel::Low,
+        ..DispatchSettings::default()
+    });
+    let _created = fixture
+        .t3_post(
+            "next-planner",
+            "/v1/planning/tasks",
+            json!({
+                "id": "gated-task",
+                "reference": "gated-task",
+                "brief": "---\nqueue:\n  complexity: high\n---\nGated work."
+            }),
+        )
+        .await;
+    let task_id = "gated-task";
+    fixture.service.state.lock().await.schedule.park(task_id);
+    let decision_id = format!("usage-permission-{task_id}");
+    fixture
+        .answer_via_inbox(project, &decision_id, USAGE_APPROVE)
+        .await;
+    assert!(
+        fixture
+            .service
+            .state
+            .lock()
+            .await
+            .schedule
+            .due(task_id)
+            .is_some()
+    );
+    fixture.advance_tell().await.unwrap();
+    fixture.advance_tell().await.unwrap();
+    assert!(!fixture.has_pending_tell().await);
+    let sends = fixture.sends.lock().unwrap();
+    assert_eq!(sends.len(), 4);
+    assert_eq!(sends[3]["threadId"], "next-planner");
+    let text = sends[3]["text"].as_str().unwrap();
+    assert!(text.contains(&decision_id));
+    assert!(text.contains("Approve at Low usage (approve)"));
+}
+
+async fn check_task_question_wake_and_notify(fixture: &DecisionNoticeFixture, project: &str) {
+    use nucleus_core::{Entry, Forge, Observation, Observed, PullRequest, Task};
+
+    let head: nucleus_core::Head = "a".repeat(40).parse().unwrap();
+    let pr = PullRequest {
+        url: format!("https://github.com/{}/pull/1", crate::tests::REPOSITORY),
+        head: head.clone(),
+    };
+    let mut task = Task::new(
+        nucleus_core::Identity {
+            id: "review-entry-task".into(),
+            reference: "review-entry-task".into(),
+            repository: crate::tests::REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::ReviewEntry,
+            origin_thread: Some("next-planner".into()),
+        },
+        "Review the fixture".into(),
+        Some(pr.clone()),
+    );
+    assert!(matches!(
+        task.reconcile(&Observation {
+            forge: Observed::Known(Forge::Merged { pr, commit: head }),
+            host: Observed::Unknown,
+            workspace: Observed::Unknown,
+        }),
+        Action::Ask(_)
+    ));
+    fixture
+        .service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&task, &crate::event("admitted"))
+        .unwrap();
+    let row = fixture.service.task("review-entry-task").await.unwrap();
+    fixture.service.native_task_decision(&row).await.unwrap();
+    fixture
+        .service
+        .state
+        .lock()
+        .await
+        .schedule
+        .park("review-entry-task");
+    fixture
+        .answer_via_inbox(project, "task-review-entry-task-1", ACCEPT)
+        .await;
+    assert!(
+        fixture
+            .service
+            .state
+            .lock()
+            .await
+            .schedule
+            .due("review-entry-task")
+            .is_some()
+    );
+    fixture.advance_tell().await.unwrap();
+    fixture.advance_tell().await.unwrap();
+    assert!(!fixture.has_pending_tell().await);
+    let sends = fixture.sends.lock().unwrap();
+    assert_eq!(sends.len(), 5);
+    assert_eq!(sends[4]["threadId"], "next-planner");
+    let text = sends[4]["text"].as_str().unwrap();
+    assert!(text.contains("task-review-entry-task-1"));
+    assert!(text.contains("Accept merge (accept)"));
+}
+
+async fn check_tell_failure_rolls_back_answer_atomically(
+    fixture: &DecisionNoticeFixture,
+    project: &str,
+) {
+    let next = Authority::Planner {
+        actor: "next-planner".into(),
+    };
+    let failed = fixture
+        .service
+        .add_decision(project, decision_input("Atomic failure test?"), &next)
+        .await
+        .unwrap();
+    let db_path = fixture
+        .service
+        .storage
+        .database()
+        .path()
+        .join("engine.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_tell_write BEFORE INSERT ON project_tell_deliveries
+         BEGIN SELECT RAISE(ABORT, 'injected tell failure'); END;",
+    )
+    .unwrap();
+    let inbox_key = fixture.service.native_inbox.as_ref().unwrap().credential;
+    let err = fixture
+        .service
+        .answer_inbox(
+            &inbox_key,
+            InboxAnswer {
+                field: inbox_field(project, &failed.id),
+                option_id: "ship".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ServiceError::Store(_)));
+    let stored = fixture
+        .service
+        .state
+        .lock()
+        .await
+        .store
+        .decision(project, &failed.id)
+        .unwrap()
+        .unwrap();
+    assert!(stored.answer.is_none());
+    assert!(!fixture.has_pending_tell().await);
+    assert!(
+        fixture
+            .service
+            .inbox_snapshot(&inbox_key)
+            .await
+            .unwrap()
+            .pending
+            .iter()
+            .any(|form| form.field == inbox_field(project, &failed.id))
+    );
+    conn.execute_batch("DROP TRIGGER fail_tell_write;").unwrap();
+    fixture.answer_via_inbox(project, &failed.id, "ship").await;
+    fixture.advance_tell().await.unwrap();
+    fixture.advance_tell().await.unwrap();
+    assert!(!fixture.has_pending_tell().await);
+    let sends = fixture.sends.lock().unwrap();
+    assert_eq!(sends.len(), 6);
+    assert_eq!(sends[5]["threadId"], "next-planner");
+    assert!(sends[5]["text"].as_str().unwrap().contains(&failed.id));
+}
+
+async fn check_capped_planner_still_records_and_queues_notice(
+    fixture: &DecisionNoticeFixture,
+    project: &str,
+) {
+    let next = Authority::Planner {
+        actor: "next-planner".into(),
+    };
+    let capped = fixture
+        .service
+        .add_decision(project, decision_input("At cap delivery test?"), &next)
+        .await
+        .unwrap();
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    let mut hit_cap = false;
+    {
+        let mut state = fixture.service.state.lock().await;
+        for index in 0..25 {
+            let key = format!("cap-seed-{index}");
+            let delivery_id = format!("tell-cap-{index}");
+            let text = format!("cap seed tell {index}");
+            match state.store.record_tell(
+                &nucleus_store::TellSubmission {
+                    key: &key,
+                    sender: "alpha-planner",
+                    direct: Some("next-planner"),
+                    from_project: project,
+                    text: &text,
+                    recorded_at: now,
+                    no_live_planners: &[],
+                },
+                &[(project.to_string(), delivery_id)],
+            ) {
+                Ok(_) => {}
+                Err(nucleus_store::StoreError::TellRateLimit(_)) => {
+                    hit_cap = true;
+                    break;
+                }
+                Err(other) => panic!("unexpected tell seed error: {other}"),
+            }
+        }
+    }
+    assert!(hit_cap);
+    let delivered_state = serde_json::to_string(&nucleus_store::TellState::Delivered {
+        at_ms: now,
+        thread: "next-planner".into(),
+    })
+    .unwrap();
+    let db_path = fixture
+        .service
+        .storage
+        .database()
+        .path()
+        .join("engine.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "UPDATE project_tell_deliveries SET state = ?1, retry_at = NULL WHERE request_key LIKE 'cap-seed-%'",
+        [delivered_state],
+    )
+    .unwrap();
+    fixture.answer_via_inbox(project, &capped.id, "ship").await;
+    let stored = fixture
+        .service
+        .state
+        .lock()
+        .await
+        .store
+        .decision(project, &capped.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.answer.unwrap().input.option_id, "ship");
+    fixture.advance_tell().await.unwrap();
+    fixture.advance_tell().await.unwrap();
+    assert!(!fixture.has_pending_tell().await);
+    let sends = fixture.sends.lock().unwrap();
+    assert_eq!(sends.len(), 7);
+    assert_eq!(sends[6]["threadId"], "next-planner");
+    assert!(sends[6]["text"].as_str().unwrap().contains(&capped.id));
+}
+
+#[tokio::test]
+async fn decision_answer_notifies_author_falls_back_dedupes_replays_and_wakes_tasks() {
+    let fixture = DecisionNoticeFixture::open().await;
+    fixture.enroll("alpha-planner").await;
+    fixture.enroll("next-planner").await;
+    let project = fixture.project_id("alpha-planner").await;
+    check_inbox_and_replay(&fixture, &project).await;
+    check_gone_author_fallback(&fixture, &project).await;
+    check_task_linked_wake_and_notify(&fixture, &project).await;
+    check_task_question_wake_and_notify(&fixture, &project).await;
+    check_tell_failure_rolls_back_answer_atomically(&fixture, &project).await;
+    check_capped_planner_still_records_and_queues_notice(&fixture, &project).await;
+}
