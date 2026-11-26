@@ -1118,6 +1118,21 @@ impl Store {
             }
         }
         append(&tx, &task.identity().id, event)?;
+        if row.task.phase() != task.phase() {
+            append(
+                &tx,
+                &task.identity().id,
+                &EventDraft {
+                    at: event.at,
+                    kind: "phase_transition".into(),
+                    detail: serde_json::json!({
+                        "from": row.task.phase(),
+                        "to": task.phase(),
+                    })
+                    .to_string(),
+                },
+            )?;
+        }
         if let Some(group) = group {
             let launch = task
                 .run()
@@ -1216,7 +1231,7 @@ impl Store {
         let mut query = self.connection.prepare_cached(
             "SELECT sequence, at, kind, detail FROM events
              WHERE task_id = ?1 AND (
-                kind IN ('host_send', 'reported')
+                kind IN ('host_send', 'reported', 'phase_transition', 'provider_limit')
                 OR json_type(CASE WHEN json_valid(detail) THEN detail END, '$.presentation') = 'array'
              ) ORDER BY sequence",
         )?;

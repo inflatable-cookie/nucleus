@@ -13,6 +13,13 @@ Tom accepted the planner's recommendations on 2026-11-26:
 5. Engine data comes first: serve each role turn (the lifecycle transcript) to the board, giving per-round timings and thread links in one change.
 6. Leads and papercuts gain reopen (parked or dropped back to open). A revisit date marks a parked item due; it does not reopen automatically.
 
+## Lifecycle journal facts
+
+Task updates record each phase transition with its previous and new phases at
+the update's journal time, in the same transaction. Provider-limit events record
+the run instance, subscription group and observed reset time (null when unknown).
+Older journal rows remain valid; absent transition facts do not establish a time.
+
 ## The idea in one paragraph
 
 Each detail view answers three questions, in this order: what state is

@@ -306,7 +306,7 @@ fn restart_service(service: Service, remote: &ForgeFixture) -> Service {
 
 async fn advance(service: &Service) -> Result<Action, ServiceError> {
     let row = service.task(TASK).await.unwrap();
-    service.advance(&row, &service.host.fixture_pass()).await
+    Box::pin(service.advance(&row, &service.host.fixture_pass())).await
 }
 
 #[tokio::test]

@@ -542,15 +542,26 @@ fn a_stale_writer_cannot_change_state_or_append_history() {
         second.save_row(&prior, &initial, &event("stale")),
         Err(StoreError::StaleTask)
     ));
-    assert_eq!(second.get("1").expect("read"), Some(working));
+    assert_eq!(second.get("1").expect("read"), Some(working.clone()));
     assert_eq!(second.get("2").expect("read absent"), None);
     let newest = second.history("1", None, 1).expect("latest event");
-    assert_eq!(newest[0].content.kind, "working");
+    assert_eq!(newest[0].content.kind, "phase_transition");
+    assert_eq!(newest[0].content.at, event("working").at);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&newest[0].content.detail).unwrap(),
+        serde_json::json!({"from":"queued", "to":"working"})
+    );
     let older = first
         .history("1", Some(newest[0].sequence), 5)
         .expect("history before cursor");
-    assert_eq!(older.len(), 1);
-    assert_eq!(older[0].content.kind, "accepted");
+    assert_eq!(older.len(), 2);
+    assert_eq!(older[0].content.kind, "working");
+    assert_eq!(older[1].content.kind, "accepted");
+    drop(first);
+    drop(second);
+    let reopened = Store::open(&storage).expect("reopen older and new rows");
+    assert_eq!(reopened.get("1").unwrap(), Some(working));
+    assert_eq!(reopened.lifecycle_events("1").unwrap().len(), 1);
 }
 
 #[test]
@@ -576,6 +587,18 @@ fn a_row_that_returns_to_the_same_task_still_invalidates_old_decisions() {
         Err(StoreError::StaleTask)
     ));
     assert_eq!(store.get("1").expect("read row"), Some(initial));
+    let transitions = store.lifecycle_events("1").unwrap();
+    let details: Vec<serde_json::Value> = transitions
+        .iter()
+        .map(|entry| serde_json::from_str(&entry.content.detail).unwrap())
+        .collect();
+    assert_eq!(
+        details,
+        [
+            serde_json::json!({"from":"queued", "to":"working"}),
+            serde_json::json!({"from":"working", "to":"queued"})
+        ]
+    );
 }
 
 #[test]

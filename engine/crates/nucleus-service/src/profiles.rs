@@ -295,7 +295,7 @@ impl Service {
         row: &TaskRow,
         run: &Run,
         limit: &ProviderLimit,
-    ) -> Result<String, ServiceError> {
+    ) -> Result<(String, String, Option<u64>), ServiceError> {
         let state = self.state.lock().await;
         if self.lookup(&state, &row.task.identity().id)? != *row {
             return Err(nucleus_store::StoreError::StaleTask.into());
@@ -312,13 +312,14 @@ impl Service {
             .save_subscription_pause(&state, group, requested, now_ms())?
             .unwrap_or(requested);
         let horizon = nucleus_hosts::snooze_deadline(pause.until_ms);
-        Ok(if pause.fallback {
+        let cause = if pause.fallback {
             format!(
                 "Provider usage limit for subscription group {group}. Reset unknown, clear in Profiles after topping up. Automatic retry at {horizon}."
             )
         } else {
             format!("Provider usage limit for subscription group {group}. Reset at {horizon}.")
-        })
+        };
+        Ok((cause, group.to_owned(), limit.reset_at_ms))
     }
 
     pub(super) fn record_subscription_pause(

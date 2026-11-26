@@ -402,6 +402,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
         .save(&row, updated, &event("phase_reconciled"))
         .await
         .expect("apply report");
+    assert_working_transition(&service).await;
     service
         .state
         .lock()
@@ -438,7 +439,28 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     assert!(lifecycle["reviewer"].is_null());
 }
 
+async fn assert_working_transition(service: &Service) {
+    {
+        let state = service.state.lock().await;
+        let events = state.store.lifecycle_events("worker").unwrap();
+        let transition = events
+            .iter()
+            .find(|event| event.content.kind == "phase_transition")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&transition.content.detail).unwrap(),
+            json!({"from":"working", "to":"reviewing"})
+        );
+        assert_eq!(
+            state.store.get("worker").unwrap().unwrap().phase(),
+            Phase::Reviewing
+        );
+    }
+}
+
 fn assert_worker_history(history: &Value, instance: &str, thread: &str, sent_at_ms: u64) {
+    assert_eq!(history[0]["content"]["kind"], "phase_transition");
+    let history = without_transitions(history);
     assert_eq!(
         history[0]["presentation"],
         json!([
@@ -459,6 +481,15 @@ fn assert_worker_history(history: &Value, instance: &str, thread: &str, sent_at_
                 "startedAtMs":sent_at_ms - 2_000}
         ])
     );
+}
+
+fn without_transitions(history: &Value) -> Vec<&Value> {
+    history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["content"]["kind"] != "phase_transition")
+        .collect()
 }
 
 #[tokio::test]
@@ -556,6 +587,7 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
     assert_eq!(detail["lifecycle"]["steps"][2]["roundLabel"], "Round 2");
     assert_eq!(detail["lifecycle"]["steps"][2]["activeSinceMs"], 4);
     let history = json_body(get_as(&api, "/v1/tasks/reviewer/history", &BOARD_KEY).await).await;
+    let history = without_transitions(&history);
     assert_eq!(history[0]["presentation"][0]["purpose"], "Checking round 2");
     assert_eq!(
         history[5]["presentation"],
