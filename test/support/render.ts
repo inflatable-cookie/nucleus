@@ -192,10 +192,15 @@ export function mount(initial: React.ReactElement) {
       );
     const { type, props } = node as React.ReactElement<Record<string, any>>;
     if (type === React.Fragment) return walk(props.children, path);
-    if (typeof type === "string")
-      return [
-        { type, props, children: walk(props.children, `${path}/${type}`) },
-      ];
+    if (typeof type === "string") {
+      // A host node is its own ref target, so a component can observe what the tree drew.
+      const host: HostNode = { type, props, children: [] };
+      const ref = props.ref as unknown;
+      if (typeof ref === "function") ref(host);
+      else if (ref && typeof ref === "object") (ref as { current: unknown }).current = host;
+      host.children = walk(props.children, `${path}/${type}`);
+      return [host];
+    }
     // React.memo: render the wrapped component under its own name; the renderer never skips.
     if (
       type &&

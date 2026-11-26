@@ -654,10 +654,11 @@ test("026-12a every inbox card renders through the shared board card, and the li
     1,
     "the list is one scroll",
   );
-  // Leads and Papercuts load their next page from real list layout and scroll events.
-  assert.match(list, /onLayout=\{\(event\) =>/);
-  assert.match(list, /onContentSizeChange=\{\(_width, height\) =>/);
-  assert.match(list, /onScroll=\{\(event\) =>/);
+  // Leads, Papercuts and the Queue's held-back pages load as their end nears view (nucleus#1608):
+  // one shared sentinel, not the list's own scroll arithmetic.
+  assert.match(list, /<PageSentinel\b/);
+  assert.doesNotMatch(list, /onScroll=\{/);
+  assert.doesNotMatch(list, /onContentSizeChange=/);
   assert.doesNotMatch(
     list,
     /const visible = page \? page\.visible : section\.cards;/,

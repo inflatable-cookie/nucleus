@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import React, { useState } from "react";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
+import { observeIntersections } from "./support/intersection";
 import type {
   BoardLead,
   LaneDocumentVersion,
@@ -518,6 +519,18 @@ test("lead lists page eight at a time from the complete read, so a first page is
   assert.match(paged.ui.text(), /Showing 8 of 9 papercuts\./);
   paged.ui.press("Show 1 more papercuts");
   assert.ok(paged.ui.get("Open papercut Papercut 8"));
+});
+
+test("a lane's lead list loads its next page when its end comes into view, without a click (nucleus#1608)", async (t) => {
+  const io = observeIntersections(t);
+  const records = Array.from({ length: 10 }, (_, index) =>
+    lead(`l${index}`, `Lead ${index}`),
+  );
+  const { ui } = await mountLane({ leads: { items: records } });
+  assert.equal(ui.query("Open lead Lead 8"), undefined);
+  io.enter(ui.query("Show 2 more leads"));
+  assert.ok(ui.get("Open lead Lead 9"), "the next page arrives on approach");
+  assert.equal(ui.query("Show 2 more leads"), undefined);
 });
 
 test("a lead list still loading or failing shows no count, so a partial read is never a total", async () => {

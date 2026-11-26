@@ -44,6 +44,7 @@ import {
   type CardKind,
 } from "./board/cards";
 import { Pill } from "./planning-roadmap";
+import { PageSentinel } from "./board/page-sentinel";
 import { Readable } from "./readable-text";
 
 /** The latest document as read. `null` is a lane with no document yet; `undefined` is not loaded. */
@@ -208,16 +209,13 @@ function RecordList({
           c={c}
         />
       ))}
-      {read.items.length > shown && (
-        <View style={row}>
-          <Button
-            small
-            c={c}
-            text={`Show ${Math.min(LANE_LIST_PAGE, read.items.length - shown)} more ${label}`}
-            onPress={onShowMore}
-          />
-        </View>
-      )}
+      <PageSentinel
+        c={c}
+        more={read.items.length > shown}
+        page={shown}
+        label={`Show ${Math.min(LANE_LIST_PAGE, read.items.length - shown)} more ${label}`}
+        onMore={onShowMore}
+      />
     </View>
   );
 }
@@ -731,20 +729,19 @@ export function LaneScreen({
             </View>
           </View>
         )}
-        {allFinished &&
-          !allFinished.loading &&
-          !allFinished.error &&
-          allFinished.cursor && (
-            <View style={row}>
-              <Button
-                small
-                c={c}
-                text="Show more finished work"
-                label={`Show more finished work in ${name}`}
-                onPress={() => void seeAll(allFinished.cursor)}
-              />
-            </View>
-          )}
+        {allFinished && (
+          <PageSentinel
+            c={c}
+            more={
+              !allFinished.loading &&
+              !allFinished.error &&
+              Boolean(allFinished.cursor)
+            }
+            page={allFinished.rows.length}
+            label={`Show more finished work in ${name}`}
+            onMore={() => void seeAll(allFinished.cursor)}
+          />
+        )}
         {allFinished &&
           !readFinished &&
           allFinished.rows.length < lane.terminalCount && (
