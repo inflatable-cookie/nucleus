@@ -295,7 +295,7 @@ impl Service {
         row: &TaskRow,
         run: &Run,
         limit: &ProviderLimit,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<String, ServiceError> {
         let state = self.state.lock().await;
         if self.lookup(&state, &row.task.identity().id)? != *row {
             return Err(nucleus_store::StoreError::StaleTask.into());
@@ -311,8 +311,14 @@ impl Service {
             || DispatchSettings::default().provider_limit_cooldown_seconds,
             |settings| settings.provider_limit_cooldown_seconds,
         );
-        self.record_subscription_pause(&state, group, limit_deadline(limit, cooldown), now_ms())?;
-        Ok(())
+        let deadline = limit_deadline(limit, cooldown);
+        let until = self
+            .record_subscription_pause(&state, group, deadline, now_ms())?
+            .unwrap_or(deadline);
+        Ok(format!(
+            "Provider usage limit for subscription group {group}. Reset at {}.",
+            nucleus_hosts::snooze_deadline(until)
+        ))
     }
 
     pub(super) fn record_subscription_pause(

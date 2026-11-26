@@ -148,6 +148,8 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
             "environment":{"orchestrationProtocolVersion":2},
             "providers":[
                 {"instanceId":"codex","enabled":true,"status":"ready",
+                 "usageLimits":{"windows":[{"id":"monthly","kind":"monthly","label":"Monthly",
+                    "usedPercent":100,"resetsAt":"2099-01-01T00:00:00Z"}]},
                  "models":[{"slug":"first"},{"slug":"second","capabilities":{
                     "optionDescriptors":[{"id":"serviceTier","type":"select",
                                           "options":[{"id":"default"},{"id":"priority"}]}]
@@ -183,8 +185,8 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
                 json!([{
                     "id":"usage-limit","runId":"native-run","type":"error","status":"failed",
                     "nodeId":"root","ordinal":1,"updatedAt":completed,
-                    "failure":{"class":"usage_limit","code":"api_error_429","message":"fixture quota",
-                               "retryable":true,"resetAt":"2099-01-01T00:00:00Z"}
+                    "failure":{"class":"provider_error","code":null,
+                        "message":r#"402: {"type":"invalid_request_error","message":"Insufficient balance."}"#}
                 }])
             } else {
                 json!([])
@@ -198,6 +200,7 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
                              "status":if limited {"failed"} else {"running"},
                              "userMessageId":launch["initialMessage"]["messageId"],
                              "providerInstanceId":launch["modelSelection"]["instanceId"],
+                             "startedAt":"2026-11-24T07:55:00Z","modelSelection":launch["modelSelection"],
                              "completedAt":completed}],
                     "messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":errors
                 }
@@ -370,6 +373,14 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
     assert_eq!(limited.task.phase(), Phase::Working);
     assert!(limited.task.run().is_none() && limited.task.question().is_none());
     assert_eq!(limited.task.attempts(), 1);
+    assert_eq!(
+        limited.task.threads().last_provider_limit.as_deref(),
+        Some("Provider usage limit for subscription group shared. Reset at 2099-01-01 00:00 UTC.")
+    );
+    assert_eq!(
+        ended[0].result.as_ref().unwrap(),
+        &Action::Relaunch(Role::Worker)
+    );
     {
         let mut state = service.state.lock().await;
         assert_eq!(
