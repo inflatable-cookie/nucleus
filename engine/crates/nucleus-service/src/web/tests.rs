@@ -2569,7 +2569,10 @@ async fn dispatch_with_project_slots(api: &Router, overrides: Value) -> Value {
 
 #[tokio::test]
 async fn storage_saves_preference_without_unpinning_a_legacy_profile() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let volume =
+        nucleus_store::PinnedVolume::detect(&std::env::temp_dir()).expect("fixture volume");
+    let (_home, service) =
+        crate::tests::fixture_with_volume(GitHub::new("fixture").expect("client"), Some(volume));
     let service = Arc::new(service);
     let api = settings_api(&service);
     let path = "/v1/settings/storage";

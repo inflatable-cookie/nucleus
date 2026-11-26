@@ -25,7 +25,6 @@ fn fixture_storage(home: &Path) -> EngineStorage {
     settings
         .save(&EngineSettings {
             enabled: true,
-            work_volume: Some(PinnedVolume::detect(home).expect("fixture volume")),
             ..EngineSettings::default()
         })
         .expect("save fixture settings");

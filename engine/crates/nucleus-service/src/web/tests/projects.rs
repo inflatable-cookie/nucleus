@@ -253,21 +253,14 @@ async fn registry() -> Registry {
 }
 
 async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
-    let home = tempfile::tempdir().expect("registry fixture");
-    let root = home.path().canonicalize().expect("portable root");
-    let settings = nucleus_store::SettingsFile::open(&root).expect("portable settings");
-    settings
-        .save(&nucleus_store::EngineSettings {
-            enabled: true,
-            ..Default::default()
-        })
-        .expect("enable registry");
-    let alpha_path = root.join("repo");
-    let beta_path = root.join("second");
-    create_repository(&alpha_path, "main", ALPHA_REPO);
+    let (home, legacy) = fixture(GitHub::new("fixture").expect("client"));
+    let alpha_path = legacy.fixture().checkout.clone();
+    let beta_path = alpha_path.with_file_name("second");
     create_repository(&beta_path, "trunk", beta_repo);
     set_default(&alpha_path, "main");
     set_default(&beta_path, "trunk");
+    let settings = legacy.settings.clone();
+    drop(legacy);
     if imported {
         seed_imported_container(&settings);
     }
