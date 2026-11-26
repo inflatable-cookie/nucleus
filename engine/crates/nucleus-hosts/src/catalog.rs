@@ -227,63 +227,42 @@ impl ProfileCatalog {
             .then_some(path)
     }
 
-    pub(crate) fn exhausted_reset(
-        &self,
-        routing: &crate::RunRouting,
-        group: Option<&str>,
-        ended: u64,
-    ) -> Option<u64> {
-        let model = routing.model.as_str();
-        let family = model.split('/').next()?;
-        let own = self
+    pub(crate) fn exhausted_reset(&self, routing: &crate::RunRouting, ended: u64) -> Option<u64> {
+        let provider = self
             .0
             .iter()
             .find(|p| p["instanceId"] == routing.provider)?;
-        let windows = |provider: &Value, shared: bool| {
-            if provider
-                .pointer("/usageLimits/unavailable")
-                .is_some_and(|v| !v.is_null())
-            {
-                return None;
-            }
-            provider
-                .pointer("/usageLimits/windows")?
-                .as_array()?
-                .iter()
-                .filter(|w| {
-                    let applies = |key: &str, id: &str| {
-                        w.get(key).is_none_or(|ids| {
-                            ids.as_array()
-                                .is_some_and(|ids| ids.iter().any(|entry| entry == id))
-                        })
-                    };
-                    let go_meter = w["id"].as_str().is_some_and(|id| id.starts_with("go_"));
-                    w["usedPercent"].as_f64().is_some_and(|used| used >= 100.0)
-                        && applies("modelIds", model)
-                        && applies("providerIds", family)
-                        && (!go_meter || family == "opencode-go")
-                        && (!shared || go_meter)
-                })
-                .filter_map(|w| crate::task_row::timestamp_ms(w["resetsAt"].as_str()?).ok())
-                .filter(|reset| *reset > ended)
-                .max()
-        };
-        windows(own, false).or_else(|| {
-            // Pi can select an OpenCode Go model. Its named subscription's meters
-            // are advertised by the OpenCode driver, separate from Pi's catalog.
-            if group != Some("opencode-go") || family != "opencode-go" {
-                return None;
-            }
-            let mut sources = self
-                .0
-                .iter()
-                .filter(|p| p["enabled"] == true && p["driver"] == "opencode");
-            let source = sources.next()?;
-            if sources.next().is_some() {
-                return None;
-            }
-            windows(source, true)
-        })
+        let usage = provider.get("usageLimits")?;
+        if usage
+            .get("unavailable")
+            .is_some_and(|error| !error.is_null())
+        {
+            return None;
+        }
+        let model = routing.model.as_str();
+        let family = model.split('/').next()?;
+        usage["windows"]
+            .as_array()?
+            .iter()
+            .filter(|window| {
+                let matches = |key: &str, expected: &str| {
+                    window.get(key).map(|ids| {
+                        ids.as_array()
+                            .is_some_and(|ids| ids.iter().any(|id| id == expected))
+                    })
+                };
+                let model_match = matches("modelIds", model);
+                let family_match = matches("providerIds", family);
+                (model_match.is_some() || family_match.is_some())
+                    && model_match.unwrap_or(true)
+                    && family_match.unwrap_or(true)
+                    && window["usedPercent"]
+                        .as_f64()
+                        .is_some_and(|used| used >= 100.0)
+            })
+            .filter_map(|w| crate::task_row::timestamp_ms(w["resetsAt"].as_str()?).ok())
+            .filter(|reset| *reset > ended)
+            .max()
     }
 
     pub(crate) fn provider_family(&self, instance: &str) -> Option<Provider> {
@@ -604,44 +583,29 @@ mod exhausted_window_tests {
 
     #[test]
     fn reset_belongs_to_the_exhausted_subscription_and_observed_model() {
-        let window =
-            json!({"id":"go_monthly", "usedPercent":100, "resetsAt":"2026-12-05T17:24:37Z"});
-        let mut foreign = window.clone();
-        foreign["modelIds"] = json!(["different/model"]);
-        foreign["resetsAt"] = json!("2099-01-01T00:00:00Z");
-        let mut available = foreign.clone();
-        available["modelIds"] = json!(["opencode-go/fixture"]);
-        available["usedPercent"] = json!(10);
-        let catalog = ProfileCatalog(vec![json!({"instanceId":"pi","usageLimits":{
-            "windows":[window, foreign, available]
-        }})]);
+        let first = "2026-12-01T09:00:00Z";
+        let last = "2026-12-05T17:24:37Z";
+        let later = "2099-01-01T00:00:00Z";
+        let catalog = ProfileCatalog(vec![
+            json!({"instanceId":"own","usageLimits":{"windows":[
+                {"usedPercent":100,"providerIds":["family"],"resetsAt":first},
+                {"usedPercent":100,"modelIds":["family/model"],"resetsAt":last},
+                {"usedPercent":100,"resetsAt":later},
+                {"usedPercent":100,"modelIds":["sibling"],"providerIds":["family"],"resetsAt":later},
+                {"usedPercent":99,"providerIds":["family"],"resetsAt":later}
+            ]}}),
+            json!({"instanceId":"other","usageLimits":{"windows":[
+                {"usedPercent":100,"modelIds":["family/model"],"resetsAt":later}
+            ]}}),
+        ]);
         let mut selected = crate::RunRouting {
-            provider: "pi".into(),
-            model: "opencode-go/fixture".into(),
+            provider: "own".into(),
+            model: "family/model".into(),
         };
-        let reset = crate::task_row::timestamp_ms("2026-12-05T17:24:37Z").unwrap();
-        assert_eq!(catalog.exhausted_reset(&selected, None, 0), Some(reset));
-        assert_eq!(catalog.exhausted_reset(&selected, None, reset), None);
-        let mut published = catalog.0[0].clone();
-        published["instanceId"] = json!("meter");
-        published["enabled"] = json!(true);
-        published["driver"] = json!("opencode");
-        let mut shared = ProfileCatalog(vec![json!({"instanceId":"pi"}), published.clone()]);
-        assert_eq!(
-            shared.exhausted_reset(&selected, Some("opencode-go"), 0),
-            Some(reset)
-        );
-        assert_eq!(
-            shared.exhausted_reset(&selected, Some("different-account"), 0),
-            None
-        );
-        published["instanceId"] = json!("second-account");
-        shared.0.push(published);
-        assert_eq!(
-            shared.exhausted_reset(&selected, Some("opencode-go"), 0),
-            None
-        );
-        selected.model = "other/fixture".into();
-        assert_eq!(catalog.exhausted_reset(&selected, None, 0), None);
+        let reset = crate::task_row::timestamp_ms(last).unwrap();
+        assert_eq!(catalog.exhausted_reset(&selected, 0), Some(reset));
+        assert_eq!(catalog.exhausted_reset(&selected, reset), None);
+        selected.model = "another/model".into();
+        assert_eq!(catalog.exhausted_reset(&selected, 0), None);
     }
 }
