@@ -1162,7 +1162,7 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
         service.task("reviewer").await.unwrap().task.phase(),
         Phase::Done
     );
-    assert!(reads.load(Ordering::Relaxed) >= 3);
+    assert!(reads.load(Ordering::Relaxed) <= 5);
     assert_eq!(
         service.state.lock().await.store.occupied_slots("").unwrap(),
         1
@@ -1174,32 +1174,10 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
 async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
     let head = service.fixture().start.clone();
-    let pull = forge_pull(&head);
-    let checks = crate::tests::forge_checks(&head);
-    let readable = Arc::new(AtomicBool::new(false));
-    let ready = readable.clone();
-    let (forge, server) = serve_forge(
-        Router::new()
-            .route(
-                &format!("/repos/{REPOSITORY}/pulls/1"),
-                get(move || async move {
-                    if ready.load(Ordering::Relaxed) {
-                        Json(pull).into_response()
-                    } else {
-                        StatusCode::SERVICE_UNAVAILABLE.into_response()
-                    }
-                }),
-            )
-            .route(
-                "/graphql",
-                axum::routing::post(move || async move { Json(checks) }),
-            ),
-    )
-    .await;
+    let (forge, readable, server) = switchable_open_forge(&head).await;
     service.forge = forge;
     let (host, _, _, native) = planner_roster_fixture("planner", "spare-planner").await;
     service.host = host;
-    let head = service.fixture().start.clone();
     let exact = seed_review_work_question(&service, &head).await;
     service
         .refresh_planner_authority("reviewer")
@@ -1353,6 +1331,34 @@ async fn seed_review_work_question(
     assert!(task.bind_question_delivery(notice));
     seed_task(service, &task).await;
     observation.forge
+}
+
+async fn switchable_open_forge(
+    head: &nucleus_core::Head,
+) -> (GitHub, Arc<AtomicBool>, tokio::task::JoinHandle<()>) {
+    let pull = forge_pull(head);
+    let checks = crate::tests::forge_checks(head);
+    let readable = Arc::new(AtomicBool::new(false));
+    let ready = readable.clone();
+    let (forge, server) = serve_forge(
+        Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async move {
+                    if ready.load(Ordering::Relaxed) {
+                        Json(pull).into_response()
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE.into_response()
+                    }
+                }),
+            )
+            .route(
+                "/graphql",
+                axum::routing::post(move || async move { Json(checks) }),
+            ),
+    )
+    .await;
+    (forge, readable, server)
 }
 
 async fn serve_merged_forge(

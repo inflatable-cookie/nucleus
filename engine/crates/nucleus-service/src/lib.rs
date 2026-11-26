@@ -1459,6 +1459,49 @@ impl Service {
         Ok(row)
     }
 
+    /// A missing head is the only preflight result that needs an inline forge read.
+    fn prepare_command(
+        &self,
+        state: &mut State,
+        prior: &Task,
+        authority: &Authority,
+        observation: &Observation,
+        command: Command,
+    ) -> Result<Option<Task>, ServiceError> {
+        let id = &prior.identity().id;
+        if matches!(
+            command,
+            Command::Move(Phase::Merging | Phase::Closing | Phase::Done) | Command::Complete { .. }
+        ) && !prior.phase().is_terminal()
+            && state.store.dependency_blocked(id)?
+        {
+            return Err(ServiceError::DependencyEdit(
+                "this task has unfinished prerequisites",
+            ));
+        }
+        let mut task = prior.clone();
+        match state.preflight(&mut task, authority, observation, command) {
+            Ok(Preflight::Ready) => Ok(Some(task)),
+            Ok(Preflight::NeedsHead) => Ok(None),
+            Err(error) => {
+                if matches!(error, ServiceError::PlannerAuthorityUnknown) {
+                    self.request_planner_check(state, prior);
+                } else if matches!(
+                    error,
+                    ServiceError::Core(CommandError::MergeAuthorityRequired)
+                ) && matches!(observation.forge, Observed::Known(Forge::Merged { .. }))
+                {
+                    state.command_authority(prior, authority)?;
+                    // Let reconciliation offer external source acceptance even at capacity.
+                    state.forge_requested.insert(id.clone());
+                    state.schedule.wake(id, Instant::now(), Priority::Wake);
+                    self.wake.notify_one();
+                }
+                Err(error)
+            }
+        }
+    }
+
     async fn command_with_session(
         &self,
         id: &str,
@@ -1497,45 +1540,23 @@ impl Service {
             .flatten();
         let mut observation = state.command_observation(&prior);
         let task = loop {
-            if matches!(
-                command,
-                Command::Move(Phase::Merging | Phase::Closing | Phase::Done)
-                    | Command::Complete { .. }
-            ) && !prior.task.phase().is_terminal()
-                && state.store.dependency_blocked(id)?
-            {
-                return Err(ServiceError::DependencyEdit(
-                    "this task has unfinished prerequisites",
-                ));
-            }
-            let mut task = prior.task.clone();
-            match state.preflight(&mut task, authority, &observation, command.clone()) {
-                Ok(Preflight::Ready) => break task,
-                Ok(Preflight::NeedsHead) => {}
-                Err(error) => {
-                    if matches!(error, ServiceError::PlannerAuthorityUnknown) {
-                        self.request_planner_check(&mut state, &prior.task);
-                    } else if matches!(
-                        error,
-                        ServiceError::Core(CommandError::MergeAuthorityRequired)
-                    ) && matches!(
-                        observation.forge,
-                        Observed::Known(Forge::Merged { .. })
-                    ) {
-                        state.command_authority(&prior.task, authority)?;
-                        // Let reconciliation offer external source acceptance even at capacity.
-                        state.forge_requested.insert(id.into());
-                        state.schedule.wake(id, Instant::now(), Priority::Wake);
-                        self.wake.notify_one();
-                    }
-                    return Err(error);
-                }
+            if let Some(task) = self.prepare_command(
+                &mut state,
+                &prior.task,
+                authority,
+                &observation,
+                command.clone(),
+            )? {
+                break task;
             }
             drop(state);
             observation.forge = Observed::Known(
-                tokio::time::timeout(Duration::from_secs(10), self.command_forge(&prior.task))
-                    .await
-                    .map_err(|_| ServiceError::CommandForgeTimeout)??,
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    Box::pin(self.command_forge(&prior.task)),
+                )
+                .await
+                .map_err(|_| ServiceError::CommandForgeTimeout)??,
             );
             state = self.state.lock().await;
             if self.command_row(&state, id, scope, session)?.version != prior.version {
