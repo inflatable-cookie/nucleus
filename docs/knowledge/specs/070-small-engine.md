@@ -712,11 +712,22 @@ Later decisions carry their own attribution.
     Rust module responsibilities, and tests coupled to implementation. The planner reviews one
     ranked consolidation plan, including the rule and risk for each proposed cut, before implementation.
 
-48. **Recheck after a mechanical repair.** On 2026-11-26 the planner asked Tom,
-    “After a mechanical repair, should an owner get one guarded Recheck instead of
-    Hold then Release?” Tom chose “Add Recheck (Recommended)”. Recheck observes
-    once at the current task version and cannot release another person’s hold.
-    Hold and Release remain the controls for actual holds.
+48. **Recheck after a mechanical repair.** On 2026-11-26 Tom was asked:
+
+    > When a task is stuck on something mechanical (say a missing GitHub field or a timed-out check) and the cause has been fixed, owners currently nudge it by placing a Hold and then Releasing it, which forces a fresh check. The structural review suggests one 'Recheck' action instead: it looks once at the current state and can never release a hold someone else placed. Should we add Recheck?
+
+    Tom chose “Add Recheck (Recommended)”. Recheck observes once at the current task version.
+    It cannot release another person’s hold. Hold and Release remain available for actual holds.
+
+49. **Keep native execution and freeze the production line budget.** On 2026-11-26 Tom answered two questions:
+
+    > Spec 070 caps the Rust engine at 30,000 lines. It was 33,000 on 24 Nov and is 41,800 now. An independent costed review found only ~300–550 lines removable without changing what Nucleus does; the growth is mostly features you asked for (native Inbox, GitHub accounts, reply routes, recovery). Reaching 30k would mean giving up Nucleus running workers/reviewers in T3 itself. How should we treat the budget?
+
+    Tom chose “Freeze at today's size (Recommended)”. The ceiling and PR accounting rule are in [Validation](#validation).
+
+    > Separately, three optional features each cost 600–1,200 lines and could go without touching core execution. Do you want to retire any of them?
+
+    Tom chose “Keep all three (Recommended)”. The pinned T3 Inbox, GitHub account sign-in UI and planner messages with replies remain supported. The compatible reductions (estimated at 275–560 lines) and the structural consolidation continue.
 
 ## The model
 
@@ -935,7 +946,8 @@ Tom, 2026-11-24: "How are we doing on complexity? No horrible extra narrow fixes
 
 Every fix states its general rule and what it replaces. An independent review
 checks for special cases, duplicate paths and dead code before the milestone 3
-cutover. Keep the engine below 30,000 source lines through milestone 4.
+cutover. The ceiling is 42,000 production Rust lines by `scripts/count-engine-rust.py`.
+The measured baseline at `1d92ea014` is 41,785.
 
 Count nonblank lines of operator-shipped Rust after removing comments, tests,
 fixtures and generated source. Keep lines with code alongside comments, the
@@ -952,15 +964,11 @@ python scripts/count-engine-rust.py "$(git merge-base origin/main HEAD)" HEAD
 ```
 
 Use the checkout containing the counter for both revisions. You can pass older
-commit IDs even if those commits predate the counter. Report the net production
-Rust line delta in each engine PR. For growth, explain why the change could not
-reuse existing code.
-
-Planner ruling, 2026-11-24. Land recovery (#609 and #607) first, then #608,
-without holding those PRs for the line budget. After #608, reduce the engine
-below 30,000 lines with headroom before the remaining parity ports. Limit each
-reduction batch to three modules and state its general rule, what it replaces
-and its net line delta.
+commit IDs even if those commits predate the counter. Every engine PR reports its net
+production Rust delta. Offset growth in the same batch or justify it in the PR
+body, explaining why existing code cannot supply the behavior. Land an offsetting
+cut first if the PR would cross 42,000. Each consolidation PR covers at most
+three production modules and identifies the rule that replaces the removed code.
 
 Tom approved Rust for the engine on 2026-11-23. That replaces the 2026-10-04 "no
 Cargo builds" rule for the `engine/` workspace only:
