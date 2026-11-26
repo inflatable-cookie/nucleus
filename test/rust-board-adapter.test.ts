@@ -1266,10 +1266,10 @@ test("the mounted Rust board counts parked leads and papercuts like their All li
   };
 
   await press(/^Leads, 2$/);
-  await waitFor(() => Boolean(ui.query("2 items") && ui.query(/^Lead: Parked lead,/)), 4000, "All leads and matching menu count");
+  await waitFor(() => ui.text().includes("2 items") && Boolean(ui.query(/^Lead: Parked lead,/)), 4000, "All leads and matching menu count");
   assert.ok(ui.query(/^Lead: Open lead,/));
   await press(/^Papercuts, 1$/);
-  await waitFor(() => Boolean(ui.query("1 item") && ui.query(/^Papercut: Parked papercut,/)), 4000, "All papercuts and matching menu count");
+  await waitFor(() => ui.text().includes("1 item") && Boolean(ui.query(/^Papercut: Parked papercut,/)), 4000, "All papercuts and matching menu count");
 });
 
 test("the board reads, edits, and closes the selected project's lane when keys collide", async (t) => {
