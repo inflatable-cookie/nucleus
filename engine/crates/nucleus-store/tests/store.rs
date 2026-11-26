@@ -486,6 +486,38 @@ fn provider_pauses_survive_reopen_and_expire_at_the_deadline() {
 }
 
 #[test]
+fn only_the_displayed_fallback_can_be_cleared_after_reopen() {
+    use nucleus_store::SubscriptionPause;
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let estimate = SubscriptionPause {
+        until_ms: 80_000,
+        fallback: true,
+    };
+    let store = Store::open(&storage).unwrap();
+    assert!(store.set_subscription_pause("group", estimate, 5).unwrap());
+    drop(store);
+    let store = Store::open(&storage).unwrap();
+    assert_eq!(
+        store.subscription_pause("group", 5).unwrap(),
+        Some(estimate)
+    );
+    assert_eq!(store.fallback_pause_groups(5).unwrap(), ["group"]);
+    assert!(!store.clear_fallback_pause("group", 60_000).unwrap());
+    store.record_provider_pause("group", 70_000, 6).unwrap();
+    assert!(!store.set_subscription_pause("group", estimate, 7).unwrap());
+    assert!(!store.clear_fallback_pause("group", 70_000).unwrap());
+    assert!(store.fallback_pause_groups(7).unwrap().is_empty());
+    assert!(
+        store
+            .set_subscription_pause("group", estimate, 70_000)
+            .unwrap()
+    );
+    assert!(store.clear_fallback_pause("group", 80_000).unwrap());
+    assert_eq!(store.provider_pause("group", 70_000).unwrap(), None);
+}
+
+#[test]
 fn a_stale_writer_cannot_change_state_or_append_history() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());
