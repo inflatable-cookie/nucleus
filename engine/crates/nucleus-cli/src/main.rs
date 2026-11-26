@@ -456,18 +456,26 @@ async fn serve(
                 Ok(outcomes) => {
                     for outcome in outcomes {
                         if let Err(error) = outcome.result {
-                            eprintln!("{}: {error}", outcome.task);
+                            eprintln!(
+                                "{} {}: {error}",
+                                ::time::OffsetDateTime::now_utc(),
+                                outcome.task
+                            );
                         }
                     }
                 }
                 Err(error) => {
-                    eprintln!("{error}");
+                    eprintln!("{} {error}", ::time::OffsetDateTime::now_utc());
                     tokio::time::sleep(Duration::from_secs(3)).await;
                 }
             }
         }
     });
-    println!("Nucleus engine listening on http://{}", tcp.local_addr()?);
+    println!(
+        "{} Nucleus engine listening on http://{}",
+        ::time::OffsetDateTime::now_utc(),
+        tcp.local_addr()?
+    );
     let result = tokio::select! {
         result = axum::serve(tcp, api) => result,
         result = tokio::signal::ctrl_c() => result,

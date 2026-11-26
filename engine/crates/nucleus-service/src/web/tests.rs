@@ -4937,3 +4937,32 @@ fn obs_absent_host(head: &nucleus_core::Head) -> Observation {
         workspace: Observed::Known(nucleus_core::Workspace::Clean(head.clone())),
     }
 }
+
+#[tokio::test]
+async fn acp_server_error_is_logged_with_timestamp() {
+    use tower::ServiceExt as _;
+    let app = Router::new()
+        .route(
+            "/v1/acp/inbox",
+            axum::routing::get(|| async {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error": "fixture-1622-store-error"})),
+                )
+            }),
+        )
+        .layer(axum::middleware::from_fn(super::log_acp_error));
+    let response = app
+        .oneshot(Request::get("/v1/acp/inbox").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let lines = crate::diagnostics::TEST_LINES.lock().unwrap();
+    let line = lines
+        .iter()
+        .find(|line| line.contains("fixture-1622-store-error"))
+        .unwrap();
+    assert!(line.contains("+00:00"));
+    assert!(line.contains("route=/v1/acp/inbox status=503"));
+    assert_eq!(line.lines().count(), 1);
+}

@@ -595,7 +595,7 @@ impl Rpc {
                 "<redacted>"
             }
         });
-        eprintln!("T3 {method} timed out (thread {thread})");
+        host_log!("T3 {method} timed out (thread {thread})");
     }
 
     pub(crate) fn stream_failed(&self, method: &'static str, error: HostError) {
@@ -713,7 +713,7 @@ impl Rpc {
                 ThreadReply::Missing
             }
             Reply::Failure(cause) => {
-                eprintln!(
+                host_log!(
                     "{id}: T3 orchestration.subscribeThread: {:?}",
                     self.failure_detail(&cause)
                 );

@@ -1,11 +1,13 @@
 use std::{
+    collections::HashMap,
     env,
     fs::File,
     io::Read,
     net::SocketAddr,
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
-    time::Duration,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use nucleus_core::{
@@ -35,6 +37,8 @@ pub(crate) enum Failure {
     Unauthorized,
     #[error("Nucleus is unavailable.")]
     Unavailable,
+    #[error("Nucleus could not answer: {0}")]
+    Engine(String),
     #[error("{0}")]
     Refused(String),
 }
@@ -122,6 +126,9 @@ pub(crate) struct ServiceClient {
     endpoint: SocketAddr,
     task: Option<String>,
     auth: HeaderValue,
+    attempt: Arc<Mutex<HashMap<String, usize>>>,
+    #[cfg(test)]
+    log: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 #[derive(Deserialize)]
@@ -164,6 +171,9 @@ impl ServiceClient {
             endpoint: binding.endpoint(),
             task,
             auth: authorization(key)?,
+            attempt: Arc::default(),
+            #[cfg(test)]
+            log: Arc::default(),
         })
     }
 
@@ -206,15 +216,65 @@ impl ServiceClient {
         Ok(detail)
     }
 
+    async fn call<T>(
+        &self,
+        path: &str,
+        request: reqwest::RequestBuilder,
+        decode: impl AsyncFnOnce(Response) -> Result<T, Failure>,
+    ) -> Result<T, Failure> {
+        let started = Instant::now();
+        let attempt = {
+            let mut attempts = self.attempt.lock().expect("attempt lock");
+            let attempt = attempts.entry(path.to_owned()).or_default();
+            *attempt += 1;
+            *attempt
+        };
+        let mut outcome = String::from("transport");
+        let work = async {
+            let response = request.send().await.map_err(|error| {
+                if error.is_timeout() {
+                    outcome = "timeout".into();
+                }
+                Failure::Unavailable
+            })?;
+            outcome = response.status().as_u16().to_string();
+            let response = accepted(response).await?;
+            decode(response).await
+        };
+        let result = if let Ok(result) = tokio::time::timeout(DEADLINE, work).await {
+            result
+        } else {
+            outcome = "timeout".into();
+            Err(Failure::Unavailable)
+        };
+        if result.is_err() || started.elapsed() > Duration::from_secs(2) {
+            let resource = if self.task.is_some() {
+                "/v1/tasks/{id}"
+            } else {
+                "/v1/acp/inbox"
+            };
+            let event = serde_json::json!({"time": time::OffsetDateTime::now_utc().to_string(), "route": format!("{resource}{path}"), "outcome": outcome, "latency_ms": started.elapsed().as_millis(), "attempt": attempt});
+            #[cfg(not(test))]
+            eprintln!("{event}");
+            #[cfg(test)]
+            self.log.lock().unwrap().push(event.to_string());
+        }
+        if result.is_ok() {
+            self.attempt.lock().expect("attempt lock").remove(path);
+        }
+        result
+    }
+
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, Failure> {
-        let response = accepted(
-            self.request(Method::GET, path, &self.auth)
-                .timeout(DEADLINE)
-                .send()
-                .await,
+        self.call(
+            path,
+            self.request(Method::GET, path, &self.auth),
+            |response| async {
+                serde_json::from_slice(&body(response).await?)
+                    .map_err(|_| Failure::Engine("malformed reply".into()))
+            },
         )
-        .await?;
-        serde_json::from_slice(&body(response).await?).map_err(|_| Failure::Unavailable)
+        .await
     }
 
     pub(crate) async fn inbox(&self) -> Result<InboxSnapshot, Failure> {
@@ -225,38 +285,33 @@ impl ServiceClient {
         &self,
         run: Option<&str>,
     ) -> Result<Vec<String>, Failure> {
-        let mut request = self
-            .request(Method::POST, "/replies", &self.auth)
-            .timeout(DEADLINE);
+        let mut request = self.request(Method::POST, "/replies", &self.auth);
         if let Some(run) = run {
             request = request.json(run);
         }
-        let response = accepted(request.send().await).await?;
-        serde_json::from_slice(&body(response).await?).map_err(|_| Failure::Unavailable)
+        self.call("/replies", request, |response| async {
+            serde_json::from_slice(&body(response).await?)
+                .map_err(|_| Failure::Engine("malformed reply".into()))
+        })
+        .await
     }
 
     pub(crate) async fn answer(&self, answer: &InboxAnswer) -> Result<(), Failure> {
-        let response = self
+        let request = self
             .request(Method::POST, "/answer", &self.auth)
-            .timeout(DEADLINE)
-            .json(answer)
-            .send()
-            .await;
-        accepted(response).await?;
-        Ok(())
+            .json(answer);
+        self.call("/answer", request, |_| async { Ok(()) }).await
     }
 
     pub(crate) async fn stream(&self) -> Result<Invalidations, Failure> {
-        let response = tokio::time::timeout(
-            DEADLINE,
-            self.request(Method::GET, "/events", &self.auth).send(),
-        )
-        .await
-        .map_err(|_| Failure::Unavailable)?;
-        Ok(Invalidations {
-            response: accepted(response).await?,
-            buffer: Vec::new(),
+        let request = self.request(Method::GET, "/events", &self.auth);
+        self.call("/events", request, |response| async {
+            Ok(Invalidations {
+                response,
+                buffer: Vec::new(),
+            })
         })
+        .await
     }
 }
 
@@ -267,12 +322,16 @@ fn authorization(credential: &[u8; 32]) -> Result<HeaderValue, Failure> {
     Ok(auth)
 }
 
-async fn accepted(result: Result<Response, reqwest::Error>) -> Result<Response, Failure> {
-    let response = result.map_err(|_| Failure::Unavailable)?;
+async fn accepted(response: Response) -> Result<Response, Failure> {
     match response.status() {
         StatusCode::UNAUTHORIZED => Err(Failure::Unauthorized),
         status if status.is_success() => Ok(response),
-        status if status.is_server_error() => Err(Failure::Unavailable),
+        status if status.is_server_error() => {
+            let Failure::Refused(message) = rejection(response).await else {
+                unreachable!()
+            };
+            Err(Failure::Engine(message))
+        }
         _ => Err(rejection(response).await),
     }
 }
@@ -297,7 +356,7 @@ async fn body(mut response: Response) -> Result<Vec<u8>, Failure> {
     let mut data = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| Failure::Unavailable)? {
         if data.len() + chunk.len() > MAX_REPLY {
-            return Err(Failure::Unavailable);
+            return Err(Failure::Engine("oversized reply".into()));
         }
         data.extend_from_slice(&chunk);
     }
@@ -329,9 +388,68 @@ impl Invalidations {
                 .map_err(|_| Failure::Unavailable)?
                 .ok_or(Failure::Unavailable)?;
             if self.buffer.len() + chunk.len() > 64 * 1024 {
-                return Err(Failure::Unavailable);
+                return Err(Failure::Engine("oversized event".into()));
             }
             self.buffer.extend_from_slice(&chunk);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::{io::AsyncWriteExt, net::TcpListener};
+
+    async fn fixture(
+        response: Option<&'static [u8]>,
+    ) -> (ServiceClient, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            if let Some(response) = response {
+                socket.write_all(response).await.unwrap();
+            } else {
+                tokio::time::sleep(DEADLINE + Duration::from_secs(1)).await;
+            }
+        });
+        let binding = SessionBinding::Inbox(nucleus_core::acp::InboxBinding {
+            session_id: "fixture".into(),
+            endpoint,
+            inbox_credential: [0; 32],
+        });
+        (ServiceClient::new(&binding).unwrap(), server)
+    }
+
+    fn check_log(client: &ServiceClient, outcome: &str) {
+        let lines = client.log.lock().unwrap();
+        assert_eq!(lines.len(), 1);
+        let event: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert!(event["time"].as_str().unwrap().contains("+00:00"));
+        assert_eq!(event["route"], "/v1/acp/inbox");
+        assert_eq!(event["outcome"], outcome);
+        assert!(event["latency_ms"].as_u64().is_some());
+        assert_eq!(event["attempt"], 1);
+    }
+
+    #[tokio::test]
+    async fn engine_error_preserves_message_and_logs_status() {
+        let (client, server) = fixture(Some(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 22\r\n\r\n{\"error\":\"store busy\"}")).await;
+        let error = client.inbox().await.err().unwrap();
+        assert_eq!(error.to_string(), "Nucleus could not answer: store busy");
+        check_log(&client, "503");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn hung_server_times_out_and_logs_attempt() {
+        let (client, server) = fixture(None).await;
+        let start = Instant::now();
+        let error = client.inbox().await.err().unwrap();
+        assert_eq!(error.to_string(), "Nucleus is unavailable.");
+        assert!(start.elapsed() >= DEADLINE);
+        check_log(&client, "timeout");
+        server.abort();
+        let _ = server.await;
     }
 }

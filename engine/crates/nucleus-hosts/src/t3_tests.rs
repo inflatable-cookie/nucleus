@@ -915,6 +915,9 @@ async fn unavailable_parent_recovery_requires_exact_terminal_evidence() {
         "nodeId":"parent-root", "ordinal":1, "updatedAt":"2026-11-26T04:07:04Z",
         "failure":{"class":"provider_error", "message":"Nucleus is unavailable."}
     }]);
+    let mut engine_error = unavailable.clone();
+    engine_error["projection"]["turnItems"][0]["failure"]["message"] =
+        json!("Nucleus could not answer: store unavailable");
     let mut wrong_run = unavailable.clone();
     wrong_run["projection"]["turnItems"][0]["runId"] = json!("other");
     let mut wrong_provider = unavailable.clone();
@@ -925,6 +928,7 @@ async fn unavailable_parent_recovery_requires_exact_terminal_evidence() {
     wrong_error["projection"]["turnItems"][0]["failure"]["message"] = json!("unrelated");
     for (snapshot, recover) in [
         (unavailable, true),
+        (engine_error, true),
         (wrong_run, false),
         (wrong_provider, false),
         (wrong_node, false),

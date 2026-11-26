@@ -578,7 +578,7 @@ impl Service {
             }
             Err(error) => {
                 if run.last_send_at_ms().is_none() {
-                    eprintln!(
+                    service_log!(
                         "{}: before reading T3 launch state for {}: {error}",
                         run.launch().instance,
                         launch_diagnostic(run)
@@ -1097,7 +1097,7 @@ impl Service {
             .claim_task_effect(id, &audit, false)?
             .is_some()
         {
-            eprintln!(
+            service_log!(
                 "{id}: assignment exceeds the T3 message limit: {}",
                 audit.detail
             );
@@ -1596,7 +1596,7 @@ impl Service {
         let run = task.run().ok_or(ServiceError::Input)?;
         let _fence = self.effect(row).await?;
         let authorization = host.authorize_send(run).await.inspect_err(|error| {
-            eprintln!(
+            service_log!(
                 "{}: before sending T3 {}: {error}",
                 run.launch().instance,
                 launch_diagnostic(run)
@@ -1668,7 +1668,7 @@ impl Service {
             && run.last_send_at_ms().is_none()
             && let Err(error) = self.reflect_role_admission(&sent, checkout, provider).await
         {
-            eprintln!("{}: {error}", task.identity().id);
+            service_log!("{}: {error}", task.identity().id);
         }
         let result = match host.send(dispatch).await {
             Err(

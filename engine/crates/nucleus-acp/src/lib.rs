@@ -376,7 +376,12 @@ async fn task_prompt(
         }
         .await;
         match result {
-            Err(error @ (Failure::Unavailable | Failure::Unauthorized | Failure::Refused(_))) => {
+            Err(
+                error @ (Failure::Unavailable
+                | Failure::Engine(_)
+                | Failure::Unauthorized
+                | Failure::Refused(_)),
+            ) => {
                 if matches!(error, Failure::Unauthorized)
                     && matches!(client.renew_task_reader(cwd, session), Ok(false))
                 {
