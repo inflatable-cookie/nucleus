@@ -39,6 +39,18 @@ const PLANNER_KEY: [u8; 32] = [5; 32];
 const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
+#[test]
+fn operator_snooze_is_not_projected_as_board_wait_text() {
+    let detail = crate::WaitDetail::OperatorSnoozed {
+        version: 1,
+        thread: "thread:fixture".into(),
+        until: 42,
+        message: "You snoozed this thread until 00:00".into(),
+    };
+
+    assert_eq!(board_wait_detail(&detail), None);
+}
+
 #[tokio::test]
 async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));

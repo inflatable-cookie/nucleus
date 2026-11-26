@@ -86,6 +86,7 @@ export function HostDefault({
     if (values && !auto.saver.busy && !auto.failed)
       setHost(values.operatorDefaultHostKind);
   }, [values?.operatorDefaultHostKind, auto.failed]);
+  if (rust && (hosts === undefined || hosts.length < 2)) return null;
   const placeholder =
     rust && host !== null
       ? hosts === undefined

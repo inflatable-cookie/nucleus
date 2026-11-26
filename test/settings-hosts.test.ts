@@ -301,7 +301,7 @@ test("the default host picker lives here and saves through the Settings capacity
   }
 });
 
-test("Rust default host choices use registered hosts (second-host case uses a fixture)", async () => {
+test("Rust default host stays hidden until a second host is registered", async () => {
   const oneHost = { ...LIST, hosts: [LIST.hosts[2]!] };
   const single = await mountHosts(
     {
@@ -311,9 +311,8 @@ test("Rust default host choices use registered hosts (second-host case uses a fi
     true,
   );
   try {
-    assert.ok(single.ui.get("Default host, T3Code"));
-    single.ui.press("Default host, T3Code");
-    assert.match(single.ui.text(), /Planner's host/);
+    assert.equal(single.ui.query("Default host, T3Code"), undefined);
+    assert.doesNotMatch(single.ui.text(), /Default host/);
     assert.doesNotMatch(single.ui.text(), /Paseo|BB/);
   } finally {
     single.done();
@@ -349,7 +348,7 @@ test("Rust default host choices use registered hosts (second-host case uses a fi
   }
 });
 
-test("an unregistered Rust default stays unavailable until the operator changes it", async () => {
+test("a single Rust host hides an unregistered default without saving", async () => {
   let saves = 0;
   const onlyT3 = { ...LIST, hosts: [LIST.hosts[2]!] };
   const unavailable = await mountHosts(
@@ -363,10 +362,7 @@ test("an unregistered Rust default stays unavailable until the operator changes 
     true,
   );
   try {
-    assert.ok(unavailable.ui.query("Default host, Unavailable"));
-    unavailable.ui.press("Default host, Unavailable");
-    assert.match(unavailable.ui.text(), /T3Code/);
-    assert.match(unavailable.ui.text(), /Planner's host/);
+    assert.equal(unavailable.ui.query("Default host, Unavailable"), undefined);
     assert.doesNotMatch(unavailable.ui.text(), /Paseo|BB/);
     assert.equal(saves, 0);
   } finally {
@@ -374,7 +370,7 @@ test("an unregistered Rust default stays unavailable until the operator changes 
   }
 });
 
-test("a pending or failed Rust host read does not claim the saved default is unavailable", async () => {
+test("a pending or failed Rust host read keeps the default picker hidden", async () => {
   for (const loadError of [null, new Error("service unavailable")]) {
     const unknown = await mountHosts(
       {
@@ -385,8 +381,8 @@ test("a pending or failed Rust host read does not claim the saved default is una
       true,
     );
     try {
-      assert.ok(unknown.ui.get("Default host, BB"));
-      assert.doesNotMatch(unknown.ui.text(), /Unavailable/);
+      assert.equal(unknown.ui.query("Default host, BB"), undefined);
+      assert.doesNotMatch(unknown.ui.text(), /Default host/);
     } finally {
       unknown.done();
     }
