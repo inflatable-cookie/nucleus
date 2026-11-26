@@ -183,6 +183,7 @@ const profileUsage = z.object({
   totals: countMap,
   groupTotals: countMap,
   limitedGroups: countMap.optional(),
+  fallbackGroups: z.array(z.string()).optional(),
 });
 export type RustCachedCatalog = z.infer<typeof cachedCatalog>;
 export type RustProfileUsage = z.infer<typeof profileUsage>;
@@ -329,6 +330,10 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
     storage: shareRead(() => board.read(storageView, "/settings/storage")),
     storedProfiles: shareRead(() => board.read(profilesSnapshot, "/settings/profiles")),
     profileUsage: () => board.read(profileUsage, "/profiles/usage"),
+    clearFallbackPause: (group: string, untilMs: number) => board.read(
+      z.object({ ok: z.literal(true) }), `/profiles/pauses/${encodeURIComponent(group)}/clear`,
+      json("POST", { untilMs }),
+    ),
     plan: (project: string) => board.read(planView, planning(project, "/plan")),
     setPlan: (project: string, value: RustPlan) =>
       board.read(plan, planning(project, "/plan"), json("PUT", value)),
