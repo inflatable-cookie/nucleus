@@ -655,24 +655,27 @@ function Availability({
               fontSize: typeScale.metadata.fontSize,
             }}
           >
-            {paused
+            {paused && current?.resetUnknown && current.retryAt
+              ? `Reset unknown, clear in Profiles after topping up. Automatic retry at ${new Date(current.retryAt).toLocaleString()}.`
+              : paused
               ? current?.retryAt
                 ? `Unavailable until ${new Date(current.retryAt).toLocaleString()}`
                 : "Unavailable"
               : "Available"}
           </Text>
-          {canEdit && paused && (!rust || !current?.retryAt) && (
+          {canEdit && paused && (!rust || !current?.retryAt || current.resetUnknown) && (
             <Button
               small
               c={c}
-              text={`Reset ${group}`}
+              text={current?.resetUnknown ? `Clear ${group} pause` : `Reset ${group}`}
               disabled={busy}
               onPress={() =>
                 void save({
                   group,
                   unavailable: false,
                   reason: "Reset by operator",
-                  retryAt: null,
+                  retryAt: current?.resetUnknown ? current.retryAt : null,
+                  ...(current?.resetUnknown && { resetUnknown: true }),
                 })
               }
             />

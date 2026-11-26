@@ -751,15 +751,25 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
   ], ["team"]);
   fake.setOfferedGroups({ r: "codex-team" });
   const worker = { counts: { w: 50 }, groups: { team: 50 }, sample: 50 };
+  const deadline = Date.now() + 86_400_000;
   fake.setUsage({
     recent: worker, worker, reviewer: { counts: {}, groups: {}, sample: 0 },
     totals: { w: 50 }, groupTotals: { team: 50 },
-    limitedGroups: { "codex-team": Date.now() + 3_600_000 },
+    limitedGroups: { "codex-team": deadline }, fallbackGroups: ["codex-team"],
   });
   useNativeStubs();
   const { ProfilesPanel } = await import("../client/settings-profiles");
+  const clears: unknown[] = [];
+  const fetcher: typeof fetch = async (url, init) => {
+    if (String(url).endsWith("/profiles/pauses/codex-team/clear")) {
+      assert.equal(init?.method, "POST");
+      clears.push(JSON.parse(String(init.body)));
+      return Response.json({ ok: true });
+    }
+    return fake.fetcher(url, init);
+  };
   for (const canEditSettings of [true, false]) {
-    const adapter = createRustAdapter(createRustApi(fake.fetcher));
+    const adapter = createRustAdapter(createRustApi(fetcher));
     fake.setSession({
       id: canEditSettings ? "operator-session" : "planner-session",
       canEditSettings,
@@ -801,8 +811,12 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
     assert.ok(ui.query("Worker, all roles: 50 of 50 recent assignments"));
     assert.ok(ui.query("Reserve, all roles: 0 of 50 recent assignments"));
     assert.doesNotMatch(ui.text(), /Reading subscriptions/);
+    assert.equal(Boolean(ui.query("Clear codex-team pause")), canEditSettings);
     if (canEditSettings) {
-      assert.match(ui.text(), /Unavailable until/);
+      assert.match(ui.text(), /Reset unknown, clear in Profiles after topping up/);
+      ui.press("Clear codex-team pause");
+      await waitFor(() => clears.length === 1);
+      assert.deepEqual(clears, [{ untilMs: deadline }]);
       assert.equal(ui.query("Pause codex"), undefined);
       ui.press("Edit codex-team");
       ui.press("Mark codex-team unavailable");
