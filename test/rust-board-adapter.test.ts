@@ -560,13 +560,51 @@ test("the Rust Hosts panel hides the default picker below two registered hosts",
     list.hosts.map(({ kind }) => kind),
     ["t3code"],
   );
-  const registered = mountPanel(list, "t3code");
+  let hiddenSaves = 0;
+  const registered = mountPanel(list, "t3code", async () => {
+    hiddenSaves++;
+  });
   try {
     assert.ok(registered.ui.query("T3 Code host t3, Online, default"));
     assert.equal(registered.ui.query("Default host, T3 Code"), undefined);
     assert.doesNotMatch(registered.ui.text(), /Paseo|BB/);
+    assert.equal(hiddenSaves, 0);
   } finally {
     registered.close();
+  }
+
+  // The current adapter reports only T3; retain its real row and add a registered
+  // future-host fixture to exercise the two-host path the board keeps available.
+  const secondHostList = api.hostList.output.parse({
+    ...list,
+    hosts: [
+      ...list.hosts,
+      {
+        id: "bb:fixture",
+        kind: "bb",
+        label: "BB",
+        endpoint: "bb-data-dir:/synthetic/bb",
+        state: "offline",
+        reason: "Fixture host",
+        isDefault: false,
+        versions: [],
+        dependents: [],
+        removalBlockers: [],
+      },
+    ],
+  });
+  const multiple = mountPanel(secondHostList, "t3code");
+  try {
+    multiple.ui.press("Default host, T3 Code");
+    assert.deepEqual(
+      multiple.ui
+        .all(/^Default host: /)
+        .map(({ props }) => props.accessibilityLabel)
+        .sort(),
+      ["Default host: BB", "Default host: Planner's host", "Default host: T3 Code"],
+    );
+  } finally {
+    multiple.close();
   }
 
   fake.setT3(null);
@@ -582,6 +620,76 @@ test("the Rust Hosts panel hides the default picker below two registered hosts",
     assert.equal(saves, 0);
   } finally {
     unavailable.close();
+  }
+});
+
+test("Rust Settings opens an adapter project without requesting owner candidates", async () => {
+  useNativeStubs();
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  let candidateReads = 0;
+  const invoke = async (method: string, input: unknown) => {
+    if (method === "project.owner-candidates") {
+      candidateReads++;
+      throw new RustUnsupported(method);
+    }
+    const contract = Object.values(api).find(
+      (value) =>
+        typeof value === "object" &&
+        value !== null &&
+        "name" in value &&
+        value.name === method,
+    );
+    if (!contract) throw new Error(`Unknown RPC ${method}`);
+    return adapter.rpc(contract as never, input as never);
+  };
+  const h = React.createElement;
+  const { QueueSettingsScreen } = await import("../client/settings-screen");
+  const ui = mount(
+    h(QueryClientProvider, {
+      client,
+      children: h(EngineFeaturesContext.Provider, {
+        value: RUST_ENGINE_FEATURES,
+        children: h(PluginRpcProvider, {
+          invoke: invoke as never,
+          children: h(QueueSettingsScreen as never, {
+            theme: { colors: new Proxy({}, { get: () => "#123" }) },
+            layout: { compact: false, platform: "ios" },
+            host: { id: "t3", label: "T3 Code" },
+          }),
+        }),
+      }),
+    }),
+  );
+  try {
+    ui.get("Nucleus settings").props.onLayout({
+      nativeEvent: { layout: { width: 1024 } },
+    });
+    await waitFor(
+      () => Boolean(ui.query("Usage level")),
+      HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS,
+      "Settings loads through the Rust adapter",
+    );
+    ui.press("Projects");
+    await waitFor(
+      () => ui.text().includes("Orbit"),
+      HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS,
+      "the adapter project appears",
+    );
+    ui.press("Orbit");
+    await waitFor(
+      () => Boolean(ui.query("Project name")),
+      HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS,
+      "the adapter project opens",
+    );
+    assert.equal(candidateReads, 0);
+    assert.doesNotMatch(ui.text(), /Couldn't load threads/);
+  } finally {
+    ui.update(React.createElement(React.Fragment));
+    client.clear();
   }
 });
 

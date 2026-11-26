@@ -19,7 +19,6 @@ import { formatLocalDateTime } from "./date-time-field";
 import { errorText } from "./error-text";
 import { useEngineFeatures } from "./engine-features";
 import type * as api from "../shared/contracts";
-import { HOST_KIND_LABELS } from "../shared/host-kind";
 import type { HostDependency, HostView } from "../shared/rpc/hosts";
 
 /*
@@ -88,14 +87,8 @@ export function HostDefault({
   }, [values?.operatorDefaultHostKind, auto.failed]);
   if (rust && (hosts === undefined || hosts.length < 2)) return null;
   const placeholder =
-    rust && host !== null
-      ? hosts === undefined
-        ? host === "t3code"
-          ? "T3 Code"
-          : HOST_KIND_LABELS[host]
-        : registeredKinds.has(host)
-          ? undefined
-          : "Unavailable"
+    rust && host !== null && !registeredKinds.has(host)
+      ? "Unavailable"
       : undefined;
   return (
     <Section
