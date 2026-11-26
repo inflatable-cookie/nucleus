@@ -112,7 +112,6 @@ impl SessionStore {
         Ok(evicted)
     }
 
-
     pub fn authenticate(
         &mut self,
         key: &[u8; 32],
