@@ -65,6 +65,27 @@ pub enum Entry {
     ReviewEntry,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueuePriority {
+    // Promoted sorts ahead of Normal in BTreeSet capacity waiters.
+    Promoted,
+    #[default]
+    Normal,
+}
+
+impl QueuePriority {
+    #[must_use]
+    pub const fn is_promoted(self) -> bool {
+        matches!(self, Self::Promoted)
+    }
+
+    #[must_use]
+    pub const fn is_normal(&self) -> bool {
+        matches!(self, Self::Normal)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Identity {
     pub id: String,
@@ -655,6 +676,8 @@ pub struct Task {
     pub(crate) work_continuation: Option<WorkContinuation>,
     #[serde(rename = "report_task", skip_serializing_if = "Option::is_none")]
     pub(crate) report_state: Option<ReportTask>,
+    #[serde(default, skip_serializing_if = "QueuePriority::is_normal")]
+    pub(crate) queue_priority: QueuePriority,
 }
 
 #[derive(Deserialize)]
@@ -673,6 +696,8 @@ struct StoredTask {
     work_continuation: Option<WorkContinuation>,
     #[serde(rename = "report_task")]
     report_state: Option<ReportTask>,
+    #[serde(default)]
+    queue_priority: QueuePriority,
 }
 
 impl TryFrom<StoredTask> for Task {
@@ -749,6 +774,7 @@ impl TryFrom<StoredTask> for Task {
             hold: stored.hold,
             work_continuation: stored.work_continuation,
             report_state: stored.report_state,
+            queue_priority: stored.queue_priority,
         })
     }
 }
@@ -760,6 +786,10 @@ impl Task {
             Entry::Brief => Phase::Queued,
             Entry::ReviewEntry => Phase::Reviewing,
         };
+        let queue_priority = crate::profiles::BriefPolicy::parse(&brief)
+            .ok()
+            .and_then(|policy| policy.priority)
+            .unwrap_or_default();
         Self {
             identity,
             papercut_title: None,
@@ -774,6 +804,7 @@ impl Task {
             hold: None,
             work_continuation: None,
             report_state: None,
+            queue_priority,
         }
     }
 
@@ -989,6 +1020,15 @@ impl Task {
     #[must_use]
     pub const fn hold(&self) -> Option<&Hold> {
         self.hold.as_ref()
+    }
+
+    #[must_use]
+    pub const fn queue_priority(&self) -> QueuePriority {
+        self.queue_priority
+    }
+
+    pub fn set_queue_priority(&mut self, priority: QueuePriority) {
+        self.queue_priority = priority;
     }
 
     pub(crate) fn approves(&self, head: &Head) -> bool {

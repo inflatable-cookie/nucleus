@@ -31,6 +31,7 @@ import { openScopeLanes } from "../../shared/project-scope";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { useRpc } from "../shell";
 import {
+  Button,
   DropdownSelect,
   muted,
   row,
@@ -39,6 +40,7 @@ import {
 import { projectName } from "./text";
 import { useTick } from "../use-tick";
 import { relativeAge } from "../../shared/pipeline-board";
+import { Badge } from "./badges";
 import {
   BoardCard,
   BoardCardVariantContext,
@@ -53,7 +55,7 @@ import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
 import { RustTaskProgress } from "../task/rust-progress";
-import { rustCardAgeAt, rustQuestionText, rustTaskLabel, rustWaitDetail, type RustTask } from "../web/rust-board";
+import { rustCardAgeAt, rustQuestionText, rustTaskLabel, rustWaitDetail, type RustCommand, type RustTask } from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
 
@@ -294,6 +296,8 @@ export type InboxListProps = {
     selected: string | null;
     onSelect: (id: string) => void;
     project: (task: RustTask) => { name: string; key?: string; badge: ProjectBadge | null };
+    busy?: boolean;
+    onCommand?: (id: string, command: RustCommand) => void;
   };
   leadsLoading: boolean;
   decisions: DecisionView[] | undefined;
@@ -905,6 +909,8 @@ export function RustListRows({ c, rust, view }: {
       const detail = task.hold?.reason ?? rustWaitDetail(task);
       const ageAt = rustCardAgeAt(task);
       const project = rust.project(task);
+      const canPrioritize = task.phase === "queued" || task.wait === "capacity";
+      const promoted = task.queuePriority === "promoted";
       return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
         title={title} label={title === reference ? title : `${reference}, ${title}`} meta={title === reference ? null : reference}
         project={<CardProject c={c} name={project.name} projectKey={project.key} badge={project.badge} />}
@@ -913,6 +919,19 @@ export function RustListRows({ c, rust, view }: {
           state: task.stateLabel, detail: question ? null : detail,
         }}
         age={ageAt === null ? null : relativeAge(ageAt)}
+        flags={canPrioritize && promoted ? <Badge label="Promoted" tone="accent" c={c} a11y="Promoted" /> : undefined}
+        actions={canPrioritize && rust.onCommand ? (
+          <View style={{ ...row, gap: space.xs }}>
+            <Button
+              small
+              c={c}
+              disabled={rust.busy}
+              text={promoted ? "Demote" : "Promote"}
+              label={`${promoted ? "Demote" : "Promote"} ${reference}`}
+              onPress={() => rust.onCommand?.(task.identity.id, promoted ? { demote: task.version } : { promote: task.version })}
+            />
+          </View>
+        ) : undefined}
         progress={<RustTaskProgress progress={task.lifecycle} c={c} compact barsOnly />}
         selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
     })}

@@ -1,0 +1,5 @@
+# A cwd census covers the whole user, so these tests must not overlap with
+# subprocess-heavy tests in the same nextest run.
+[[profile.default.overrides]]
+filter = 'package(nucleus-service) and (test(writers_in_all_retirement_roots_hold_checkout) or test(terminal_cleanup_) or test(unbound_review_checkout_survives_a_local_writer_and_an_active_child))'
+threads-required = 'num-test-threads'

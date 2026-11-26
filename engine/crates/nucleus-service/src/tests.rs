@@ -1063,7 +1063,7 @@ pub(super) fn verified_native_fixture(host: T3, root: &std::path::Path) -> T3 {
     described_native_fixture(host, root, std::process::id())
 }
 
-fn described_native_fixture(host: T3, root: &std::path::Path, pid: u32) -> T3 {
+pub(super) fn described_native_fixture(host: T3, root: &std::path::Path, pid: u32) -> T3 {
     let descriptor = root.join("native-runtime.json");
     if !descriptor.exists() {
         // The local proof reads process start time at whole-second resolution.
@@ -1484,7 +1484,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
                 .await
                 .capacity_waiters
                 .iter()
-                .map(|(_, id)| id.as_str())
+                .map(|(_, _, id)| id.as_str())
                 .collect::<Vec<_>>(),
             [oldest, newest[0], newest[1]]
         );

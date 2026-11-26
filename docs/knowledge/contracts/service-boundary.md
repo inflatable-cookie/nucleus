@@ -74,7 +74,10 @@ The engine serves the board and Settings on its own loopback listener. Use
 authority and project scope. The browser removes the link fragment, exchanges
 the grant and uses an HttpOnly, SameSite=Strict cookie. The engine stores
 only a session digest and its authority and expiry in the owner-only profile.
-Active sessions survive an engine restart. Revocation clears grants and
+Active sessions survive an engine restart. At the 64-session limit, a new
+pairing first expires stale sessions, then replaces the least recently used one
+and ends its event stream. Each authenticated use records its time in the
+session file, so that order survives a restart. Revocation clears grants and
 sessions and ends their event streams. The listener checks the loopback Host
 and any supplied Origin. The board's request header and session are required
 for its paired API. Controller credentials stay outside the browser. See
