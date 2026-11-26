@@ -1035,9 +1035,10 @@ mod tests {
                 "selection": {"id": "alternate", "capability": "heavyweight", "weight": "fewer",
                               "provider": "codex", "model": "fixture", "effort": null}
             }],
-            "pausedGroups": ["Fixture Team", "Fixture Plus"]
+            "pausedGroups": ["Fixture Plus", "Fixture Team"]
         });
         let mut legacy_profiles = profiles.clone();
+        legacy_profiles["pausedGroups"] = json!(["Fixture Team", "Fixture Plus"]);
         let profile = &mut legacy_profiles["profiles"][0];
         profile["roles"] = json!(["worker", "reviewer", "coordinator"]);
         profile["scopes"] = json!(["mechanical", "complex"]);
