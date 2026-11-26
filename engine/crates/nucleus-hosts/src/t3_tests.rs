@@ -1732,8 +1732,9 @@ async fn closing_tasks_share_one_cwd_census_for_retirement_roots() {
     let pid = child.id().unwrap();
     let host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
     let pass = host.pass(elsewhere.path());
-    let scope = |checkout: &Path, scratch| pass.for_task(&reserve(binding(checkout)).0, scratch);
     assert!(!pass.evidence.processes.initialized());
+    let pass = pass.with_fixture_process_cwd(pid, busy.path());
+    let scope = |checkout: &Path, scratch| pass.for_task(&reserve(binding(checkout)).0, scratch);
     assert_eq!(
         scope(busy.path(), None)
             .retirement_writer(busy.path())

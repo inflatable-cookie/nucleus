@@ -2637,24 +2637,6 @@ mod tests {
         derived
     }
 
-    // A different process of this uid can exit between lsof and the cwd follow-up.
-    // An incomplete census has made no retirement decision; retry with a fresh pass.
-    async fn retry_incomplete_cwd<F, Fut>(mut check: F) -> Result<Option<Retirement>, ServiceError>
-    where
-        F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = Result<Option<Retirement>, ServiceError>>,
-    {
-        for _ in 0..4 {
-            match check().await {
-                Err(ServiceError::Host(HostError::ProcessCoverage(
-                    nucleus_hosts::ProcessEvidenceFailure::Cwd { .. },
-                ))) => tokio::time::sleep(Duration::from_millis(100)).await,
-                result => return result,
-            }
-        }
-        check().await
-    }
-
     #[tokio::test]
     async fn writers_in_all_retirement_roots_hold_checkout() {
         use std::os::unix::fs::PermissionsExt as _;
@@ -2691,17 +2673,15 @@ mod tests {
                     .kill_on_drop(true)
                     .spawn()
                     .unwrap();
-                let result = retry_incomplete_cwd(|| async {
-                    let host = service
-                        .host
-                        .pass(service.storage.scratch().path())
-                        .for_task(&row.task, service.existing_run_scratch(&row.task));
-                    service
-                        .retire_if_idle(&host, &row.task, &binding, &checkout, Some(&head))
-                        .await
-                })
-                .await;
                 let pid = child.id().unwrap();
+                let host = service
+                    .host
+                    .pass(service.storage.scratch().path())
+                    .with_fixture_process_cwd(pid, root)
+                    .for_task(&row.task, service.existing_run_scratch(&row.task));
+                let result = service
+                    .retire_if_idle(&host, &row.task, &binding, &checkout, Some(&head))
+                    .await;
                 child.kill().await.unwrap();
                 assert!(
                     matches!(&result, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
@@ -2933,37 +2913,37 @@ mod tests {
             }));
         };
         shell(json!([]));
-        let retire = || async {
-            service
-                .retire_if_idle(
-                    &service.host.pass(service.storage.scratch().path()),
-                    &task,
-                    &binding,
-                    &checkout,
-                    Some(head),
-                )
-                .await
-        };
         let mut writer = tokio::process::Command::new("/bin/sleep")
             .arg("60")
             .current_dir(checkout.path())
             .kill_on_drop(true)
             .spawn()
             .unwrap();
+        let writer_host = service
+            .host
+            .pass(service.storage.scratch().path())
+            .with_fixture_process_cwd(writer.id().unwrap(), checkout.path())
+            .for_task(&task, None);
         assert!(
-            matches!(retry_incomplete_cwd(retire).await, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {}", writer.id().unwrap())))
+            matches!(service.retire_if_idle(&writer_host, &task, &binding, &checkout, Some(head)).await, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {}", writer.id().unwrap())))
         );
         assert!(checkout.path().exists());
         writer.kill().await.unwrap();
+        let quiet_host = service.host.fixture_pass().for_task(&task, None);
         shell(json!([{"id":"active-child","parentThreadId":parent,"status":"running"}]));
         assert!(matches!(
-            retry_incomplete_cwd(retire).await,
+            service
+                .retire_if_idle(&quiet_host, &task, &binding, &checkout, Some(head))
+                .await,
             Err(ServiceError::Host(HostError::RowChildBusy))
         ));
         assert!(checkout.path().exists());
         shell(json!([]));
         assert_eq!(
-            retry_incomplete_cwd(retire).await.unwrap(),
+            service
+                .retire_if_idle(&quiet_host, &task, &binding, &checkout, Some(head))
+                .await
+                .unwrap(),
             Some(Retirement::Removed)
         );
         assert!(!checkout.path().exists());
