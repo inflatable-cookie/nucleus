@@ -157,6 +157,10 @@ impl Board {
             .route("/api/engine/theme", get(theme))
             .route("/api/engine/profiles/catalog", get(profile_catalog))
             .route("/api/engine/profiles/usage", get(profile_usage))
+            .route(
+                "/api/engine/profiles/pauses/{group}/clear",
+                post(settings::clear_fallback_pause),
+            )
             .route("/api/engine/tasks", get(super::list).post(super::admit))
             .route("/api/engine/tasks/{id}", get(super::detail))
             .route("/api/engine/tasks/{id}/next", get(super::next))
@@ -264,12 +268,20 @@ async fn profile_usage(State(api): State<Api>) -> Result<Json<Value>, ApiError> 
         .store
         .profile_usage()
         .map_err(crate::ServiceError::from)?;
+    let now = now_ms();
     let limited_groups = state
         .store
-        .active_provider_pauses(now_ms())
+        .active_provider_pauses(now)
         .map_err(crate::ServiceError::from)?;
     let mut view = json!(usage);
     view["limitedGroups"] = json!(limited_groups);
+    let fallback = state
+        .store
+        .fallback_pause_groups(now)
+        .map_err(crate::ServiceError::from)?;
+    if !fallback.is_empty() {
+        view["fallbackGroups"] = json!(fallback);
+    }
     Ok(Json(view))
 }
 

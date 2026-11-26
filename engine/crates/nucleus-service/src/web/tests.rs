@@ -722,6 +722,35 @@ async fn reject_foreign_addresses(api: &Router, worker_path: &str, key: &[u8; 32
 }
 
 #[tokio::test]
+async fn next_shows_the_settled_reviewers_provider_reset() {
+    let (_home, service) = fixture(GitHub::new("unused-fixture").unwrap());
+    let (mut task, _, mut observation) =
+        reservation("reviewer", Entry::ReviewEntry, &service.fixture().start);
+    let cause =
+        "Provider usage limit for subscription group shared. Reset at 2099-01-01 00:00 UTC.";
+    observation.host = Observed::Known(Host::ProviderLimited {
+        instance: task.run().unwrap().launch().instance.clone(),
+        cause: cause.into(),
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Relaunch(nucleus_core::Role::Reviewer)
+    );
+    seed_task(&service, &task).await;
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }],
+    );
+    let next = json_body(get_as(&api, "/v1/tasks/reviewer/next", &BOARD_KEY).await).await;
+    assert_eq!(next["lastProviderLimit"], cause);
+}
+
+#[tokio::test]
 async fn next_and_owner_commands_agree_on_code_recovery() {
     let (_home, service) = fixture(GitHub::new("unused-fixture").unwrap());
     let service = Arc::new(service);
@@ -2207,12 +2236,20 @@ async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_grou
     std::fs::write(assets.join("app.js"), "").unwrap();
     let api = router_with_board(
         Arc::clone(&service),
-        [Controller {
-            credential: BOARD_KEY,
-            authority: Authority::Operator {
-                actor: "operator".into(),
+        [
+            Controller {
+                credential: BOARD_KEY,
+                authority: Authority::Operator {
+                    actor: "operator".into(),
+                },
             },
-        }],
+            Controller {
+                credential: PLANNER_KEY,
+                authority: Authority::Planner {
+                    actor: "fixture-planner".into(),
+                },
+            },
+        ],
         &assets,
     )
     .unwrap();
@@ -2280,7 +2317,63 @@ async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_grou
     let usage = read_paired_task(&api, "/api/engine/profiles/usage", &cookie).await;
     assert_eq!(usage["limitedGroups"], json!({"codex-team":deadline}));
     assert!(matches!(select().await, Ok(LaunchSelection::Paused)));
+    assert_paired_pause_clear(&api, &service, &cookie, now, deadline).await;
     native.abort();
+}
+
+async fn assert_paired_pause_clear(
+    api: &Router,
+    service: &Service,
+    cookie: &str,
+    now: u64,
+    deadline: u64,
+) {
+    let clear = "/api/engine/profiles/pauses/";
+    let click = |group: &str, observed, cookie: &str| {
+        let path = format!("{clear}{group}/clear");
+        let cookie = cookie.to_owned();
+        async move {
+            browser_request(
+                api,
+                Method::POST,
+                &path,
+                Some(&cookie),
+                Some(&json!({"untilMs":observed})),
+            )
+            .await
+            .status()
+        }
+    };
+    assert_eq!(
+        click("codex-team", deadline, cookie).await,
+        StatusCode::CONFLICT
+    );
+    let estimate = nucleus_store::SubscriptionPause {
+        until_ms: deadline,
+        fallback: true,
+    };
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .set_subscription_pause("estimated", estimate, now)
+        .unwrap();
+    let usage = read_paired_task(api, "/api/engine/profiles/usage", cookie).await;
+    assert_eq!(usage["fallbackGroups"], json!(["estimated"]));
+    let planner = pair_board(api, &PLANNER_KEY).await;
+    assert_eq!(
+        click("estimated", deadline, &planner).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        click("estimated", deadline - 1, cookie).await,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(click("estimated", deadline, cookie).await, StatusCode::OK);
+    let usage = read_paired_task(api, "/api/engine/profiles/usage", cookie).await;
+    assert_eq!(usage["limitedGroups"], json!({"codex-team":deadline}));
+    assert!(usage.get("fallbackGroups").is_none());
 }
 
 fn subscription_catalog_reply(request: &Value) -> Value {

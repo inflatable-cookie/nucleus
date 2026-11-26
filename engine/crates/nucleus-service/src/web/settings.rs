@@ -50,6 +50,29 @@ pub(super) async fn pause_group(
     Ok(Json(json!({"group":group, "untilMs":until_ms})))
 }
 
+pub(super) async fn clear_fallback_pause(
+    State(api): State<Api>,
+    Extension(authority): Extension<Authority>,
+    Path(group): Path<String>,
+    input: Result<Json<ProviderPause>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    require_operator(&authority)?;
+    let pause = body(input)?;
+    let mut state = api.service.state.lock().await;
+    if !state
+        .store
+        .clear_fallback_pause(&group, pause.until_ms)
+        .map_err(ServiceError::from)?
+    {
+        return Err(ApiError::Conflict(
+            "The estimated pause changed. Refresh Profiles.",
+        ));
+    }
+    api.service.profile_usage_changes.send_replace(());
+    api.service.wake_settings_capacity(&mut state);
+    Ok(Json(json!({"ok":true})))
+}
+
 pub(crate) struct RuntimeSettings {
     pub dispatch: Option<DispatchSettings>,
     pub profiles: Option<Arc<Profiles>>,

@@ -885,6 +885,7 @@ async fn next(
         }
     }
     Ok(Json(NextView {
+        last_provider_limit: task.threads().last_provider_limit.clone(),
         version: row.version,
         phase: summary.card.phase,
         state_label: summary.card.state_label,
@@ -1501,6 +1502,8 @@ impl From<&ReportTask> for ReportView {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NextView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_provider_limit: Option<String>,
     version: i64,
     phase: Phase,
     state_label: String,
@@ -1544,6 +1547,7 @@ enum ApiError {
     BriefBodyTooLarge,
     SettingsOperator,
     GitHubAccountsOperator,
+    Conflict(&'static str),
     ProjectOpenTasks,
     BoardUnavailable,
     BoardOperator,
@@ -1583,6 +1587,7 @@ impl IntoResponse for ApiError {
                 StatusCode::FORBIDDEN,
                 "GitHub account settings require an operator".into(),
             ),
+            Self::Conflict(cause) => (StatusCode::CONFLICT, cause.into()),
             Self::ProjectOpenTasks => (
                 StatusCode::CONFLICT,
                 "Finish or cancel the project's open tasks before removing it.".into(),
