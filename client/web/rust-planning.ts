@@ -201,142 +201,6 @@ export function boardDecision(
   };
 }
 
-const RUST_ONLY = "Not part of the Rust engine (Spec 070 planning model).";
-
-/** A Rust item as the board's lead record. Both kinds keep their names (ruling 12). */
-export function boardLeadRecord(item: RustItem, project: RustProject) {
-  const repos = repositories(project, item.repositories);
-  const base = project.repositories[0]?.base ?? "main";
-  return {
-    id: item.id,
-    title: item.title,
-    body: item.body,
-    repositories: repos,
-    lanes: item.lanes,
-    tags: item.kind === "papercut" ? ["papercut"] : [],
-    papercut: null,
-    closure: null,
-    author: item.author || "Nucleus",
-    state:
-      item.state === "promoted"
-        ? ("promoted" as const)
-        : item.state === "dropped"
-          ? ("dropped" as const)
-          : ("open" as const),
-    version: item.version ?? 1,
-    check: null,
-    checkOperationId: null,
-    approval: null,
-    baseBranch: base,
-    dropReason: item.state === "dropped" ? (item.reason ?? null) : null,
-    reopens: [],
-    parked:
-      item.state === "parked"
-        ? {
-            reason: item.reason || "Parked",
-            revisitAt: item.revisitAt ?? null,
-            by: item.author || "Nucleus",
-            at: "",
-          }
-        : null,
-    recheck: null,
-    targets:
-      item.state === "promoted" && item.taskId
-        ? [
-            {
-              kind: "task" as const,
-              repository: repos[0]?.origin ?? null,
-              reference: item.taskId,
-              at: "",
-            },
-          ]
-        : [],
-    source: null,
-    createdAt: item.createdAtMs == null ? "" : iso(item.createdAtMs),
-    updatedAt: item.updatedAtMs == null ? "" : iso(item.updatedAtMs),
-    closedAt: null,
-  };
-}
-
-function leadDetail(item: RustItem, project: RustProject) {
-  const open = item.state === "open";
-  const bound = new Set(
-    project.repositories
-      .filter((repo) => repo.hostProject)
-      .map((repo) => repo.origin.toLowerCase()),
-  );
-  return {
-    ...boardLeadRecord(item, project),
-    actions: {
-      check: RUST_ONLY,
-      approve: RUST_ONLY,
-      drop:
-        open || item.state === "parked"
-          ? null
-          : "Only an open item can be dropped.",
-      reopen:
-        item.state === "parked" || item.state === "dropped"
-          ? null
-          : "Only parked or dropped items can be reopened.",
-      park: open ? null : "Only an open item can be parked.",
-      promoteTo: RUST_ONLY,
-      promote: repositories(project, item.repositories).map((repo) => ({
-        origin: repo.origin,
-        reason: !open
-          ? "Only an open item can be promoted."
-          : bound.has(repo.origin.toLowerCase())
-            ? null
-            : "Bind this repository to T3Code before promoting.",
-      })),
-    },
-    versions: [],
-    promotedTaskId: item.state === "promoted" ? (item.taskId ?? null) : null,
-  };
-}
-
-function boardPapercut(item: RustItem, row: ProjectRow) {
-  const repos = repositories(row.project, item.repositories);
-  return {
-    id: item.id,
-    project: row.id,
-    repository: repos[0]!,
-    repositories: repos,
-    area: null,
-    title: item.title,
-    happened: item.body,
-    impact: "",
-    fix: null,
-    filedBy: item.author || "Nucleus",
-    filedAt: item.createdAtMs == null ? "" : iso(item.createdAtMs),
-    state:
-      item.state === "promoted"
-        ? ("promoted" as const)
-        : item.state === "dropped"
-          ? ("closed" as const)
-          : ("open" as const),
-    version: item.version ?? 1,
-    taskId: item.state === "promoted" ? (item.taskId ?? null) : null,
-    closedReason:
-      item.state === "dropped"
-        ? (item.disposition ?? ("deprecated" as const))
-        : null,
-    draftId: null,
-    note: item.state === "dropped" ? (item.reason ?? null) : null,
-    closedAt: null,
-    source: null,
-    lanes: item.lanes,
-    parked:
-      item.state === "parked"
-        ? {
-            reason: item.reason || "Parked",
-            revisitAt: item.revisitAt ?? null,
-            by: item.author || "Nucleus",
-            at: "",
-          }
-        : null,
-  };
-}
-
 type PlanningCollection = "Plans" | "Items" | "Decisions";
 type ReportPlanningIssues = (
   collection: PlanningCollection,
@@ -363,6 +227,10 @@ const history = z.array(
   }),
 );
 const snapshotVersion = z.object({ version: z.number().int() });
+const historySnapshot = z.object({
+  note: z.string().optional(),
+  disposition: z.enum(["completed", "deprecated"]).optional(),
+});
 
 async function laneRevision(
   saved: RustLane,
@@ -579,20 +447,62 @@ export function createRustPlanning(
     return match;
   }
 
-  async function promote({
-    id,
-    project,
-    repository,
-    complexity,
-  }: {
-    id: string;
-    project?: string;
-    repository?: string;
-    complexity?: api.CapabilityLevel;
-  }) {
-    const { row } = await recordOwner("items", item, id, project);
-    const task = await rust.promoteItem(row.id, id, { repository, complexity });
-    return { taskId: task.identity.id, reference: task.reference };
+  /** An item action addresses the project the view opened it from. */
+  function itemOwner(input: { id: string; project: string }) {
+    return recordOwner("items", item, input.id, input.project);
+  }
+
+  /** The item read back after a write: park and drop answer without its version. */
+  async function savedItem(row: ProjectRow, id: string) {
+    const record = await findRecord(row, "items", item, id);
+    if (!record) throw new Error(`Item ${id} is no longer in ${row.project.name}.`);
+    return record;
+  }
+
+  /** The item as the detail view reads it, with its history. */
+  async function itemDetail(row: ProjectRow, record: RustItem): Promise<api.ItemDetail> {
+    const records = await planningRead(row, `history/item/${encodeURIComponent(record.id)}`, history);
+    if (record.version === undefined)
+      throw new Error("The engine did not supply the item version.");
+    const bound = new Set(
+      row.project.repositories
+        .filter((repo) => repo.hostProject)
+        .map((repo) => repo.origin.toLowerCase()),
+    );
+    return {
+      id: record.id,
+      kind: record.kind,
+      projectKey: row.board.key,
+      projectName: row.project.name,
+      title: record.title,
+      body: record.body,
+      lanes: record.lanes,
+      repositories: repositories(row.project, record.repositories).map((repo) => ({
+        origin: repo.origin,
+        bound: bound.has(repo.origin.toLowerCase()),
+      })),
+      author: record.author,
+      state: record.state,
+      reason: record.reason ?? null,
+      disposition: record.state === "dropped" ? (record.disposition ?? "deprecated") : null,
+      briefComplexity: record.kind === "lead" ? (record.complexity ?? null) : null,
+      revisitAt: record.state === "parked" ? (record.revisitAt ?? null) : null,
+      taskId: record.state === "promoted" ? (record.taskId ?? null) : null,
+      version: record.version,
+      createdAtMs: record.createdAtMs ?? null,
+      updatedAtMs: record.updatedAtMs ?? null,
+      history: (records ?? []).map((entry) => {
+        const snapshot = historySnapshot.safeParse(entry.snapshot).data;
+        return {
+          actor: entry.actor,
+          atMs: entry.atMs,
+          action: entry.action,
+          note: snapshot?.note ?? null,
+          disposition:
+            entry.action === "drop" ? (snapshot?.disposition ?? "deprecated") : null,
+        };
+      }),
+    };
   }
 
   const handlers = {
@@ -845,99 +755,76 @@ export function createRustPlanning(
       });
       return boardDecision(saved, row.board.key, row.project);
     },
-    "lead.get": async (input: { project?: string; id: string }) => {
-      const { row, record } = await recordOwner(
-        "items",
-        item,
-        input.id,
-        input.project,
-      );
-      return leadDetail(record, row.project);
+    "item.closed": async (input: { kind: "lead" | "papercut" }) => {
+      const closed = await collectProjects("Items", async (row, issues) => {
+        const raw = await planningRead(row, "items", rawList);
+        return collectRows(raw ?? [], `${row.id} item`, issues, (value) => item.parse(value)).flatMap(
+          (record): api.ClosedItem[] =>
+            record.kind === input.kind && (record.state === "promoted" || record.state === "dropped")
+              ? [
+                  {
+                    id: record.id,
+                    kind: record.kind,
+                    projectKey: row.board.key,
+                    projectName: row.project.name,
+                    title: record.title,
+                    state: record.state,
+                    disposition: record.state === "dropped" ? (record.disposition ?? "deprecated") : null,
+                    atMs: record.updatedAtMs ?? record.createdAtMs ?? null,
+                  },
+                ]
+              : [],
+        );
+      });
+      return closed.sort((a, b) => (b.atMs ?? 0) - (a.atMs ?? 0));
     },
-    "papercut.get": async (input: { project?: string; id: string }) => {
-      const { row, record } = await recordOwner(
-        "items",
-        item,
-        input.id,
-        input.project,
-        (value) => value.kind === "papercut",
-      );
-      if (record.version === undefined)
-        throw new Error("The engine did not supply the papercut version.");
-      return boardPapercut(record, row);
+    "item.get": async (input: { project?: string; id: string }) => {
+      const { row, record } = await recordOwner("items", item, input.id, input.project);
+      return itemDetail(row, record);
     },
-    "papercut.edit": async (input: output<typeof api.papercutEdit.input>) => {
-      const { id, project, version, title, body, happened } = input;
-      if (project === undefined)
-        throw new Error("Reopen the papercut before editing it.");
-      const { row, record } = await recordOwner(
-        "items",
-        item,
-        id,
-        keys().key(project),
-        (value) => value.kind === "papercut",
-      );
-      if (version !== record.version)
-        throw new Error("The papercut changed since you started editing.");
-      const saved = await rust.editItem(row.id, id, {
-        version,
-        title: title ?? record.title,
-        body: body ?? happened ?? record.body,
+    "item.edit": async (input: output<typeof api.itemEdit.input>) => {
+      const { row, record } = await itemOwner(input);
+      await rust.editItem(row.id, record.id, {
+        version: input.version,
+        title: input.title,
+        body: input.body,
         lanes: record.lanes,
       });
-      return boardPapercut(saved, row);
+      return itemDetail(row, await savedItem(row, record.id));
     },
-    "lead.promote-task": promote,
-    "papercut.promote-task": promote,
-    "lead.park": async (input: {
-      project?: string;
-      id: string;
-      reason: string;
-      revisitAt?: string | null;
-    }) => {
-      const { row } = await recordOwner("items", item, input.id, input.project);
-      const saved = await rust.parkItem(row.id, input.id, {
+    "item.park": async (input: output<typeof api.itemPark.input>) => {
+      const { row, record } = await itemOwner(input);
+      await rust.parkItem(row.id, record.id, {
         reason: input.reason,
-        revisitAt: input.revisitAt ?? null,
+        revisitAt: input.revisitAt,
       });
-      return boardLeadRecord(saved, row.project);
+      return itemDetail(row, await savedItem(row, record.id));
     },
-    "lead.reopen": async (input: {
-      project?: string;
-      id: string;
-      reason?: string;
-      version?: number;
-    }) => {
-      const { row } = await recordOwner("items", item, input.id, input.project);
-      const saved = await rust.reopenItem(row.id, input.id, {
-        note: input.reason || undefined,
+    "item.drop": async (input: output<typeof api.itemDrop.input>) => {
+      const { row, record } = await itemOwner(input);
+      await rust.dropItem(
+        row.id,
+        record.id,
+        input.note || null,
+        input.disposition,
+      );
+      return itemDetail(row, await savedItem(row, record.id));
+    },
+    "item.reopen": async (input: output<typeof api.itemReopen.input>) => {
+      const { row, record } = await itemOwner(input);
+      await rust.reopenItem(row.id, record.id, { version: input.version });
+      return itemDetail(row, await savedItem(row, record.id));
+    },
+    "item.promote": async (input: output<typeof api.itemPromote.input>) => {
+      const { row, record } = await itemOwner(input);
+      // One engine operation: it refuses an item past the version the view showed, and a
+      // lead's chosen level is written into its brief only together with the admitted task.
+      const task = await rust.promoteItem(row.id, record.id, {
+        repository: input.repository,
+        complexity: input.complexity,
         version: input.version,
       });
-      return { ...boardLeadRecord(saved, row.project), version: saved.version };
-    },
-    "lead.drop": async (input: {
-      project?: string;
-      id: string;
-      reason: string;
-    }) => {
-      const { row } = await recordOwner("items", item, input.id, input.project);
-      const saved = await rust.dropItem(row.id, input.id, input.reason);
-      return boardLeadRecord(saved, row.project);
-    },
-    "papercut.close": async (input: {
-      project?: string;
-      id: string;
-      reason: "completed" | "deprecated";
-      note?: string;
-    }) => {
-      const { row } = await recordOwner("items", item, input.id, input.project);
-      const saved = await rust.dropItem(
-        row.id,
-        input.id,
-        input.note || null,
-        input.reason,
-      );
-      return boardPapercut(saved, row);
+      return { taskId: task.identity.id, reference: task.reference };
     },
   };
 

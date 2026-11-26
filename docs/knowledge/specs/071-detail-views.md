@@ -282,6 +282,45 @@ sections (the Rust item has only a body), the complexity chip row (now a
 dropdown), and the two separate "Close as …" buttons (now Drop with a
 disposition).
 
+### Built (nucleus#1604)
+
+The Rust board's lead and papercut view follows this layout, in the task view's
+frame and with its pieces (panel, cards, activity list, footer). The board reads
+one `item.get` record with the engine's own state, disposition, revisit date and
+history, and writes through `item.edit`, `item.park`, `item.drop`,
+`item.reopen` and `item.promote`, each answered with the item read back.
+
+- **Promote.** The Repository dropdown shows only for an item spanning several
+  repositories; an unbound one can be chosen but Promote stays disabled with the
+  reason. Promote always names the destination, because the engine defaults one
+  only when the whole project has a single bound repository. Both kinds get the
+  Complexity dropdown. A lead's starts at the level its brief declares, which
+  the engine reads with the admission brief policy and serves on the board's
+  item list (`complexity`). Promote is one engine request carrying the item
+  version the view showed: the engine refuses it whole if the item changed since,
+  and the view reloads and says so. A lead sends a level only when the operator
+  chose one (or its brief declares none); the engine writes it into the brief's
+  `queue.complexity`, keeps the rest, and saves that brief on the lead in the
+  same transaction that admits the task and links its source, so a refused
+  promotion leaves the lead as filed. A papercut's level goes into the task
+  brief only.
+- **Parked.** The revisit date is a `YYYY-MM-DD` field; changing it offers Save,
+  which parks again with the same reason. Reopen shows on parked and dropped
+  items.
+- **Edit.** Saves at the version the editor opened. When the engine refuses a
+  stale save, the view keeps the draft and shows the saved version beside it;
+  the operator either uses the saved text or replaces it with the draft. No
+  ordinary Save is offered over content the operator has not seen. Both kinds
+  accept a versioned edit (the store had limited versioned edits to papercuts).
+- **Closed items.** The Leads and Papercuts state filter adds Closed on the Rust
+  board: promoted and dropped items, newest first, read through `item.closed`
+  and narrowed by the board's project selection like the other rows. All and
+  the menu counts keep the open-plus-parked set. A closed item opens
+  this view, so its task card or its outcome and Reopen stay reachable.
+- Age shows the time of the history entry that set the current state, or the
+  filing time while open, with the exact times in its tooltip. Activity lists
+  each history entry with its actor and a reopen's note.
+
 ### Data mapping
 
 | Element | Source | Status |
@@ -298,9 +337,9 @@ disposition).
 | Promote | `POST …/items/{id}/promote {repository, complexity}` | exists |
 | Bound repositories | project `repositories[].hostProject` | exists |
 | Linked task card | `taskId` joined with the board's task list | exists (client join) |
-| Edit | `PUT …/items/{id}` with `version` | exists (the adapter wires it for papercuts only) |
+| Edit | `PUT …/items/{id}` with `version` | exists (both kinds since nucleus#1604) |
 | Park, re-park | `POST …/items/{id}/park {reason, revisitAt}` | exists |
-| Drop | `POST …/items/{id}/drop {disposition, reason}` | exists (the lead adapter sends no disposition) |
+| Drop | `POST …/items/{id}/drop {disposition, reason}` | exists |
 | Reopen (parked or dropped) | `POST …/items/{id}/reopen {note, version}` | exists; version and note are optional |
 | Revisit date | Due indication while parked | exists; reopening is explicit |
 | Activity | `history/{kind}/{id}` | exists |

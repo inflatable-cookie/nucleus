@@ -5,7 +5,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
-use nucleus_core::{Authority, ReportArtifact, profiles::Complexity};
+use nucleus_core::{
+    Authority, ReportArtifact,
+    profiles::{BriefPolicy, Complexity},
+};
 use nucleus_store::planning::{
     Decision, DecisionAnswerInput, DecisionInput, History, Horizon, Item, ItemContent,
     ItemDisposition, ItemKind, ItemState, ItemWithTimes, Lane, LaneDisposition, LaneDocument,
@@ -16,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use super::{Api, ApiError, ControllerScope, Summary, body, credential, run_api_error};
 use crate::{
     ServiceError,
-    planning::{TaskAdmission, new_id, stamp},
+    planning::{ItemPromotion, TaskAdmission, new_id, stamp},
 };
 
 // A JSON string can use six bytes to escape one input byte.
@@ -283,9 +286,12 @@ async fn items(
         .await?;
     let store = &state.store;
     if session.is_some() {
-        let items = store
+        let items: Vec<BoardItem> = store
             .items_with_times(&project)
-            .map_err(ServiceError::from)?;
+            .map_err(ServiceError::from)?
+            .into_iter()
+            .map(BoardItem::from)
+            .collect();
         Ok(Json(items).into_response())
     } else {
         let items = store.items(&project).map_err(ServiceError::from)?;
@@ -324,6 +330,27 @@ async fn add_item(
         .map_err(ServiceError::from)?;
     api.service.planning_changes.send_replace(());
     Ok((StatusCode::CREATED, Json(item)))
+}
+
+/// A board item with the complexity its brief declares, read by the same brief
+/// policy admission uses. Only a lead's body is its task brief.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardItem {
+    #[serde(flatten)]
+    item: ItemWithTimes,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    complexity: Option<Complexity>,
+}
+
+impl From<ItemWithTimes> for BoardItem {
+    fn from(item: ItemWithTimes) -> Self {
+        let complexity = (item.item.kind == ItemKind::Lead)
+            .then(|| BriefPolicy::submitted(&item.item.content.body).ok())
+            .flatten()
+            .and_then(|policy| policy.complexity);
+        Self { item, complexity }
+    }
 }
 
 #[derive(Deserialize)]
@@ -477,6 +504,8 @@ async fn reopen_item(
 struct Promotion {
     repository: Option<String>,
     complexity: Option<Complexity>,
+    /// The item version the caller saw; a later change refuses the promotion.
+    version: Option<i64>,
 }
 
 async fn promote(
@@ -490,6 +519,7 @@ async fn promote(
     let Promotion {
         repository,
         complexity,
+        version,
     } = input
         .map_err(|_| ApiError::Invalid)?
         .map(|Json(input)| input)
@@ -499,8 +529,11 @@ async fn promote(
         .promote_planning_item(
             project.as_deref(),
             &id,
-            repository.as_deref(),
-            complexity,
+            ItemPromotion {
+                repository: repository.as_deref(),
+                complexity,
+                version,
+            },
             &caller,
             &scope,
         )

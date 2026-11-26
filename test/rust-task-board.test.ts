@@ -1007,7 +1007,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const secondCut = "A second open papercut";
   const leadItem = (id: string, title: string, origin: string) => ({
     id, title, repositories: [origin], kind: "lead", author: "Fixture planner",
-    body: itemBody, lanes: [], state: "open",
+    body: itemBody, lanes: [], state: "open", version: 3,
     createdAtMs: now - 4 * 3_600_000, updatedAtMs: now - 36 * 60_000,
   });
   const papercut = "A papercut title long enough to verify the sidebar ellipsis and the browser’s built-in full-title hover";
@@ -1313,11 +1313,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       { ...leadItem("parked-cut", parkedCut, boundRepository), kind: "papercut", state: "parked", reason: parkReason, version: 21 },
       editableCut,
     ]);
+    if (path.startsWith("/api/engine/planning/fixture/history/item/")) return Response.json([]);
     if (init?.method === "PUT" && path.startsWith("/api/engine/planning/fixture/items/")) {
       const body = JSON.parse(String(init.body));
       papercutWrites.push({ path, body });
       assert.equal(path, "/api/engine/planning/fixture/items/second-cut");
-      assert.equal(body.version, editableCut.version);
+      // The engine refuses an edit at any version but the current one.
+      if (body.version !== editableCut.version) return Response.json({ error: "planning record conflict" }, { status: 409 });
       editableCut = { ...editableCut, ...body, version: body.version + 1, updatedAtMs: now };
       return Response.json(editableCut);
     }
@@ -1580,7 +1582,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => triageTitles("Leads", "Lead").length === leadOrder.length, "all leads restored");
   assert.equal(planningReads().length, beforeFilters, "state filters do not read the API");
   await click(`Lead: ${parkedLead}, Status: Parked · ${parkReason}`);
-  await eventually(() => selector("Parked lead")?.textContent?.includes(parkReason) ?? false,
+  await eventually(() => selector("Parked")?.textContent?.includes(parkReason) ?? false,
     "the parked lead detail shows the reason");
   await click(`Lead: ${longLead}, Status: Unchecked · awaiting a check`);
   await eventually(() => selector("Lead detail")?.querySelector('[role="heading"]')?.textContent === longLead,
@@ -1605,7 +1607,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.ok(cutTitle);
   assert.equal(style(cutTitle).textOverflow, "ellipsis");
   await click(`Papercut: ${secondCut}, Status: Open`);
-  await click("Edit");
+  await click("Edit papercut");
   const editField = (label: string, value: string) => {
     const field = selector(label) as HTMLInputElement | HTMLTextAreaElement;
     const prototype = field instanceof dom.window.HTMLTextAreaElement
@@ -1618,24 +1620,25 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const editedBody = "    first line is an indented code block\n";
   assert.ok(!selector("Impact"), "the Rust editor has title and Markdown body fields");
   editField("Title", editedTitle);
-  editField("What happened", editedBody);
+  editField("Body", editedBody);
   await click("Save changes");
-  await eventually(() => text().includes("Saved version 12"), "uses the saved Rust item version");
+  await eventually(() => !selector("Body") && editableCut.version === 12, "saves at the opened Rust item version");
   assert.deepEqual(papercutWrites, [{
     path: "/api/engine/planning/fixture/items/second-cut",
     body: { version: 11, title: editedTitle, body: editedBody, lanes: ["delivery"] },
   }]);
   await eventually(() => Boolean(selector(`Papercut: ${editedTitle}, Status: Open`)), "list shows the saved title");
-  await click("Edit");
+  await click("Edit papercut");
   const draft = "Keep my draft after a conflict";
-  const draftField = editField("What happened", draft);
+  const draftField = editField("Body", draft);
   editableCut = { ...editableCut, title: "Concurrent papercut title", version: 13 };
   emit("planning");
   await eventually(() => Boolean(selector("Papercut detail")?.textContent?.includes(editableCut.title)), "detail refreshes during editing");
   await click("Save changes");
-  await eventually(() => text().includes("The papercut changed since you started editing."), "refuses the version that opened the form");
+  await eventually(() => text().includes("This papercut changed since you opened the editor."), "the engine refuses the version that opened the form");
   assert.equal(draftField.value, draft);
-  assert.equal(papercutWrites.length, 1, "a stale draft writes neither item");
+  assert.equal(editableCut.title, "Concurrent papercut title", "the refused draft changed nothing");
+  assert.equal(papercutWrites.at(-1)?.body.version, 12, "the save carried the version the form opened at");
   await click("Working, 1");
 
   // Dispatch hold writes the Rust Dispatch mode through Settings.

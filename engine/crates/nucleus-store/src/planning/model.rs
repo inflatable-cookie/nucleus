@@ -141,6 +141,17 @@ pub enum ItemState {
     },
 }
 
+/// What a promotion requires of its item, read inside the admission transaction.
+#[derive(Debug, Clone, Copy)]
+pub struct PromotionCheck<'a> {
+    /// The body admission read; any later edit refuses the promotion.
+    pub body: &'a str,
+    /// The version the caller saw, when it names one.
+    pub version: Option<i64>,
+    /// A new source body saved with the promotion (a lead's chosen complexity).
+    pub source_body: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSource {

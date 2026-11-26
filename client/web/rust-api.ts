@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { repositoryToolQuietLimitSchema } from "../../shared/schema/projects";
 import type { CapabilityLevel } from "../../shared/contracts";
+import { capabilityLevels } from "../../shared/schema/settings/capability";
 import {
   CANONICAL_PROVIDERS,
   THINKING_LEVELS,
@@ -261,6 +262,8 @@ export const item = z.object({
   disposition: z.enum(["completed", "deprecated"]).optional(),
   revisitAt: z.string().nullable().optional(),
   taskId: z.string().optional(),
+  /** A lead's brief complexity, parsed by the engine's brief policy (board reads only). */
+  complexity: z.enum(capabilityLevels).optional(),
 });
 export const decision = z.object({
   id: z.string(),
@@ -421,7 +424,12 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
     editItem: (
       project: string,
       id: string,
-      value: { version: number; title: string; body: string; lanes: string[] },
+      value: {
+        version: number;
+        title: string;
+        body: string;
+        lanes: string[];
+      },
     ) =>
       board.read(
         item.extend({ version: z.number().int().positive() }),
@@ -462,7 +470,13 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
     promoteItem: (
       project: string,
       id: string,
-      value: { repository?: string; complexity?: CapabilityLevel },
+      value: {
+        repository?: string;
+        /** A papercut's level, or a lead's new level (written into its brief with the task). */
+        complexity?: CapabilityLevel;
+        /** The item version the caller saw; a later change refuses the promotion. */
+        version?: number;
+      },
     ) =>
       board.read(
         z.object({

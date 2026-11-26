@@ -1523,7 +1523,6 @@ impl IntoResponse for ApiError {
                     | ServiceError::TellArchivedProject(_)
                     | ServiceError::ReportInput(_)
                     | ServiceError::ComplexityRequired
-                    | ServiceError::LeadComplexity
                     | ServiceError::BriefTooLarge { .. }
                     | ServiceError::BriefPolicy(_)
                     | ServiceError::DependencyInput(_)

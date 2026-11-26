@@ -3964,6 +3964,51 @@ async fn assert_browser_item(api: &Router, cookie: Option<&str>, events: &mut Bo
     )
     .await;
     assert_eq!(listed[0], saved);
+
+    assert_browser_lead_complexity(api, cookie, events).await;
+}
+
+/// A lead's list entry carries the complexity its brief declares, flow-style YAML included.
+async fn assert_browser_lead_complexity(
+    api: &Router,
+    cookie: Option<&str>,
+    events: &mut BodyDataStream,
+) {
+    let lead = json!({"kind":"lead","title":"Flow lead","body":"---\nqueue: {complexity: medium, dependsOn: []}\n---\nDo the work.\n","lanes":[]});
+    let added = browser_request(
+        api,
+        Method::POST,
+        "/api/engine/planning/local-fixture/items",
+        cookie,
+        Some(&lead),
+    )
+    .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+    assert_event(events, &["event: planning"]).await;
+    let listed_lead = |listed: &Value| {
+        listed
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|item| item["kind"] == "lead")
+            .expect("lead")
+            .clone()
+    };
+    let items = "/api/engine/planning/local-fixture/items";
+    let listed = json_body(browser_request(api, Method::GET, items, cookie, None).await).await;
+    let current = listed_lead(&listed);
+    assert_eq!(current["complexity"], "medium");
+    let papercut = listed
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["kind"] == "papercut")
+        .expect("papercut");
+    assert_eq!(
+        papercut.get("complexity"),
+        None,
+        "papercut bodies are not briefs"
+    );
 }
 
 async fn assert_board_assets(api: &Router) {

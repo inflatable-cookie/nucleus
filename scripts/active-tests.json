@@ -51,6 +51,7 @@
   "test/queue-navigation.test.ts",
   "test/queued-more.test.ts",
   "test/rust-board-adapter.test.ts",
+  "test/rust-item-detail.test.ts",
   "test/rust-task-board.test.ts",
   "test/rust-task-detail.test.ts",
   "test/schema-ownership.test.ts",

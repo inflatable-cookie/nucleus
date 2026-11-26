@@ -9,7 +9,7 @@ use nucleus_store::{
     StoreError, TaskAdmissionFacts, TaskRow, TellSubmission,
     planning::{
         Decision, DecisionAnswerInput, DecisionInput, DecisionKind, Item, ItemKind, ItemSource,
-        ItemState, USAGE_APPROVE, UsagePermission, WriteAt, valid_key,
+        ItemState, PromotionCheck, USAGE_APPROVE, UsagePermission, WriteAt, valid_key,
     },
 };
 use serde::Deserialize;
@@ -47,7 +47,19 @@ enum AdmissionSource<'a> {
     Item {
         source: &'a ItemSource,
         item: &'a Item,
+        /// The item version the caller saw, checked inside the admission transaction.
+        version: Option<i64>,
+        /// Save the task brief as the item's body with the promotion (a lead's new level).
+        rewrite: bool,
     },
+}
+
+/// A board or planner promotion: the destination, a complexity, and the version seen.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ItemPromotion<'a> {
+    pub repository: Option<&'a str>,
+    pub complexity: Option<Complexity>,
+    pub version: Option<i64>,
 }
 
 struct Admission<'a> {
@@ -170,11 +182,15 @@ impl Service {
         &self,
         project: Option<&str>,
         id: &str,
-        repository: Option<&str>,
-        complexity: Option<Complexity>,
+        request: ItemPromotion<'_>,
         caller: &Authority,
         scope: &ControllerScope,
     ) -> Result<(bool, TaskRow), ServiceError> {
+        let ItemPromotion {
+            repository,
+            complexity,
+            version,
+        } = request;
         self.storage.database().verify()?;
         let (_projects, state, route) = self.admission_route(scope, project, repository).await?;
         let item = state
@@ -193,10 +209,19 @@ impl Service {
         if !matches!(item.state, ItemState::Open | ItemState::Parked { .. }) {
             return Err(StoreError::PlanningConflict.into());
         }
+        // A lead's body is its brief: a different level is written into it, and the item keeps
+        // that brief when (and only when) the task is admitted. A papercut's body stays as filed.
+        let declared = (item.kind == ItemKind::Lead)
+            .then(|| BriefPolicy::parse(&item.content.body).ok())
+            .flatten()
+            .and_then(|policy| policy.complexity);
+        let rewrite = item.kind == ItemKind::Lead
+            && complexity.is_some_and(|complexity| declared != Some(complexity));
         let brief = match complexity {
-            Some(_) if item.kind == ItemKind::Lead => return Err(ServiceError::LeadComplexity),
-            Some(complexity) => BriefPolicy::with_complexity(&item.content.body, complexity)?,
-            None => item.content.body.clone(),
+            Some(complexity) if item.kind == ItemKind::Papercut || rewrite => {
+                BriefPolicy::with_complexity(&item.content.body, complexity)?
+            }
+            _ => item.content.body.clone(),
         };
         let policy = check_brief(&brief)?;
         let task_id = new_id("t")?;
@@ -220,6 +245,8 @@ impl Service {
             source: AdmissionSource::Item {
                 source: &source,
                 item: &item,
+                version,
+                rewrite,
             },
             caller,
             scope,
@@ -266,7 +293,7 @@ impl Service {
         }
         let attached = match &source {
             AdmissionSource::Direct => &[][..],
-            AdmissionSource::Item { source, item } => {
+            AdmissionSource::Item { source, item, .. } => {
                 if let Some(row) = self.existing_promotion(&state, source, item)? {
                     return Ok((false, row));
                 }
@@ -294,17 +321,20 @@ impl Service {
         };
         let number = match source {
             AdmissionSource::Direct => state.store.create_with_facts(&task, &admitted, facts)?,
-            AdmissionSource::Item { source, item } => {
+            AdmissionSource::Item {
+                source,
+                item,
+                version,
+                rewrite,
+            } => {
+                let check = PromotionCheck {
+                    body: &item.content.body,
+                    version,
+                    source_body: rewrite.then_some(task.brief().text.as_str()),
+                };
                 state
                     .store
-                    .promote_item_with_facts(
-                        source,
-                        &item.content.body,
-                        &task,
-                        &admitted,
-                        stamp(caller),
-                        facts,
-                    )?
+                    .promote_item_with_facts(source, check, &task, &admitted, stamp(caller), facts)?
                     .1
             }
         };

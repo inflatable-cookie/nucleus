@@ -27,7 +27,12 @@ export type InboxView = (typeof inboxViews)[number]["id"];
 export type InboxSection = { id: string; label: string; cards: PipelineCard[] };
 
 export const triageStates = ["All", "Open", "Parked"] as const;
-export type TriageFilter = (typeof triageStates)[number];
+/**
+ * The Rust board adds Closed: promoted and dropped items, read on their own so
+ * the default list and the menu counts keep the open-plus-parked set.
+ */
+export const rustTriageStates = [...triageStates, "Closed"] as const;
+export type TriageFilter = (typeof rustTriageStates)[number];
 
 /** The original Triage order, narrowed to one record kind and parked state. */
 export function triageCards(
@@ -36,6 +41,8 @@ export function triageCards(
   filter: TriageFilter,
 ): PipelineCard[] {
   const kind = view === "leads" ? "lead" : "papercut";
+  // Closed items are not board cards; the Rust list reads them separately.
+  if (filter === "Closed") return [];
   return board.cards.Triage.filter(
     (card) =>
       card.kind === "lead" &&
