@@ -1531,6 +1531,7 @@ async fn notice_pass(service: &Service, task: &str) -> Vec<crate::PassOutcome> {
 enum TaskNotice {
     Report,
     Prerequisite,
+    Completion,
 }
 
 impl TaskNotice {
@@ -1538,36 +1539,60 @@ impl TaskNotice {
         let registry = registry().await;
         registry.enroll("alpha-planner").await;
         registry.enroll("next-planner").await;
-        seed_ready_report(
-            &registry.service,
-            "notice",
-            matches!(self, Self::Prerequisite),
-        )
-        .await;
-        if matches!(self, Self::Prerequisite) {
-            let mut state = registry.service.state.lock().await;
-            let mut identity = state
-                .store
-                .row("notice")
-                .unwrap()
-                .unwrap()
-                .task
-                .identity()
-                .clone();
-            "finished".clone_into(&mut identity.id);
-            "finished".clone_into(&mut identity.reference);
-            let mut completed =
-                serde_json::to_value(Task::new(identity, "Fixture".into(), None)).unwrap();
-            completed["phase"] = json!("done");
-            state
-                .store
-                .create(
-                    &serde_json::from_value(completed).unwrap(),
-                    &event("fixture"),
-                )
-                .unwrap();
-            drop(state);
-            release_notice(&registry).await;
+        match self {
+            Self::Report => {
+                seed_ready_report(&registry.service, "notice", false).await;
+            }
+            Self::Prerequisite => {
+                seed_ready_report(&registry.service, "notice", true).await;
+                let mut state = registry.service.state.lock().await;
+                let mut identity = state
+                    .store
+                    .row("notice")
+                    .unwrap()
+                    .unwrap()
+                    .task
+                    .identity()
+                    .clone();
+                "finished".clone_into(&mut identity.id);
+                "finished".clone_into(&mut identity.reference);
+                let mut completed =
+                    serde_json::to_value(Task::new(identity, "Fixture".into(), None)).unwrap();
+                completed["phase"] = json!("done");
+                state
+                    .store
+                    .create(
+                        &serde_json::from_value(completed).unwrap(),
+                        &event("fixture"),
+                    )
+                    .unwrap();
+                drop(state);
+                release_notice(&registry).await;
+            }
+            Self::Completion => {
+                let brief = "---\nqueue:\n  complexity: low\n  notifyOriginOnCloseout: true\n---\n# Fix rounding";
+                assert_eq!(
+                    submit(&registry.api, "alpha-planner", "notice", None)
+                        .await
+                        .status(),
+                    StatusCode::CREATED
+                );
+                let commands = "/v1/tasks/notice/commands";
+                for command in [json!({"amend": brief}), json!("cancel")] {
+                    assert_eq!(
+                        caller_request(
+                            &registry.api,
+                            Method::POST,
+                            commands,
+                            "alpha-planner",
+                            command
+                        )
+                        .await
+                        .status(),
+                        StatusCode::OK
+                    );
+                }
+            }
         }
         registry.reopen()
     }
@@ -1590,6 +1615,14 @@ impl TaskNotice {
                 .await
                 .store
                 .pending_prerequisite_notice("notice")
+                .unwrap()
+                .is_some(),
+            Self::Completion => service
+                .state
+                .lock()
+                .await
+                .store
+                .completion_notice("notice")
                 .unwrap()
                 .is_some(),
         }
@@ -1630,6 +1663,7 @@ async fn assert_idle_notice(registry: &Registry) {
         Action::Nothing
     );
     assert!(!service.notify_prerequisite_release(&prior).await.unwrap());
+    service.notify_completion(&prior).await.unwrap();
     assert_eq!(registry.reads.load(Ordering::Relaxed), calls);
     assert_eq!(service.task("notice").await.unwrap(), prior);
     assert_eq!(service.history("notice", None, 30).await.unwrap(), history);
@@ -1645,8 +1679,40 @@ async fn advance_task_notice(registry: &Registry) -> Result<Action, ServiceError
 }
 
 #[tokio::test]
+async fn task_notice_delivery_stays_spent_across_restart() {
+    for kind in [
+        TaskNotice::Report,
+        TaskNotice::Prerequisite,
+        TaskNotice::Completion,
+    ] {
+        let registry = kind.fixture().await;
+        assert_eq!(
+            advance_task_notice(&registry).await.unwrap(),
+            Action::Nothing
+        );
+        assert!(!kind.pending(&registry.service).await);
+        registry.archived.store(true, Ordering::Relaxed);
+        let registry = registry.reopen();
+        assert_idle_notice(&registry).await;
+        let fixture = registry.notices.lock().unwrap();
+        assert_eq!(fixture.sends.len(), 1);
+        assert_eq!(fixture.sends[0]["threadId"], "alpha-planner");
+        assert_eq!(fixture.sends[0]["accepted"], true);
+        if matches!(kind, TaskNotice::Completion) {
+            let text = fixture.sends[0]["text"].as_str().unwrap();
+            assert!(!text.contains("Reply:"));
+            assert!(!text.contains("nreply_"));
+        }
+    }
+}
+
+#[tokio::test]
 async fn exact_task_notice_rejection_allows_one_fresh_attempt_after_restart() {
-    for kind in [TaskNotice::Report, TaskNotice::Prerequisite] {
+    for kind in [
+        TaskNotice::Report,
+        TaskNotice::Prerequisite,
+        TaskNotice::Completion,
+    ] {
         let registry = kind.fixture().await;
         registry.notices.lock().unwrap().next_reply = NoticeReply::Rejected;
         advance_task_notice(&registry).await.unwrap();
@@ -1696,7 +1762,11 @@ async fn exact_task_notice_rejection_allows_one_fresh_attempt_after_restart() {
 
 #[tokio::test]
 async fn lost_reply_or_rejection_for_another_command_keeps_both_task_notices_closed() {
-    for kind in [TaskNotice::Report, TaskNotice::Prerequisite] {
+    for kind in [
+        TaskNotice::Report,
+        TaskNotice::Prerequisite,
+        TaskNotice::Completion,
+    ] {
         for reply in [NoticeReply::Lost, NoticeReply::WrongCommand] {
             let registry = kind.fixture().await;
             registry.notices.lock().unwrap().next_reply = reply;

@@ -663,6 +663,11 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn held_parent_notice_delivery_stays_spent() {
+        Box::pin(exercise_recovery_notice(RecoveryNoticeReply::Accepted)).await;
+    }
+
+    #[tokio::test]
     async fn held_parent_notice_lost_reply_or_wrong_refusal_stays_spent() {
         for reply in [RecoveryNoticeReply::Lost, RecoveryNoticeReply::WrongCommand] {
             Box::pin(exercise_recovery_notice(reply)).await;
@@ -676,27 +681,31 @@ mod tests {
 
     #[derive(Clone, Copy)]
     enum RecoveryNoticeReply {
+        Accepted,
         Lost,
         WrongCommand,
         Rejected,
     }
 
     impl RecoveryNoticeReply {
-        fn rejection(self, command: &Value) -> Value {
+        fn exit(self, command: &Value) -> Value {
             match self {
-                Self::Lost => json!({"_tag":"LostReply"}),
+                Self::Accepted => json!({"_tag":"Success","value":{"sequence":17}}),
+                Self::Lost => {
+                    json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"_tag":"LostReply"}}]})
+                }
                 Self::Rejected | Self::WrongCommand => {
                     let id = if matches!(self, Self::Rejected) {
                         command
                     } else {
                         &json!("unrelated-command")
                     };
-                    json!({
+                    json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{
                         "_tag":"OrchestrationV2DispatchCommandError", "commandId":id,
                         "commandType":"message.dispatch", "cause":{
                             "name":"OrchestratorCommandPreviouslyRejectedError", "commandId":id
                         }
-                    })
+                    }}]})
                 }
             }
         }
@@ -713,9 +722,7 @@ mod tests {
             }
             let payload = &request["payload"];
             native.lock().unwrap().push(payload.clone());
-            json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Failure","cause":[
-                {"_tag":"Fail","error":reply.rejection(&payload["commandId"])}
-            ]}})
+            json!({"_tag":"Exit","requestId":request["id"],"exit":reply.exit(&payload["commandId"])})
         })
         .await;
         service.host = host;

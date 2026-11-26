@@ -373,6 +373,14 @@ pub fn child_origin_instance(thread: &str) -> Option<&str> {
 }
 
 /// Whether a worker reservation predates the explicit T3 provider and model pin.
+/// Whether a worker run continues a retained thread. Such a run reuses the
+/// task parent's turn instead of holding it at launch.
+#[must_use]
+pub fn retained_worker_continuation(run: &Run) -> bool {
+    run.launch().role == nucleus_core::Role::Worker
+        && Wire::read(run).is_ok_and(|wire| wire.method == Method::Continue)
+}
+
 #[must_use]
 pub fn unpinned_worker_continuation(run: &Run) -> bool {
     run.launch().role == nucleus_core::Role::Worker
