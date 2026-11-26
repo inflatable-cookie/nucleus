@@ -170,14 +170,11 @@ fn select_launch(
 ) -> Result<Option<ProfileLaunch>, ProfileLaunchError> {
     let Action::Launch {
         role,
-        via: previous,
+        via: previous @ (Launch::Create | Launch::Continue { .. }),
     } = decide(task, observation)
     else {
         return Ok(None);
     };
-    if previous == Launch::SendPrepared {
-        return Ok(None);
-    }
 
     let brief = BriefPolicy::parse(&task.brief().text).map_err(ProfileLaunchError::Brief)?;
     let request = brief.request(role).filter(|_| policy.planner_brief);
@@ -196,42 +193,47 @@ fn select_launch(
         })
     });
     let retained = task.threads().profile(role);
-    let (profile, reason, climbed, step_up_from) =
-        if let Some(retained) = instructed_worker(task, role, policy)? {
-            (retained, None, false, None)
-        } else if let Some(candidate) = requested {
-            let mut profile = candidate.profile.clone();
-            let reason = request.map(|request| {
-                profile.effort = request.thinking_option_id.or(profile.effort);
-                request.reason.clone()
-            });
-            (profile, reason, false, None)
-        } else {
-            if let Some(request) = request.filter(|request| request.required) {
-                return Err(ProfileLaunchError::RequiredProfileUnavailable {
-                    role,
-                    id: request.profile_id.clone(),
-                });
-            }
-            let automatic = eligible.filter(|candidate| {
-                candidate.usable_if_unpaused(None)
-                    && !request_only(
-                        candidate.profile.capability,
-                        policy.usage,
-                        brief.complexity.unwrap_or_default(),
-                        demand.climb.or(demand.earned),
-                    )
-            });
-            let (best, step_up_from) = automatic_profile(
-                automatic, &previous, retained, &demand, sample,
-            )
-            .ok_or(ProfileLaunchError::NoEligibleProfile {
+    let required = request.filter(|request| request.required);
+    let instructed = if required.is_none() {
+        instructed_worker(task, role, policy)?
+    } else {
+        None
+    };
+    let (profile, reason, climbed, step_up_from) = if let Some(retained) = instructed {
+        (retained, None, false, None)
+    } else if let Some(candidate) = requested {
+        let mut profile = candidate.profile.clone();
+        let reason = request.map(|request| {
+            profile.effort = request.thinking_option_id.or(profile.effort);
+            request.reason.clone()
+        });
+        (profile, reason, false, None)
+    } else {
+        if let Some(request) = required {
+            return Err(ProfileLaunchError::RequiredProfileUnavailable {
                 role,
-                demand: demand.target,
-            })?;
-            let climbed = demand.climb == Some(best.profile.capability);
-            (best.profile.clone(), None, climbed, step_up_from)
-        };
+                id: request.profile_id.clone(),
+            });
+        }
+        let automatic = eligible.filter(|candidate| {
+            candidate.usable_if_unpaused(None)
+                && !request_only(
+                    candidate.profile.capability,
+                    policy.usage,
+                    brief.complexity.unwrap_or_default(),
+                    demand.climb.or(demand.earned),
+                )
+        });
+        let (best, step_up_from) = automatic_profile(
+            automatic, &previous, retained, &demand, sample,
+        )
+        .ok_or(ProfileLaunchError::NoEligibleProfile {
+            role,
+            demand: demand.target,
+        })?;
+        let climbed = demand.climb == Some(best.profile.capability);
+        (best.profile.clone(), None, climbed, step_up_from)
+    };
     let via = match (&previous, retained) {
         (Launch::Continue { .. }, Some(retained)) if retained.same_binding(&profile) => {
             previous.clone()
@@ -282,18 +284,19 @@ fn instructed_worker(
         .threads()
         .profile(role)
         .ok_or(ProfileLaunchError::OpaqueAuthor)?;
-    if !policy.candidates.iter().any(|candidate| {
+    let candidate = policy.candidates.iter().copied().find(|candidate| {
         candidate.profile.id == retained.id
             && candidate.profile.provider == retained.provider
             && candidate.profile.model == retained.model
-            && candidate.usable(retained.effort)
-    }) {
-        return Err(ProfileLaunchError::RequiredProfileUnavailable {
+    });
+    match candidate {
+        Some(candidate) if !candidate.group_available => Ok(None),
+        Some(candidate) if candidate.usable(retained.effort) => Ok(Some(retained.clone())),
+        _ => Err(ProfileLaunchError::RequiredProfileUnavailable {
             role,
             id: retained.id.clone(),
-        });
+        }),
     }
-    Ok(Some(retained.clone()))
 }
 
 fn consumed_review(task: &Task, role: Role, climbed: bool) -> Option<u64> {
