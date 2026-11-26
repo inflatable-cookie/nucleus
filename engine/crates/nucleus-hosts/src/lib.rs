@@ -425,6 +425,20 @@ struct PassEvidence {
     sent: AtomicBool,
 }
 
+#[cfg(any(test, feature = "loopback-fixture"))]
+impl T3Pass<'_> {
+    /// Use one known process cwd in this loopback fixture pass.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_fixture_process_cwd(mut self, pid: u32, cwd: &Path) -> Self {
+        self.evidence = Arc::new(PassEvidence {
+            processes: OnceCell::new_with(Some(Ok(Inventory::process_fixture(pid, cwd)))),
+            ..PassEvidence::default()
+        });
+        self
+    }
+}
+
 impl T3 {
     /// Check the recorded worker's turn in the synchronized shell for owner acceptance.
     ///
