@@ -188,6 +188,7 @@ impl Registry {
             ServiceError::PlannerEnrollmentPending(_)
         ));
         drop(state);
+        self.service.enrollment_wake.notified().await;
         self.take_requested(actor).await;
     }
 
@@ -203,12 +204,6 @@ impl Registry {
         self.take_requested(actor).await;
         self.service.complete_enrollment(actor).await;
         command.await
-    }
-
-    async fn finish_requested(&self, actor: &str) {
-        self.service.enrollment_wake.notified().await;
-        self.take_requested(actor).await;
-        self.service.complete_enrollment(actor).await;
     }
 
     async fn take_requested(&self, actor: &str) {
@@ -258,14 +253,21 @@ async fn registry() -> Registry {
 }
 
 async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
-    let (home, legacy) = fixture(GitHub::new("fixture").expect("client"));
-    let alpha_path = legacy.fixture().checkout.clone();
-    let beta_path = alpha_path.with_file_name("second");
+    let home = tempfile::tempdir().expect("registry fixture");
+    let root = home.path().canonicalize().expect("portable root");
+    let settings = nucleus_store::SettingsFile::open(&root).expect("portable settings");
+    settings
+        .save(&nucleus_store::EngineSettings {
+            enabled: true,
+            ..Default::default()
+        })
+        .expect("enable registry");
+    let alpha_path = root.join("repo");
+    let beta_path = root.join("second");
+    create_repository(&alpha_path, "main", ALPHA_REPO);
     create_repository(&beta_path, "trunk", beta_repo);
     set_default(&alpha_path, "main");
     set_default(&beta_path, "trunk");
-    let settings = legacy.settings.clone();
-    drop(legacy);
     if imported {
         seed_imported_container(&settings);
     }
@@ -2156,10 +2158,8 @@ async fn project_tell_rechecks_only_saved_cold_recipients_before_admitting_a_req
     registry.enroll("beta-planner").await;
     let send = || registry.tell("beta-planner", json!("Exact T3 Alpha"), "After restart");
     let reads = registry.reads.load(Ordering::Relaxed);
-    let (response, ()) = tokio::join!(biased; send(), async {
-        assert!(registry.service.state.lock().await.store.next_tell().unwrap().is_none());
-        registry.finish_requested("alpha-planner").await;
-    });
+    let response = registry.inline_command("alpha-planner", send()).await;
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(registry.reads.load(Ordering::Relaxed), reads + 1);
     let result = json_body(response).await;
     assert_eq!(result["deliveries"].as_array().unwrap().len(), 1);
@@ -2207,6 +2207,17 @@ async fn project_tell_cannot_reenroll_a_removed_recipient_route() {
     registry.enroll("beta-planner").await;
     let send = || registry.tell("beta-planner", json!("Exact T3 Alpha"), "Cold recipient");
     assert_eq!(send().await.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .next_tell()
+            .unwrap()
+            .is_none()
+    );
     let actor = registry.service.take_enrollment().await.unwrap();
     // Settings can remove the binding between the request and its scheduled check.
     {
