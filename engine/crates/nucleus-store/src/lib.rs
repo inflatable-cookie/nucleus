@@ -50,7 +50,7 @@ pub use tells::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };
 pub use titles::TitleReceipt;
-pub use usage::{ProfileUsage, UsageWindow};
+pub use usage::{ProfileUsage, SubscriptionPause, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
@@ -328,7 +328,7 @@ impl Store {
             }
         }
         // This independent table is additive to every supported task schema.
-        tx.execute(usage::PROVIDER_PAUSES, [])?;
+        usage::prepare_pauses(tx)?;
         tx.execute(LEGACY_PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
         tx.execute_batch(task_rows::SCHEMA)?;
@@ -943,12 +943,15 @@ impl Store {
         until_ms: u64,
         now_ms: u64,
     ) -> Result<(), StoreError> {
-        Ok(usage::record_pause(
-            &self.connection,
+        self.set_subscription_pause(
             group,
-            until_ms,
+            SubscriptionPause {
+                until_ms,
+                fallback: false,
+            },
             now_ms,
-        )?)
+        )?;
+        Ok(())
     }
 
     /// Record a task effect once and return its journal sequence when newly inserted.
