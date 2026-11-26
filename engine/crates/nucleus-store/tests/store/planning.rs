@@ -409,6 +409,30 @@ fn retained_history_preserves_item_times_and_edit_versions() {
 }
 
 #[test]
+fn versioned_edits_apply_to_leads_at_their_current_version() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).unwrap();
+    let content = |title: &str| ItemContent {
+        title: title.into(),
+        body: "details".into(),
+        lanes: vec![],
+    };
+    store
+        .add_item("project", "lead".into(), ItemKind::Lead, content("Lead"), STAMP)
+        .unwrap();
+    let current = store.items_with_times("project").unwrap().pop().unwrap();
+    let saved = store
+        .edit_item("project", "lead", content("Edited"), Some(current.version), STAMP)
+        .unwrap();
+    assert_eq!(saved.item.content.title, "Edited");
+    assert!(matches!(
+        store.edit_item("project", "lead", content("Stale"), Some(current.version), STAMP),
+        Err(StoreError::PlanningConflict)
+    ));
+}
+
+#[test]
 fn config_inventory_recognizes_only_real_schema_backup_files() {
     let home = tempfile::tempdir().unwrap();
     let storage = fixture_storage(home.path());

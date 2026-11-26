@@ -106,6 +106,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
             path: "/work/orbit-docs",
             base: "main",
             hungToolMinutes: 30,
+            hostProject: "t3-orbit-docs",
           },
         ],
       },
@@ -275,10 +276,17 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
         domain: "reassign",
         body: { revision: body.revision, value: body },
       });
-      const all: Record<
-        string,
-        { repositories: typeof projects.projects.Orbit_Main.repositories }
-      > = projects.projects;
+      type FixtureRepository = {
+        origin: string;
+        path: string;
+        base: string;
+        requiredChecks: string[];
+        hungToolMinutes: number;
+        hostProject?: string;
+        hostProjectTitle?: string;
+      };
+      const all: Record<string, { repositories: FixtureRepository[] }> =
+        projects.projects;
       const from = Object.values(all).find((project) =>
         project.repositories.some((repo) => repo.origin === body.origin),
       )!;
@@ -392,6 +400,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
           body: "Fixture idea",
           lanes: ["delivery"],
           state: "open",
+          version: 1,
           createdAtMs: 10,
         },
         {
@@ -425,6 +434,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
           answer: null,
         },
       ]);
+    if (/^\/planning\/[^/]+\/history\/item\/[^/]+$/.test(path)) return json([]);
     return new Response(JSON.stringify({ error: { message: "no route" } }), {
       status: 404,
     });
@@ -2051,7 +2061,7 @@ test("unreadable planning records leave healthy siblings readable in lists and d
   );
   assert.ok(leads.activity?.every((activity) => activity.id !== "bad-item"));
   assert.equal(
-    (await adapter.rpc(api.leadGet, { id: "i-lantern" }))?.title,
+    (await adapter.rpc(api.itemGet, { id: "i-lantern" }))?.title,
     "An idea",
   );
   assert.equal((await adapter.rpc(api.decisionList, {})).length, 2);
@@ -2223,8 +2233,9 @@ test("a board click and action address the selected project's colliding decision
   );
   await press(/^Papercuts, 2$/);
   await press(/^Papercut: Orbit_Main cut,/);
-  await press("Papercut complexity medium");
-  await press("Promote to example/orbit-docs");
+  await press(/^Repository, /);
+  await press("Repository: example/orbit-docs");
+  await press("Promote papercut");
   await waitFor(
     () => ui.text().includes("Promoted as orbit-docs#12"),
     4000,
@@ -2238,23 +2249,25 @@ test("a board click and action address the selected project's colliding decision
     },
   ]);
   await press(/^Papercut: lantern cut,/);
+  await press("Park papercut");
   await visible("Park reason");
   ui.type("Park reason", "Later");
-  await press("Park the lead");
-  await visible("Parked lead");
-  assert.ok(ui.query("Return the lead to the to-do list"));
-  await press("Close as completed");
+  await press("Park");
+  await visible("Reopen papercut");
+  assert.ok(ui.query("State: Parked"));
+  await press("Open drop for papercut");
+  await press("Drop papercut");
   await waitFor(() => dropped.size > 0, 4000, "papercut closed");
   assert.deepEqual(
     [...dropped],
     [["lantern", { reason: null, disposition: "completed" }]],
   );
-  const saved = await adapter.rpc(api.papercutGet, {
+  const saved = await adapter.rpc(api.itemGet, {
     id: "cut",
     project: "lantern",
   });
-  assert.equal(saved?.closedReason, "completed");
-  assert.equal(saved?.note, null);
+  assert.equal(saved.disposition, "completed");
+  assert.equal(saved.reason, null);
 });
 
 test("the mounted Rust board counts parked leads and papercuts like their All lists", async (t) => {
@@ -2643,14 +2656,15 @@ test("promotion sends the selected repository and displays the public task refer
     };
     const adapter = createRustAdapter(createRustApi(fetcher));
     assert.deepEqual(
-      await adapter.rpc(api.leadPromoteTask, {
+      await adapter.rpc(api.itemPromote, {
         id: "i-Orbit_Main",
+        project: projectKey("Orbit_Main"),
         repository,
-        board: true,
+        complexity: "medium",
       }),
       { taskId: "t-internal", reference },
     );
-    assert.deepEqual(sent, [{ repository }]);
+    assert.deepEqual(sent, [{ repository, complexity: "medium" }]);
   }
 });
 
@@ -2708,7 +2722,7 @@ test("a project refusal settles lists until the paired session changes", async (
 
 test("the selected item's project scopes detail, drop, reopen and promotion", async () => {
   const fake = engine();
-  const writes: string[] = [];
+  const writes: Array<{ path: string; body: unknown }> = [];
   const fetcher: typeof fetch = async (url, init) => {
     const path = String(url);
     const match =
@@ -2728,14 +2742,8 @@ test("the selected item's project scopes detail, drop, reopen and promotion", as
       createdAtMs: 10,
     };
     if (!match[2]) return Response.json([item]);
-    writes.push(path);
-    if (match[2] === "reopen") {
-      assert.deepEqual(JSON.parse(String(init?.body)), {
-        note: "Again",
-        version: 1,
-      });
-      return Response.json({ ...item, version: 9 });
-    }
+    writes.push({ path, body: JSON.parse(String(init?.body)) });
+    if (match[2] === "reopen") return Response.json({ ...item, version: 9 });
     return Response.json(
       match[2] === "drop"
         ? { ...item, state: "dropped" }
@@ -2745,38 +2753,43 @@ test("the selected item's project scopes detail, drop, reopen and promotion", as
   const adapter = createRustAdapter(createRustApi(fetcher));
   const id = "shared",
     project = "lantern";
-  await assert.rejects(adapter.rpc(api.leadGet, { id }), /ambiguous/);
-  await assert.rejects(
-    adapter.rpc(api.papercutPromoteTask, { id, board: true }),
-    /ambiguous/,
-  );
+  await assert.rejects(adapter.rpc(api.itemGet, { id }), /ambiguous/);
   assert.equal(writes.length, 0);
-  assert.equal(
-    (await adapter.rpc(api.papercutGet, { project, id }))?.title,
-    "lantern item",
-  );
-  await adapter.rpc(api.leadDrop, { project, id, reason: "Resolved" });
-  const reopened = await adapter.rpc(api.leadReopen, {
+  const detail = await adapter.rpc(api.itemGet, { project, id });
+  assert.equal(detail.title, "lantern item");
+  assert.equal(detail.projectKey, "lantern");
+  assert.deepEqual(detail.repositories, [
+    { origin: "example/lantern", bound: false },
+  ]);
+  await adapter.rpc(api.itemDrop, {
     project,
     id,
-    reason: "Again",
-    version: 1,
-    author: "operator",
+    disposition: "completed",
+    note: "Resolved",
   });
-  assert.equal(reopened.version, 9);
-  await adapter.rpc(api.papercutPromoteTask, { project, id, board: true });
+  await adapter.rpc(api.itemReopen, { project, id, version: 1 });
+  await adapter.rpc(api.itemPromote, { project, id, complexity: "low" });
   assert.deepEqual(writes, [
-    "/api/engine/planning/lantern/items/shared/drop",
-    "/api/engine/planning/lantern/items/shared/reopen",
-    "/api/engine/planning/lantern/items/shared/promote",
+    {
+      path: "/api/engine/planning/lantern/items/shared/drop",
+      body: { reason: "Resolved", disposition: "completed" },
+    },
+    {
+      path: "/api/engine/planning/lantern/items/shared/reopen",
+      body: { version: 1 },
+    },
+    {
+      path: "/api/engine/planning/lantern/items/shared/promote",
+      body: { complexity: "low" },
+    },
   ]);
 });
 
-test("papercut editing refuses ambiguous and out-of-scope records before a write", async () => {
+test("item editing refuses ambiguous and out-of-scope records before a write", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
   await assert.rejects(
-    adapter.rpc(api.papercutGet, { id: "promoted" }),
+    adapter.rpc(api.itemGet, { id: "promoted" }),
     /ambiguous/,
   );
   fake.setSession({
@@ -2785,23 +2798,15 @@ test("papercut editing refuses ambiguous and out-of-scope records before a write
     planningProjects: ["Orbit_Main"],
   });
   await adapter.refreshSession();
-  const scoped = await adapter.rpc(api.papercutGet, { id: "promoted" });
-  assert.equal(scoped.project, "Orbit_Main");
+  const scoped = await adapter.rpc(api.itemGet, { id: "promoted" });
+  assert.equal(scoped.projectKey, projectKey("Orbit_Main"));
   await assert.rejects(
-    adapter.rpc(api.papercutEdit, {
+    adapter.rpc(api.itemEdit, {
       id: scoped.id,
       project: "lantern",
       version: scoped.version,
       title: "Wrong project",
-    }),
-    /accessible projects/,
-  );
-  await assert.rejects(
-    adapter.rpc(api.papercutEdit, {
-      id: "i-Orbit_Main",
-      project: scoped.project,
-      version: scoped.version,
-      title: "Wrong kind",
+      body: "Body",
     }),
     /accessible projects/,
   );

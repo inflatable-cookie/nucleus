@@ -282,6 +282,24 @@ sections (the Rust item has only a body), the complexity chip row (now a
 dropdown), and the two separate "Close as …" buttons (now Drop with a
 disposition).
 
+### Built (nucleus#1604)
+
+The Rust board's lead and papercut view follows this layout, in the task view's
+frame and with its pieces (panel, cards, activity list, footer). The board reads
+one `item.get` record with the engine's own state, disposition, revisit date and
+history, and writes through `item.edit`, `item.park`, `item.drop`,
+`item.reopen` and `item.promote`, each answered with the item read back. Promote
+offers the repository dropdown only for an item spanning several repositories;
+an unbound one can be chosen but Promote stays disabled with the reason. The
+revisit date is a `YYYY-MM-DD` field; changing it offers Save, which parks again
+with the same reason. Reopen shows on parked and dropped items. Edit saves at the
+version the editor opened; the engine refuses a stale save, the view says so,
+reloads, and keeps the draft so a second Save replaces the newer change. Both
+kinds accept a versioned edit (the store had limited versioned edits to
+papercuts). Age shows the time of the history entry that set the current state,
+or the filing time while open, with the exact times in its tooltip. Activity
+lists each history entry with its actor and a reopen's note.
+
 ### Data mapping
 
 | Element | Source | Status |
@@ -298,9 +316,9 @@ disposition).
 | Promote | `POST …/items/{id}/promote {repository, complexity}` | exists |
 | Bound repositories | project `repositories[].hostProject` | exists |
 | Linked task card | `taskId` joined with the board's task list | exists (client join) |
-| Edit | `PUT …/items/{id}` with `version` | exists (the adapter wires it for papercuts only) |
+| Edit | `PUT …/items/{id}` with `version` | exists (both kinds since nucleus#1604) |
 | Park, re-park | `POST …/items/{id}/park {reason, revisitAt}` | exists |
-| Drop | `POST …/items/{id}/drop {disposition, reason}` | exists (the lead adapter sends no disposition) |
+| Drop | `POST …/items/{id}/drop {disposition, reason}` | exists |
 | Reopen (parked or dropped) | `POST …/items/{id}/reopen {note, version}` | exists; version and note are optional |
 | Revisit date | Due indication while parked | exists; reopening is explicit |
 | Activity | `history/{kind}/{id}` | exists |

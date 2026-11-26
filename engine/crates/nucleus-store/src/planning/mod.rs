@@ -248,7 +248,7 @@ impl Store {
     }
 
     /// Replace the item content, retaining the original author and its prior history.
-    /// An expected version restricts the edit to that exact papercut snapshot.
+    /// An expected version restricts the edit to that exact item snapshot.
     ///
     /// # Errors
     /// Returns an error for a missing item, wrong kind or version, invalid content, or database failure.
@@ -267,9 +267,7 @@ impl Store {
             .query_row([project, id], item_view)
             .optional()?
             .ok_or(StoreError::PlanningMissing)?;
-        if expected_version.is_some_and(|version| {
-            saved.item.kind != ItemKind::Papercut || version != saved.version
-        }) {
+        if expected_version.is_some_and(|version| version != saved.version) {
             return Err(StoreError::PlanningConflict);
         }
         saved.item.content = content;

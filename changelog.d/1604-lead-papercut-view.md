@@ -1,0 +1,1 @@
+Rebuilt the lead and papercut view on the Rust board. It shows the state first, holds Promote (repository and complexity), the parked reason and revisit date, the linked task or the drop outcome in one panel, and keeps Park and Drop (with a disposition and note) in the footer. Parked and dropped items can be reopened, and leads can now be edited from the board.

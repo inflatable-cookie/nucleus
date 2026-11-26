@@ -56,6 +56,7 @@ import { groupRustTasks, postRustCommand, rustProjectActivity, useRustTasks, typ
 import { useTaskDraftStore } from "./task/drafts";
 import { LeadDialog } from "./records/lead-dialog";
 import { PapercutDialog } from "./records/papercut-dialog";
+import { RustItemDialog } from "./records/rust-item";
 import { DecisionDialog } from "./records/decision-dialog";
 import type { RecordNoticeValue } from "./task/parts";
 import { overlay, roles, space, type as typeScale } from "./design";
@@ -402,6 +403,12 @@ export function MainSurface({
 
   const laneName = (key: string) =>
     lanes.find((lane) => lane.key === key)?.title ?? key;
+  /** A project's T3 badge, from its first repository with one. */
+  const itemBadge = (key: string) => {
+    const project = state?.projects.find((candidate) => candidate.key === key);
+    const path = project?.repositories.find((repo) => repo.path && state?.repositoryBadges?.[repo.path])?.path;
+    return (path && state?.repositoryBadges?.[path]) || null;
+  };
   const task = detailQuery.data?.task;
   const inset = space.md;
   // The first failed board read, in plain words: which read failed and why.
@@ -452,6 +459,26 @@ export function MainSurface({
       onClose={() => setSelected(null)}
       onSelectTask={setSelected}
       c={c}
+    />
+  ) : (selectedLeadId || openPapercutId) && features.engine === "rust" ? (
+    // The Rust engine keeps leads and papercuts as one item (Spec 071).
+    <RustItemDialog
+      key={recordKey}
+      id={(selectedLeadId ?? openPapercutId)!}
+      project={recordProject}
+      kind={selectedLeadId ? "lead" : "papercut"}
+      inline={inlineDetail}
+      compact={compact}
+      c={c}
+      laneName={laneName}
+      badge={itemBadge}
+      task={(id) => rustTasks.data?.find(({ identity }) => identity.id === id)}
+      onOpenTask={selectRustTask}
+      onClose={() => {
+        setLeadLane(null);
+        setSelectedLeadId(null);
+        setOpenPapercutId(null);
+      }}
     />
   ) : selectedLeadId ? (
     <LeadDialog

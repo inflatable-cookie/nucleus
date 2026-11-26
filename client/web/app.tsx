@@ -136,7 +136,7 @@ export function WebApp() {
           invalidateBoard({
             queryKey: ["nucleus"],
             predicate: ({ queryKey: [, area] }) =>
-              ["plans", "leads", "lane-document", "lead", "papercut"].some((key) => key === area),
+              ["plans", "leads", "lane-document", "item"].some((key) => key === area),
           });
         },
         profileUsageChanged: () => invalidateBoard({ queryKey: RUST_PROFILE_USAGE_KEY }),
