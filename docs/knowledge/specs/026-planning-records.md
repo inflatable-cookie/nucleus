@@ -1225,8 +1225,9 @@ leads and park the same way. The first use is a T3 board lead that waits on the 
 - **Board** (Tom, 2026-11-24). Parked leads and papercuts stay in their usual
   list order with dimmed text and grayscale marks. Both lists default to All
   and offer Open and Parked filters. Parked is the status, with the reason on
-  hover and in detail. The menu and planning tab still count open work; lane
-  drain checks and triage batches exclude parked records.
+  hover and in detail. The Leads and Papercuts menu counts include parked
+  records; the planning tab counts open work. Lane drain checks and triage
+  batches exclude parked records.
 - **Unparking.** An edit, a promotion (question, knowledge or task) or a drop unparks.
   When `revisitAt` passes, the sweep unparks the lead once and writes one durable
   `lead_recheck` notice to the project's planner: "Parked lead <title> is due for a
