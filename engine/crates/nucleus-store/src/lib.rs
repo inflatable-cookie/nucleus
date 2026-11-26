@@ -171,6 +171,17 @@ pub struct TaskList {
     pub unreadable: Vec<UnreadableTask>,
 }
 
+/// Scheduling facts for one task from the active backstop scan.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TaskSeed {
+    /// The durable task ID.
+    pub id: String,
+    /// The capacity queue ordinal for tasks awaiting their first role.
+    pub admission_order: Option<i64>,
+    /// Whether the task is closing or settling terminal work.
+    pub closeout: bool,
+}
+
 /// A task's execution snapshot plus its public number. Equality fences the
 /// execution snapshot, so backfill cannot invalidate a callback or launch.
 #[derive(Debug, Clone)]
@@ -478,11 +489,7 @@ impl Store {
     /// Read active task IDs in admission order, with the ordinal for first workers.
     /// # Errors
     /// Returns an error if the database cannot read the page.
-    pub fn active_ids(
-        &self,
-        after: Option<&str>,
-        limit: u32,
-    ) -> Result<Vec<(String, Option<i64>)>, StoreError> {
+    pub fn active_ids(&self, after: Option<&str>, limit: u32) -> Result<Vec<TaskSeed>, StoreError> {
         let mut query = self.connection.prepare_cached(
             "WITH cursor AS (SELECT coalesce((SELECT rowid FROM tasks WHERE id = ?2), 0) AS seq),
              due AS (SELECT rowid AS admitted, id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
@@ -507,11 +514,15 @@ impl Store {
              ORDER BY admitted LIMIT ?1)
              SELECT due.id, CASE WHEN t.phase IN ('queued', 'working') AND t.entry = 'brief' AND t.run IS NULL
                AND json_extract(t.threads, '$.worker') IS NULL AND json_extract(t.threads, '$.reviewer') IS NULL
-               THEN due.admitted END
+               THEN due.admitted END, t.phase IN ('closing', 'done', 'cancelled')
              FROM due JOIN tasks t ON t.id = due.id ORDER BY due.admitted",
         )?;
         let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            Ok(TaskSeed {
+                id: row.get(0)?,
+                admission_order: row.get(1)?,
+                closeout: row.get(2)?,
+            })
         })?;
         Ok(ids.collect::<Result<_, _>>()?)
     }

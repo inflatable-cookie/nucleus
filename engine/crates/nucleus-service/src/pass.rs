@@ -23,7 +23,7 @@ use tokio::sync::RwLockReadGuard;
 use crate::{
     Service, ServiceError, active, event, now_ms,
     profiles::{LaunchSelection, SelectedLaunch},
-    project::{ProjectRoute, linked_checkout},
+    project::ProjectRoute,
     prompt::{Assignment, LaneContext, Prompt, PromptSize, report_reminder},
     scratch, ticket,
 };
@@ -171,7 +171,7 @@ impl Service {
                 return Ok(Action::Wait(WaitReason::Stopping));
             }
         }
-        let workspace = checkout.observe_for_retirement()?;
+        let workspace = self.observe_checkout_for_retirement(&checkout).await?;
         if workspace == Workspace::Absent {
             if checkout.has_prunable_registration()?
                 && self
@@ -321,7 +321,7 @@ impl Service {
             return Ok(Action::Wait(WaitReason::Prerequisite));
         }
         let binding = route.binding(&checkout)?;
-        let workspace = checkout.observe();
+        let workspace = self.observe_checkout(&checkout).await;
         let mut observation = Observation {
             host: Observed::Unknown,
             forge,
@@ -1467,7 +1467,7 @@ impl Service {
         let role = task.run().ok_or(ServiceError::Input)?.launch().role;
         if role == Role::Reviewer {
             observation.forge = Observed::Known(self.read_forge(task, checkout).await?.0);
-            observation.workspace = seen(checkout.observe());
+            observation.workspace = seen(self.observe_checkout(checkout).await);
         }
         let action = decide(task, &observation);
         if !matches!(
@@ -1700,7 +1700,7 @@ impl Service {
                 // Exact native destination and project came from the synchronized
                 // shell. Keep the usual local identity and ownership fence.
                 self.verify_route(identity, &route).await?;
-                let present = checkout.observe()? != Workspace::Absent;
+                let present = self.observe_checkout(checkout).await? != Workspace::Absent;
                 (present || task.phase().is_terminal()).then_some(false)
             }
             DispatchTarget::Run {
@@ -1710,7 +1710,7 @@ impl Service {
                     let run = task.run().ok_or(ServiceError::Input)?;
                     if let Some(head) = run.launch().review_head.as_ref() {
                         let forge = Observed::Known(self.read_forge(task, checkout).await?.0);
-                        let workspace = checkout.observe()?;
+                        let workspace = self.observe_checkout(checkout).await?;
                         if workspace == Workspace::Absent {
                             return Ok(None);
                         }
@@ -1722,10 +1722,11 @@ impl Service {
                         replay_policy(Some(head), &fresh)
                             .filter(|&superseded| !superseded || run.revoked())
                     } else {
-                        (checkout.observe()? != Workspace::Absent).then_some(false)
+                        (self.observe_checkout(checkout).await? != Workspace::Absent)
+                            .then_some(false)
                     }
                 } else {
-                    (checkout.observe()? != Workspace::Absent).then_some(false)
+                    (self.observe_checkout(checkout).await? != Workspace::Absent).then_some(false)
                 }
             }
             DispatchTarget::Planner(authorization) => {
@@ -1744,7 +1745,9 @@ impl Service {
                 }
                 self.host.check_notice_target(authorization)?;
                 if let Some(path) = &target.worktree_path
-                    && !linked_checkout(&root, Path::new(path), &self.git)?
+                    && !self
+                        .verify_linked_checkout(root, PathBuf::from(path))
+                        .await?
                 {
                     return Err(HostError::Binding.into());
                 }
@@ -1816,7 +1819,7 @@ impl Service {
             StopProgress::ReplayDue => {
                 if head.is_some() {
                     observation.forge = Observed::Known(self.read_forge(task, checkout).await?.0);
-                    observation.workspace = seen(checkout.observe());
+                    observation.workspace = seen(self.observe_checkout(checkout).await);
                 }
                 if replay_policy(head, &observation).is_none() {
                     return Ok(stopping);
@@ -2121,7 +2124,7 @@ impl Service {
         let mut observed = Observation {
             host: Observed::Unknown,
             forge: Observed::Known(forge),
-            workspace: seen(checkout.observe_for_retirement()),
+            workspace: seen(self.observe_checkout_for_retirement(checkout).await),
         };
         let action = decide(task, &observed);
         if let Action::Close {
@@ -2143,7 +2146,7 @@ impl Service {
             {
                 return Ok(Action::Wait(WaitReason::Stopping));
             }
-            observed.workspace = seen(checkout.observe_for_retirement());
+            observed.workspace = seen(self.observe_checkout_for_retirement(checkout).await);
         } else if matches!(
             action,
             Action::Close {

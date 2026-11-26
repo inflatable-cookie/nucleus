@@ -50,9 +50,11 @@ mod github_accounts;
 mod inbox;
 mod planning;
 mod settings;
+mod task_list;
 pub(crate) use board::Board;
 pub use board::{router_with_board, router_with_board_and_t3_callers};
 pub(crate) use settings::{CachedHost, ProjectMatchError, RuntimeSettings};
+use task_list::{ListCard, list};
 
 const DEFAULT_BODY_LIMIT: usize = 64 * 1024;
 // A JSON escape can use six bytes for one brief byte. The ordinary limit covers metadata.
@@ -63,7 +65,7 @@ pub(crate) mod tests;
 
 #[derive(Clone)]
 struct Api {
-    finished_cards: Arc<tokio::sync::Mutex<HashMap<String, FinishedCard>>>,
+    list_cards: Arc<tokio::sync::Mutex<HashMap<String, ListCard>>>,
     service: Arc<Service>,
     controllers: Arc<[ControllerEntry]>,
     t3_caller_key: Option<[u8; 32]>,
@@ -243,7 +245,7 @@ fn routes(
         })
         .collect();
     let api = Api {
-        finished_cards: Arc::default(),
+        list_cards: Arc::default(),
         service,
         controllers: carriers,
         t3_caller_key,
@@ -630,158 +632,6 @@ async fn admit(
     ))
 }
 
-#[derive(Serialize)]
-struct ListedTask {
-    #[serde(flatten)]
-    summary: Summary<Arc<Card>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    lanes: Vec<String>,
-}
-
-async fn list(
-    State(api): State<Api>,
-    Extension(scope): Extension<ControllerScope>,
-    Extension(authority): Extension<Authority>,
-) -> Result<Json<Vec<ListedTask>>, ApiError> {
-    api.service
-        .storage
-        .database()
-        .verify()
-        .map_err(ServiceError::from)?;
-    let state = api.service.state.lock().await;
-    let listing = state.store.list().map_err(ServiceError::from)?;
-    let tasks = listing.readable;
-    let revisions = state
-        .store
-        .finished_card_revisions()
-        .map_err(ServiceError::from)?;
-    let by_id = tasks
-        .iter()
-        .map(|row| (row.task.identity().id.as_str(), row))
-        .collect();
-    let mut cache = api.finished_cards.lock().await;
-    cache.retain(|id, _| revisions.contains_key(id));
-    let mut result = Vec::new();
-    for row in &tasks {
-        let identity = row.task.identity();
-        if api.service.task_scope(identity).is_err() || scope.task(&state, identity).is_err() {
-            continue;
-        }
-        let id = identity.id.as_str();
-        if let Some(&revision) = revisions.get(id)
-            && state.wait_detail(id).is_none()
-            && state.wait_reason(id).is_none()
-        {
-            let entry = match cache.entry(identity.id.clone()) {
-                std::collections::hash_map::Entry::Occupied(entry)
-                    if entry.get().revision == revision
-                        && entry.get().card.version == row.version
-                        && entry.get().papercut_title == row.task.papercut_title =>
-                {
-                    entry.into_mut()
-                }
-                entry => entry
-                    .insert_entry(FinishedCard {
-                        revision,
-                        papercut_title: row.task.papercut_title.clone(),
-                        card: Arc::new(Card::read(row, &state, false, None)?),
-                        brief_lanes: brief_lanes(&row.task),
-                        dependencies: state.store.dependencies(id).map_err(ServiceError::from)?,
-                    })
-                    .into_mut(),
-            };
-            result.push(Summary {
-                card: Arc::clone(&entry.card),
-                dependency_status: DependencyStatus::finished(
-                    &state,
-                    &scope,
-                    &entry.dependencies,
-                    &by_id,
-                    &listing.unreadable,
-                )?,
-                dependency_edits: DependencyEdits::unavailable(),
-            });
-        } else {
-            let summary = Summary::read(row, &state, &scope, Some(&authority), None)?;
-            result.push(Summary {
-                card: Arc::new(summary.card),
-                dependency_status: summary.dependency_status,
-                dependency_edits: summary.dependency_edits,
-            });
-        }
-    }
-    for damaged in listing.unreadable {
-        if api.service.task_scope(&damaged.identity).is_ok()
-            && scope.task(&state, &damaged.identity).is_ok()
-        {
-            result.push(Summary {
-                card: Arc::new(Card::unreadable(damaged)),
-                dependency_status: DependencyStatus::default(),
-                dependency_edits: DependencyEdits::unavailable(),
-            });
-        }
-    }
-    let mut lanes = task_lanes(&state, &tasks, &cache)?;
-    drop(cache);
-    Ok(Json(
-        result
-            .into_iter()
-            .map(|summary| ListedTask {
-                lanes: lanes.remove(&summary.card.identity.id).unwrap_or_default(),
-                summary,
-            })
-            .collect(),
-    ))
-}
-
-fn brief_lanes(task: &Task) -> Vec<String> {
-    nucleus_core::profiles::BriefPolicy::parse(&task.brief().text)
-        .map(|policy| policy.lanes().to_vec())
-        .unwrap_or_default()
-}
-
-fn task_lanes(
-    state: &EngineState,
-    rows: &[nucleus_store::TaskRow],
-    finished: &HashMap<String, FinishedCard>,
-) -> Result<HashMap<String, Vec<String>>, ServiceError> {
-    let mut sources = HashMap::<String, Vec<(String, String)>>::new();
-    for (id, project, lane) in state.store.source_lanes()? {
-        sources.entry(id).or_default().push((project, lane));
-    }
-    let mut result = HashMap::new();
-    for row in rows {
-        let task = &row.task;
-        let id = &task.identity().id;
-        let project = state
-            .settings
-            .project_for_origin(&task.identity().repository)
-            .map(|(id, _, _)| id);
-        let mut lanes = finished
-            .get(id)
-            .filter(|cached| cached.card.version == row.version)
-            .map_or_else(|| brief_lanes(task), |cached| cached.brief_lanes.clone());
-        if let Some(items) = sources.remove(id) {
-            lanes.extend(
-                items
-                    .into_iter()
-                    .filter_map(|(owner, lane)| (Some(owner.as_str()) == project).then_some(lane)),
-            );
-        }
-        if let Some(report) = task.report_task()
-            && Some(report.project.as_str()) == project
-        {
-            lanes.push(report.lane.clone());
-        }
-        if !lanes.is_empty() {
-            lanes.sort_unstable();
-            lanes.dedup();
-            result.insert(id.clone(), lanes);
-        }
-    }
-    Ok(result)
-}
-
 async fn detail(
     State(api): State<Api>,
     TaskPath(id): TaskPath,
@@ -895,7 +745,7 @@ async fn next(
         wait: summary.card.wait,
         wait_detail: summary.card.wait_detail,
         attention: summary.card.attention,
-        next_check_at: summary.card.next_check_at,
+        next_check_at: summary.next_check_at,
         answer_form: task
             .question()
             .filter(|_| commands.iter().any(|command| command.name == "answer"))
@@ -1256,16 +1106,9 @@ async fn summary_after(
 struct Summary<C = Card> {
     #[serde(flatten)]
     card: C,
+    next_check_at: Option<u64>,
     dependency_status: DependencyStatus,
     dependency_edits: DependencyEdits,
-}
-
-struct FinishedCard {
-    papercut_title: Option<String>,
-    brief_lanes: Vec<String>,
-    revision: (i64, Option<i64>),
-    card: Arc<Card>,
-    dependencies: nucleus_store::Dependencies,
 }
 
 #[derive(Serialize)]
@@ -1286,7 +1129,6 @@ struct Card {
     wait_detail: Option<String>,
     attention: crate::attention::TaskAttention,
     lifecycle: nucleus_core::acp::lifecycle::Lifecycle,
-    next_check_at: Option<u64>,
     question: Option<Question>,
     hold: Option<Hold>,
 }
@@ -1302,10 +1144,34 @@ impl Summary {
         let dependency_status = DependencyStatus::read(state, row, scope)?;
         let dependency_edits =
             DependencyEdits::read(state, &row.task, authority, &dependency_status);
+        let inputs = CardInputs::read(row, state, dependency_status.blocking)?;
+        let card = Card::read(row, state, &inputs, transcript)?;
         Ok(Self {
-            card: Card::read(row, state, dependency_status.blocking, transcript)?,
+            next_check_at: card.next_check_at(row, state),
+            card,
             dependency_status,
             dependency_edits,
+        })
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct CardInputs {
+    observed_wait: Option<crate::TaskWait>,
+    dependencies_block: bool,
+    attention: crate::attention::TaskAttention,
+}
+
+impl CardInputs {
+    fn read(
+        row: &nucleus_store::TaskRow,
+        state: &EngineState,
+        dependencies_block: bool,
+    ) -> Result<Self, ServiceError> {
+        Ok(Self {
+            observed_wait: state.waits.get(&row.task.identity().id).cloned(),
+            dependencies_block,
+            attention: state.task_attention_with_dependencies(row, || Ok(dependencies_block))?,
         })
     }
 }
@@ -1339,39 +1205,47 @@ impl Card {
             },
             question: None,
             hold: None,
-            next_check_at: None,
         }
     }
 
     fn read(
         row: &nucleus_store::TaskRow,
         state: &EngineState,
-        dependencies_block: bool,
+        inputs: &CardInputs,
         transcript: Option<crate::presentation::TranscriptRequest<'_>>,
     ) -> Result<Self, ServiceError> {
         let task = &row.task;
         let id = &task.identity().id;
-        let wait = state.wait_reason(id);
-        let wait = if dependencies_block && task.run().is_none() {
+        let observed = inputs.observed_wait.as_ref();
+        let reason = observed.and_then(|wait| wait.reason);
+        let detail = observed.and_then(|wait| wait.detail.as_ref());
+        let wait = if inputs.dependencies_block && task.run().is_none() {
             Some(WaitReason::Prerequisite)
         } else {
-            wait.filter(|wait| *wait != WaitReason::Prerequisite || dependencies_block)
+            reason.filter(|wait| *wait != WaitReason::Prerequisite || inputs.dependencies_block)
         };
         let times = state.store.board_times(id)?;
         let created_at_ms = times.admitted;
         let fixed = crate::titles::task_label_from_facts(task);
         let state_since_ms = times
             .since
-            .filter(|_| fixed.is_some() || state.waits.get(id).is_some_and(|wait| wait.timed));
+            .filter(|_| fixed.is_some() || observed.is_some_and(|wait| wait.timed));
         let state_label = match fixed {
             Some(label) => label,
             None => crate::titles::task_state_label(
                 task,
-                state.effective_wait(task)?,
-                state.wait_detail(id),
+                observed.map_or_else(
+                    || {
+                        (inputs.dependencies_block
+                            && crate::dependencies::checks_prerequisites(task))
+                        .then_some(WaitReason::Prerequisite)
+                    },
+                    |wait| wait.reason,
+                ),
+                detail,
             ),
         };
-        let archive_detail = match state.wait_detail(id) {
+        let archive_detail = match detail {
             Some(crate::WaitDetail::Archive(message)) if task.phase() == Phase::Done => {
                 Some(message.as_str())
             }
@@ -1390,13 +1264,13 @@ impl Card {
             _ => wait,
         };
         let wait_detail = archive_detail.or_else(|| {
-            if wait != state.wait_reason(id)
+            if wait != reason
                 || task.hold().is_some()
                 || (task.question().is_some() && wait != Some(WaitReason::ExternalMergeBlocked))
             {
                 return None;
             }
-            match state.wait_detail(id)? {
+            match detail? {
                 crate::WaitDetail::BeforeSend(message) => *message,
                 crate::WaitDetail::ConfirmingDelivery(message)
                 | crate::WaitDetail::Observation(message) => Some(*message),
@@ -1405,14 +1279,6 @@ impl Card {
                 crate::WaitDetail::Archive(_) => None,
             }
         });
-        let next_check_at = state
-            .schedule
-            .due(id)
-            .filter(|_| wait.is_some() && task.operator_decline().is_none())
-            .map(|due| {
-                let delay = due.saturating_duration_since(tokio::time::Instant::now());
-                now_ms().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
-            });
         Ok(Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
@@ -1420,7 +1286,7 @@ impl Card {
             reference: row.reference().into_owned(),
             version: row.version,
             phase: task.phase(),
-            attention: state.task_attention(row)?,
+            attention: inputs.attention,
             lifecycle: crate::presentation::task_lifecycle(
                 task,
                 &state.store,
@@ -1433,12 +1299,22 @@ impl Card {
             state_since_ms,
             latest_event_at_ms: times.latest_event,
             created_at_ms,
-            next_check_at,
             wait,
             wait_detail: wait_detail.map(str::to_owned),
             question: task.question().cloned(),
             hold: task.hold().cloned(),
         })
+    }
+
+    fn next_check_at(&self, row: &nucleus_store::TaskRow, state: &EngineState) -> Option<u64> {
+        state
+            .schedule
+            .due(&self.identity.id)
+            .filter(|_| self.wait.is_some() && row.task.operator_decline().is_none())
+            .map(|due| {
+                let delay = due.saturating_duration_since(tokio::time::Instant::now());
+                now_ms().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
+            })
     }
 }
 

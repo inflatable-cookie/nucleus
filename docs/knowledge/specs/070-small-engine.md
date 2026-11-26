@@ -478,6 +478,8 @@ Later decisions carry their own attribution.
     project and checkout capacity under the task fence before entering Working.
     This also applies to report-only work. A first worker without a run or a
     retained role returns to Queued if capacity closes before reservation.
+    When both are due, Closing and terminal housekeeping alternate with
+    ordinary scheduler work. Capacity ordering applies on the ordinary turns.
     An unresolved parent attempt keeps its task version and waits for capacity.
     Schema 12 reads that decision from the current delivery occurrence. Exact
     acceptance, refusal before send or failure releases that occurrence's guard.
@@ -945,6 +947,12 @@ Reuse, to be confirmed by the build when it reads their contracts:
 
 ## Validation
 
+For a scheduler or board latency investigation, start the engine with
+`NUCLEUS_TRACE_SCHEDULER=1` to log state-lock acquisition wait and hold times
+separately for the scheduler pass and task list. The first-service record
+after Dispatch resumes includes the task, phase, selected priority, due and
+service times, and queue depth.
+
 Tom, 2026-11-24: "How are we doing on complexity? No horrible extra narrow fixes as issues come up? We need to stop this version from descending into madness like the TS version did."
 
 Every fix states its general rule and what it replaces. An independent review
@@ -1100,6 +1108,10 @@ Unrelated updates and repeated observations leave the entry time intact. Reads
 use local task state and the recorded entry time. The first scheduler observation after restart
 establishes a volatile wait without dating it. A label fixed by committed facts,
 such as a blocking hold or a finished phase, keeps its recorded entry time.
+
+The list reuses task cards while the row, journal and displayed wait facts
+are current. Each request checks scope, prerequisite status, edit authority,
+lane sources and the next scheduled check against current state.
 
 The paired API mounts the same planning handlers as the controller API (plans,
 lanes, items, decisions) and the repository reassign action. The session response

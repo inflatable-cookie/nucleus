@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ControllerScope, Service, ServiceError, State, enrollment::EnrolledPlanner, now_ms,
-    planning::new_id, project::linked_checkout, web::ProjectMatchError,
+    planning::new_id, web::ProjectMatchError,
 };
 
 const MAX_TEXT_CHARS: usize = 4000;
@@ -663,7 +663,7 @@ impl Service {
             repo.path.clone()
         };
         if let Some(path) = &target.worktree_path {
-            return Ok(linked_checkout(&root, Path::new(path), &self.git)?);
+            return Ok(self.verify_linked_checkout(root, path.into()).await?);
         }
         Ok(true)
     }

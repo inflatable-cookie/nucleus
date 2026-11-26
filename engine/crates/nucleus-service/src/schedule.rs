@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use nucleus_core::WaitReason;
+use nucleus_core::{Phase, WaitReason};
 use nucleus_hosts::T3_RETRY_DELAY;
 use nucleus_store::Store;
 use tokio::time::Instant;
@@ -19,6 +19,7 @@ pub(crate) const FORGE_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Priority {
+    Closeout,
     Effect,
     Wake,
     Decision,
@@ -28,10 +29,72 @@ pub(crate) enum Priority {
 pub(crate) struct DueTask {
     pub(crate) id: String,
     pub(crate) priority: Priority,
+    pub(crate) timing: Option<DueTiming>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DueTiming {
+    due: Instant,
+    selected_due: Instant,
+    depth: usize,
+}
+
+struct Resume {
+    at: Instant,
+    at_ms: u64,
+    served: BTreeSet<String>,
+}
+
+pub(crate) struct FirstService {
+    resume_at: Instant,
+    resume_at_ms: u64,
+    timing: DueTiming,
+}
+
+impl FirstService {
+    pub(crate) fn record(&self, id: &str, phase: Phase, priority: Priority, started: Instant) {
+        let timestamp = |at: Instant| {
+            let millis = |delay: Duration| u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
+            if at < self.resume_at {
+                self.resume_at_ms
+                    .saturating_sub(millis(self.resume_at - at))
+            } else {
+                self.resume_at_ms
+                    .saturating_add(millis(at - self.resume_at))
+            }
+        };
+        let eligible = self.timing.due.max(self.resume_at);
+        crate::diagnostics::record(&serde_json::json!({
+            "kind": "scheduler_first_service",
+            "task_id": id,
+            "phase": phase,
+            "priority": format!("{priority:?}"),
+            "resume_at_ms": self.resume_at_ms,
+            "due_at_ms": timestamp(self.timing.due),
+            "selected_due_at_ms": timestamp(self.timing.selected_due),
+            "first_service_at_ms": timestamp(started),
+            "eligible_delay_ms": started.saturating_duration_since(eligible).as_millis(),
+            "depth": self.timing.depth,
+        }));
+    }
 }
 
 impl Priority {
-    const ORDER: [Self; 4] = [Self::Effect, Self::Wake, Self::Decision, Self::Refresh];
+    const ORDER: [Self; 5] = [
+        Self::Closeout,
+        Self::Effect,
+        Self::Wake,
+        Self::Decision,
+        Self::Refresh,
+    ];
+
+    pub(crate) const fn for_phase(self, phase: Phase) -> Self {
+        if matches!(phase, Phase::Closing | Phase::Done | Phase::Cancelled) {
+            Self::Closeout
+        } else {
+            self
+        }
+    }
 }
 
 #[derive(Default)]
@@ -89,6 +152,8 @@ pub(crate) struct Schedule {
     scan_at: Instant,
     cursor: Option<String>,
     archive_cursor: Option<String>,
+    resume: Option<Resume>,
+    served_closeout: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +170,17 @@ impl Schedule {
             scan_at: Instant::now(),
             cursor: None,
             archive_cursor: None,
+            resume: None,
+            served_closeout: false,
         }
+    }
+
+    pub(crate) fn dispatch_changed(&mut self, running: bool) {
+        self.resume = (running && crate::diagnostics::enabled()).then(|| Resume {
+            at: Instant::now(),
+            at_ms: crate::now_ms(),
+            served: BTreeSet::new(),
+        });
     }
 
     pub(crate) fn wake(&mut self, id: &str, due: Instant, priority: Priority) {
@@ -128,7 +203,7 @@ impl Schedule {
         self.tasks.insert(id.into(), pending);
     }
 
-    pub(crate) fn recover_workspace(&mut self, id: &str, now: Instant) -> bool {
+    pub(crate) fn recover_workspace(&mut self, id: &str, now: Instant, phase: Phase) -> bool {
         let next = match self.workspace.get(id).copied() {
             Some(Recovery::CheckAt(due)) if due <= now => Recovery::Blocked,
             Some(prior) => prior,
@@ -137,7 +212,7 @@ impl Schedule {
         self.workspace.insert(id.into(), next);
         self.park(id);
         if let Recovery::CheckAt(due) = next {
-            self.wake(id, due, Priority::Effect);
+            self.wake(id, due, Priority::Effect.for_phase(phase));
         }
         next == Recovery::Blocked
     }
@@ -169,7 +244,7 @@ impl Schedule {
             store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE, parenting)?;
         let more = ids.len() == SCAN_PAGE as usize;
         let more_archival = archival.len() == SCAN_PAGE as usize;
-        self.cursor = ids.last().filter(|_| more).map(|(id, _)| id.clone());
+        self.cursor = ids.last().filter(|_| more).map(|seed| seed.id.clone());
         self.archive_cursor = archival.last().filter(|_| more_archival).cloned();
         self.scan_at = now
             + if more || more_archival {
@@ -177,20 +252,25 @@ impl Schedule {
             } else {
                 SCAN_INTERVAL
             };
-        for (id, admitted) in ids {
-            self.tasks.entry(id.clone()).or_insert_with(|| {
-                if let Some(admitted) = admitted {
-                    capacity_waiters.insert((admitted, id));
+        for seed in ids {
+            self.tasks.entry(seed.id.clone()).or_insert_with(|| {
+                if let Some(admitted) = seed.admission_order {
+                    capacity_waiters.insert((admitted, seed.id));
                 }
                 let mut pending = Pending::default();
-                pending.wake(now, Priority::Decision);
+                let priority = if seed.closeout {
+                    Priority::Closeout
+                } else {
+                    Priority::Decision
+                };
+                pending.wake(now, priority);
                 pending
             });
         }
         for id in archival {
             self.tasks.entry(id).or_insert_with(|| {
                 let mut pending = Pending::default();
-                pending.wake(now, Priority::Effect);
+                pending.wake(now, Priority::Closeout);
                 pending
             });
         }
@@ -203,25 +283,73 @@ impl Schedule {
         visited: &BTreeSet<String>,
         waiting: impl IntoIterator<Item = &'a str>,
     ) -> Option<DueTask> {
-        let ((priority, _), id) = self
-            .tasks
-            .iter()
-            .filter_map(|(id, pending)| pending.ready(now).map(|ready| (ready, id)))
-            .min()?;
-        let (priority, id) = waiting
-            .into_iter()
-            .filter_map(|id| self.tasks.get_key_value(id))
-            .filter_map(|(id, due)| due.ready(now).map(|(priority, _)| (priority, id)))
-            .find(|(candidate, _)| priority != Priority::Effect || *candidate == Priority::Effect)
-            .unwrap_or((priority, id));
+        let mut closeout = None;
+        let mut ordinary = None;
+        for (id, pending) in &self.tasks {
+            if let Some(ready) = pending.ready(now) {
+                let best = if ready.0 == Priority::Closeout {
+                    &mut closeout
+                } else {
+                    &mut ordinary
+                };
+                let candidate = (ready, id);
+                if best.is_none_or(|prior| candidate < prior) {
+                    *best = Some(candidate);
+                }
+            }
+        }
+        // Give closeout and ordinary work turns while both are ready. FIFO
+        // capacity selection applies only on ordinary turns.
+        let ((priority, _), id) = if self.served_closeout {
+            ordinary.or(closeout)?
+        } else {
+            closeout.or(ordinary)?
+        };
+        let (priority, id) = if priority == Priority::Closeout {
+            (priority, id)
+        } else {
+            waiting
+                .into_iter()
+                .filter_map(|id| self.tasks.get_key_value(id))
+                .filter_map(|(id, due)| due.ready(now).map(|(priority, _)| (priority, id)))
+                .find(|(candidate, _)| {
+                    *candidate != Priority::Closeout
+                        && (priority != Priority::Effect || *candidate == Priority::Effect)
+                })
+                .unwrap_or((priority, id))
+        };
         // Start a fresh pass instead of observing the same task again with the
         // census shared by this pass. Lower priority work stays in the queue.
         if visited.contains(id) {
             return None;
         }
+        self.served_closeout = priority == Priority::Closeout;
+        let depth = self.tasks.len();
         let id = id.clone();
-        self.tasks.remove(&id);
-        Some(DueTask { id, priority })
+        let pending = self.tasks.remove(&id).expect("selected due task");
+        let timing = crate::diagnostics::enabled().then(|| DueTiming {
+            due: pending.due().expect("selected task has a deadline"),
+            selected_due: pending.deadlines[priority as usize].expect("selected priority is due"),
+            depth,
+        });
+        Some(DueTask {
+            id,
+            priority,
+            timing,
+        })
+    }
+
+    pub(crate) fn first_service(&mut self, task: &DueTask) -> Option<FirstService> {
+        let timing = task.timing?;
+        let resume = self.resume.as_mut()?;
+        resume
+            .served
+            .insert(task.id.clone())
+            .then_some(FirstService {
+                resume_at: resume.at,
+                resume_at_ms: resume.at_ms,
+                timing,
+            })
     }
 
     pub(crate) fn next(&self) -> Instant {
@@ -305,12 +433,55 @@ mod tests {
         schedule
             .seed(&store, now, true, &mut capacity_waiters)
             .unwrap();
-        for (id, admitted) in active {
-            assert_eq!(schedule.due(&id), Some(now), "missing active task {id}");
-            assert!(capacity_waiters.contains(&(admitted.expect("admission order"), id)));
+        for seed in active {
+            assert_eq!(
+                schedule.due(&seed.id),
+                Some(now),
+                "missing active task {}",
+                seed.id
+            );
+            assert!(
+                capacity_waiters
+                    .contains(&(seed.admission_order.expect("admission order"), seed.id))
+            );
         }
-        assert!(schedule.effect_ready("archival", now));
+        assert_eq!(
+            schedule
+                .take_ready(now, &BTreeSet::new(), None)
+                .map(|task| (task.id, task.priority)),
+            Some(("archival".into(), Priority::Closeout)),
+        );
         assert_eq!(schedule.due(&format!("active-{SCAN_PAGE:02}")), None);
+    }
+
+    #[test]
+    fn due_closeouts_get_turns_during_a_capacity_backlog() {
+        let now = Instant::now();
+        let resume = now + Duration::from_millis(1);
+        let mut schedule = Schedule::new();
+        let waiting: Vec<_> = (0..140)
+            .rev()
+            .map(|index| format!("queued-{index:03}"))
+            .collect();
+        for id in &waiting {
+            schedule.wake(id, resume, Priority::Effect);
+        }
+        schedule.wake("closing", now, Priority::Decision.for_phase(Phase::Closing));
+        schedule.wake("terminal", now, Priority::Effect.for_phase(Phase::Done));
+
+        let mut visited = BTreeSet::new();
+        for (id, priority) in [
+            ("closing", Priority::Closeout),
+            ("queued-139", Priority::Effect),
+            ("terminal", Priority::Closeout),
+            ("queued-138", Priority::Effect),
+        ] {
+            let task = schedule
+                .take_ready(resume, &visited, waiting.iter().map(String::as_str))
+                .expect("due task");
+            assert_eq!((task.id.as_str(), task.priority), (id, priority));
+            visited.insert(task.id);
+        }
     }
 
     #[test]

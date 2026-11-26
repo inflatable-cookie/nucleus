@@ -222,6 +222,17 @@ impl Service {
             .map_err(|_| ServiceError::Project)?
     }
 
+    pub(super) async fn verify_linked_checkout(
+        &self,
+        project: PathBuf,
+        checkout: PathBuf,
+    ) -> Result<bool, HostError> {
+        let git = self.git.clone();
+        tokio::task::spawn_blocking(move || linked_checkout(&project, &checkout, &git))
+            .await
+            .map_err(|_| HostError::Uncertain)?
+    }
+
     pub(super) async fn check_project_route(
         &self,
         identity: &Identity,
@@ -387,11 +398,7 @@ pub(super) fn discover_repository(
     })
 }
 
-pub(super) fn linked_checkout(
-    project: &Path,
-    path: &Path,
-    policy: &LocalGit,
-) -> Result<bool, HostError> {
+fn linked_checkout(project: &Path, path: &Path, policy: &LocalGit) -> Result<bool, HostError> {
     if !path.is_absolute() {
         return Ok(false);
     }

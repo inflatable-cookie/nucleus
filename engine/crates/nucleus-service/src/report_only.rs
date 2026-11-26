@@ -11,11 +11,11 @@ use nucleus_store::{
     planning::{Lane, WriteAt},
 };
 use nucleus_work::Checkout;
-use tokio::sync::MutexGuard;
 
 use crate::{
     ControllerScope, Service, ServiceError, State,
     acp::{self, WriteAccess},
+    diagnostics::StateGuard,
     event, now_ms,
 };
 
@@ -232,13 +232,13 @@ impl Service {
 
     pub(super) async fn fence_report_completion<'a>(
         &'a self,
-        state: MutexGuard<'a, State>,
+        state: StateGuard<'a>,
         prior: &TaskRow,
         acceptance: &ReportAcceptance,
         authority: &Authority,
         session: Option<&WriteAccess>,
         scope: &ControllerScope,
-    ) -> Result<MutexGuard<'a, State>, ServiceError> {
+    ) -> Result<StateGuard<'a>, ServiceError> {
         if prior.version != acceptance.version {
             return Err(StoreError::StaleTask.into());
         }
@@ -496,7 +496,7 @@ impl Service {
         {
             return Err(ServiceError::ReportCheckout("archival is paused"));
         }
-        let head = match checkout.observe_for_retirement()? {
+        let head = match self.observe_checkout_for_retirement(checkout).await? {
             Workspace::Absent => return Ok(None),
             Workspace::Dirty => {
                 checkout

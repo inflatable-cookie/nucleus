@@ -939,6 +939,11 @@ async fn save_dispatch(
     value: DispatchSettings,
 ) -> Result<Value, ApiError> {
     let mut state = service.state.lock().await;
+    let prior = state
+        .settings
+        .dispatch
+        .as_ref()
+        .map(|dispatch| dispatch.mode);
     let result = edit(&service.settings, revision, move |current| {
         *current = value;
         Ok(())
@@ -948,9 +953,13 @@ async fn save_dispatch(
         Ok((saved, changed)) => {
             if changed {
                 let stopping = saved.value.mode == DispatchMode::Stopped
-                    && state.settings.dispatch.as_ref().map(|prior| prior.mode)
-                        != Some(DispatchMode::Stopped);
+                    && prior != Some(DispatchMode::Stopped);
                 state.settings.dispatch = Some(saved.value.clone());
+                if prior != Some(saved.value.mode) {
+                    state
+                        .schedule
+                        .dispatch_changed(saved.value.mode == DispatchMode::Running);
+                }
                 state.refresh_allowance_clock();
                 service.title_wake.notify_one();
                 if stopping {
@@ -965,6 +974,16 @@ async fn save_dispatch(
                 // Fall back to a read of the atomically replaced file before admitting more work.
                 let saved = read::<DispatchSettings>(&service.settings).await;
                 state.settings.dispatch = saved.ok().map(|snapshot| snapshot.value);
+                let mode = state
+                    .settings
+                    .dispatch
+                    .as_ref()
+                    .map(|dispatch| dispatch.mode);
+                if prior != mode {
+                    state
+                        .schedule
+                        .dispatch_changed(mode == Some(DispatchMode::Running));
+                }
                 state.refresh_allowance_clock();
                 service.title_wake.notify_one();
                 service.wake_settings_capacity(&mut state);

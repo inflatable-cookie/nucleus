@@ -76,7 +76,14 @@ async fn an_unreadable_task_has_a_scoped_error_card_and_does_not_block_its_sibli
     );
     let host = service.host.pass(service.storage.scratch().path());
     let outcome = service
-        .run_due_task("damaged", crate::schedule::Priority::Decision, &host)
+        .run_due_task(
+            &crate::schedule::DueTask {
+                id: "damaged".into(),
+                priority: crate::schedule::Priority::Decision,
+                timing: None,
+            },
+            &host,
+        )
         .await
         .unwrap();
     assert!(matches!(
@@ -86,7 +93,14 @@ async fn an_unreadable_task_has_a_scoped_error_card_and_does_not_block_its_sibli
         )))
     ));
     let next = service
-        .run_due_task("dependent", crate::schedule::Priority::Decision, &host)
+        .run_due_task(
+            &crate::schedule::DueTask {
+                id: "dependent".into(),
+                priority: crate::schedule::Priority::Decision,
+                timing: None,
+            },
+            &host,
+        )
         .await
         .unwrap()
         .unwrap()
@@ -325,4 +339,96 @@ async fn refreshed_finished_cards_follow_current_dependencies_and_same_version_b
     assert_eq!(edited[0]["version"], cold[0]["version"]);
     assert_eq!(edited[0]["latestEventAtMs"], event.at);
     assert_eq!(edited[0]["stateSinceMs"], event.at);
+}
+
+#[tokio::test]
+async fn warm_active_cards_follow_dependency_attention_and_scheduler_waits() {
+    use std::time::Duration;
+
+    use tokio::time::Instant;
+
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let service = Arc::new(service);
+    let api = controller(Arc::clone(&service));
+    add(&service, "first", ADMIT).await;
+    let row = add(
+        &service,
+        "dependent",
+        "---\nqueue:\n  complexity: medium\n  dependsOn: ['#1']\n  lanes: [fixture]\n---\n# Follow",
+    )
+    .await;
+    let card = async || {
+        let cards = json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
+        cards[0].clone()
+    };
+    let cold = card().await;
+    assert_eq!(cold["identity"]["id"], "dependent");
+    assert_eq!(cold["lanes"], json!(["fixture"]));
+    assert_eq!(cold["attention"], "waiting");
+    assert_eq!(cold["wait"], "prerequisite");
+    assert_eq!(
+        cold["dependencyStatus"]["dependencies"][0]["status"],
+        "pending"
+    );
+
+    service
+        .command("first", &operator(), Command::Cancel)
+        .await
+        .unwrap();
+    let changed = card().await;
+    assert_eq!(changed["version"], row.version);
+    assert_eq!(changed["attention"], "attention");
+    assert_eq!(
+        changed["dependencyStatus"]["dependencies"][0]["status"],
+        "cancelled"
+    );
+
+    let row = service
+        .command_dependencies(
+            "dependent",
+            &operator(),
+            DependencyCommand::SetDependencies {
+                version: row.version,
+                depends_on: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(card().await["version"], row.version);
+    let start = Instant::now();
+    {
+        let mut state = service.state.lock().await;
+        state
+            .observe_wait_detail(
+                &row.task,
+                Some(WaitReason::WorkspaceBlocked),
+                Some(crate::WaitDetail::Blocked(
+                    "Fixture checkout needs repair.".into(),
+                )),
+            )
+            .unwrap();
+        state.schedule.park("dependent");
+        state.schedule.wake(
+            "dependent",
+            start + Duration::from_mins(1),
+            crate::Priority::Effect,
+        );
+    }
+    let waiting = card().await;
+    assert_eq!(waiting["version"], row.version);
+    assert_eq!(
+        waiting["waitDetail"].as_str(),
+        Some("Fixture checkout needs repair.")
+    );
+    let before = waiting["nextCheckAt"].as_u64().unwrap();
+    {
+        let mut state = service.state.lock().await;
+        state.schedule.park("dependent");
+        state.schedule.wake(
+            "dependent",
+            start + Duration::from_mins(2),
+            crate::Priority::Effect,
+        );
+    }
+    assert!(card().await["nextCheckAt"].as_u64().unwrap() > before + 50_000);
 }

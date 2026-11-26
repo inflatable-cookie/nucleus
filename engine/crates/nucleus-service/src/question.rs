@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, path::Path};
+use std::cmp::Reverse;
 
 use nucleus_core::{Action, OperatorDecline, Question, QuestionDelivery, Task, WaitReason};
 use nucleus_hosts::{
@@ -10,9 +10,7 @@ use tokio::time::Instant;
 
 use crate::pass::{DispatchPermit, DispatchTarget};
 use crate::{
-    RegisteredRole, Service, ServiceError, State, event,
-    project::{ProjectRoute, linked_checkout},
-    schedule::Priority,
+    RegisteredRole, Service, ServiceError, State, event, project::ProjectRoute, schedule::Priority,
 };
 
 pub(super) struct PlannerAuthority {
@@ -445,13 +443,9 @@ impl Service {
         if rank == 3
             && let Some(worktree) = worktree
         {
-            let project = route.checkout.clone();
-            let git = self.git.clone();
-            return Ok(tokio::task::spawn_blocking(move || {
-                linked_checkout(&project, Path::new(&worktree), &git)
-            })
-            .await
-            .map_err(|_| HostError::Uncertain)??);
+            return Ok(self
+                .verify_linked_checkout(route.checkout.clone(), worktree.into())
+                .await?);
         }
         Ok(true)
     }
@@ -486,6 +480,7 @@ fn notice_text(reference: &str, question: &Question, limit: Option<&str>) -> Str
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
