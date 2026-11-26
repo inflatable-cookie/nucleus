@@ -305,17 +305,36 @@ async fn main() -> Result<()> {
             } else {
                 Authority::Operator { actor }
             };
-            let provider = acp_provider.ok_or("supply the T3 ACP provider")?;
-            serve(
-                endpoint,
-                home.as_deref(),
-                provider,
-                t3.as_deref(),
-                authority,
-                fixture_origin_thread,
-                board_assets.as_deref(),
-            )
-            .await
+            std::panic::set_hook(Box::new(|info| {
+                eprintln!(
+                    "{} {}",
+                    ::time::OffsetDateTime::now_utc(),
+                    info.to_string().replace(['\r', '\n'], " ")
+                );
+            }));
+            let result = async {
+                let provider = acp_provider.ok_or("supply the T3 ACP provider")?;
+                serve(
+                    endpoint,
+                    home.as_deref(),
+                    provider,
+                    t3.as_deref(),
+                    authority,
+                    fixture_origin_thread,
+                    board_assets.as_deref(),
+                )
+                .await
+            }
+            .await;
+            if let Err(error) = result {
+                eprintln!(
+                    "{} {}",
+                    ::time::OffsetDateTime::now_utc(),
+                    error.to_string().replace(['\r', '\n'], " ")
+                );
+                std::process::exit(1);
+            }
+            Ok(())
         }
         Action::Report { ticket } => report(&ticket).await,
         Action::Planning(action) if action.uses_ticket() => action.run_ticket().await,
