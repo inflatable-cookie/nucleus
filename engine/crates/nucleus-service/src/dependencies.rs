@@ -364,13 +364,10 @@ impl Service {
         state: &State,
         scope: &ControllerScope,
         prior: &Task,
-        amended: &Task,
+        before: &[String],
+        after: &[String],
     ) -> Result<Option<Vec<String>>, ServiceError> {
-        use nucleus_core::profiles::BriefPolicy;
-
-        let before = BriefPolicy::parse(&prior.brief().text).unwrap_or_default();
-        let after = BriefPolicy::submitted(&amended.brief().text)?;
-        if before.depends_on == after.depends_on {
+        if before == after {
             return Ok(None);
         }
         if !DependencyEdits::for_task(prior, false).set_dependencies {
@@ -386,8 +383,7 @@ impl Service {
                 .dependencies(&prior.identity().id)?
                 .before_dispatch,
         )?;
-        let (ids, _) =
-            self.resolve_dependencies(state, prior.identity(), &after.depends_on, scope)?;
+        let (ids, _) = self.resolve_dependencies(state, prior.identity(), after, scope)?;
         Ok(Some(ids))
     }
 

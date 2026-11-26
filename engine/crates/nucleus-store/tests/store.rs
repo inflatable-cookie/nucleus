@@ -960,7 +960,7 @@ fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
     store.create(&task, &event("admitted")).unwrap();
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN queue_priority; ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; PRAGMA user_version = 10;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; PRAGMA user_version = 10;")
         .unwrap();
     drop(db);
 
@@ -1639,7 +1639,7 @@ fn schema_twelve_preserves_existing_snooze_ownership() {
 
 fn revert_parent_schema(storage: &EngineStorage) {
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN queue_priority; DROP TABLE parent_deliveries; PRAGMA user_version=11;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; DROP TABLE parent_deliveries; PRAGMA user_version=11;")
         .unwrap();
 }
 
@@ -1824,7 +1824,7 @@ fn migrating_version_twelve_defaults_queue_priority_without_rewriting_rows() {
     drop(store);
 
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN queue_priority; PRAGMA user_version = 12;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; PRAGMA user_version = 12;")
         .unwrap();
     drop(db);
 
@@ -1854,4 +1854,41 @@ fn migrating_version_twelve_defaults_queue_priority_without_rewriting_rows() {
             },
         ]
     );
+}
+
+#[test]
+fn migrating_version_thirteen_keeps_existing_holds_and_stores_merge_holds() {
+    let root = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(root.path());
+    let mut legacy = task("held", "fixture#1");
+    let operator = Authority::Operator {
+        actor: "operator".into(),
+    };
+    legacy
+        .command(
+            Command::Hold("Pause dispatch".into()),
+            &operator,
+            &observation(),
+        )
+        .unwrap();
+    let mut store = Store::open(&storage).unwrap();
+    store.create(&legacy, &event("admitted")).unwrap();
+    drop(store);
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; PRAGMA user_version = 13;")
+        .unwrap();
+    drop(db);
+
+    let mut store = Store::open(&storage).unwrap();
+    let prior = row(&store, "held");
+    assert_eq!(prior.task, legacy);
+    legacy
+        .set_brief_merge_hold(Some("Verify the candidate"), &operator, 123)
+        .unwrap();
+    store
+        .save_row(&prior, &legacy, &event("brief_merge_hold_changed"))
+        .unwrap();
+    drop(store);
+    let reopened = Store::open(&storage).unwrap();
+    assert_eq!(row(&reopened, "held").task, legacy);
 }

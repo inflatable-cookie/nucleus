@@ -141,7 +141,8 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
             | WaitReason::Permission
             | WaitReason::UsagePermission
             | WaitReason::IdleWithoutTerminalRun
-            | WaitReason::Hold,
+            | WaitReason::Hold
+            | WaitReason::MergeHold,
         ) => (LIVE_CHECK, Priority::Refresh),
         Some(WaitReason::HostUnknown | WaitReason::RetainedThreadBusy | WaitReason::Question) => {
             (T3_RETRY_DELAY, Priority::Decision)

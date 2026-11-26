@@ -135,15 +135,19 @@ fn working() -> (Task, Observation) {
 }
 
 fn ready_for_merge() -> Task {
-    let (mut task, obs) = working();
+    let (task, obs) = working();
+    finish_review(task, &obs)
+}
+
+fn finish_review(mut task: Task, obs: &Observation) -> Task {
     assert_eq!(
-        decide(&task, &obs),
+        decide(&task, obs),
         Action::Launch {
             role: Role::Worker,
             via: Launch::Create
         }
     );
-    let bearer = start(&mut task, &obs, Role::Worker, "worker", "work-1");
+    let bearer = start(&mut task, obs, Role::Worker, "worker", "work-1");
     report(&mut task, &bearer, Report::Work(pr('a').into()));
     let review = open('a', CheckState::Pending);
     let ended = host(&task, review.clone(), RunState::Ended);
@@ -162,6 +166,54 @@ fn ready_for_merge() -> Task {
     let ended = host(&task, review, RunState::Ended);
     assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Merging));
     task
+}
+
+#[test]
+fn a_brief_merge_hold_allows_work_and_review_then_requires_its_owner_to_release() {
+    let brief = "---\nqueue:\n  complexity: low\n  mergeHold: true\n  mergeHoldReason: '  Check release evidence  '\n---\nPublish the reviewed candidate.";
+    let policy = nucleus_core::profiles::BriefPolicy::submitted(brief).unwrap();
+    let mut task = Task::new(task(Entry::Brief).identity().clone(), brief.into(), None);
+    task.set_brief_merge_hold(policy.merge_hold_reason(), &planner(), 123)
+        .unwrap();
+    let obs = Observation {
+        workspace: Observed::Known(Workspace::Absent),
+        ..observation()
+    };
+    assert_eq!(task.reconcile(&obs), Action::Advance(Phase::Working));
+    let mut task = finish_review(task, &obs);
+    let ready = open('a', CheckState::Ready);
+    assert_eq!(
+        decide(&task, &open('a', CheckState::Pending)),
+        Action::Wait(WaitReason::ChecksPending)
+    );
+    assert_eq!(decide(&task, &ready), Action::Wait(WaitReason::MergeHold));
+    let mut external = task.clone();
+    assert_eq!(
+        external.reconcile(&merged('a', Workspace::Clean(sha('a')))),
+        Action::Advance(Phase::Closing)
+    );
+    let other = Authority::Planner {
+        actor: "other".into(),
+    };
+    assert_eq!(
+        task.command(Command::Release, &other, &ready),
+        Err(CommandError::MergeHoldOwner)
+    );
+    task.command(Command::Hold("Pause the task".into()), &planner(), &ready)
+        .unwrap();
+    assert_eq!(decide(&task, &ready), Action::Wait(WaitReason::Hold));
+    task.command(Command::Release, &planner(), &ready).unwrap();
+    assert_eq!(decide(&task, &ready), Action::Wait(WaitReason::MergeHold));
+    let mut task: Task = serde_json::from_value(serde_json::to_value(task).unwrap()).unwrap();
+    let hold = task.merge_hold().unwrap();
+    assert_eq!(hold.reason, "Check release evidence");
+    assert_eq!(hold.since_ms, Some(123));
+    task.command(Command::Release, &planner(), &ready).unwrap();
+    assert_eq!(decide(&task, &ready), Action::Merge { head: sha('a') });
+    assert_eq!(
+        decide(&task, &open('b', CheckState::Ready)),
+        Action::Advance(Phase::Reviewing)
+    );
 }
 
 #[test]

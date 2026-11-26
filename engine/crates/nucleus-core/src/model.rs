@@ -340,6 +340,10 @@ pub struct Hold {
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<HoldBy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -673,6 +677,8 @@ pub struct Task {
     pub(crate) question: Option<OpenQuestion>,
     pub(crate) hold: Option<Hold>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) merge_hold: Option<Hold>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) work_continuation: Option<WorkContinuation>,
     #[serde(rename = "report_task", skip_serializing_if = "Option::is_none")]
     pub(crate) report_state: Option<ReportTask>,
@@ -692,6 +698,7 @@ struct StoredTask {
     attempts: u8,
     question: Option<OpenQuestion>,
     hold: Option<Hold>,
+    merge_hold: Option<Hold>,
     #[serde(default)]
     work_continuation: Option<WorkContinuation>,
     #[serde(rename = "report_task")]
@@ -772,6 +779,7 @@ impl TryFrom<StoredTask> for Task {
             attempts: stored.attempts,
             question: stored.question,
             hold: stored.hold,
+            merge_hold: stored.merge_hold,
             work_continuation: stored.work_continuation,
             report_state: stored.report_state,
             queue_priority: stored.queue_priority,
@@ -802,6 +810,7 @@ impl Task {
             attempts: 0,
             question: None,
             hold: None,
+            merge_hold: None,
             work_continuation: None,
             report_state: None,
             queue_priority,
@@ -1020,6 +1029,12 @@ impl Task {
     #[must_use]
     pub const fn hold(&self) -> Option<&Hold> {
         self.hold.as_ref()
+    }
+
+    /// Return the outstanding brief-declared hold on the merge request.
+    #[must_use]
+    pub const fn merge_hold(&self) -> Option<&Hold> {
+        self.merge_hold.as_ref()
     }
 
     #[must_use]

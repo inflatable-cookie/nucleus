@@ -1,11 +1,11 @@
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Deserializer, de};
 
 use super::{Complexity, Effort};
 use crate::{Brief, QueuePriority, Role};
 
-/// Only the routing keys from the existing `queue` frontmatter.
+/// The engine policy declared in a brief's `queue` frontmatter.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BriefPolicy {
@@ -13,6 +13,9 @@ pub struct BriefPolicy {
     pub priority: Option<QueuePriority>,
     pub critical: bool,
     pub notify_origin_on_closeout: bool,
+    merge_hold: Option<bool>,
+    #[serde(default, deserialize_with = "optional_text")]
+    merge_hold_reason: Option<String>,
     profile_requests: Requests,
     #[serde(default, deserialize_with = "present")]
     preferred_profile_id: Option<()>,
@@ -29,6 +32,8 @@ pub struct BriefPolicy {
     pub depends_on: Vec<String>,
     #[serde(default, deserialize_with = "present")]
     interactive: Option<()>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, yaml_serde::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -100,6 +105,8 @@ pub enum BriefPolicyError {
     UnclosedFrontmatter,
     RetiredProfile,
     RetiredInteractive,
+    UnknownQueueKey(String),
+    MergeHoldReason,
     InvalidFrontmatter(yaml_serde::Error),
     UnjustifiedRequest(Role),
     ReportPolicy(&'static str),
@@ -110,6 +117,8 @@ impl fmt::Display for BriefPolicyError {
         match self {
             Self::RetiredProfile => f.write_str("queue.preferredProfileId is retired; use queue.profileRequests.worker with profileId and reason (required: true to require it)"),
             Self::RetiredInteractive => f.write_str("queue.interactive is retired; submit the work as a normal brief"),
+            Self::UnknownQueueKey(key) => write!(f, "unknown queue key: queue.{key}"),
+            Self::MergeHoldReason => f.write_str("queue.mergeHold: true requires a queue.mergeHoldReason of 1 to 4000 characters"),
             Self::UnclosedFrontmatter => {
                 f.write_str("brief frontmatter is missing its closing delimiter")
             }
@@ -129,7 +138,7 @@ impl BriefPolicy {
     /// Validate routing keys on a new or amended brief. Stored briefs stay readable.
     ///
     /// # Errors
-    /// Returns a replacement for the retired profile selector.
+    /// Returns an error for unsupported keys or invalid policy.
     pub fn submitted(brief: &str) -> Result<Self, BriefPolicyError> {
         let policy = Self::parse(brief)?;
         if policy.preferred_profile_id.is_some() {
@@ -138,7 +147,32 @@ impl BriefPolicy {
         if policy.interactive.is_some() {
             return Err(BriefPolicyError::RetiredInteractive);
         }
+        if let Some((key, _)) = policy.unknown.first_key_value() {
+            return Err(BriefPolicyError::UnknownQueueKey(key.clone()));
+        }
+        if policy.merge_hold == Some(true) {
+            if policy
+                .merge_hold_reason()
+                .is_none_or(|reason| reason.is_empty() || reason.chars().count() > 4000)
+            {
+                return Err(BriefPolicyError::MergeHoldReason);
+            }
+            if policy.report_only == Some(true) {
+                return Err(BriefPolicyError::ReportPolicy(
+                    "queue.mergeHold cannot be combined with queue.reportOnly",
+                ));
+            }
+        }
         Ok(policy)
+    }
+
+    /// Return the reason when the brief declares a merge hold.
+    #[must_use]
+    pub fn merge_hold_reason(&self) -> Option<&str> {
+        self.merge_hold_reason
+            .as_deref()
+            .filter(|_| self.merge_hold == Some(true))
+            .map(str::trim)
     }
 
     /// Write the explicit promotion choice into a papercut's task brief.
@@ -284,5 +318,28 @@ mod submission_tests {
                 .to_string()
                 .contains("queue.interactive is retired")
         );
+    }
+
+    #[test]
+    fn only_submitted_briefs_refuse_legacy_queue_keys() {
+        let brief = "---\nqueue:\n  complexity: high\n  scope: complex\n---\nHeld work";
+        assert!(BriefPolicy::parse(brief).unwrap().complexity.is_some());
+        assert_eq!(
+            BriefPolicy::submitted(brief).unwrap_err().to_string(),
+            "unknown queue key: queue.scope"
+        );
+    }
+
+    #[test]
+    fn a_merge_hold_requires_a_reason() {
+        for reason in ["", "  mergeHoldReason: '   '\n"] {
+            let brief = format!("---\nqueue:\n  mergeHold: true\n{reason}---\nHeld work");
+            assert!(
+                BriefPolicy::submitted(&brief)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("requires a queue.mergeHoldReason")
+            );
+        }
     }
 }

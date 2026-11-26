@@ -143,6 +143,7 @@ pub enum CloseWorkspace {
 #[serde(rename_all = "snake_case")]
 pub enum WaitReason {
     Hold,
+    MergeHold,
     Question,
     OperatorDeclined,
     HostUnknown,
@@ -543,6 +544,10 @@ fn merge_signal(task: &Task, observation: &Observation) -> Signal {
             checks: CheckState::Pending,
             ..
         }) => Signal::Wait(WaitReason::ChecksPending),
+        Observed::Known(Forge::Open {
+            checks: CheckState::Ready,
+            ..
+        }) if task.merge_hold().is_some() => Signal::Wait(WaitReason::MergeHold),
         Observed::Known(Forge::Open {
             pr,
             checks: CheckState::Ready,
