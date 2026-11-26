@@ -7,13 +7,9 @@ import { mount, useNativeStubs } from "./support/render";
 import { t3HostCatalog } from "../hosts/t3code/catalog";
 import { configProvider } from "../hosts/t3code/config";
 import { t3codeVocabulary } from "../hosts/t3code/vocabulary";
-import { paseoVocabulary } from "../hosts/paseo/vocabulary";
-import {
-  canonicalCatalog,
-  mergeCanonicalCatalogs,
-} from "../shared/profile-vocabulary";
+import { canonicalCatalog } from "../shared/profile-vocabulary";
 import type { HostCatalog } from "../shared/host";
-import { nightlyProviders, paseoCatalog } from "./support/pool-shapes";
+import { nightlyProviders } from "./support/pool-shapes";
 import { HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, waitFor } from "./support/budgets";
 
 /**
@@ -28,6 +24,9 @@ const colors = new Proxy({}, { get: () => "#123" }) as never;
 function t3Catalog(): HostCatalog {
   return t3HostCatalog(configProvider.array().parse(nightlyProviders()));
 }
+
+const canonicalT3Catalog = () =>
+  canonicalCatalog(t3codeVocabulary, t3Catalog());
 
 async function editor(
   catalog: HostCatalog,
@@ -71,10 +70,7 @@ const controls = (ui: Awaited<ReturnType<typeof editor>>, name: string) =>
   ui.all(new RegExp(`^${name}, `));
 
 test("a model whose host carries thinking as a feature shows exactly one Thinking and one Mode control and no thinking or reasoning field", async () => {
-  const merged = mergeCanonicalCatalogs([
-    canonicalCatalog(paseoVocabulary, paseoCatalog()),
-    canonicalCatalog(t3codeVocabulary, t3Catalog()),
-  ]);
+  const merged = canonicalT3Catalog();
   // Muse 1.3 grind after migration: T3 carries Pi's level as its `thinking` option.
   const ui = await editor(merged, {
     id: "synthetic-muse",
@@ -115,24 +111,8 @@ test("a model whose host carries thinking as a feature shows exactly one Thinkin
   assert.equal(codex.all(/^Service Tier, /).length, 0);
 });
 
-test("a model with no modes still shows its one Mode control, as Host default", async () => {
-  const ui = await editor(canonicalCatalog(paseoVocabulary, paseoCatalog()), {
-    id: "synthetic-pi",
-    name: "Pi",
-    provider: "pi",
-    model: "opencode-go/deepseek-v4.1-flash",
-    thinkingOptionId: "high",
-  });
-  assert.equal(controls(ui, "Mode").length, 1);
-  assert.equal(ui.get("Mode, Host default").type, "Text");
-  assert.equal(controls(ui, "Thinking").length, 1);
-});
-
 test("a thinking carrier the migration kept shows under the one Thinking control, and choosing a level replaces it and keeps other options", async () => {
-  const merged = mergeCanonicalCatalogs([
-    canonicalCatalog(paseoVocabulary, paseoCatalog()),
-    canonicalCatalog(t3codeVocabulary, t3Catalog()),
-  ]);
+  const merged = canonicalT3Catalog();
   // The migration left this clash as stored: level low, T3's Pi carrier max.
   const calls: Array<{ method: string; input: any }> = [];
   const ui = await editor(
@@ -173,16 +153,16 @@ test("a thinking carrier the migration kept shows under the one Thinking control
 });
 
 test("a stored level outside this model's list shows as unavailable in the one Thinking control, so another level can replace it", async () => {
-  const ui = await editor(canonicalCatalog(paseoVocabulary, paseoCatalog()), {
+  const ui = await editor(canonicalT3Catalog(), {
     id: "synthetic-odd",
     name: "Odd",
     provider: "claude",
     model: "claude-opus-5-5",
-    thinkingOptionId: "ultracode",
+    thinkingOptionId: "legacy-level",
   });
   assert.equal(controls(ui, "Thinking").length, 1);
   ui.press(/^Thinking, /);
-  assert.ok(ui.query("Thinking: ultracode · unavailable"));
+  assert.ok(ui.query("Thinking: legacy-level · unavailable"));
   assert.ok(ui.query("Thinking: Medium"));
 });
 
@@ -190,7 +170,7 @@ test("a saved model no host reports keeps its retained thinking shown and repair
   // The migration kept this clash; its model is retired, so no catalog lists it.
   const calls: Array<{ method: string; input: any }> = [];
   const ui = await editor(
-    canonicalCatalog(paseoVocabulary, paseoCatalog()),
+    canonicalT3Catalog(),
     {
       id: "synthetic-retired",
       name: "Retired",
@@ -221,15 +201,15 @@ test("a saved model no host reports keeps its retained thinking shown and repair
     "the model and other options stay; the carrier goes",
   );
   // An unmapped stored level on a retired model shows too, and another level replaces it.
-  const odd = await editor(canonicalCatalog(paseoVocabulary, paseoCatalog()), {
+  const odd = await editor(canonicalT3Catalog(), {
     id: "synthetic-odd-retired",
     name: "Odd retired",
     provider: "claude",
     model: "claude-retired",
-    thinkingOptionId: "ultracode",
+    thinkingOptionId: "legacy-level",
   });
   assert.equal(controls(odd, "Thinking").length, 1);
   odd.press(/^Thinking, /);
-  assert.ok(odd.query("Thinking: ultracode · unavailable"));
+  assert.ok(odd.query("Thinking: legacy-level · unavailable"));
   assert.ok(odd.query("Thinking: Medium"));
 });

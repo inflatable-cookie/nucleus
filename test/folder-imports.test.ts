@@ -204,10 +204,7 @@ test("host environment gate rejects planted core literals and confines each host
     [],
   );
   assert.deepEqual(
-    hostEnvironmentNames(
-      "core/escaped.ts",
-      "const key = 'PASEO_\\u0041GENT_ID';",
-    ),
+    hostEnvironmentNames("core/escaped.ts", "const key = 'PASEO_\\u0041GENT_ID';"),
     ["PASEO_AGENT_ID"],
   );
   assert.deepEqual(
