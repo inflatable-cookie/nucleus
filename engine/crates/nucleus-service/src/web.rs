@@ -1547,6 +1547,7 @@ enum ApiError {
     BriefBodyTooLarge,
     SettingsOperator,
     GitHubAccountsOperator,
+    PauseChanged,
     ProjectOpenTasks,
     BoardUnavailable,
     BoardOperator,
@@ -1585,6 +1586,10 @@ impl IntoResponse for ApiError {
             Self::GitHubAccountsOperator => (
                 StatusCode::FORBIDDEN,
                 "GitHub account settings require an operator".into(),
+            ),
+            Self::PauseChanged => (
+                StatusCode::CONFLICT,
+                "The estimated pause changed. Refresh Profiles.".into(),
             ),
             Self::ProjectOpenTasks => (
                 StatusCode::CONFLICT,

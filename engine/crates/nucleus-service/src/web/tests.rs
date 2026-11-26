@@ -2236,12 +2236,20 @@ async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_grou
     std::fs::write(assets.join("app.js"), "").unwrap();
     let api = router_with_board(
         Arc::clone(&service),
-        [Controller {
-            credential: BOARD_KEY,
-            authority: Authority::Operator {
-                actor: "operator".into(),
+        [
+            Controller {
+                credential: BOARD_KEY,
+                authority: Authority::Operator {
+                    actor: "operator".into(),
+                },
             },
-        }],
+            Controller {
+                credential: PLANNER_KEY,
+                authority: Authority::Planner {
+                    actor: "fixture-planner".into(),
+                },
+            },
+        ],
         &assets,
     )
     .unwrap();
@@ -2309,6 +2317,53 @@ async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_grou
     let usage = read_paired_task(&api, "/api/engine/profiles/usage", &cookie).await;
     assert_eq!(usage["limitedGroups"], json!({"codex-team":deadline}));
     assert!(matches!(select().await, Ok(LaunchSelection::Paused)));
+    let clear = "/api/engine/profiles/pauses/";
+    let click = |group: &str, observed, cookie: &str| {
+        let path = format!("{clear}{group}/clear");
+        let cookie = cookie.to_owned();
+        let api = &api;
+        async move {
+            browser_request(
+                api,
+                Method::POST,
+                &path,
+                Some(&cookie),
+                Some(&json!({"untilMs":observed})),
+            )
+            .await
+            .status()
+        }
+    };
+    assert_eq!(
+        click("codex-team", deadline, &cookie).await,
+        StatusCode::CONFLICT
+    );
+    let estimate = nucleus_store::SubscriptionPause {
+        until_ms: deadline,
+        fallback: true,
+    };
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .set_subscription_pause("estimated", estimate, now)
+        .unwrap();
+    let usage = read_paired_task(&api, "/api/engine/profiles/usage", &cookie).await;
+    assert_eq!(usage["fallbackGroups"], json!(["estimated"]));
+    let planner = pair_board(&api, &PLANNER_KEY).await;
+    assert_eq!(
+        click("estimated", deadline, &planner).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        click("estimated", deadline - 1, &cookie).await,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(click("estimated", deadline, &cookie).await, StatusCode::OK);
+    let usage = read_paired_task(&api, "/api/engine/profiles/usage", &cookie).await;
+    assert_eq!(usage["limitedGroups"], json!({"codex-team":deadline}));
+    assert!(usage.get("fallbackGroups").is_none());
     native.abort();
 }
 
