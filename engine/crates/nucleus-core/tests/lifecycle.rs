@@ -512,6 +512,39 @@ fn three_confirmed_failures_open_one_question_and_retry_reuses_the_thread() {
 }
 
 #[test]
+fn provider_limits_use_the_role_attempt_budget_and_survive_reopen() {
+    let (mut task, mut obs) = working();
+    for attempt in 0..3 {
+        start(
+            &mut task,
+            &obs,
+            Role::Worker,
+            "worker",
+            &format!("work-{attempt}"),
+        );
+        task.record_send(&instance(&task), 2).unwrap();
+        let cause = "Provider usage limit for fixture. Reset at 2099-01-01T00:00:00Z.";
+        obs.host = Observed::Known(Host::ProviderLimited {
+            instance: instance(&task),
+            cause: cause.into(),
+        });
+        let action = task.reconcile(&obs);
+        assert_eq!(
+            action,
+            if attempt < 2 {
+                Action::Relaunch(Role::Worker)
+            } else {
+                Action::Ask(Question::Retry { role: Role::Worker })
+            }
+        );
+        task = serde_json::from_value(serde_json::to_value(&task).unwrap()).unwrap();
+        assert_eq!(task.threads().last_provider_limit.as_deref(), Some(cause));
+        obs = retained(obs, "worker", RetainedThread::Idle);
+    }
+    assert_eq!(task.attempts(), 3);
+}
+
+#[test]
 fn a_worker_without_a_report_can_recover_its_first_pr() {
     let (mut task, workspace) = working();
     let no_pr = Observation {

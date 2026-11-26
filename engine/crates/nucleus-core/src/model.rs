@@ -581,6 +581,9 @@ impl Run {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Threads {
+    /// The subscription and reset observed on the most recently settled role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_provider_limit: Option<String>,
     pub(crate) worker: Option<String>,
     pub(crate) reviewer: Option<String>,
     pub(crate) launch_sequence: u64,

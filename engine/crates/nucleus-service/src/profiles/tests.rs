@@ -369,7 +369,7 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
     let limited = service.task(IDS[0]).await.expect("settled limit");
     assert_eq!(limited.task.phase(), Phase::Working);
     assert!(limited.task.run().is_none() && limited.task.question().is_none());
-    assert_eq!(limited.task.attempts(), 0);
+    assert_eq!(limited.task.attempts(), 1);
     {
         let mut state = service.state.lock().await;
         assert_eq!(
@@ -406,7 +406,7 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
     let run = next.task.run().expect("replacement reservation");
     assert_eq!(run.launch().subscription_group(), Some("claudeAgent"));
     assert_ne!(run.launch().thread, threads[0]);
-    assert_eq!(next.task.attempts(), 0);
+    assert_eq!(next.task.attempts(), 1);
     native_server.abort();
     forge_server.abort();
 }

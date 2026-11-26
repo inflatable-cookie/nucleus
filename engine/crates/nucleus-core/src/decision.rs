@@ -17,6 +17,10 @@ pub struct Observation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Host {
+    ProviderLimited {
+        instance: String,
+        cause: String,
+    },
     Retained {
         thread: String,
         state: RetainedThread,
@@ -293,10 +297,8 @@ fn signal(task: &Task, observation: &Observation) -> Signal {
             }
             Some(RunState::Permission) => Signal::Wait(WaitReason::Permission),
             Some(RunState::Input) => Signal::Wait(WaitReason::Input),
-            Some(RunState::UsageLimited) if run.report_reminder_for().is_some() => {
-                settled(task, observation, role, Err(RunState::UsageLimited))
-            }
-            Some(RunState::UsageLimited | RunState::ParentEnded | RunState::AssignmentRejected) => {
+            Some(RunState::UsageLimited) => Signal::Failed(role),
+            Some(RunState::ParentEnded | RunState::AssignmentRejected) => {
                 Signal::Stopped(task.phase)
             }
             None => Signal::Wait(WaitReason::HostUnknown),
@@ -686,6 +688,9 @@ impl Observation {
 
     pub(crate) fn current(&self, expected: &str) -> Option<RunState> {
         match &self.host {
+            Observed::Known(Host::ProviderLimited { instance, .. }) if instance == expected => {
+                Some(RunState::UsageLimited)
+            }
             Observed::Known(Host::Current { instance, state }) if instance == expected => {
                 Some(*state)
             }

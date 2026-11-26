@@ -205,7 +205,7 @@ impl Task {
                     _ => {}
                 }
             } else if phase == Phase::Blocked {
-                state.failure = Some(reminder_cause.map_or_else(
+                state.failure = Some(self.threads.last_provider_limit.clone().or(reminder_cause).map_or_else(
                     || "The worker did not deliver an authenticated report.".into(),
                     |cause| {
                         format!(
@@ -253,6 +253,14 @@ impl Task {
 
     fn settle_run(&mut self, observation: &Observation) -> Option<Run> {
         let run = self.run.take()?;
+        self.threads.last_provider_limit = match &observation.host {
+            Observed::Known(crate::Host::ProviderLimited { instance, cause })
+                if instance == &run.launch.instance && run.report.is_none() && !run.revoked =>
+            {
+                Some(cause.clone())
+            }
+            _ => None,
+        };
         // An older writer kept the preceding settled path while the next role ran.
         // Its one report reminder, if any, also consumed a launch sequence.
         if let Some(previous) = self.threads.settled_scratch.take()
