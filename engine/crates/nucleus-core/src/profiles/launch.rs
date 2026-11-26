@@ -20,6 +20,10 @@ pub struct LaunchPolicy<'a> {
     pub planner_brief: bool,
     /// Additional known contributors, including author models for a review entry.
     pub author_models: &'a [&'a str],
+    /// Tiers above the role's bracket. A caller sets this only when every
+    /// profile at the bracket is paused (Spec 070 ruling 51), and caps it at
+    /// three. Zero is an ordinary launch.
+    pub step_up: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +45,7 @@ pub struct ProfileLaunch {
     pub(crate) pr: Option<PullRequest>,
     pub(crate) findings: Option<String>,
     pub(crate) request_reason: Option<String>,
+    pub(crate) step_up: u8,
     critical_fallback_worker: Option<String>,
 }
 
@@ -91,6 +96,13 @@ impl ProfileLaunch {
     #[must_use]
     pub fn request_reason(&self) -> Option<&str> {
         self.request_reason.as_deref()
+    }
+
+    /// The number of tiers this selection stepped above the role's bracket
+    /// because every eligible profile was paused. Zero for an ordinary launch.
+    #[must_use]
+    pub const fn step_up(&self) -> u8 {
+        self.step_up
     }
 
     /// The worker profile for which this new independent reviewer fell short.
@@ -174,7 +186,14 @@ fn select_launch(
 
     let brief = BriefPolicy::parse(&task.brief().text).map_err(ProfileLaunchError::Brief)?;
     let request = brief.request(role).filter(|_| policy.planner_brief);
-    let demand = demand(task, observation, role, &brief, policy.usage);
+    let demand = demand(
+        task,
+        observation,
+        role,
+        &brief,
+        policy.usage,
+        policy.step_up,
+    );
     let exclusions = excluded_models(task, role, policy.author_models)?;
     let eligible = policy.candidates.iter().copied().filter(|candidate| {
         let model = model_key(&candidate.profile.model);
@@ -258,6 +277,7 @@ fn select_launch(
         pr,
         findings: changes.map(str::to_owned),
         request_reason: reason,
+        step_up: policy.step_up,
         critical_fallback_worker,
     }))
 }
@@ -312,6 +332,20 @@ struct Demand {
 }
 
 fn demand(
+    task: &Task,
+    observation: &Observation,
+    role: Role,
+    brief: &BriefPolicy,
+    usage: UsageLevel,
+    steps: u8,
+) -> Demand {
+    let mut demand = ordinary_demand(task, observation, role, brief, usage);
+    demand.target = demand.target.raised(steps);
+    demand.ceiling = demand.ceiling.raised(steps);
+    demand
+}
+
+fn ordinary_demand(
     task: &Task,
     observation: &Observation,
     role: Role,
@@ -380,6 +414,13 @@ pub(crate) fn applied_changes<'a>(task: &'a Task, observation: &Observation) -> 
             Observed::Known(Forge::Open { pr, .. }),
         ) if task.pull_request() == Some(pr) && head == &pr.head => Some(summary),
         _ => None,
+    }
+}
+
+impl Capability {
+    /// Move up `steps` brackets, stopping at Frontier.
+    fn raised(self, steps: u8) -> Self {
+        (0..steps).fold(self, |capability, _| capability.higher())
     }
 }
 

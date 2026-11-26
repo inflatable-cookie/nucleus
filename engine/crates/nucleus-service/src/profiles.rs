@@ -246,32 +246,45 @@ fn select_profile(
     } else {
         None
     };
-    let choose = |candidates: &[Candidate<'_>]| {
+    let choose = |candidates: &[Candidate<'_>], step_up: u8| {
         let policy = LaunchPolicy {
             usage,
             candidates,
             // Admission and brief changes are authenticated controller writes.
             planner_brief: true,
             author_models: &[],
+            step_up,
         };
         sample.map_or_else(
             || decide_profile_launch(task, observation, &policy),
             |sample| decide_weighted_launch(task, observation, &policy, sample),
         )
     };
-    let intent = match choose(&candidates) {
+    let intent = match choose(&candidates, 0) {
         Ok(Some(intent)) => intent,
         Ok(None) => return Err(ServiceError::Input),
         Err(
             error @ (ProfileLaunchError::NoEligibleProfile { .. }
             | ProfileLaunchError::RequiredProfileUnavailable { .. }),
         ) => {
-            let pauses: Vec<_> = offers.iter().map(|(_, _, _, _, _, pause)| *pause).collect();
-            if let Some(pause) = earliest_eligible_pause(&mut candidates, &pauses, choose) {
-                state.group_waits.insert(task.identity().id.clone(), pause);
-                return Ok(LaunchSelection::Paused);
+            // A required profile waits for its own group; only an automatic
+            // bracket with nothing eligible steps up.
+            if matches!(error, ProfileLaunchError::NoEligibleProfile { .. })
+                && let Some(intent) = step_up(&candidates, &choose)
+            {
+                intent
+            } else {
+                let pauses: Vec<_> = offers.iter().map(|(_, _, _, _, _, pause)| *pause).collect();
+                if let Some(pause) =
+                    earliest_eligible_pause(&mut candidates, &pauses, |candidates| {
+                        choose(candidates, 0)
+                    })
+                {
+                    state.group_waits.insert(task.identity().id.clone(), pause);
+                    return Ok(LaunchSelection::Paused);
+                }
+                return Err(error.into());
             }
-            return Err(error.into());
         }
         Err(error) => return Err(error.into()),
     };
@@ -381,6 +394,32 @@ impl Service {
         }
         Ok(Some(Action::Wait(WaitReason::Capacity)))
     }
+}
+
+/// The most tiers a launch may step above its bracket. Mechanical reaches
+/// Frontier in three steps; Frontier then stays behind its request rules.
+const MAX_STEP_UP: u8 = 3;
+
+/// Spec 070 ruling 51: when every eligible profile at the ordinary bracket is
+/// paused, select from the next tier up, one tier at a time. Nothing persists:
+/// every launch tries the ordinary bracket first.
+fn step_up(
+    candidates: &[Candidate<'_>],
+    choose: &impl Fn(&[Candidate<'_>], u8) -> Result<Option<ProfileLaunch>, ProfileLaunchError>,
+) -> Option<ProfileLaunch> {
+    // The ordinary bracket is fully paused only if it would succeed unpaused.
+    // Otherwise nothing is eligible at all, and the task waits as before.
+    let unpaused: Vec<_> = candidates
+        .iter()
+        .map(|candidate| Candidate {
+            group_available: true,
+            ..*candidate
+        })
+        .collect();
+    if !matches!(choose(&unpaused, 0), Ok(Some(_))) {
+        return None;
+    }
+    (1..=MAX_STEP_UP).find_map(|steps| choose(candidates, steps).ok().flatten())
 }
 
 fn limit_pause(limit: &ProviderLimit) -> SubscriptionPause {

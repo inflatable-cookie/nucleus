@@ -1089,6 +1089,7 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
         }],
         planner_brief: true,
         author_models: &["fixture-author-model"],
+        step_up: 0,
     };
     let intent = if counts == RotationCounts::default() {
         decide_weighted_launch(&task, &observation, &policy, 42)

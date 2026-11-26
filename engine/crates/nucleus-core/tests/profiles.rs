@@ -286,6 +286,7 @@ fn history_free_selection_uses_weights_inside_the_eligible_bracket() {
         candidates: &candidates,
         planner_brief: true,
         author_models: &[],
+        step_up: 0,
     };
     let task = working("Add a greeting.");
     let observation = unbound();
@@ -317,6 +318,7 @@ fn pick(
             candidates: pool,
             planner_brief: true,
             author_models: &[],
+            step_up: 0,
         },
     )
     .unwrap()
@@ -340,6 +342,7 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                     candidates: &[candidate(&frontier)],
                     planner_brief: true,
                     author_models: &[],
+                    step_up: 0,
                 }
             ),
             Err(ProfileLaunchError::NoEligibleProfile {
@@ -363,6 +366,7 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                 candidates: &pool,
                 planner_brief: false,
                 author_models: &[],
+                step_up: 0,
             },
         )
         .unwrap()
@@ -385,6 +389,7 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                     candidates: &unavailable,
                     planner_brief: true,
                     author_models: &[],
+                    step_up: 0,
                 }
             ),
             Err(ProfileLaunchError::RequiredProfileUnavailable {
@@ -545,6 +550,7 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
                 candidates: &[],
                 planner_brief: false,
                 author_models: &[],
+                step_up: 0,
             }
         )
         .unwrap()
@@ -728,6 +734,7 @@ fn review_entry_excludes_declared_and_opaque_author_models() {
         candidates: &pool,
         planner_brief: true,
         author_models: &["vendor/MODEL-AUTHOR"],
+        step_up: 0,
     };
     let selection = decide_profile_launch(&entry, &open('a'), &policy)
         .unwrap()
@@ -936,9 +943,139 @@ fn an_instructed_worker_continuation_keeps_its_profile_over_a_new_request() {
         candidates: &pool,
         planner_brief: true,
         author_models: &[],
+        step_up: 0,
     };
     assert!(matches!(
         decide_profile_launch(&task, &observation, &policy),
         Err(ProfileLaunchError::RequiredProfileUnavailable { role: Role::Worker, id }) if id == "retained"
     ));
+}
+
+fn launch_with_step(
+    task: &Task,
+    obs: &Observation,
+    pool: &[Candidate<'_>],
+    step_up: u8,
+) -> Result<Option<ProfileLaunch>, ProfileLaunchError> {
+    decide_profile_launch(
+        task,
+        obs,
+        &LaunchPolicy {
+            usage: Normal,
+            candidates: pool,
+            planner_brief: true,
+            author_models: &[],
+            step_up,
+        },
+    )
+}
+
+#[test]
+fn fully_paused_mechanic_bracket_steps_up_one_tier_and_reverts_when_unpaused() {
+    // Spec 070 ruling 51: a mechanic worker's only mechanic-tier reviewer alternative
+    // sits in a paused subscription group, so the review steps up to Worker.
+    let worker = profile("luna-mechanic", Mechanical);
+    let muse = profile("muse-mechanic", Mechanical);
+    let peer = profile("peer-worker", Worker);
+    let mut task = working("Fix a typo.");
+    finish_worker(&mut task, &worker);
+    let obs = open('a');
+
+    let mut paused = candidate(&muse);
+    paused.group_available = false;
+    let pool = [candidate(&worker), paused, candidate(&peer)];
+    assert!(matches!(
+        launch_with_step(&task, &obs, &pool, 0),
+        Err(ProfileLaunchError::NoEligibleProfile {
+            role: Role::Reviewer,
+            ..
+        })
+    ));
+    let stepped = launch_with_step(&task, &obs, &pool, 1)
+        .unwrap()
+        .expect("the next tier");
+    assert_eq!(stepped.profile(), &peer);
+    assert_eq!(stepped.step_up(), 1);
+
+    let unpaused = [candidate(&worker), candidate(&muse), candidate(&peer)];
+    let ordinary = launch_with_step(&task, &obs, &unpaused, 0)
+        .unwrap()
+        .expect("the ordinary bracket");
+    assert_eq!(ordinary.profile(), &muse);
+    assert_eq!(ordinary.step_up(), 0);
+}
+
+#[test]
+fn step_up_never_selects_the_author_model_or_exceeds_frontier_rules() {
+    let worker = profile("luna-mechanic", Mechanical);
+    let mut author_at_next_tier = profile("author-worker", Worker);
+    author_at_next_tier.model.clone_from(&worker.model);
+    let frontier = profile("frontier", Frontier);
+    let mut task = working("Fix a typo.");
+    finish_worker(&mut task, &worker);
+
+    let muse = profile("muse-mechanic", Mechanical);
+    let mut paused = candidate(&muse);
+    paused.group_available = false;
+    let pool = [
+        candidate(&worker),
+        candidate(&author_at_next_tier),
+        paused,
+        candidate(&frontier),
+    ];
+    // Frontier is never automatic below Maximum, so a stepped launch cannot reach it.
+    for step in 1..=3 {
+        assert!(matches!(
+            launch_with_step(&task, &open('a'), &pool, step),
+            Err(ProfileLaunchError::NoEligibleProfile {
+                role: Role::Reviewer,
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
+fn required_profile_in_a_paused_group_still_waits_after_a_step() {
+    let worker = profile("luna-mechanic", Mechanical);
+    let muse = profile("muse-mechanic", Mechanical);
+    let peer = profile("peer-worker", Worker);
+    let mut task = working(&format!(
+        "---\nqueue: {{complexity: low, profileRequests: {{reviewer: {{profileId: muse-mechanic, reason: independent, required: true}}}}}}\n---\nFix a typo."
+    ));
+    finish_worker(&mut task, &worker);
+    let mut paused = candidate(&muse);
+    paused.group_available = false;
+    let pool = [candidate(&worker), paused, candidate(&peer)];
+    for step in 0..=3 {
+        assert!(matches!(
+            launch_with_step(&task, &open('a'), &pool, step),
+            Err(ProfileLaunchError::RequiredProfileUnavailable {
+                role: Role::Reviewer,
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
+fn step_up_raises_a_mechanic_worker_bracket_only_when_asked() {
+    let muse = profile("muse-mechanic", Mechanical);
+    let peer = profile("peer-worker", Worker);
+    let task = working("---\nqueue: {complexity: low}\n---\nFix a typo.");
+    let mut paused = candidate(&muse);
+    paused.group_available = false;
+    let pool = [paused, candidate(&peer)];
+    assert!(matches!(
+        launch_with_step(&task, &unbound(), &pool, 0),
+        Err(ProfileLaunchError::NoEligibleProfile {
+            role: Role::Worker,
+            ..
+        })
+    ));
+    let stepped = launch_with_step(&task, &unbound(), &pool, 1)
+        .unwrap()
+        .expect("the stepped worker");
+    assert_eq!(stepped.profile(), &peer);
+    assert_eq!(stepped.step_up(), 1);
 }

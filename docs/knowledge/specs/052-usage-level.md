@@ -284,6 +284,13 @@ ran every worker and reviewer on Heavyweight or Frontier.
   reach outside automatic selection, subject to profile availability, thinking
   support and role rules. Rotation weight affects selection among eligible
   profiles ([Spec 053](053-demand-based-selection.md)).
+- **A fully paused bracket steps up** (Spec 070 ruling 51). When every eligible
+  profile at a role's bracket is in a paused subscription group, automatic
+  selection uses the next tier up, one tier at a time and at most three. The
+  author's model stays excluded, and Frontier keeps its request rules. A
+  required profile still waits for its group. Each launch decides from the
+  ordinary bracket first, so the bracket returns when the group unpauses. The
+  launch records its step.
 - **Frontier is a capability bracket, not a cost** (Tom, 2026-11-09: "Can we
   get rid of very low, and instead add `frontier` to the other end of the
   scale?… then Opus would move to `frontier` to distinguish it better from
