@@ -84,6 +84,10 @@ pub(super) fn task_state_label(
     if matches!(detail, Some(WaitDetail::OperatorSnoozed { .. })) {
         return phase_with_delay(task, None);
     }
+    // A capacity wait that carries a cause is a paused subscription group (ruling 51).
+    if wait == Some(WaitReason::Capacity) && matches!(detail, Some(WaitDetail::Blocked(_))) {
+        return phase_with_delay(task, Some("paused"));
+    }
     if task.phase() == Phase::Reviewing
         && wait == Some(WaitReason::ForgeUnknown)
         && matches!(detail, Some(WaitDetail::ConfirmingDelivery(_)))

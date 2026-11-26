@@ -1358,17 +1358,25 @@ impl Service {
             match state
                 .group_waits
                 .get(id)
-                .copied()
+                .cloned()
                 .filter(|_| wait == Some(WaitReason::Capacity))
             {
-                Some(profiles::GroupPause::Until(reset)) => state.schedule.wake(
+                Some(profiles::GroupPause::Until { reset, .. }) => state.schedule.wake(
                     id,
                     now + Duration::from_millis(reset.saturating_sub(now_ms())),
                     priority,
                 ),
-                Some(profiles::GroupPause::Manual) => state.schedule.park(id),
+                Some(profiles::GroupPause::Manual { .. }) => state.schedule.park(id),
                 None => state.schedule.wake(id, due, priority),
             }
+        }
+        // A capacity wait on a paused subscription group names the group and its reset (ruling 51).
+        if wait == Some(WaitReason::Capacity) && detail.is_none() {
+            detail = state
+                .group_waits
+                .get(id)
+                .filter(|pause| pause.remaining(now_ms()))
+                .map(|pause| WaitDetail::Blocked(pause.cause()));
         }
         let prior_wait = state.wait_reason(id);
         let changed = state.observe_wait_detail(&row.task, wait, detail)?;

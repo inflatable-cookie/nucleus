@@ -418,7 +418,10 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
         );
         assert!(matches!(
             state.group_waits.get(IDS[0]),
-            Some(GroupPause::Until(RESET_MS))
+            Some(GroupPause::Until {
+                reset: RESET_MS,
+                ..
+            })
         ));
         assert_eq!(
             state
