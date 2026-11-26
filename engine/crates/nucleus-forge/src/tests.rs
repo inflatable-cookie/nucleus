@@ -108,7 +108,7 @@ fn checks(head: char, state: &str) -> Value {
 
 fn merged_without_commit() -> Value {
     let mut merged = pull('a', true);
-    merged["merge_commit_sha"] = Value::Null;
+    merged.as_object_mut().unwrap().remove("merge_commit_sha");
     merged
 }
 
@@ -246,8 +246,51 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
 }
 
 #[tokio::test]
+async fn open_pull_without_a_rest_merge_commit_observes_only_the_selected_checks() {
+    let target = branches().target(PR_URL).unwrap();
+    let mut open = pull('a', false);
+    open.as_object_mut().unwrap().remove("merge_commit_sha");
+    for (state, review, expected) in [
+        ("SUCCESS", Some("CHANGES_REQUESTED"), CheckState::Blocked),
+        ("SUCCESS", None, CheckState::Ready),
+        ("PENDING", None, CheckState::Pending),
+    ] {
+        let mut response = checks('a', state);
+        let pr = &mut response["data"]["repository"]["pullRequest"];
+        pr["statusCheckRollup"] = json!({"state": state});
+        pr["reviewDecision"] = json!(review);
+        let (forge, calls) = server(vec![Some(open.clone()), Some(response)]);
+        assert!(matches!(
+            forge.observe(&target).await,
+            Ok(Forge::Open { checks, .. }) if checks == expected
+        ));
+        assert_eq!(
+            calls.join().unwrap()[1].body.as_ref().unwrap()["variables"]["namedChecks"],
+            false
+        );
+    }
+
+    let mut response = checks('a', "SUCCESS");
+    response["data"]["repository"]["pullRequest"]["statusCheckRollup"] = json!({"state":"SUCCESS"});
+    let (forge, calls) = server(vec![Some(open), Some(response)]);
+    assert!(matches!(
+        forge.merge(&task_with_approval(), &target).await,
+        Err(ForgeError::Incomplete)
+    ));
+    assert!(
+        calls
+            .join()
+            .unwrap()
+            .iter()
+            .all(|r| !r.method_and_path.starts_with("PUT "))
+    );
+}
+
+#[tokio::test]
 async fn a_missing_rest_merge_commit_uses_the_exact_graphql_merge() {
     let graph = merged_graph('a', "main", "MERGED", Some(sha('f')));
+    let mut explicit_null = merged_without_commit();
+    explicit_null["merge_commit_sha"] = Value::Null;
     let (forge, calls) = server(vec![
         Some(pull('a', false)),
         Some(checks('a', "SUCCESS")),
@@ -255,7 +298,7 @@ async fn a_missing_rest_merge_commit_uses_the_exact_graphql_merge() {
         None,
         Some(merged_without_commit()),
         Some(graph.clone()),
-        Some(merged_without_commit()),
+        Some(explicit_null),
         Some(graph),
     ]);
     let target = branches().target(PR_URL).expect("target");

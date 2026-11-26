@@ -12,7 +12,7 @@ pub(crate) struct Pull {
     pub(crate) merged: bool,
     #[serde(deserialize_with = "Deserialize::deserialize")]
     pub(crate) user: Option<AuthenticatedGitHubUser>,
-    #[serde(deserialize_with = "Deserialize::deserialize")]
+    // REST can omit this hint. A merged pull still needs a verified commit.
     pub(crate) merge_commit_sha: Option<Head>,
     pub(crate) state: PullState,
     pub(crate) base: GitRef,
