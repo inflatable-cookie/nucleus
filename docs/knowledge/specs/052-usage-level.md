@@ -201,10 +201,10 @@ starts each task one bracket above its own and no longer reserves Heavyweight
 and Frontier for workers and reviewers; it replaces the earlier Maximum, which
 ran every worker and reviewer on Heavyweight or Frontier.
 
-- **Above the climb bracket.** A worker run above the bracket the task may
-  climb to is an explicit planner or operator route, never automatic. Maximum
-  is the exception: its start brackets sit above the climb bracket for very-low,
-  low and medium work, and its ceiling is Frontier.
+- **Above the climb bracket.** An explicit planner or operator route can take
+  a worker above its climb bracket. Automatic selection can do so at Maximum
+  and during a subscription-pause step-up. Maximum starts above the climb
+  bracket for very-low, low and medium work, and its ceiling is Frontier.
 - **Step-up.** When an applied review requests changes on a task that started
   below the bracket it may climb to, the next worker run climbs one bracket,
   never past it: a medium task stays on Worker, a high task climbs once to
@@ -216,9 +216,8 @@ ran every worker and reviewer on Heavyweight or Frontier.
   (`resolution.review.status === "changes_required"`) authorizes it, never the
   `changes_requested` phase alone (an owner move or recovery also takes that
   phase), and one climb is recorded per review run
-  (`resolution.workerClimb`). A retained worker thread cannot change profile, so
-  the climb is the one automatic worker replacement: the ordinary revision
-  launch records the climb, retires the retained worker (for the archive sweep),
+  (`resolution.workerClimb`). A retained worker thread keeps its profile, so
+  the ordinary revision launch records the climb, retires that worker (for the archive sweep),
   and continues as its usual revision run on a fresh agent at the climbed
   profile; delivery binds that agent and run as the task's retained worker,
   keeps the selected subscription group on both the run and the task, and
@@ -230,19 +229,16 @@ ran every worker and reviewer on Heavyweight or Frontier.
   authorizes it. Availability and failover checks use the recorded climb when
   checking the earned bracket. A planner or owner can request a higher bracket
   explicitly.
-- **Automatic selection stays at or below the climb bracket.** The run's
-  bracket is its demand: it rotates inside that bracket, takes the nearest
-  bracket above only when nothing carries it, and falls back to the most
-  capable profile at or below the climb bracket on a shortfall. A profile above
-  it is never automatic for a worker, and neither a worker preference nor a
-  `preferredProfileId` reaches it; only an explicit request or owner route
-  does. At Maximum the ceiling is Frontier, so the nearest bracket above serves
-  when the start bracket is empty.
+- **Ordinary automatic selection.** The run's bracket is its demand: it rotates
+  inside that bracket, takes the nearest bracket above when nothing carries it,
+  and falls back to the most capable eligible profile on a shortfall. The
+  worker's ordinary ceiling is the climb bracket, including for worker
+  preferences and `preferredProfileId`. Maximum sets that ceiling to Frontier.
 - **The usage level sets the reviewer's bracket** (Tom, 2026-11-19: "the
   reviewer should be 1 bracket down from the worker on minimal, low and
   normal. Above that, it should be same bracket"). The reviewer reads the
-  worker's actual profile (its start bracket before a worker ran) and never
-  runs above it. At Low and Normal it runs one bracket below: Frontier →
+  worker's actual profile (its start bracket before a worker ran) as its
+  ordinary ceiling. At Low and Normal it runs one bracket below: Frontier →
   Heavyweight, Heavyweight → Worker, Worker → Mechanical. At High it runs one
   bracket below a Heavyweight or Frontier worker and on a Worker worker's
   bracket. At Extra high and Maximum it runs on the worker's bracket. A
