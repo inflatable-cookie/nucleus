@@ -112,6 +112,8 @@ pub enum HostError {
     Protocol,
     #[error("the host thread does not match the configured project and checkout")]
     Binding,
+    #[error("T3 cannot confirm report completion: {0}")]
+    ReportObservation(&'static str),
     #[error("the retained role thread binding changed before the send")]
     RetainedBindingChanged,
     #[error("the host observation or mutation outcome is unknown")]
@@ -423,6 +425,42 @@ struct PassEvidence {
 }
 
 impl T3 {
+    /// Check the recorded worker's turn in the synchronized shell for owner acceptance.
+    ///
+    /// # Errors
+    /// Returns the missing evidence or a refusal if the workspace binding changed.
+    pub fn report_worker_idle(&self, binding: &Binding, thread: &str) -> Result<bool, HostError> {
+        self.rpc.with_shell(|shell| {
+            let row = shell
+                .ok_or(HostError::ReportObservation(
+                    "the shell is not synchronized",
+                ))?
+                .marker(thread)
+                .ok_or(HostError::ReportObservation(
+                    "the retained worker is missing from the shell",
+                ))?;
+            if !row["deletedAt"].is_null()
+                || row["projectId"] != binding.project_id
+                || row["worktreePath"] != binding.worktree_path
+                || row["branch"] != binding.branch
+            {
+                return Err(HostError::Binding);
+            }
+            match ShellCustody(&row).turn_activity() {
+                RowChildren::Active => Ok(false),
+                RowChildren::Quiet
+                    if row["status"] == "idle"
+                        || row["latestRunId"].as_str().is_some_and(|id| !id.is_empty()) =>
+                {
+                    Ok(true)
+                }
+                _ => Err(HostError::ReportObservation(
+                    "the retained worker's turn or input state is unknown",
+                )),
+            }
+        })
+    }
+
     /// Start serving shell reads from the service's sole live subscription.
     pub fn use_held_shell(&self) {
         self.rpc.use_held_shell();

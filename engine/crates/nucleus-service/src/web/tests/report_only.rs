@@ -390,7 +390,15 @@ async fn report_only_ticket_revision_and_historical_owner_acceptance() {
         StatusCode::CONFLICT
     );
     fixture.open_pr.store(false, Ordering::Relaxed);
-    fixture.busy.store(true, Ordering::Relaxed);
+    let mut worker = json!({"id":WORKER,"projectId":PROJECT,"worktreePath":fixture.checkout,
+        "branch":format!("ns-{TASK}"),"status":"completed","latestRunId":"native-run",
+        "activeRunId":null,"pendingRuntimeRequest":{"kind":"permission"}});
+    let observe = |row: &Value| {
+        fixture.service.host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{"projects":[],"threads":[row],"snapshotSequence":9}
+        }))
+    };
+    observe(&worker);
     assert_eq!(
         fixture
             .command(complete(ready.version, amended_artifact))
@@ -398,7 +406,22 @@ async fn report_only_ticket_revision_and_historical_owner_acceptance() {
             .status(),
         StatusCode::CONFLICT
     );
-    fixture.busy.store(false, Ordering::Relaxed);
+    worker["pendingRuntimeRequest"] = Value::Null;
+    let mut unknown = worker.clone();
+    unknown.as_object_mut().unwrap().remove("activeRunId");
+    observe(&unknown);
+    let refused = fixture
+        .command(complete(ready.version, amended_artifact))
+        .await;
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        json_body(refused).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("turn or input state is unknown")
+    );
+    // The idle worker has no pendingBackgroundTasks field.
+    observe(&worker);
     let accept = complete(ready.version, amended_artifact);
     let done = fixture.command(accept.clone()).await;
     assert_eq!(done.status(), StatusCode::OK);
@@ -721,7 +744,6 @@ struct ReportFixture {
     head: Head,
     published: Arc<Mutex<Option<Head>>>,
     open_pr: Arc<AtomicBool>,
-    busy: Arc<AtomicBool>,
     notices: Arc<Mutex<NoticeFixture>>,
     checkout: std::path::PathBuf,
     forge: tokio::task::JoinHandle<()>,
@@ -734,7 +756,6 @@ impl ReportFixture {
         let head = service.fixture().start.clone();
         let published = Arc::new(Mutex::new(Some(head.clone())));
         let open_pr = Arc::new(AtomicBool::new(false));
-        let busy = Arc::new(AtomicBool::new(false));
         let origin = Arc::clone(&published);
         let branch = Arc::clone(&published);
         let prs = Arc::clone(&open_pr);
@@ -757,7 +778,6 @@ impl ReportFixture {
         let checkout = nucleus_work::checkout_path(service.storage.work().path(), REPOSITORY, TASK);
         let root = service.fixture().checkout.clone();
         let path = checkout.clone();
-        let running = Arc::clone(&busy);
         let notices = Arc::new(Mutex::new(NoticeFixture::default()));
         let deliveries = Arc::clone(&notices);
         let (host, host_server) = native_fixture(move |request| {
@@ -773,12 +793,9 @@ impl ReportFixture {
                 }
                 Some("orchestration.subscribeThread") => {
                     assert_eq!(request["payload"]["threadId"], WORKER);
-                    let requests = if running.load(Ordering::Relaxed) {
-                        json!([{"kind":"permission","status":"pending"}])
-                    } else { json!([]) };
                     json!({"kind":"snapshot","snapshotSequence":1,"projection":{
                     "thread":{"id":WORKER,"projectId":PROJECT,"worktreePath":path,"branch":format!("ns-{TASK}")},
-                    "runs":[],"messages":[],"runtimeRequests":requests,"providerThreads":[],"turnItems":[],"subagents":[]
+                    "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[],"subagents":[]
                     }})
                 }
                 Some("orchestration.dispatchCommand") => return deliveries.lock().unwrap().dispatch(request),
@@ -818,7 +835,6 @@ impl ReportFixture {
             head,
             published,
             open_pr,
-            busy,
             notices,
             checkout,
             forge: forge_server,

@@ -1,13 +1,11 @@
 //! Admission, lane authority and closeout for report-only tasks.
 
-use std::time::Duration;
-
 use nucleus_core::{
-    Action, Authority, CommandError, Head, Host, Identity, Phase, ReportAcceptance, ReportArtifact,
-    RetainedThread, Role, Task, WaitReason, Workspace,
+    Action, Authority, CommandError, Head, Identity, Phase, ReportAcceptance, ReportArtifact, Role,
+    Task, WaitReason, Workspace,
 };
 use nucleus_forge::{Branches, ForgeError};
-use nucleus_hosts::{HostError, NoticeOutcome, T3, TaskHost};
+use nucleus_hosts::{HostError, NoticeOutcome, T3};
 use nucleus_store::{
     DispatchMode, StoreError, TaskRow,
     planning::{Lane, WriteAt},
@@ -285,21 +283,8 @@ impl Service {
             .threads()
             .get(Role::Worker)
             .ok_or(ServiceError::ReportWorkerBusy)?;
-        // Each observation checks the exact native thread, workspace, turn and tool custody.
-        for check in 0..2 {
-            if check != 0 {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-            #[cfg(test)]
-            let host = self.host.fixture_pass();
-            #[cfg(not(test))]
-            let host = self.host.pass(self.storage.scratch().path());
-            if !matches!(
-                host.observe_retained(&binding, thread).await?,
-                Host::Retained { thread: seen, state: RetainedThread::Idle } if seen == thread
-            ) {
-                return Err(ServiceError::ReportWorkerBusy);
-            }
+        if !self.host.report_worker_idle(&binding, thread)? {
+            return Err(ServiceError::ReportWorkerBusy);
         }
         Ok(())
     }
