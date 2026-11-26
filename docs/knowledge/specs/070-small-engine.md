@@ -712,6 +712,12 @@ Later decisions carry their own attribution.
     Rust module responsibilities, and tests coupled to implementation. The planner reviews one
     ranked consolidation plan, including the rule and risk for each proposed cut, before implementation.
 
+48. **Recheck after a mechanical repair.** On 2026-11-26 the planner asked Tom,
+    “After a mechanical repair, should an owner get one guarded Recheck instead of
+    Hold then Release?” Tom chose “Add Recheck (Recommended)”. Recheck observes
+    once at the current task version and cannot release another person’s hold.
+    Hold and Release remain the controls for actual holds.
+
 ## The model
 
 ### Stored state per task
