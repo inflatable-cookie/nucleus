@@ -673,13 +673,15 @@ async fn list(
             let entry = match cache.entry(identity.id.clone()) {
                 std::collections::hash_map::Entry::Occupied(entry)
                     if entry.get().revision == revision
-                        && entry.get().card.version == row.version =>
+                        && entry.get().card.version == row.version
+                        && entry.get().papercut_title == row.task.papercut_title =>
                 {
                     entry.into_mut()
                 }
                 entry => entry
                     .insert_entry(FinishedCard {
                         revision,
+                        papercut_title: row.task.papercut_title.clone(),
                         card: Arc::new(Card::read(row, &state, false, None)?),
                         brief_lanes: brief_lanes(&row.task),
                         dependencies: state.store.dependencies(id).map_err(ServiceError::from)?,
@@ -1246,6 +1248,7 @@ struct Summary<C = Card> {
 }
 
 struct FinishedCard {
+    papercut_title: Option<String>,
     brief_lanes: Vec<String>,
     revision: (i64, Option<i64>),
     card: Arc<Card>,
