@@ -1104,7 +1104,7 @@ and keep fields the client does not know.
 
 The board's Pause, Dispatch hold and Stop controls write the Dispatch domain's
 `mode` (`running`, `held`, `paused` or `stopped`), which only Settings writes
-change. The scheduler reads it from the in-memory read model: `held` starts no
+change. Stop writes `stopped` in one revisioned settings update. The scheduler reads it from the in-memory read model: `held` starts no
 task's first run, `paused` starts no run, and `stopped` also revokes each live
 run so the ordinary stop custody settles it. A gated launch waits as Capacity.
 Running again relaunches the work; no task carries a hold for it.
