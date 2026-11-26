@@ -837,6 +837,59 @@ fn a_critical_fallback_reviewer_continues_until_the_ordinary_bracket_changes() {
 }
 
 #[test]
+fn configured_heavyweight_profiles_supply_work_and_independent_review() {
+    let stored = serde_json::json!([
+        {"name":"Sol heavyweight","roles":["reviewer"],"scopes":["mechanical"],
+         "selection":{"id":"sol","provider":"codex","model":"gpt-6.2-sol","capability":"heavyweight"}},
+        {"name":"Sonnet heavyweight","roles":["worker"],"scopes":["complex"],
+         "selection":{"id":"sonnet","provider":"claude","model":"claude-sonnet-5","capability":"heavyweight"}},
+        {"name":"Astra frontier","roles":["worker"],
+         "selection":{"id":"astra","provider":"codex","model":"gpt-6.2-astra","capability":"frontier"}}
+    ]);
+    let selections: Vec<Profile> = stored
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| serde_json::from_value(entry["selection"].clone()).unwrap())
+        .collect();
+    let [sol, sonnet, astra] = selections.as_slice() else {
+        panic!("expected three configured profiles");
+    };
+    let brief = "---\nqueue: {complexity: very_high}\n---\nImplement.";
+    let mut task = working(brief);
+    assert_eq!(
+        pick(&task, &unbound(), Normal, &[candidate(sol)]).profile(),
+        sol
+    );
+    finish_worker(&mut task, sol);
+    assert_eq!(
+        pick(
+            &task,
+            &open('a'),
+            Normal,
+            &[candidate(sol), candidate(sonnet), candidate(astra)],
+        )
+        .profile(),
+        sonnet
+    );
+
+    let frontier = [candidate(astra)];
+    let requested = working(
+        "---\nqueue: {complexity: very_high, profileRequests: {worker: {profileId: astra, reason: investigation}}}\n---\nImplement.",
+    );
+    for usage in [UsageLevel::Low, Normal, UsageLevel::High] {
+        assert!(matches!(
+            select(&working(brief), &unbound(), usage, &frontier),
+            Err(ProfileLaunchError::NoEligibleProfile { .. })
+        ));
+        assert_eq!(
+            pick(&requested, &unbound(), usage, &frontier).profile(),
+            astra
+        );
+    }
+}
+
+#[test]
 fn reviewer_frontier_request_preserves_independence_and_role_bounds() {
     let worker = profile("frontier", Frontier);
     let mut same_model = profile("same-model", Frontier);

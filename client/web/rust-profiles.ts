@@ -26,9 +26,6 @@ import {
 type RustProfilesValue = z.infer<typeof profilesSnapshot>["value"];
 type Handler = (input: never) => Promise<unknown>;
 
-const ACTIVE_ROLES = ["worker", "reviewer"] as const;
-type ActiveRole = (typeof ACTIVE_ROLES)[number];
-
 // The pool editor requires a nonempty group field even while a model has no offer.
 function poolGroupDefault(profile: RustNamedProfile) {
   const provider = profile.selection.provider;
@@ -55,14 +52,6 @@ export function boardProfile(
   const effectiveGroup = Object.hasOwn(effectiveGroups, selection.id)
     ? effectiveGroups[selection.id]
     : undefined;
-  // The coordinator role is retired (ruling 1); omitted roles allow both.
-  const roles = (profile.roles ?? ACTIVE_ROLES).filter(
-    (role): role is ActiveRole => role !== "coordinator",
-  );
-  const scopes = (profile.scopes ?? []).filter(
-    (scope): scope is "general" | "mechanical" | "complex" =>
-      scope === "general" || scope === "mechanical" || scope === "complex",
-  );
   const stored: NucleusProfile = {
     id: selection.id,
     name: profile.name,
@@ -79,10 +68,8 @@ export function boardProfile(
       profileId: selection.id,
       enabled: profile.enabled ?? true,
       group: effectiveGroup ?? poolGroupDefault(profile),
-      roles: roles.length ? roles : [...ACTIVE_ROLES],
       capability: selection.capability,
       weight: selection.weight,
-      scopes: scopes.length ? scopes : ["general"],
     },
     view: {
       ...stored,
@@ -136,10 +123,6 @@ export function boardSubscriptionAvailability(
       retryAt: manual ? null : new Date(limited[group]!).toISOString(),
     };
   });
-}
-
-function sameSet(a: readonly string[], b: readonly string[]) {
-  return a.length === b.length && a.every((value) => b.includes(value));
 }
 
 export function createRustProfiles(rust: RustApi) {
@@ -236,9 +219,8 @@ export function createRustProfiles(rust: RustApi) {
         ),
       };
     },
-    // A new profile starts off and worker-only, as the shared editor's default
-    // dispatch entry shows it. Its subscription stays the engine's default (the
-    // T3 instance) until the operator names one.
+    // A new profile starts off. Its subscription defaults to the T3 instance
+    // until the operator names one.
     "profile.create": async (input: NucleusProfileInput) => {
       const id = input.id ?? crypto.randomUUID();
       const saved = await editProfiles((value) => {
@@ -255,7 +237,6 @@ export function createRustProfiles(rust: RustApi) {
             weight: "default",
           },
           enabled: false,
-          roles: ["worker"],
           ...(input.modeId ? { modeId: input.modeId } : {}),
           ...(input.featureValues && Object.keys(input.featureValues).length
             ? { featureValues: input.featureValues }
@@ -334,19 +315,13 @@ export function createRustProfiles(rust: RustApi) {
       }));
       return { removed };
     },
-    // The board shows defaults for unset fields (both roles, general scope and
-    // the resolved subscription). A value equal to that display leaves the stored
-    // field as it was, so an unrelated edit never pins a default or drops an
-    // imported value; a changed value is written.
+    // An unrelated edit leaves the resolved subscription at its default.
     "queue.profile": async (input: api.PoolEntry & { groupChanged?: boolean }) => {
       const saved = await editProfiles((value, groups) => ({
         ...value,
         profiles: value.profiles.map((entry) => {
           if (entry.selection.id !== input.profileId) return entry;
           const shown = boardProfile(entry, groups).pool;
-          const roles = input.roles.filter(
-            (role): role is ActiveRole => role !== "coordinator",
-          );
           const next: RustNamedProfile = {
             ...entry,
             enabled: input.enabled,
@@ -358,8 +333,6 @@ export function createRustProfiles(rust: RustApi) {
           };
           if (input.groupChanged !== false && input.group !== shown.group)
             next.group = input.group;
-          if (roles.length && !sameSet(roles, shown.roles)) next.roles = roles;
-          if (!sameSet(input.scopes, shown.scopes)) next.scopes = input.scopes;
           return next;
         }),
       }));

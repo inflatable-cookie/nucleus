@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { profileCapabilitySchema, profileWeightSchema, scopeSchema } from "./capability";
+import { profileCapabilitySchema, profileWeightSchema } from "./capability";
 
 /**
  * The pool: the profiles the operator enabled and the host catalog makes
- * available, each with its capability, rotation weight and scopes. A profile is
+ * available, each with its capability and rotation weight. A profile is
  * decoded strictly: a host or store row that carries a field the contract does
  * not declare is refused rather than silently dropped.
  */
@@ -21,11 +21,10 @@ export type Profile = z.infer<typeof profileSchema>;
 
 export const poolSchema = z.object({
   profileId: z.string(), enabled: z.boolean(), group: z.string().min(1).max(100),
-  roles: z.array(z.enum(["worker", "reviewer", "coordinator"])).min(1).default(["worker"]),
   /** The profile capability bracket (mechanical..frontier) used to satisfy task demand. */
   capability: profileCapabilitySchema.nullable().optional(),
   /** The five-stop rotation weight; Default is the centre (Spec 053). */
-  weight: profileWeightSchema, scopes: z.array(scopeSchema).min(1),
+  weight: profileWeightSchema,
 }).strict();
 
 export type PoolEntry = z.infer<typeof poolSchema>;

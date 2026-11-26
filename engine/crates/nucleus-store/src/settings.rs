@@ -750,8 +750,8 @@ pub trait SettingsValue: Default + Serialize + DeserializeOwned {
     const ID: &'static str;
     const FILE: &'static str;
     const CLASS: StorageClass;
-    /// Obsolete keys accepted only when reading previously stored documents.
-    const RETIRED_KEYS: &'static [&'static str] = &[];
+    /// Discard obsolete keys only when reading previously stored documents.
+    fn discard_retired_fields(_value: &mut Value) {}
 
     /// Check stored or submitted settings without consulting an adapter.
     ///
@@ -814,11 +814,7 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
     }
 
     fn decode(&self, mut value: Value) -> Result<S, DomainIssue> {
-        if let Some(fields) = value.as_object_mut() {
-            for key in S::RETIRED_KEYS {
-                fields.remove(*key);
-            }
-        }
+        S::discard_retired_fields(&mut value);
         serde_json::from_value(value)
             .map_err(|_| DomainIssue::new("decode", "invalid settings document"))
     }

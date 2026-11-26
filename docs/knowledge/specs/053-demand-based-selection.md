@@ -13,13 +13,11 @@ Governing refs: [Spec 030](030-routing-changes.md) (routing, capability fit),
 
 ## Problem
 
-Automatic selection filters the pool by role and scope switches, then weights
-the survivors by a soft capability fit. The switches carry no real
-information (every model can work, review and coordinate), so the operator
-uses them only to keep a strong model off trivial work, with no global effect.
-The capability fit is a bounded preference that never decides. So the
-operator's two real levers, task complexity and the usage slider, don't drive
-the choice, and supervisors pin profiles to get the strength they want.
+Before demand-based selection, role and scope switches filtered the pool.
+The operator used them to keep strong models off trivial work. A soft
+capability preference then weighted the remaining profiles. Task complexity
+and the usage slider had little influence, and supervisors pinned profiles
+to get the strength they wanted.
 
 
 ## Weight is a five-stop rotation slider; Cost is retired (Tom, 2026-11-21)
@@ -40,8 +38,8 @@ the 2026-11-04 ruling (cost leans, it does not exclude) is kept only as history.
   whatever a profile's prior cost.
 - **One rule for selection and diagnostics.** `chooseProfile`, the selection
   explanation (`met` rows carry `weight` and `share`) and the board's preview
-  rank by recent use over share (`rotationShare`). Capability, role fit,
-  workload, sign-off, host and subscription availability, scope, reviewer
+  rank by recent use over share (`rotationShare`). Capability and demand,
+  workload, sign-off, host and subscription availability, reviewer
   independence and assignment history are unchanged. Cost-only filters in
   non-delivery routing and transient rate-limit failover are removed, and
   `routeCost` no longer reaches the coordinator route plan. Actual usage and
@@ -190,9 +188,10 @@ the task (`shared/demand.ts`), before selection switched over. A shortfall is
 shown in warning colour with the profiles a signed-off request could reach.
 Tom reviewed the preview and approved the switch (2026-10-21: "Preview looks
 fine for now. Go"); there is no Settings toggle, and the old weighted path is
-deleted. Settings no longer shows role or scope switches; stored `roles` and
-`scopes` stay readable and are ignored. Skills and supervisors are told only
-after the switch is live (the "operator UI before agent rollout" rule).
+deleted. Settings has no role or scope switches. Loading an older profile file
+discards those fields in memory. The next settings edit that saves the file
+omits them. Skills and supervisors are told only after the switch is live (the
+"operator UI before agent rollout" rule).
 
 ## Decisions (Tom, 2026-10-21)
 
@@ -249,7 +248,7 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | 7 | Reviewer shares the author's model | Excluded, as today |
 | 8 | Author escalation history (rows stripped 2026-11-09, task 989) | No demand change |
 | 9 | Signed-off request | Used for that role whatever the demand |
-| 10 | Pool entry limited to one role or scope | Still selectable for every role and task scope |
+| 10 | Older profile file carries retired membership fields | Loads without those fields. Dispatch uses capability and demand, and the next save omits them. |
 | 11 | Two profiles at the same capability, weights More and Default | Share follows the stops (150:100); Most and Fewest give 200:50, so 160:40 over 200 picks |
 | 12 | Same capability, equal weight, differently rated legacy costs | Equal rotation; the legacy cost is discarded on read |
 | 13 | Unavailable subscription group in the set | Skipped; the rest of the set rotates |

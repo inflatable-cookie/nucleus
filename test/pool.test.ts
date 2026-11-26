@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {poolRecordFromLegacy,poolSchema,type ProfileWeight} from '../shared/contracts';
 import {checkPoolEntries, removePoolEntry, saveProfileSettings, stalePoolEntries} from '../shared/pool';
-const entry=(profileId:string,group='subscription',weight:ProfileWeight='default')=>poolSchema.parse({profileId,group,weight,enabled:true,scopes:['general']});
+const entry=(profileId:string,group='subscription',weight:ProfileWeight='default')=>poolSchema.parse({profileId,group,weight,enabled:true});
 test('profiles in one subscription may carry different weights and a save preserves its own',()=>{
  const pool=[entry('a'),entry('b','subscription','most'),entry('c','other')];
  const saved=saveProfileSettings(pool,{...pool[0],weight:'more'});
@@ -13,7 +13,7 @@ test('profiles in one subscription may carry different weights and a save preser
  assert.equal(moved.find(p=>p.profileId==='b')?.weight,'most');assert.equal(moved.find(p=>p.profileId==='c')?.weight,'default');
 });
 test('a brand-new profile saves at the Default weight and only the five stops are valid',()=>{
- const settings={profileId:'new',enabled:true,group:'subscription',roles:['worker'] as ['worker'],weight:'default' as const,scopes:['general'] as ['general']};
+ const settings={profileId:'new',enabled:true,group:'subscription',weight:'default' as const};
  assert.equal(saveProfileSettings([entry('a','subscription','most')],settings).at(-1)?.weight,'default');
  for(const stop of ['fewest','fewer','default','more','most'] as const)assert.equal(entry('a','subscription',stop).weight,stop);
  assert.throws(()=>poolSchema.parse({...entry('a'),weight:1}),'a bare integer is a legacy input, never a stored value');
@@ -21,14 +21,14 @@ test('a brand-new profile saves at the Default weight and only the five stops ar
  assert.throws(()=>poolSchema.parse({...entry('a'),cost:'low'}),'the retired Cost field is not part of the contract');
 });
 test('legacy records map the old integer weight and drop Cost at the read boundary only',()=>{
- const legacy=(weight:unknown,extra:Record<string,unknown>={})=>poolSchema.parse(poolRecordFromLegacy({profileId:'p',enabled:true,group:'g',roles:['worker'],scopes:['general'],weight,...extra}));
+ const legacy=(weight:unknown,extra:Record<string,unknown>={})=>poolSchema.parse(poolRecordFromLegacy({profileId:'p',enabled:true,group:'g',weight,...extra}));
  assert.equal(legacy(1).weight,'default');assert.equal(legacy(2).weight,'more');
  for(const n of [3,4,7,10])assert.equal(legacy(n).weight,'most',`legacy ${n}`);
  for(const bad of [0,11,1.5,'2',null])assert.throws(()=>legacy(bad),`legacy ${String(bad)} still fails validation`);
  const rated=legacy(1,{cost:'very_low',capability:'worker',group:'kept'});
  assert.equal('cost' in rated,false);assert.equal(rated.capability,'worker');
  assert.equal(legacy(1,{cost:'very_high'}).weight,legacy(1,{cost:null}).weight,'cost never changes the migrated weight');
- const raw={profileId:'p',enabled:true,group:'g',roles:['worker'],scopes:['general'],weight:2,cost:'low'};
+ const raw={profileId:'p',enabled:true,group:'g',weight:2,cost:'low'};
  poolRecordFromLegacy(raw);assert.deepEqual(raw.weight,2,'the stored record is never mutated');
 });
 test('a stale entry for a profile gone from Paseo does not block other pool saves, but a new or changed one is refused',()=>{

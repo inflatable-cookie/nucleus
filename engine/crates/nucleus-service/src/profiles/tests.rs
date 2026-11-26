@@ -29,7 +29,7 @@ const IDS: [&str; 3] = ["overlap-a", "overlap-b", "overlap-c"];
 const RESET_MS: u64 = 4_070_908_800_000;
 
 #[tokio::test]
-async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() {
+async fn worker_launches_exclude_disabled_and_unavailable_profiles() {
     let (forge, forge_server) = serve_forge(Router::new()).await;
     let (_home, mut service) = fixture(forge);
     let (host, native_server) = native_fixture_with_traffic(
@@ -47,11 +47,9 @@ async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() 
     service.state.lock().await.settings.profiles = Some(Arc::new(serde_json::from_value(json!({
         "profiles": [
             {"name":"Disabled","enabled":false,"selection":{"id":"disabled","provider":"codex","model":"first"}},
-            {"name":"Review","roles":["reviewer"],"selection":{"id":"review","provider":"codex","model":"first"}},
-            {"name":"Coordinator","roles":["coordinator"],"selection":{"id":"coordinator","provider":"codex","model":"first"}},
             {"name":"Missing instance","providerInstanceId":"unavailable","selection":{"id":"missing-instance","provider":"codex","model":"first"}},
             {"name":"Missing model","providerInstanceId":"codex","selection":{"id":"missing-model","provider":"codex","model":"other"}},
-            {"name":"Worker","roles":["worker"],"modeId":"supervised",
+            {"name":"Worker","modeId":"supervised",
              "featureValues":{"speed":"priority"},
              "selection":{"id":"worker","provider":"codex","model":"second"}}
         ]
@@ -65,8 +63,6 @@ async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() 
     for request in [
         None,
         Some(("disabled", true)),
-        Some(("review", true)),
-        Some(("coordinator", true)),
         Some(("missing-instance", true)),
         Some(("missing-model", true)),
         Some(("missing-instance", false)),
@@ -118,6 +114,123 @@ async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() 
             _ => panic!("unexpected eligibility result for {request:?}"),
         }
     }
+    native_server.abort();
+    forge_server.abort();
+}
+
+fn read_legacy_profile_fixture(service: &Service) -> Arc<Profiles> {
+    let config = service.settings.home().join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("profiles.json"), json!({
+        "domain": "nucleus.engine.profiles", "schemaVersion": 1,
+        "value": {"profiles": [
+            {"name":"Sol heavyweight","roles":["reviewer"],"scopes":["mechanical"],
+             "selection":{"id":"sol","provider":"codex","model":"first","capability":"heavyweight"}},
+            {"name":"Sol alternate","selection":{"id":"sol-alternate","provider":"codex","model":"first","capability":"heavyweight"}},
+            {"name":"Sonnet heavyweight","roles":["worker"],"scopes":["complex"],
+             "selection":{"id":"sonnet","provider":"claude","model":"other","capability":"heavyweight"}},
+            {"name":"Astra frontier","roles":["coordinator"],
+             "selection":{"id":"astra","provider":"codex","model":"second","capability":"frontier"}}
+        ]}
+    }).to_string()).unwrap();
+    Arc::new(service.settings.read::<Profiles>().unwrap().value)
+}
+
+#[tokio::test]
+async fn legacy_profile_membership_does_not_gate_work_review_or_groups() {
+    let (forge, forge_server) = serve_forge(Router::new()).await;
+    let (_home, mut service) = fixture(forge);
+    let (host, native_server) = crate::tests::native_fixture(|request| {
+        native_response(
+            request,
+            std::path::Path::new("/fixture"),
+            &mut NativeRuns::default(),
+        )
+    })
+    .await;
+    service.host = host;
+    let profiles = read_legacy_profile_fixture(&service);
+    service.state.lock().await.settings.profiles = Some(Arc::clone(&profiles));
+    let host = service.host.fixture_pass();
+    let mut observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(Workspace::Absent),
+    };
+    let mut task = Task::new(
+        Identity {
+            id: "fixture".into(),
+            reference: "fixture".into(),
+            repository: REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        "---\nqueue:\n  complexity: very_high\n  profileRequests:\n    worker: {profileId: sol, reason: build, required: true}\n    reviewer: {profileId: sol-alternate, reason: review}\n---\nFixture brief".into(),
+        None,
+    );
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    let LaunchSelection::Profile(worker) = service
+        .select_launch(&task, &observation, Role::Worker, &host)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a worker");
+    };
+    assert_eq!(worker.intent.profile().id, "sol");
+    assert_eq!(
+        service.effective_profile_groups(&profiles)["astra"],
+        "codex"
+    );
+    let instance = worker.intent.instance().to_owned();
+    let bearer = task
+        .reserve_profile_launch(
+            &observation,
+            LaunchInputs {
+                scratch: None,
+                thread: "worker-fixture".into(),
+                input: "fixture wire".into(),
+                started_at: 1,
+            },
+            &[7; 32],
+            worker.intent,
+        )
+        .unwrap();
+    task.record_send(&instance, 2).unwrap();
+    let pr = PullRequest {
+        url: format!("https://github.com/{REPOSITORY}/pull/1"),
+        head: service.fixture().start.clone(),
+    };
+    task.record_report(
+        &instance,
+        bearer.as_bytes(),
+        Report::Work(pr.clone().into()),
+    )
+    .unwrap();
+    observation.host = Observed::Known(Host::Current {
+        instance,
+        state: RunState::Ended,
+    });
+    observation.workspace = Observed::Known(Workspace::Clean(pr.head.clone()));
+    observation.forge = Observed::Known(Forge::Open {
+        pr,
+        checks: CheckState::Ready,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Reviewing)
+    );
+    let LaunchSelection::Profile(reviewer) = service
+        .select_launch(&task, &observation, Role::Reviewer, &host)
+        .await
+        .unwrap()
+    else {
+        panic!("expected an independent reviewer");
+    };
+    assert_eq!(reviewer.intent.profile().id, "sonnet");
     native_server.abort();
     forge_server.abort();
 }
@@ -496,7 +609,7 @@ async fn a_stored_subscription_pause_reserves_the_next_tier_and_records_the_reas
         state.settings.profiles = Some(Arc::new(serde_json::from_value(json!({
             "profiles": [
                 {"name":"Mechanic","group":"shared","selection":{"id":"mechanic","provider":"codex","model":"first","capability":"mechanical"}},
-                {"name":"Reviewer","roles":["reviewer"],"selection":{"id":"review","provider":"codex","model":"second","capability":"mechanical"}},
+                {"name":"Second mechanic","group":"shared","selection":{"id":"second","provider":"codex","model":"second","capability":"mechanical"}},
                 {"name":"Worker","group":"other","selection":{"id":"worker","provider":"claude","model":"other","capability":"worker"}}
             ]
         })).expect("profile settings")));
@@ -764,9 +877,9 @@ async fn retained_role_endpoints(
 async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_wait() {
     let profiles: Profiles = serde_json::from_value(json!({
         "profiles": [
-            {"name":"Author as reviewer","roles":["reviewer"],"group":"decoy","selection":{"id":"decoy","provider":"codex","model":"first","capability":"mechanical"}},
-            {"name":"Author","roles":["worker"],"group":"author","selection":{"id":"author","provider":"codex","model":"first","capability":"mechanical"}},
-            {"name":"Reviewer","roles":["reviewer"],"group":"review","selection":{"id":"review","provider":"codex","model":"second","capability":"mechanical"}},
+            {"name":"Author as reviewer","group":"decoy","selection":{"id":"decoy","provider":"codex","model":"first","capability":"mechanical"}},
+            {"name":"Author","group":"author","selection":{"id":"author","provider":"codex","model":"first","capability":"mechanical"}},
+            {"name":"Reviewer","group":"review","selection":{"id":"review","provider":"codex","model":"second","capability":"mechanical"}},
             {"name":"Replacement","group":"other","selection":{"id":"replacement","provider":"claude","model":"other","capability":"worker"}}
         ]
     })).unwrap();
@@ -780,9 +893,10 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
     ] {
         let (_home, mut service) = fixture(nucleus_forge::GitHub::new("fixture").unwrap());
         let id = "retained-pause";
-        let (thread, group) = match role {
-            Role::Worker => ("thread:worker", "author"),
-            Role::Reviewer => ("thread:reviewer", "review"),
+        let (thread, groups): (&str, &[&str]) = match role {
+            Role::Worker => ("thread:worker", &["author", "decoy", "review"]),
+            Role::Reviewer if required => ("thread:reviewer", &["review", "decoy"]),
+            Role::Reviewer => ("thread:reviewer", &["review"]),
         };
         let (task, binding) = retained_role_task(&service, id, author, reviewer, role, required);
         let (native_server, forge_server) =
@@ -791,15 +905,12 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
         {
             let mut state = service.state.lock().await;
             let mut settings = profiles.clone();
-            if manual {
-                settings.paused_groups.insert(group.into());
-            } else {
-                service
-                    .record_subscription_pause(&state, group, RESET_MS, now_ms())
-                    .unwrap();
-                if required {
+            for &group in groups {
+                if manual {
+                    settings.paused_groups.insert(group.into());
+                } else {
                     service
-                        .record_subscription_pause(&state, "decoy", RESET_MS, now_ms())
+                        .record_subscription_pause(&state, group, RESET_MS, now_ms())
                         .unwrap();
                 }
             }

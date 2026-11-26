@@ -14,7 +14,7 @@ use nucleus_hosts::{
     HostError, ProfileCatalog, ProfileOffer, ProviderLimit, RoleProfile, TaskHost,
     launch_provider_instance, snooze_deadline,
 };
-use nucleus_store::{DispatchMode, NamedProfile, PoolRole, Profiles, SubscriptionPause, TaskRow};
+use nucleus_store::{DispatchMode, NamedProfile, Profiles, SubscriptionPause, TaskRow};
 
 use crate::{ProjectMode, Service, ServiceError, State, now_ms};
 
@@ -160,13 +160,7 @@ impl Service {
         profiles: &'a Profiles,
     ) -> BTreeMap<&'a str, String> {
         let catalog = self.host.cached_profile_catalog();
-        let modes = [
-            (PoolRole::Worker, self.profile_runtime_mode(Role::Worker)),
-            (
-                PoolRole::Reviewer,
-                self.profile_runtime_mode(Role::Reviewer),
-            ),
-        ];
+        let modes = [Role::Worker, Role::Reviewer].map(|role| self.profile_runtime_mode(role));
         profiles
             .profiles
             .iter()
@@ -180,14 +174,7 @@ impl Service {
                         let catalog = catalog.as_deref()?;
                         // Registry launches share one default mode. A legacy project can use
                         // different modes by role, so only present a single unambiguous group.
-                        let mut groups = modes.into_iter().filter_map(|(role, mode)| {
-                            if profile
-                                .roles
-                                .as_ref()
-                                .is_some_and(|roles| !roles.contains(&role))
-                            {
-                                return None;
-                            }
+                        let mut groups = modes.into_iter().filter_map(|mode| {
                             profile_offer(catalog, profile, mode).map(|(_, group)| group)
                         });
                         let group = groups.next()?;
@@ -235,7 +222,7 @@ fn select_profile(
     let resets = state.store.active_provider_pauses(now_ms())?;
     let mut offers = Vec::new();
     for profile in &profiles.profiles {
-        if !profile.eligible_for(role) {
+        if !profile.enabled || profile.selection.model.is_empty() {
             continue;
         }
         let Some((offer, group)) = profile_offer(catalog, profile, runtime_mode) else {
