@@ -316,7 +316,7 @@ impl Service {
             .run()
             .filter(|run| !run.revoked() && run.report().is_none())
         {
-            let (state, error) = self.read_current_run(row, run, host, &route).await?;
+            let (state, error, limit) = self.read_current_run(row, run, host, &route).await?;
             if !forge_requested
                 && run.last_send_at_ms().is_some()
                 && task.question().is_none()
@@ -325,7 +325,7 @@ impl Service {
                 self.observe_commands(row, &Observed::Unknown).await?;
                 return wait.map_err(ServiceError::Host);
             }
-            Some((state, error))
+            Some((state, error, limit))
         } else {
             None
         };
@@ -399,7 +399,8 @@ impl Service {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
         }
-        let (host_state, mut host_error) = run_host.unwrap_or((Observed::Unknown, None));
+        let (host_state, mut host_error, limit) =
+            run_host.unwrap_or((Observed::Unknown, None, None));
         observation.host = host_state;
         let mut action = decide(task, &observation);
         if task.run().is_none()
@@ -520,7 +521,10 @@ impl Service {
             }
             Action::Wait(WaitReason::ForgeUnknown) if let Some(error) = forge_error => Err(error),
             Action::Wait(_) if forge_requested && let Some(error) = forge_error => Err(error),
-            action => self.apply(row, &observation, action).await,
+            action => {
+                self.apply_with_limit(row, &observation, action, limit.as_ref())
+                    .await
+            }
         }
     }
 
@@ -530,8 +534,9 @@ impl Service {
         run: &Run,
         host: &impl TaskHost,
         route: &ProjectRoute,
-    ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
+    ) -> Result<(Observed<Host>, Option<HostError>, Option<serde_json::Value>), ServiceError> {
         let mut limited = None;
+        let mut limit_fact = None;
         // Only a continuing worker reuses a parent turn that may already have ended.
         let reuses_parent =
             self.acp_provider().is_some() && nucleus_hosts::retained_worker_continuation(run);
@@ -544,12 +549,16 @@ impl Service {
                     self.observe_run_routing(row, run, routing).await?;
                 }
                 if let Some(limit) = &seen.provider_limit {
-                    let cause = self.record_provider_limit(row, run, limit).await?;
+                    let (cause, group, reset_at_ms) =
+                        self.record_provider_limit(row, run, limit).await?;
                     if let Host::Current {
                         instance,
                         state: RunState::UsageLimited,
                     } = &seen.host
                     {
+                        limit_fact = Some(serde_json::json!({
+                            "instance": instance, "group": group, "resetAtMs": reset_at_ms,
+                        }));
                         limited = Some(Observed::Known(Host::ProviderLimited {
                             instance: instance.clone(),
                             cause,
@@ -591,7 +600,7 @@ impl Service {
             // soon instead of waiting for the live check that may come after it ends.
             self.recheck_reentry(row).await;
         }
-        Ok((limited.unwrap_or(state), error))
+        Ok((limited.unwrap_or(state), error, limit_fact))
     }
 
     pub(super) fn check_forge_ready(&self) -> Result<(), ForgeError> {
@@ -784,6 +793,16 @@ impl Service {
         observation: &Observation,
         action: Action,
     ) -> Result<Action, ServiceError> {
+        self.apply_with_limit(row, observation, action, None).await
+    }
+
+    async fn apply_with_limit(
+        &self,
+        row: &TaskRow,
+        observation: &Observation,
+        action: Action,
+        limit: Option<&serde_json::Value>,
+    ) -> Result<Action, ServiceError> {
         let kind = match &action {
             Action::Advance(_)
                 if matches!(
@@ -834,7 +853,7 @@ impl Service {
         let mut audit = event(kind);
         if kind == "provider_limit" {
             audit.detail =
-                serde_json::json!({"cause": updated.threads().last_provider_limit}).to_string();
+                serde_json::json!({"cause": updated.threads().last_provider_limit, "providerLimit": limit}).to_string();
         }
         if kind == "merge_returned_to_work" {
             audit.detail = serde_json::json!({
