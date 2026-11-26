@@ -367,14 +367,39 @@ export function RustItemDialog({
           complexity={chosenLevel}
           setComplexity={setComplexity}
           onPromote={(origin) => {
-            let reference = "";
-            void act(async () => {
-              // A lead's changed level is written into its brief by the adapter before admission.
-              reference = (
-                await promoteItem({ ...address, repository: origin, complexity: chosenLevel })
-              ).reference;
-              void queryClient.invalidateQueries({ queryKey: rustTaskListKey });
-            }).then((ok) => ok && setNotice({ text: `Promoted as ${reference}`, tone: "success" }));
+            // A lead sends a level only to change its brief (or when the brief has none); the
+            // engine writes it into the brief together with the task. The version is the one
+            // this view shows, so any change since refuses the promotion as a whole.
+            const level =
+              item.kind === "lead" && complexity === null && item.briefComplexity !== null ? undefined : chosenLevel;
+            void (async () => {
+              if (busy) return;
+              setBusy(true);
+              setNotice(null);
+              try {
+                const { reference } = await promoteItem({
+                  ...address,
+                  repository: origin,
+                  version: item.version,
+                  ...(level ? { complexity: level } : {}),
+                });
+                void queryClient.invalidateQueries({ queryKey: rustTaskListKey });
+                void queryClient.invalidateQueries({ queryKey: ["nucleus", "leads"] });
+                await query.refetch();
+                setNotice({ text: `Promoted as ${reference}`, tone: "success" });
+              } catch (error) {
+                if (isRustHttpError(error, 409)) {
+                  setComplexity(null);
+                  await query.refetch();
+                  setNotice({
+                    text: `This ${word.toLowerCase()} changed since you opened it. It has been reloaded; check it and promote again.`,
+                    tone: "warning",
+                  });
+                } else setNotice({ text: errorText(error), tone: "warning" });
+              } finally {
+                setBusy(false);
+              }
+            })();
           }}
         />
       )}
@@ -570,7 +595,7 @@ function PromotePanel({
   repository: string | null;
   setRepository: (origin: string) => void;
   complexity: CapabilityLevel;
-  setComplexity: (level: CapabilityLevel) => void;
+  setComplexity: (level: CapabilityLevel | null) => void;
   onPromote: (origin: string) => void;
 }) {
   const [help, setHelp] = useState(false);

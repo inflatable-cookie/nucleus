@@ -3968,8 +3968,7 @@ async fn assert_browser_item(api: &Router, cookie: Option<&str>, events: &mut Bo
     assert_browser_lead_complexity(api, cookie, events).await;
 }
 
-/// A lead's list entry carries the complexity its brief declares, flow-style YAML
-/// included, and a versioned edit can set it while keeping the rest of the brief.
+/// A lead's list entry carries the complexity its brief declares, flow-style YAML included.
 async fn assert_browser_lead_complexity(
     api: &Router,
     cookie: Option<&str>,
@@ -4010,20 +4009,6 @@ async fn assert_browser_lead_complexity(
         None,
         "papercut bodies are not briefs"
     );
-    let lead_path = format!(
-        "/api/engine/planning/local-fixture/items/{}",
-        current["id"].as_str().expect("lead ID")
-    );
-    let edit = json!({"version":current["version"],"complexity":"high","title":"Flow lead","body":current["body"],"lanes":[]});
-    let response = browser_request(api, Method::PUT, &lead_path, cookie, Some(&edit)).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_event(events, &["event: planning"]).await;
-    let edited =
-        listed_lead(&json_body(browser_request(api, Method::GET, items, cookie, None).await).await);
-    assert_eq!(edited["complexity"], "high");
-    let body = edited["body"].as_str().expect("body");
-    assert!(body.ends_with("---\nDo the work.\n"), "{body}");
-    assert!(body.contains("dependsOn"), "{body}");
 }
 
 async fn assert_board_assets(api: &Router) {

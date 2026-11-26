@@ -817,23 +817,12 @@ export function createRustPlanning(
     },
     "item.promote": async (input: output<typeof api.itemPromote.input>) => {
       const { row, record } = await itemOwner(input);
-      const lead = record.kind === "lead";
-      // The engine admits a lead with its own brief and refuses a complexity beside it,
-      // so a changed level is saved into the lead's brief (at the version read) first.
-      if (lead && input.complexity && input.complexity !== record.complexity) {
-        if (record.version === undefined)
-          throw new Error("The engine did not supply the item version.");
-        await rust.editItem(row.id, record.id, {
-          version: record.version,
-          title: record.title,
-          body: record.body,
-          lanes: record.lanes,
-          complexity: input.complexity,
-        });
-      }
+      // One engine operation: it refuses an item past the version the view showed, and a
+      // lead's chosen level is written into its brief only together with the admitted task.
       const task = await rust.promoteItem(row.id, record.id, {
         repository: input.repository,
-        ...(lead ? {} : { complexity: input.complexity }),
+        complexity: input.complexity,
+        version: input.version,
       });
       return { taskId: task.identity.id, reference: task.reference };
     },

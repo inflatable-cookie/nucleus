@@ -296,11 +296,14 @@ history, and writes through `item.edit`, `item.park`, `item.drop`,
   only when the whole project has a single bound repository. Both kinds get the
   Complexity dropdown. A lead's starts at the level its brief declares, which
   the engine reads with the admission brief policy and serves on the board's
-  item list (`complexity`). The engine admits a lead with its own brief and
-  refuses a complexity sent beside it, so a different level is first saved into
-  the lead's brief through a versioned edit carrying `complexity` (the engine
-  writes `queue.complexity` and keeps the rest of the brief), then the lead is
-  promoted. A papercut's level is sent with the promotion.
+  item list (`complexity`). Promote is one engine request carrying the item
+  version the view showed: the engine refuses it whole if the item changed since,
+  and the view reloads and says so. A lead sends a level only when the operator
+  chose one (or its brief declares none); the engine writes it into the brief's
+  `queue.complexity`, keeps the rest, and saves that brief on the lead in the
+  same transaction that admits the task and links its source, so a refused
+  promotion leaves the lead as filed. A papercut's level goes into the task
+  brief only.
 - **Parked.** The revisit date is a `YYYY-MM-DD` field; changing it offers Save,
   which parks again with the same reason. Reopen shows on parked and dropped
   items.

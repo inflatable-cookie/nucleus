@@ -106,10 +106,12 @@ export const itemPromote = defineRpc({
       ...address,
       repository: z.string().min(1).optional(),
       /**
-       * The task's complexity. A papercut sends it with the promotion; a lead is admitted
-       * with its own brief, so a different level is first written into the lead's brief.
+       * The task's complexity. A lead sends one only to change its brief's level; the engine
+       * writes it into the lead's brief together with the admitted task.
        */
       complexity: capabilityLevelSchema.optional(),
+      /** The item version the view showed; the engine refuses the promotion after any change. */
+      version: z.number().int().positive(),
     })
     .strict(),
   output: z.object({ taskId: z.string(), reference: z.string() }),

@@ -367,7 +367,11 @@ impl Store {
     ) -> Result<(Item, i64), StoreError> {
         self.promote_item_with_facts(
             source,
-            &task.brief().text,
+            PromotionCheck {
+                body: &task.brief().text,
+                version: None,
+                source_body: None,
+            },
             task,
             event,
             stamp,
@@ -376,13 +380,16 @@ impl Store {
     }
 
     /// Promote the item, including its prerequisites and any required Low usage permission, in one transaction.
+    /// A changed source body (a lead's chosen complexity) is saved with the promotion, so the
+    /// item's brief changes only when its task is admitted.
     ///
     /// # Errors
-    /// Returns the same conflicts and write errors as [`Self::promote_item`].
+    /// Returns the same conflicts and write errors as [`Self::promote_item`], and a conflict
+    /// when the item moved past the expected version.
     pub fn promote_item_with_facts(
         &mut self,
         source: &ItemSource,
-        expected_body: &str,
+        check: PromotionCheck<'_>,
         task: &Task,
         event: &EventDraft,
         stamp: WriteAt<'_>,
@@ -393,11 +400,21 @@ impl Store {
             project_id: project,
             item_id: id,
         } = source;
-        let mut item: Item = required(&tx, ItemRecord, project, id)?;
+        let ItemWithTimes {
+            mut item, version, ..
+        } = tx
+            .prepare_cached(&format!("{ITEM_VIEW} WHERE i.project = ?1 AND i.id = ?2"))?
+            .query_row([project, id], item_view)
+            .optional()?
+            .ok_or(StoreError::PlanningMissing)?;
         if !matches!(item.state, ItemState::Open | ItemState::Parked { .. })
-            || item.content.body != expected_body
+            || item.content.body != check.body
+            || check.version.is_some_and(|expected| expected != version)
         {
             return Err(StoreError::PlanningConflict);
+        }
+        if let Some(body) = check.source_body {
+            item.content.body = body.into();
         }
         let number = admit(&tx, task, event, facts)?;
         link_task(&tx, source, &task.identity().id)?;

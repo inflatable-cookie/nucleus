@@ -429,8 +429,6 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         title: string;
         body: string;
         lanes: string[];
-        /** Written into the body's `queue.complexity`, keeping the rest of the brief. */
-        complexity?: CapabilityLevel;
       },
     ) =>
       board.read(
@@ -472,7 +470,13 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
     promoteItem: (
       project: string,
       id: string,
-      value: { repository?: string; complexity?: CapabilityLevel },
+      value: {
+        repository?: string;
+        /** A papercut's level, or a lead's new level (written into its brief with the task). */
+        complexity?: CapabilityLevel;
+        /** The item version the caller saw; a later change refuses the promotion. */
+        version?: number;
+      },
     ) =>
       board.read(
         z.object({

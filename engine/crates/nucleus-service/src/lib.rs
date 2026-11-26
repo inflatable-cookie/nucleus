@@ -140,8 +140,6 @@ pub enum ServiceError {
     Input,
     #[error("queue.complexity is required: very_low, low, medium, high or very_high")]
     ComplexityRequired,
-    #[error("a lead names its complexity in its brief (queue.complexity); edit the lead")]
-    LeadComplexity,
     #[error("brief is {bytes} UTF-8 bytes and exceeds the {MAX_BRIEF_BYTES}-byte limit")]
     BriefTooLarge { bytes: usize },
     #[error("{0}")]

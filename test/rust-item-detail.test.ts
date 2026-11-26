@@ -132,7 +132,7 @@ const panels = (ui: ReturnType<typeof mount>) =>
 const footer = (ui: ReturnType<typeof mount>) =>
   ui.all(/^(Park|Open drop for) (lead|papercut)$/).map((node) => node.props.accessibilityLabel as string);
 
-test("lead · open: the Complexity picker starts at the brief's level; a new level is written into the brief, then promoted to the chosen repository", async () => {
+test("lead · open: the Complexity picker starts at the brief's level; a chosen level is promoted to the chosen repository in one request", async () => {
   const engine = planningEngine();
   engine.seed("acowtancy", lead({ id: "i-offline", title: "Offline marking queue", repositories: ["example/acowtancy-v2", "example/dairy"] }), {
     actor: "planner",
@@ -159,17 +159,15 @@ test("lead · open: the Complexity picker starts at the brief's level; a new lev
   const version = engine.item("acowtancy", "i-offline").version;
   ui.press("Promote lead");
   await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted");
-  const [edit, promote] = engine.writes.slice(-2);
-  assert.equal(edit?.method, "PUT");
-  assert.equal(edit?.path, "/planning/acowtancy/items/i-offline");
-  assert.equal((edit?.body as { version: number; complexity: string }).version, version);
-  assert.equal((edit?.body as { complexity: string }).complexity, "low");
-  assert.deepEqual(promote, {
-    method: "POST",
-    path: "/planning/acowtancy/items/i-offline/promote",
-    body: { repository: "example/acowtancy-v2" },
-  });
-  // The brief keeps everything but its level.
+  // One promotion carries the version shown and the chosen level; nothing is edited first.
+  assert.deepEqual(engine.writes, [
+    {
+      method: "POST",
+      path: "/planning/acowtancy/items/i-offline/promote",
+      body: { repository: "example/acowtancy-v2", version, complexity: "low" },
+    },
+  ]);
+  // The brief, saved with the task, keeps everything but its level.
   const body = engine.item("acowtancy", "i-offline").body;
   assert.match(body, /complexity: low/);
   assert.match(body, /Replay in order$/);
@@ -195,6 +193,50 @@ test("lead · open with flow-style front matter: the declared level is read and 
 test("lead · open with no complexity in its brief: the chosen level is added to the brief before promotion", async () => {
   const engine = planningEngine();
   engine.seed("acowtancy", lead({ id: "i-bare", title: "Bare lead", body: "No front matter yet." }), { actor: "planner", atMs: now - DAY });
+
+test("lead · a stale view is refused whole: a planner's newer brief is neither overwritten nor promoted", async () => {
+  const engine = planningEngine();
+  engine.seed("acowtancy", lead({ id: "i-stale", title: "Stale lead" }), { actor: "planner", atMs: now - DAY });
+  const { ui } = await open(engine, "i-stale", "acowtancy", "lead");
+  assert.match(ui.get(/^Complexity, /).props.accessibilityLabel, /^Complexity, High$/);
+  const newer = "---\nqueue:\n  complexity: very_high\n---\nThe planner's rewrite.";
+  engine.editElsewhere("acowtancy", "i-stale", { body: newer });
+  // Untouched picker: no level is sent, and the version shown is refused.
+  ui.press("Promote lead");
+  await waitFor(() => /changed since you opened it/.test(ui.text()), 4000, "refusal said");
+  assert.deepEqual(engine.writes.at(-1)?.body, { repository: "example/acowtancy-v2", version: engine.item("acowtancy", "i-stale").version - 1 });
+  assert.equal(engine.item("acowtancy", "i-stale").state, "open");
+  assert.equal(engine.item("acowtancy", "i-stale").body, newer);
+  // The reload shows the planner's level; a chosen level after it is promoted at the new version.
+  await waitFor(() => /Complexity, Very high$/.test(String(ui.get(/^Complexity, /).props.accessibilityLabel)), 4000, "reloaded level");
+  ui.press(/^Complexity, /);
+  ui.press("Complexity: Low");
+  engine.editElsewhere("acowtancy", "i-stale", { title: "Renamed again" });
+  ui.press("Promote lead");
+  await waitFor(() => engine.writes.length === 2 && !ui.get("Promote lead").props.disabled, 4000, "second refusal");
+  assert.equal(engine.item("acowtancy", "i-stale").state, "open", "a writer between the two still refuses");
+  assert.equal(engine.item("acowtancy", "i-stale").body, newer);
+});
+
+test("lead · an admission refusal leaves the lead open with its brief as filed", async () => {
+  const engine = planningEngine();
+  engine.seed("acowtancy", lead({ id: "i-refused", title: "Refused lead" }), { actor: "planner", atMs: now - DAY });
+  const filed = engine.item("acowtancy", "i-refused").body;
+  const { ui } = await open(engine, "i-refused", "acowtancy", "lead");
+  ui.press(/^Complexity, /);
+  ui.press("Complexity: Low");
+  engine.refuseNextAdmission("the engine could not admit the task");
+  ui.press("Promote lead");
+  await waitFor(() => /could not admit the task/.test(ui.text()), 4000, "refusal shown");
+  assert.equal(engine.item("acowtancy", "i-refused").state, "open");
+  assert.equal(engine.item("acowtancy", "i-refused").body, filed);
+  assert.equal(state(ui), "State: Open");
+  // The operator's choice stays, so trying again promotes with it.
+  assert.match(ui.get(/^Complexity, /).props.accessibilityLabel, /^Complexity, Low$/);
+  ui.press("Promote lead");
+  await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted on retry");
+  assert.match(engine.item("acowtancy", "i-refused").body, /complexity: low/);
+});
   const { ui } = await open(engine, "i-bare", "acowtancy", "lead");
   assert.match(ui.get(/^Complexity, /).props.accessibilityLabel, /^Complexity, Medium$/);
   ui.press("Promote lead");
@@ -209,7 +251,7 @@ test("papercut naming one repository of a project with several bound ones promot
   assert.equal(ui.query(/^Repository, /), undefined, "one listed repository needs no choice");
   ui.press("Promote papercut");
   await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted");
-  assert.deepEqual(engine.writes.at(-1)?.body, { repository: "example/orchard-web", complexity: "medium" });
+  assert.deepEqual(engine.writes.at(-1)?.body, { repository: "example/orchard-web", complexity: "medium", version: 1 });
 });
 
 test("lead · parked: reason, who parked it and the revisit date ahead; Reopen returns it to Open", async () => {
@@ -280,7 +322,7 @@ test("papercut · open: promotes to the project's only repository with the defau
   const { ui } = await open(engine, "i-one", "nucleus", "papercut");
   ui.press("Promote papercut");
   await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted");
-  assert.deepEqual(engine.writes.at(-1)?.body, { repository: "example/nucleus", complexity: "medium" });
+  assert.deepEqual(engine.writes.at(-1)?.body, { repository: "example/nucleus", complexity: "medium", version: 1 });
 });
 
 test("papercut · parked and due: warning state; changing the revisit day parks again; drop takes a disposition", async () => {

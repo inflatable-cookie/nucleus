@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use super::{Api, ApiError, ControllerScope, Summary, body, credential, run_api_error};
 use crate::{
     ServiceError,
-    planning::{TaskAdmission, new_id, stamp},
+    planning::{ItemPromotion, TaskAdmission, new_id, stamp},
 };
 
 // A JSON string can use six bytes to escape one input byte.
@@ -356,8 +356,6 @@ impl From<ItemWithTimes> for BoardItem {
 #[derive(Deserialize)]
 struct ItemEdit {
     version: Option<i64>,
-    /// Writes `queue.complexity` into the body's front matter, keeping the rest.
-    complexity: Option<Complexity>,
     #[serde(flatten)]
     content: ItemContent,
 }
@@ -371,13 +369,9 @@ async fn edit_item(
     Extension(caller): Extension<Authority>,
     input: Result<Json<ItemEdit>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let mut input = body(input)?;
+    let input = body(input)?;
     if session.is_some() && input.version.is_none_or(|version| version <= 0) {
         return Err(ApiError::Invalid);
-    }
-    if let Some(complexity) = input.complexity {
-        input.content.body = BriefPolicy::with_complexity(&input.content.body, complexity)
-            .map_err(ServiceError::from)?;
     }
     let (mut state, resolved) = api
         .service
@@ -510,6 +504,8 @@ async fn reopen_item(
 struct Promotion {
     repository: Option<String>,
     complexity: Option<Complexity>,
+    /// The item version the caller saw; a later change refuses the promotion.
+    version: Option<i64>,
 }
 
 async fn promote(
@@ -523,6 +519,7 @@ async fn promote(
     let Promotion {
         repository,
         complexity,
+        version,
     } = input
         .map_err(|_| ApiError::Invalid)?
         .map(|Json(input)| input)
@@ -532,8 +529,11 @@ async fn promote(
         .promote_planning_item(
             project.as_deref(),
             &id,
-            repository.as_deref(),
-            complexity,
+            ItemPromotion {
+                repository: repository.as_deref(),
+                complexity,
+                version,
+            },
             &caller,
             &scope,
         )

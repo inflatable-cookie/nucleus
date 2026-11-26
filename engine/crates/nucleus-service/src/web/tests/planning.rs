@@ -61,6 +61,90 @@ async fn dropped_items_keep_the_disposition_and_note_on_readback() {
 }
 
 #[tokio::test]
+async fn a_lead_promotes_at_the_version_seen_and_keeps_a_chosen_level_only_with_its_task() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let api = router(
+        Arc::new(service),
+        [planner_controller(PLANNER_KEY, "planner")],
+    );
+    let items = format!("{PROJECT}/items");
+    let body = "---\ntitle: Lead brief\nqueue:\n  complexity: high\n---\nShip it.\n";
+    let add = |title: &str| json!({"kind":"lead","title":title,"body":body});
+    let lead = json_body(post_as(&api, &items, &PLANNER_KEY, &add("Lead")).await).await;
+    let id = lead["id"].as_str().expect("lead ID").to_owned();
+    let version = |api: Router, id: String| async move {
+        let history =
+            json_body(get_as(&api, &format!("{PROJECT}/history/item/{id}"), &PLANNER_KEY).await)
+                .await;
+        history.as_array().expect("history").last().expect("entry")["sequence"]
+            .as_i64()
+            .expect("sequence")
+    };
+    let row = |listed: &Value, id: &str| {
+        listed
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|item| item["id"] == id)
+            .expect("item")
+            .clone()
+    };
+    let seen = version(api.clone(), id.clone()).await;
+    let promote = format!("{items}/{id}/promote");
+
+    // A view older than the item is refused, and the lead keeps its brief.
+    let stale = json!({"complexity":"low","version":seen - 1});
+    let refused = post_as(&api, &promote, &PLANNER_KEY, &stale).await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    // An admission refusal (an unknown repository) leaves the brief as filed too.
+    let elsewhere = json!({"complexity":"low","version":seen,"repository":"example/missing"});
+    let refused = post_as(&api, &promote, &PLANNER_KEY, &elsewhere).await;
+    assert!(refused.status().is_client_error(), "{}", refused.status());
+    let listed = json_body(get_as(&api, &items, &PLANNER_KEY).await).await;
+    assert_eq!(row(&listed, &id)["body"], body);
+    assert_eq!(row(&listed, &id)["state"], "open");
+    assert_eq!(version(api.clone(), id.clone()).await, seen);
+
+    // At the version seen, the chosen level is admitted and saved with the promotion.
+    let chosen = json!({"complexity":"low","version":seen});
+    let admitted = post_as(&api, &promote, &PLANNER_KEY, &chosen).await;
+    assert_eq!(admitted.status(), StatusCode::CREATED);
+    let task_id = json_body(admitted).await["identity"]["id"]
+        .as_str()
+        .expect("task ID")
+        .to_owned();
+    let task = json_body(get_as(&api, &format!("/v1/tasks/{task_id}"), &PLANNER_KEY).await).await;
+    let brief = task["brief"]["text"].as_str().expect("brief").to_owned();
+    assert!(brief.contains("complexity: low"), "{brief}");
+    assert!(brief.contains("title: Lead brief"), "{brief}");
+    assert!(brief.ends_with("Ship it.\n"), "{brief}");
+    let listed = json_body(get_as(&api, &items, &PLANNER_KEY).await).await;
+    assert_eq!(row(&listed, &id)["body"], brief);
+    assert_eq!(row(&listed, &id)["state"], "promoted");
+
+    // The level the brief already declares leaves the brief byte for byte.
+    let same = json_body(post_as(&api, &items, &PLANNER_KEY, &add("Same")).await).await;
+    let same_id = same["id"].as_str().expect("lead ID");
+    let request = json!({"complexity":"high"});
+    let admitted = post_as(
+        &api,
+        &format!("{items}/{same_id}/promote"),
+        &PLANNER_KEY,
+        &request,
+    )
+    .await;
+    assert_eq!(admitted.status(), StatusCode::CREATED);
+    let task_id = json_body(admitted).await["identity"]["id"]
+        .as_str()
+        .expect("task ID")
+        .to_owned();
+    let task = json_body(get_as(&api, &format!("/v1/tasks/{task_id}"), &PLANNER_KEY).await).await;
+    assert_eq!(task["brief"]["text"], body);
+    let listed = json_body(get_as(&api, &items, &PLANNER_KEY).await).await;
+    assert_eq!(row(&listed, same_id)["body"], body);
+}
+
+#[tokio::test]
 async fn board_lane_dispositions_survive_native_validation_and_readback() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let api = router(

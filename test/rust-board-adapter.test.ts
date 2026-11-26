@@ -2245,6 +2245,7 @@ test("a board click and action address the selected project's colliding decision
       project: "Orbit_Main",
       complexity: "medium",
       repository: "example/orbit-docs",
+      version: 1,
     },
   ]);
   await press(/^Papercut: lantern cut,/);
@@ -2777,11 +2778,12 @@ test("promotion sends the selected repository and displays the public task refer
         id: "i-Orbit_Main",
         project: projectKey("Orbit_Main"),
         repository,
+        version: 1,
       }),
       { taskId: "t-internal", reference },
     );
-    // A lead is admitted with its brief's complexity; none is sent beside it.
-    assert.deepEqual(sent, [{ repository }]);
+    // A lead keeps its brief's level unless one is chosen; the version seen goes with it.
+    assert.deepEqual(sent, [{ repository, version: 1 }]);
   }
 });
 
@@ -2885,7 +2887,7 @@ test("the selected item's project scopes detail, drop, reopen and promotion", as
     note: "Resolved",
   });
   await adapter.rpc(api.itemReopen, { project, id, version: 1 });
-  await adapter.rpc(api.itemPromote, { project, id, complexity: "low" });
+  await adapter.rpc(api.itemPromote, { project, id, complexity: "low", version: 1 });
   assert.deepEqual(writes, [
     {
       path: "/api/engine/planning/lantern/items/shared/drop",
@@ -2897,7 +2899,7 @@ test("the selected item's project scopes detail, drop, reopen and promotion", as
     },
     {
       path: "/api/engine/planning/lantern/items/shared/promote",
-      body: { complexity: "low" },
+      body: { complexity: "low", version: 1 },
     },
   ]);
 });

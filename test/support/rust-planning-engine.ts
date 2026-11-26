@@ -7,10 +7,13 @@
  * from parked or dropped at the current version, versioned board edits, and
  * promotion only from open or parked into a bound repository. Promotion follows
  * the service's admission rules (`nucleus-service/src/planning.rs`
- * `promote_planning_item`, `enrollment.rs`): a lead is admitted with its own brief
- * and a complexity sent beside it is refused; the brief must then declare a
- * complexity; and without an explicit repository only a project with exactly one
- * bound repository has a destination.
+ * `promote_planning_item`, `enrollment.rs`; store `promote_item_with_facts`): a
+ * promotion naming a version is refused once the item moved past it; a lead's
+ * different level is written into its brief and saved only together with the
+ * admitted task; the brief must declare a complexity; and without an explicit
+ * repository only a project with exactly one bound repository has a destination.
+ * Any refusal leaves the item unchanged. `refuseNextAdmission` makes admission
+ * fail after the checks, as a store failure inside the transaction would.
  */
 
 export type StoredItem = {
@@ -117,6 +120,7 @@ export function planningEngine(now: () => number = Date.now) {
   const history: Array<History & { project: string; id: string }> = [];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
   let sequence = 0;
+  let refusal: string | null = null;
   let tasks = 0;
 
   const record = (project: string, id: string, actor: string, atMs: number, action: string, snapshot: unknown) =>
@@ -195,10 +199,10 @@ export function planningEngine(now: () => number = Date.now) {
       }
       case "promote": {
         if (current.state !== "open" && current.state !== "parked") return conflict();
-        if (body.complexity !== undefined && current.kind === "lead")
-          return json({ error: "a lead is promoted with the complexity in its brief" }, 400);
-        if (!body.complexity && !declaredComplexity(current.body))
-          return json({ error: "the brief needs a complexity" }, 400);
+        if (body.version !== undefined && body.version !== withTimes(project, id).version) return conflict();
+        const declared = declaredComplexity(current.body);
+        const rewrite = current.kind === "lead" && body.complexity && body.complexity !== declared;
+        if (!body.complexity && !declared) return json({ error: "the brief needs a complexity" }, 400);
         const repos = planningProjects[project]!.repositories;
         const bound = repos.filter((repo) => repo.hostProject);
         const target = body.repository
@@ -208,15 +212,20 @@ export function planningEngine(now: () => number = Date.now) {
             : undefined;
         if (!target) return json({ error: "choose a repository" }, 400);
         if (!target.hostProject) return json({ error: "repository is not bound to T3" }, 400);
+        if (refusal) {
+          const error = refusal;
+          refusal = null;
+          return json({ error }, 503);
+        }
         const taskId = `t-promoted-${++tasks}`;
-        save({ ...base(current), taskLinks: [taskId], state: "promoted", taskId }, "promote");
+        const promotedBody = rewrite ? withComplexity(current.body, body.complexity) : current.body;
+        save({ ...base(current), body: promotedBody, taskLinks: [taskId], state: "promoted", taskId }, "promote");
         return json({ identity: { id: taskId }, reference: `${target.origin.split("/")[1]}#${1200 + tasks}` }, 201);
       }
       default: {
         if (method !== "PUT") return json({ error: "method" }, 405);
         if (!(body.version > 0) || body.version !== withTimes(project, id).version) return conflict();
-        const text = body.complexity ? withComplexity(body.body, body.complexity) : body.body;
-        entry.item = { ...current, title: body.title, body: text, lanes: body.lanes };
+        entry.item = { ...current, title: body.title, body: body.body, lanes: body.lanes };
         record(project, id, "operator", at, "edit", entry.item);
         return json(withTimes(project, id));
       }
@@ -230,7 +239,16 @@ export function planningEngine(now: () => number = Date.now) {
     record(project, id, "planner", now(), "edit", entry.item);
   }
 
-  return { fetcher, seed, writes, editElsewhere, item: (project: string, id: string) => withTimes(project, id) };
+  return {
+    fetcher,
+    seed,
+    writes,
+    editElsewhere,
+    refuseNextAdmission: (error: string) => {
+      refusal = error;
+    },
+    item: (project: string, id: string) => withTimes(project, id),
+  };
 }
 
 function base(item: StoredItem) {
