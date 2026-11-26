@@ -1989,11 +1989,19 @@ impl Service {
         self.apply(row, &observation, next).await
     }
 
-    fn earlier_scratch_roots<'a>(&'a self, task: &'a Task) -> impl Iterator<Item = PathBuf> + 'a {
-        task.earlier_run_scratch()
+    fn retirement_roots<'a>(
+        &'a self,
+        task: &'a Task,
+        checkout: &Checkout<'_>,
+    ) -> impl Iterator<Item = PathBuf> + 'a {
+        let earlier = task
+            .earlier_run_scratch()
             .filter_map(|(instance, recorded)| {
                 self.retained_scratch_path(&task.identity().id, &instance, recorded)
-            })
+            });
+        std::iter::once(checkout.path().to_owned())
+            .chain(self.existing_run_scratch(task))
+            .chain(earlier)
     }
 
     // Both callers hold the task and project fences and have inspected this owned checkout.
@@ -2004,10 +2012,7 @@ impl Service {
         checkout: &Checkout<'_>,
     ) -> Result<(), ServiceError> {
         let scratch = self.storage.scratch().path();
-        let run_scratch = self.existing_run_scratch(task);
-        let mut roots = std::iter::once(checkout.path().to_owned())
-            .chain(run_scratch)
-            .chain(self.earlier_scratch_roots(task));
+        let mut roots = self.retirement_roots(task, checkout);
         let (root, mut targets) = loop {
             let Some(root) = roots.next() else {
                 return Ok(());
@@ -2106,9 +2111,7 @@ impl Service {
         ];
         let threads: Vec<_> = threads.into_iter().flatten().collect();
         // Each lookup uses the pass's shared process census.
-        for root in
-            std::iter::once(checkout.path().to_owned()).chain(self.earlier_scratch_roots(task))
-        {
+        for root in self.retirement_roots(task, checkout) {
             if let Some(pid) = host.retirement_writer(&root).await? {
                 return Err(ServiceError::ArchiveEvidence(format!(
                     "PID {pid} has its working directory in the task checkout or run scratch."
@@ -2584,14 +2587,13 @@ mod tests {
         let head = service.fixture().start.clone();
         let bound = service.existing_run_scratch(&row.task);
         assert_ne!(bound.as_deref(), Some(scratch.as_path()));
-        assert!(
-            service
-                .earlier_scratch_roots(&row.task)
-                .any(|path| path == scratch)
-        );
         let work = service.worktrees().unwrap();
         let route = service.project_for(row.task.identity()).await.unwrap();
         let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();
+        let roots: Vec<_> = service.retirement_roots(&row.task, &checkout).collect();
+        assert_eq!(roots.first().unwrap(), checkout.path());
+        assert!(bound.iter().all(|path| roots.contains(path)));
+        assert!(roots.contains(&scratch));
         checkout.allocate(&head).unwrap();
         let binding = service
             .checkout_binding(row.task.identity(), &route, &checkout)

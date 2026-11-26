@@ -1688,7 +1688,7 @@ async fn closing_tasks_share_one_cwd_census_for_checkout_and_scratch() {
     // A second census here would see that the child has exited.
     assert_eq!(
         scope(idle.path(), Some(busy.path().to_owned()))
-            .retirement_writer(idle.path())
+            .retirement_writer(busy.path())
             .await
             .unwrap(),
         Some(pid)

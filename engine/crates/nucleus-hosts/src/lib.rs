@@ -325,7 +325,7 @@ pub trait TaskHost: Send + Sync {
     /// Returns an error when the pass cannot establish workspace custody.
     fn retirement_writer(
         &self,
-        checkout: &Path,
+        root: &Path,
     ) -> impl Future<Output = Result<Option<u32>, HostError>> + Send;
 
     /// Identify checkout-owned orphan trees for a terminal task.
@@ -926,12 +926,10 @@ impl T3Pass<'_> {
 }
 
 impl TaskHost for T3Pass<'_> {
-    async fn retirement_writer(&self, checkout: &Path) -> Result<Option<u32>, HostError> {
-        self.process_inventory().await?.writer(
-            checkout,
-            self.run_scratch.as_deref(),
-            &std::collections::HashSet::new(),
-        )
+    async fn retirement_writer(&self, root: &Path) -> Result<Option<u32>, HostError> {
+        self.process_inventory()
+            .await?
+            .writer(root, None, &std::collections::HashSet::new())
     }
 
     async fn terminal_orphans(
