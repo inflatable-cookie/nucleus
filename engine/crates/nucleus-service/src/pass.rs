@@ -1439,6 +1439,18 @@ impl Service {
             detail.insert("laneDocumentPins".into(), serde_json::json!(pins));
         }
         if let Some(selected) = selection
+            && let Some(ceiling) = selected.intent.step_up_from()
+        {
+            detail.insert(
+                "profileStepUp".into(),
+                serde_json::json!({
+                    "ordinaryCeiling": ceiling,
+                    "selectedCapability": selected.intent.profile().capability,
+                    "reason": "Every eligible profile within the ordinary ceiling is paused."
+                }),
+            );
+        }
+        if let Some(selected) = selection
             && let Some(worker) = selected.intent.critical_fallback_worker()
         {
             let receipt = CriticalReviewFallback {
