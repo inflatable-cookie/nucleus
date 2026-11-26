@@ -127,7 +127,6 @@ pub(super) struct ProjectRoute {
     pub(super) host_project: String,
     pub(super) slots: Option<u32>,
     pub(super) repositories: Vec<String>,
-    pub(super) required_checks: Vec<String>,
 }
 
 impl ProjectRoute {
@@ -182,7 +181,6 @@ impl Service {
                 host_project: project.host_project.clone(),
                 slots: state.settings.fixture_slots(project),
                 repositories: vec![project.repository.clone()],
-                required_checks: state.settings.fixture_checks(project),
             });
         }
         let (id, project, repo) = state
@@ -200,7 +198,6 @@ impl Service {
                 .iter()
                 .map(|repo| repo.origin.clone())
                 .collect(),
-            required_checks: repo.required_checks.clone(),
         })
     }
 
@@ -397,7 +394,6 @@ pub(super) fn discover_repository(
         host_project: None,
         host_project_title: None,
         planner_threads: Vec::new(),
-        required_checks: Vec::new(),
         hung_tool_minutes: 30,
     })
 }

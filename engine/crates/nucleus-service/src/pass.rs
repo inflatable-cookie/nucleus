@@ -646,7 +646,6 @@ impl Service {
         };
         match target {
             Some(target) => {
-                let target = target.with_required_checks(route.required_checks);
                 let observed = if task.phase() == Phase::Merging && task.verdict().is_some() {
                     self.forge.observe_for_merge(&target).await
                 } else {
@@ -1966,11 +1965,10 @@ impl Service {
         if self.dependencies_blocked(row).await? {
             return Ok(Action::Wait(WaitReason::Prerequisite));
         }
-        let target = target.clone().with_required_checks(route.required_checks);
-        self.require_published_approval(row, &target).await?;
+        self.require_published_approval(row, target).await?;
         let attempt = self
             .forge
-            .merge(task, &target)
+            .merge(task, target)
             .await
             .inspect_err(|error| record_forge_failure(self, error))?;
         if let MergeWrite::Deferred { until } = attempt.write {
@@ -2012,7 +2010,7 @@ impl Service {
             return Ok(Action::Wait(WaitReason::ForgeUnknown));
         }
         let observed = observed?;
-        self.verify_external_merge(task, &target, &observed).await?;
+        self.verify_external_merge(task, target, &observed).await?;
         let observed = Observed::Known(observed);
         if attempt.write == MergeWrite::Unknown
             && !matches!(observed, Observed::Known(Forge::Merged { .. }))
@@ -4363,5 +4361,106 @@ mod tests {
         observation.forge = open(new);
         observation.workspace = Observed::Known(Workspace::Dirty);
         assert_eq!(replay_policy(Some(&old), &observation), Some(true));
+    }
+
+    #[tokio::test]
+    async fn merge_gate_uses_only_github_required_checks_and_ignores_legacy_project_checks() {
+        use nucleus_store::SettingsValue;
+        let (home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+        let project = service.fixture().clone();
+        let head = project.start.clone();
+        let state_dir = home.path().join("state");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        let legacy_projects = json!({
+            "domain": nucleus_store::Projects::ID,
+            "schemaVersion": 1,
+            "value": {"projects": {"fixture": {
+                "name": "Fixture",
+                "archived": false,
+                "repositories": [{
+                    "origin": REPOSITORY, "path": project.checkout, "base": project.base,
+                    "requiredChecks": ["optional-lint"], "hungToolMinutes": 30
+                }]
+            }}}
+        });
+        std::fs::write(
+            state_dir.join(nucleus_store::Projects::FILE),
+            legacy_projects.to_string(),
+        )
+        .unwrap();
+        let loaded = nucleus_store::SettingsFile::open(home.path())
+            .unwrap()
+            .read::<nucleus_store::Projects>()
+            .unwrap();
+        assert!(loaded.configured);
+        service.state.lock().await.settings.projects = Some(loaded.value);
+
+        let (task, _) = code_task_at_merge("worker", &head);
+        {
+            let worktrees = service.worktrees().unwrap();
+            worktrees
+                .checkout(&project.checkout, REPOSITORY, "worker")
+                .unwrap()
+                .allocate(&head)
+                .unwrap();
+        }
+        let mut pull = forge_pull(&head);
+        pull["head"]["ref"] = json!("ns-worker");
+
+        let check = |name, conclusion, required| json!({"__typename":"CheckRun","name":name,"conclusion":conclusion,"isRequired":required});
+        let rollup = |state, has_next, nodes| json!({"state":state,"contexts":{"pageInfo":{"hasNextPage":has_next,"endCursor":null},"nodes":nodes}});
+        let cases = [
+            (
+                "BLOCKED",
+                rollup("FAILURE", false, json!([check("CI", "FAILURE", true)])),
+                CheckState::FailedRequired(vec!["CI".into()]),
+            ),
+            (
+                "UNSTABLE",
+                rollup(
+                    "FAILURE",
+                    false,
+                    json!([
+                        check("CI", "SUCCESS", true),
+                        check("optional-lint", "FAILURE", false)
+                    ]),
+                ),
+                CheckState::Ready,
+            ),
+            (
+                "CLEAN",
+                rollup("SUCCESS", true, json!([])),
+                CheckState::Unknown,
+            ),
+        ];
+        for (merge_state, rollup, expected) in cases {
+            let mut reply = forge_checks(&head);
+            let pr = &mut reply["data"]["repository"]["pullRequest"];
+            pr["mergeStateStatus"] = json!(merge_state);
+            pr["statusCheckRollup"] = rollup;
+            let pr_wire = pull.clone();
+            let (forge, server) = serve_forge(
+                Router::new()
+                    .route(
+                        &format!("/repos/{REPOSITORY}/pulls/1"),
+                        get(move || async move { Json(pr_wire) }),
+                    )
+                    .route("/graphql", post(move || async move { Json(reply) })),
+            )
+            .await;
+            service.forge = forge;
+            let (observed, _) = {
+                let worktrees = service.worktrees().unwrap();
+                let checkout = worktrees
+                    .checkout(&project.checkout, REPOSITORY, "worker")
+                    .unwrap();
+                service.read_forge(&task, &checkout).await.unwrap()
+            };
+            assert!(
+                matches!(observed, Forge::Open { checks, .. } if checks == expected),
+                "expected {expected:?} for {merge_state}"
+            );
+            server.abort();
+        }
     }
 }
