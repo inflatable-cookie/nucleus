@@ -198,8 +198,12 @@ test("menu text follows card-title color at rest, hover and selection without an
   const ui = renderMenu("queue");
   try {
     const entry = ui.get("Needs you, 2");
-    const label = ui.ofType("Text").find((node) => node.children.join("") === "Needs you");
-    const count = ui.ofType("Text").find((node) => node.children.join("") === "2");
+    const label = ui
+      .ofType("Text")
+      .find((node) => node.children.join("") === "Needs you");
+    const count = ui
+      .ofType("Text")
+      .find((node) => node.children.join("") === "2");
     assert.ok(label);
     assert.ok(count);
     assert.equal(
@@ -212,14 +216,35 @@ test("menu text follows card-title color at rest, hover and selection without an
       design.cardTitleColor(dark as never, false),
       "the regular count uses the card title tint",
     );
-    const icon = ui.ofType("Icon").find((node) => node.props.name === "TriangleAlert");
-    assert.equal(icon?.props.color, design.cardTitleColor(dark as never, false));
+    const icon = ui
+      .ofType("Icon")
+      .find((node) => node.props.name === "TriangleAlert");
+    assert.equal(
+      icon?.props.color,
+      design.cardTitleColor(dark as never, false),
+    );
 
     entry.props.onHoverIn();
     const hovered = ui.get("Needs you, 2");
-    const hoveredLabel = ui.ofType("Text").find((node) => node.children.join("") === "Needs you");
-    assert.equal(hoveredLabel?.props.style.color, (dark as { foreground: string }).foreground);
-    assert.equal(hovered.props.style.backgroundColor, design.hoverSurface(dark as never));
+    const hoveredLabel = ui
+      .ofType("Text")
+      .find((node) => node.children.join("") === "Needs you");
+    assert.equal(
+      hoveredLabel?.props.style.color,
+      (dark as { foreground: string }).foreground,
+    );
+    assert.equal(
+      hovered.props.style.backgroundColor,
+      design.hoverSurface(dark as never),
+    );
+    hovered.props.onHoverOut();
+    ui.get("Needs you, 2").props.onFocus();
+    assert.equal(
+      ui.ofType("Text").find((node) => node.children.join("") === "Needs you")
+        ?.props.style.color,
+      (dark as { foreground: string }).foreground,
+      "keyboard focus uses full foreground",
+    );
   } finally {
     ui.update(h("View", null));
   }
@@ -229,12 +254,17 @@ test("menu text follows card-title color at rest, hover and selection without an
     const entry = selected.get("Needs you, 2");
     assert.equal(entry.props.accessibilityState.selected, true);
     assert.equal(
-      selected.ofType("Text").find((node) => node.children.join("") === "Needs you")?.props.style.color,
+      selected
+        .ofType("Text")
+        .find((node) => node.children.join("") === "Needs you")?.props.style
+        .color,
       (dark as { foreground: string }).foreground,
       "the selected label is full foreground",
     );
     assert.equal(
-      selected.ofType("View").some((node) => node.props.style?.position === "absolute"),
+      selected
+        .ofType("View")
+        .some((node) => node.props.style?.position === "absolute"),
       false,
       "selection has no indicator bar",
     );
@@ -409,7 +439,7 @@ test("menu entries hover and focus dimmed; the selected entry keeps its surface"
   }
 });
 
-test("the themed menu places a foreground selection bar on the selected row only", async () => {
+test("the themed menu keeps a selected surface without a foreground bar", async () => {
   await load();
   const c = {
     accent: "#346bf1",
@@ -428,18 +458,19 @@ test("the themed menu places a foreground selection bar on the selected row only
   const ui = mountMenu(c);
   try {
     const selectionMark = (label: string) =>
-      ui.get(label).children.find(
-        (child) =>
-          typeof child !== "string" &&
-          child.type === "View" &&
-          child.props.pointerEvents === "none" &&
-          child.props.style.backgroundColor === c.foreground,
-      );
-    assert.ok(selectionMark("Working, 3"));
+      ui
+        .get(label)
+        .children.some(
+          (child) =>
+            typeof child !== "string" &&
+            child.props.pointerEvents === "none" &&
+            child.props.style?.position === "absolute",
+        );
+    assert.equal(selectionMark("Working, 3"), false);
     const papercuts = ui.get("Papercuts, 2");
     papercuts.props.onHoverIn();
-    assert.equal(selectionMark("Papercuts, 2"), undefined);
-    assert.ok(selectionMark("Working, 3"));
+    assert.equal(selectionMark("Papercuts, 2"), false);
+    assert.equal(selectionMark("Working, 3"), false);
   } finally {
     ui.update(h("View", null));
   }
