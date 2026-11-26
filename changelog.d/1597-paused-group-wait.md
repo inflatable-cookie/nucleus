@@ -1,0 +1,1 @@
+A task waiting on a paused subscription group now shows "paused" instead of "capacity", for example "Reviewing · paused". Next names the group and when it resets. Tasks waiting for a free slot still show "capacity".

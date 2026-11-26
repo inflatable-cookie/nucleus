@@ -2287,9 +2287,12 @@ async fn profile_pause_edits_wake_a_parked_capacity_waiter() {
     {
         let mut state = service.state.lock().await;
         state.set_wait("awaiting-group", Some(WaitReason::Capacity));
-        state
-            .group_waits
-            .insert("awaiting-group".into(), crate::profiles::GroupPause::Manual);
+        state.group_waits.insert(
+            "awaiting-group".into(),
+            crate::profiles::GroupPause::Manual {
+                group: "shared".into(),
+            },
+        );
         state.schedule.park("awaiting-group");
         assert!(state.schedule.due("awaiting-group").is_none());
     }
@@ -2399,6 +2402,135 @@ async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_grou
     assert_eq!(usage["limitedGroups"], json!({"codex-team":deadline}));
     assert!(matches!(select().await, Ok(LaunchSelection::Paused)));
     assert_paired_pause_clear(&api, &service, &cookie, now, deadline).await;
+    native.abort();
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the admission, pause and both labels read as one story"
+)]
+async fn a_required_paused_group_is_named_and_a_slot_wait_stays_capacity() {
+    use crate::profiles::LaunchSelection;
+
+    let (home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    let (host, native) = crate::tests::native_fixture(subscription_catalog_reply).await;
+    service.host = host;
+    let service = Arc::new(service);
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Profiles").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let api = router_with_board(
+        Arc::clone(&service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }],
+        &assets,
+    )
+    .unwrap();
+    let cookie = pair_board(&api, &BOARD_KEY).await;
+    let path = "/api/engine/settings/profiles";
+    let initial = read_paired_task(&api, path, &cookie).await;
+    let input = json!({"revision": initial["revision"], "value": {"profiles": [
+        {"name":"Team","selection":{"id":"team","provider":"codex","model":"team-only"}}
+    ]}});
+    assert_eq!(
+        browser_request(&api, Method::PUT, path, Some(&cookie), Some(&input))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let paused = json!({"id":"paused","reference":"paused","brief":"---\nqueue:\n  complexity: low\n  profileRequests:\n    worker:\n      profileId: team\n      reason: fixture\n      required: true\n---\n# Paused brief"});
+    let response = browser_request(
+        &api,
+        Method::POST,
+        "/api/engine/tasks",
+        Some(&cookie),
+        Some(&paused),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let slot = json!({"id":"slot","reference":"slot","brief":"---\nqueue:\n  complexity: low\n---\n# Slot brief"});
+    let response = browser_request(
+        &api,
+        Method::POST,
+        "/api/engine/tasks",
+        Some(&cookie),
+        Some(&slot),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let deadline = now_ms() + 60_000;
+    {
+        let state = service.state.lock().await;
+        service
+            .record_subscription_pause(&state, "codex-team", deadline, now_ms())
+            .unwrap();
+    }
+    let observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(nucleus_core::Workspace::Absent),
+    };
+    let mut launch = service.task("paused").await.unwrap().task;
+    assert_eq!(
+        launch.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    let pass = service.host.fixture_pass();
+    assert!(matches!(
+        service
+            .select_launch(&launch, &observation, nucleus_core::Role::Worker, &pass)
+            .await,
+        Ok(LaunchSelection::Paused)
+    ));
+    let row = service.task("paused").await.unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Ok(Action::Wait(WaitReason::Capacity)),
+            crate::schedule::Priority::Wake,
+        )
+        .await
+        .unwrap();
+
+    let horizon = nucleus_hosts::snooze_deadline(deadline);
+    let detail = read_paired_task(&api, "/api/engine/tasks/paused", &cookie).await;
+    assert_eq!(detail["stateLabel"], "Queued · paused");
+    let next = read_paired_task(&api, "/api/engine/tasks/paused/next", &cookie).await;
+    assert_eq!(next["wait"], "capacity");
+    assert_eq!(
+        next["waitDetail"],
+        format!("Paused: subscription group codex-team resets at {horizon}.")
+    );
+    let list = read_paired_task(&api, "/api/engine/tasks", &cookie).await;
+    assert!(
+        list.as_array()
+            .unwrap()
+            .iter()
+            .any(|task| task["stateLabel"] == "Queued · paused")
+    );
+
+    let slot_row = service.task("slot").await.unwrap();
+    service
+        .schedule_result(
+            &slot_row,
+            &Ok(Action::Wait(WaitReason::Capacity)),
+            crate::schedule::Priority::Wake,
+        )
+        .await
+        .unwrap();
+    let slot_detail = read_paired_task(&api, "/api/engine/tasks/slot", &cookie).await;
+    assert_eq!(slot_detail["stateLabel"], "Queued · capacity");
+    let slot_next = read_paired_task(&api, "/api/engine/tasks/slot/next", &cookie).await;
+    assert_eq!(slot_next["wait"], "capacity");
+    assert!(slot_next["waitDetail"].is_null());
     native.abort();
 }
 
