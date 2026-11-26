@@ -2918,52 +2918,55 @@ mod tests {
         }
     }
 
+    /// A forge that reports the checkout's branch as published at `head`, so archive reaches retirement.
+    async fn publish_checkout_forge(
+        head: nucleus_core::Head,
+    ) -> (GitHub, tokio::task::JoinHandle<()>) {
+        let (main, branch, single) = (head.clone(), head.clone(), head);
+        crate::tests::serve_forge(
+            axum::Router::new()
+                .route(
+                    &format!("/repos/{REPOSITORY}/branches/main"),
+                    axum::routing::get(move || {
+                        let main = main.clone();
+                        async move { axum::Json(json!({"name":"main","commit":{"sha":main}})) }
+                    }),
+                )
+                .route(
+                    &format!("/repos/{REPOSITORY}/branches"),
+                    axum::routing::get(move || {
+                        let branch = branch.clone();
+                        async move {
+                            axum::Json(vec![
+                                json!({"name":"ns-orphan-test","commit":{"sha":branch}}),
+                            ])
+                        }
+                    }),
+                )
+                .route(
+                    &format!("/repos/{REPOSITORY}/branches/ns-orphan-test"),
+                    axum::routing::get(move || {
+                        let single = single.clone();
+                        async move {
+                            axum::Json(json!({"name":"ns-orphan-test","commit":{"sha":single}}))
+                        }
+                    }),
+                )
+                .route(
+                    "/graphql",
+                    axum::routing::post(|| async {
+                        axum::Json(json!({"data":{"repository":{"pullRequests":{"totalCount":0}}}}))
+                    }),
+                ),
+        )
+        .await
+    }
+
     #[tokio::test]
     async fn an_external_orphan_in_the_checkout_is_retained_and_holds_retirement() {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let head = service.fixture().start.clone();
-        // The forge reports the checkout's branch as published at its head, so archive reaches retirement.
-        let (main, branch) = (head.clone(), head.clone());
-        let (forge, _server) =
-            crate::tests::serve_forge(
-                axum::Router::new()
-                    .route(
-                        &format!("/repos/{REPOSITORY}/branches/main"),
-                        axum::routing::get(move || {
-                            let main = main.clone();
-                            async move { axum::Json(json!({"name":"main","commit":{"sha":main}})) }
-                        }),
-                    )
-                    .route(
-                        &format!("/repos/{REPOSITORY}/branches"),
-                        axum::routing::get(move || {
-                            let branch = branch.clone();
-                            async move {
-                                axum::Json(vec![
-                                    json!({"name":"ns-orphan-test","commit":{"sha":branch}}),
-                                ])
-                            }
-                        }),
-                    )
-                    .route(
-                        &format!("/repos/{REPOSITORY}/branches/ns-orphan-test"),
-                        axum::routing::get(move || {
-                            let head = head.clone();
-                            async move {
-                                axum::Json(json!({"name":"ns-orphan-test","commit":{"sha":head}}))
-                            }
-                        }),
-                    )
-                    .route(
-                        "/graphql",
-                        axum::routing::post(|| async {
-                            axum::Json(
-                                json!({"data":{"repository":{"pullRequests":{"totalCount":0}}}}),
-                            )
-                        }),
-                    ),
-            )
-            .await;
+        let (forge, _server) = publish_checkout_forge(head).await;
         service.forge = forge;
         service.host = crate::tests::verified_native_fixture(
             T3::new("http://127.0.0.1:9", "fixture").unwrap(),
