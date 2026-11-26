@@ -313,6 +313,48 @@ impl Store {
         Ok(item)
     }
 
+    /// Reopen a parked or dropped item, retaining its prior history.
+    ///
+    /// # Errors
+    /// Returns an error if the item or version is invalid, or the database fails.
+    pub fn reopen_item(
+        &mut self,
+        project: &str,
+        id: &str,
+        version: Option<i64>,
+        note: Option<&str>,
+        stamp: WriteAt<'_>,
+    ) -> Result<ItemWithTimes, StoreError> {
+        let tx = self.planning_write()?;
+        let mut saved = tx
+            .prepare_cached(&format!("{ITEM_VIEW} WHERE i.project = ?1 AND i.id = ?2"))?
+            .query_row([project, id], item_view)
+            .optional()?
+            .ok_or(StoreError::PlanningMissing)?;
+        if version.is_some_and(|version| version != saved.version)
+            || !matches!(
+                saved.item.state,
+                ItemState::Parked { .. } | ItemState::Dropped { .. }
+            )
+        {
+            return Err(StoreError::PlanningConflict);
+        }
+        saved.item.state = ItemState::Open;
+        save(&tx, ItemRecord, project, id, "reopen", &saved.item, stamp)?;
+        saved.version = tx.last_insert_rowid();
+        saved.updated_at_ms = i64::try_from(stamp.at_ms).ok();
+        if let Some(note) = note {
+            let mut snapshot = serde_json::to_value(&saved.item)?;
+            snapshot["note"] = note.into();
+            tx.execute(
+                "UPDATE planning_history SET snapshot=?1 WHERE sequence=?2",
+                params![snapshot.to_string(), saved.version],
+            )?;
+        }
+        tx.commit()?;
+        Ok(saved)
+    }
+
     /// Admit the task, link its source and record the item's promotion together.
     ///
     /// # Errors

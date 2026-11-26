@@ -11,7 +11,7 @@ Tom accepted the planner's recommendations on 2026-11-26:
 3. Task actions sit in a footer: Hold and Move on the left, and Cancel apart on the right, with a confirmation.
 4. The timeline uses equal steps with round segments. Exact durations and timestamps go in tooltips.
 5. Engine data comes first: serve each role turn (the lifecycle transcript) to the board, giving per-round timings and thread links in one change.
-6. Leads and papercuts gain reopen (parked or dropped back to open) and unpark.
+6. Leads and papercuts gain reopen (parked or dropped back to open). A revisit date marks a parked item due; it does not reopen automatically.
 
 ## Lifecycle journal facts
 
@@ -223,8 +223,7 @@ happened") and the kind icon differ.
   promote (repository plus complexity), park with a revisit date, or drop.
   Promote is the decision the view exists for, so it gets the panel.
 - **Revisit (parked).** Why was it parked, by whom, and is the date due?
-  Change the date, or drop it. Getting it back to Open needs Reopen, which the
-  engine lacks.
+  Change the date, or drop it. Reopen returns it to Open.
 - **Follow (promoted).** Where's the task now? The view becomes a pointer to
   the task.
 - **Look back (dropped).** Completed or deprecated, the note, who and when.
@@ -284,6 +283,6 @@ disposition).
 | Edit | `PUT …/items/{id}` with `version` | exists (the adapter wires it for papercuts only) |
 | Park, re-park | `POST …/items/{id}/park {reason, revisitAt}` | exists |
 | Drop | `POST …/items/{id}/drop {disposition, reason}` | exists (the lead adapter sends no disposition) |
-| Reopen (parked or dropped) | none: `set_item_state` refuses `Open` | **engine** |
-| Return to Open on the revisit date | none | **engine** |
+| Reopen (parked or dropped) | `POST …/items/{id}/reopen {note, version}` | exists; version and note are optional |
+| Revisit date | Due indication while parked | exists; reopening is explicit |
 | Activity | `history/{kind}/{id}` | exists |

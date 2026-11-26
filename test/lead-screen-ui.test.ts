@@ -118,10 +118,6 @@ async function mountScreen(
       log.calls.push(`park:${reason}:${revisitAt ?? "none"}`);
       return "Parked.";
     },
-    onUnpark: async () => {
-      log.calls.push("unpark");
-      return "Back on the to-do list.";
-    },
     onPromoteTo: async (kind, reference) => {
       log.calls.push(`${kind}:${reference}`);
       return kind === "question"
@@ -194,7 +190,10 @@ test("an empty record says what is absent and refuses every action with the reas
         body: "",
         digest: undefined,
         versions: [version(2)],
-        actions: { check: "Lead has no brief to check", approve: "Lead has no brief to approve" },
+        actions: {
+          check: "Lead has no brief to check",
+          approve: "Lead has no brief to approve",
+        },
       }),
     },
   });
@@ -273,7 +272,9 @@ test("a changed version shows the check as stale and asks for the existing reche
         check: null,
         approval: null,
         versions: [version(3), version(2, { check: check(true) }), version(1)],
-        actions: { approve: "The check is for version 2; check version 3 first" },
+        actions: {
+          approve: "The check is for version 2; check version 3 first",
+        },
       }),
     },
   });
@@ -363,7 +364,12 @@ test("a normal edit keeps the earlier approval visible as out of date", async ()
     ],
     actions: {
       approve: "The check is for version 2; check version 3 first",
-      promote: [{ origin: repo.origin, reason: "The approval is for version 2; approve version 3 first" }],
+      promote: [
+        {
+          origin: repo.origin,
+          reason: "The approval is for version 2; approve version 3 first",
+        },
+      ],
     },
   });
   assert.deepEqual(
@@ -394,7 +400,12 @@ test("an approval for another version is named stale, never shown as this versio
         approval: approved(2),
         actions: {
           approve: null,
-          promote: [{ origin: repo.origin, reason: "The approval is for version 2; approve version 3 first" }],
+          promote: [
+            {
+              origin: repo.origin,
+              reason: "The approval is for version 2; approve version 3 first",
+            },
+          ],
         },
       }),
     },
@@ -468,7 +479,14 @@ test("promotion names the repository when a lead lists more than one", async () 
             at: "2026-11-06T11:00:00Z",
           },
         ],
-        actions: { promote: [{ origin: repo.origin, reason: "Already promoted to a task in owner/alpha" }] },
+        actions: {
+          promote: [
+            {
+              origin: repo.origin,
+              reason: "Already promoted to a task in owner/alpha",
+            },
+          ],
+        },
       }),
     },
   });
@@ -485,7 +503,10 @@ test("drop, reopen and the question or knowledge promotion sit in a secondary me
       data: lead({
         check: check(true),
         approval: approved(2),
-        actions: { approve: "Approved", promote: [{ origin: repo.origin, reason: null }] },
+        actions: {
+          approve: "Approved",
+          promote: [{ origin: repo.origin, reason: null }],
+        },
       }),
     },
   });
@@ -543,7 +564,12 @@ test("drop, reopen and the question or knowledge promotion sit in a secondary me
           reopen: null,
           park: "Only open leads can be parked; this lead is dropped",
           promoteTo: "A dropped lead cannot be promoted",
-          promote: [{ origin: repo.origin, reason: "A dropped lead cannot be promoted" }],
+          promote: [
+            {
+              origin: repo.origin,
+              reason: "A dropped lead cannot be promoted",
+            },
+          ],
         },
       }),
     },
@@ -554,7 +580,7 @@ test("drop, reopen and the question or knowledge promotion sit in a secondary me
     dropped.ui.text(),
     /Only open leads can be dropped; this lead is dropped/,
   );
-  dropped.ui.type("Reopen reason", "Dropped by mistake");
+  dropped.ui.type("Reopen note (optional)", "Dropped by mistake");
   dropped.ui.press("Reopen the lead");
   await settle();
   assert.deepEqual(dropped.log.calls, ["reopen:Dropped by mistake"]);

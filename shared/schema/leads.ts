@@ -161,7 +161,6 @@ export const leadActionsSchema = z
     drop: z.string().nullable(),
     reopen: z.string().nullable(),
     park: z.string().nullable(),
-    unpark: z.string().nullable(),
     promoteTo: z.string().nullable(),
     promote: z.array(
       z.object({ origin: z.string(), reason: z.string().nullable() }).strict(),

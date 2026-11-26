@@ -53,6 +53,6 @@ export function recheckDateLabel(iso: string): string {
 /** The parked status's detail: "check again 6 Dec 2026", or a plain note when the park has no date. */
 export function parkedCheckLabel(revisitAt: string | null): string {
   return revisitAt
-    ? `check again ${recheckDateLabel(revisitAt)}`
+    ? `${Date.parse(revisitAt) <= Date.now() ? "revisit due" : "check again"} ${recheckDateLabel(revisitAt)}`
     : "no recheck date set";
 }
