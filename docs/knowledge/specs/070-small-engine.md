@@ -719,11 +719,11 @@ Later decisions carry their own attribution.
     Tom chose “Add Recheck (Recommended)”. Recheck observes once at the current task version.
     It cannot release another person’s hold. Hold and Release remain available for actual holds.
 
-49. **Keep native execution and freeze the production line budget.** On 2026-11-26 Tom answered two questions:
+49. **Keep native execution and cap production Rust.** On 2026-11-26 Tom answered two questions:
 
     > Spec 070 caps the Rust engine at 30,000 lines. It was 33,000 on 24 Nov and is 41,800 now. An independent costed review found only ~300–550 lines removable without changing what Nucleus does; the growth is mostly features you asked for (native Inbox, GitHub accounts, reply routes, recovery). Reaching 30k would mean giving up Nucleus running workers/reviewers in T3 itself. How should we treat the budget?
 
-    Tom chose “Freeze at today's size (Recommended)”. The ceiling and PR accounting rule are in [Validation](#validation).
+    Tom chose “Freeze at today's size (Recommended)”. Later on 2026-11-26 he amended the ceiling: “We don't need to be that tight with budget - let's cap at 50k”. The ceiling and PR accounting rule are in [Validation](#validation).
 
     > Separately, three optional features each cost 600–1,200 lines and could go without touching core execution. Do you want to retire any of them?
 
@@ -946,7 +946,7 @@ Tom, 2026-11-24: "How are we doing on complexity? No horrible extra narrow fixes
 
 Every fix states its general rule and what it replaces. An independent review
 checks for special cases, duplicate paths and dead code before the milestone 3
-cutover. The ceiling is 42,000 production Rust lines by `scripts/count-engine-rust.py`.
+cutover. The ceiling is 50,000 production Rust lines by `scripts/count-engine-rust.py`.
 The measured baseline at `1d92ea014` is 41,785.
 
 Count nonblank lines of operator-shipped Rust after removing comments, tests,
@@ -965,9 +965,9 @@ python scripts/count-engine-rust.py "$(git merge-base origin/main HEAD)" HEAD
 
 Use the checkout containing the counter for both revisions. You can pass older
 commit IDs even if those commits predate the counter. Every engine PR reports its net
-production Rust delta. Offset growth in the same batch or justify it in the PR
-body, explaining why existing code cannot supply the behavior. Land an offsetting
-cut first if the PR would cross 42,000. Each consolidation PR covers at most
+production Rust delta. Justify any growth in the PR body, explaining why
+existing code cannot supply the behavior. Land an offsetting
+cut first if the PR would cross 50,000. Each consolidation PR covers at most
 three production modules and identifies the rule that replaces the removed code.
 
 Tom approved Rust for the engine on 2026-11-23. That replaces the 2026-10-04 "no
