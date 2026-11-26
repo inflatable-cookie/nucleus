@@ -3635,3 +3635,116 @@ pub(crate) async fn browser_request(
         .await
         .expect("browser response")
 }
+
+async fn exhaust_legacy_allowance(service: &Service) -> (nucleus_store::TaskRow, u64) {
+    let (task, _, _) = reservation("legacy", Entry::Brief, &service.fixture().start);
+    let mut state = service.state.lock().await;
+    state.store.create(&task, &event("fixture")).unwrap();
+    state.allowance_clock = crate::allowance::Clock::new(3_600_000);
+    assert_eq!(state.allowance_view(&task).unwrap().used_ms, 0);
+    state
+        .observe_task_allowance(&task, Some(nucleus_core::WaitReason::Running))
+        .unwrap();
+    state.allowance_clock = crate::allowance::Clock::new(3_620_000);
+    state
+        .observe_task_allowance(&task, Some(nucleus_core::WaitReason::Hold))
+        .unwrap();
+    state.allowance_clock = crate::allowance::Clock::new(3_680_000);
+    assert_eq!(state.allowance_view(&task).unwrap().used_ms, 20_000);
+    state
+        .observe_task_allowance(&task, Some(nucleus_core::WaitReason::Running))
+        .unwrap();
+
+    let limit = 180 * 60_000;
+    let first_spend = 3_600_000 + 60_000 + limit;
+    state.allowance_clock = crate::allowance::Clock::new(first_spend);
+    let row = service.lookup(&state, "legacy").unwrap();
+    drop(state);
+
+    let _fence = service.effect(&row).await.unwrap();
+    assert_eq!(service.gate_allowance(&row).await.unwrap(), None);
+    let mut state = service.state.lock().await;
+    assert_eq!(state.allowance_view(&task).unwrap().limit_ms, 2 * limit);
+    let second_spend = first_spend + limit + 1_000;
+    state.allowance_clock = crate::allowance::Clock::new(second_spend);
+    drop(state);
+    assert_eq!(
+        service.gate_allowance(&row).await.unwrap(),
+        Some(Action::Wait(nucleus_core::WaitReason::Question))
+    );
+    let asked = service.task("legacy").await.unwrap();
+    assert!(matches!(
+        asked.task.question(),
+        Some(Question::Allowance { .. })
+    ));
+    (asked, limit)
+}
+
+#[tokio::test]
+async fn planner_extend_via_http_raises_the_exhausted_allowance_once() {
+    let (_root, mut service) = fixture(GitHub::new("unused").unwrap());
+    let (host, _, _, native) = planner_roster_fixture("planner", "other").await;
+    service.host = host;
+    let (asked, limit) = exhaust_legacy_allowance(&service).await;
+    let mut assigned = asked.task.clone();
+    let notice =
+        T3::prepare_notice("planner".into(), "notice".into(), "Extend the allowance?").unwrap();
+    assert!(assigned.bind_question_delivery(notice));
+    service
+        .save(&asked, assigned, &event("question_delivery"))
+        .await
+        .unwrap();
+    service.refresh_planner_authority("legacy").await.unwrap();
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [
+            planner_controller(PLANNER_KEY, "planner"),
+            Controller {
+                credential: BOARD_KEY,
+                authority: Authority::Operator {
+                    actor: "board".into(),
+                },
+            },
+        ],
+    );
+    let next = "/v1/tasks/legacy/next";
+    let commands = "/v1/tasks/legacy/commands";
+    let before = json_body(get_as(&api, next, &BOARD_KEY).await).await;
+    assert_eq!(before["allowance"]["exhausted"], true);
+    assert_eq!(before["allowance"]["limitMs"], 2 * limit);
+    let answer = json!({"answer":"extend"});
+    assert_eq!(
+        post_json(&api, commands, &PLANNER_KEY, &answer).await,
+        StatusCode::OK
+    );
+    let after = json_body(get_as(&api, next, &BOARD_KEY).await).await;
+    let used_before = before["allowance"]["usedMs"].as_u64().unwrap();
+    let extended_limit = after["allowance"]["limitMs"].as_u64().unwrap();
+    assert!(used_before >= 2 * limit + 1_000);
+    assert!(
+        extended_limit >= used_before + limit,
+        "new limit {extended_limit}, used {used_before}"
+    );
+    assert_eq!(after["allowance"]["exhausted"], false);
+    assert!(after["question"].is_null());
+    assert!(
+        !post_as(&api, commands, &PLANNER_KEY, &answer)
+            .await
+            .status()
+            .is_success()
+    );
+    let row = service.task("legacy").await.unwrap();
+    assert!(
+        row.task.run().is_some(),
+        "the unsent reservation still belongs to the task"
+    );
+    let store = nucleus_store::Store::open(&service.storage).unwrap();
+    let restored = store
+        .allowance("legacy")
+        .unwrap()
+        .view(&row.task, store.allowance_elapsed().unwrap());
+    assert_eq!(restored.limit_ms, extended_limit);
+    assert!(!restored.exhausted);
+    native.abort();
+}

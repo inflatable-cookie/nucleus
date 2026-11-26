@@ -1541,6 +1541,10 @@ impl Service {
             return Err(ServiceError::AnswerInInbox);
         }
         check_amendment(&prior.task, &command, brief_version)?;
+        let command_event = match command {
+            Command::Answer(nucleus_core::Answer::Extend) => "allowance_extended",
+            _ => "command",
+        };
         let amendment = matches!(command, Command::Amend(_));
         let explicit_move = matches!(command, Command::Move(_) | Command::MoveWork { .. });
         let returned = matches!(command, Command::MoveWork { .. })
@@ -1577,7 +1581,7 @@ impl Service {
             self.prepare_command(&mut state, &prior.task, authority, &observation, command)?
                 .ok_or(ServiceError::CommandHeadUnconfirmed)?
         };
-        let mut audit = event("command");
+        let mut audit = event(command_event);
         if let Some(acceptance) = task
             .report_task()
             .and_then(|report| report.acceptance.as_ref())
