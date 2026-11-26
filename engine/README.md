@@ -89,7 +89,10 @@ temporary files under scratch.
 Before any role is sent, interrupted checkout recovery can quarantine the
 directory in `<scratch-root>/quarantine/<task>-<timestamp>`. The existing
 scheduler archive scan removes engine-owned quarantines seven days after the
-timestamp in their name. Unverified entries stay in place.
+timestamp in their name. Unverified entries stay in place. Verified terminal
+checkout retirement renames the checkout into `<work-root>/.trash/<task>-<timestamp>-<seq>/checkout`,
+removes the Git worktree registration, and deletes owned trash entries
+asynchronously in the background.
 
 ### Stage an engine release
 

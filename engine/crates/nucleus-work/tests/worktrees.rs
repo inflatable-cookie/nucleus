@@ -1,4 +1,8 @@
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use longhorn_git_workspace::{GitCredential, GitFailure, GitPolicy};
 use longhorn_redact::{RedactionRules, Redactor};
@@ -722,4 +726,230 @@ fn a_clean_head_moved_after_preparation_remains_in_custody() {
     );
     assert_eq!(retire().unwrap(), Retirement::Retained);
     assert!(checkout.path().is_dir());
+}
+
+#[test]
+fn retire_stages_same_volume_trash_removes_git_registration_and_prunes_only_owned_trash() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    repository(&repo);
+    fs::write(repo.join(".gitignore"), "local.settings\nnode_modules/\n").unwrap();
+    git(&repo, &["add", ".gitignore"]);
+    git(&repo, &["commit", "-m", "Ignore node_modules"]);
+    let head: Head = git(&repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+    let worktrees = worktrees(root.path());
+    let storage = SettingsFile::open(root.path()).unwrap().storage().unwrap();
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-trash")
+        .unwrap();
+    let sibling = worktrees
+        .checkout(&repo, "example/fixture", "task-sibling")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    sibling.allocate(&head).unwrap();
+    let deps = checkout.path().join("node_modules/pkg");
+    fs::create_dir_all(&deps).unwrap();
+    fs::write(deps.join("index.js"), "module.exports = 1;").unwrap();
+    fs::write(checkout.path().join("local.settings"), "ignored").unwrap();
+
+    assert_eq!(checkout.retire(&head).unwrap(), Retirement::Removed);
+    assert!(!checkout.path().exists());
+    assert_eq!(checkout.observe().unwrap(), Workspace::Absent);
+    assert!(!checkout.has_prunable_registration().unwrap());
+
+    let listed = git(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(!listed.contains("ns-task-trash"));
+    assert!(listed.contains("ns-task-sibling"));
+
+    let trash_root = storage.work().path().join(".trash");
+    assert!(trash_root.is_dir());
+    let entries: Vec<_> = fs::read_dir(&trash_root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert!(
+        entries[0]
+            .join("checkout/node_modules/pkg/index.js")
+            .is_file()
+    );
+
+    // Foreign, symlinked, and replaced entries in .trash must stay untouched.
+    let foreign = trash_root.join("foreign-1-1");
+    fs::create_dir(&foreign).unwrap();
+    fs::write(foreign.join(".nucleus-trash"), "unknown").unwrap();
+    fs::write(foreign.join("keep"), "foreign").unwrap();
+
+    let symlink_target = root.path().join("outside");
+    fs::create_dir(&symlink_target).unwrap();
+    fs::write(symlink_target.join("keep"), "target").unwrap();
+    let linked = trash_root.join("linked-1-1");
+    std::os::unix::fs::symlink(&symlink_target, &linked).unwrap();
+
+    nucleus_work::prune_trash(storage.work(), u64::MAX).unwrap();
+    assert!(!entries[0].exists());
+    assert!(foreign.join("keep").is_file());
+    assert!(linked.is_symlink());
+    assert!(symlink_target.join("keep").is_file());
+}
+
+#[test]
+fn retire_recovers_interrupted_cleanup_without_dot_git_file_and_preserves_unpublished_work() {
+    for delete_gitignore in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        repository(&repo);
+        fs::create_dir(repo.join("tracked")).unwrap();
+        for i in 0..1401 {
+            fs::write(repo.join(format!("tracked/{i}")), "published").unwrap();
+        }
+        fs::write(repo.join(".gitignore"), "node_modules/\n").unwrap();
+        git(&repo, &["add", "tracked", ".gitignore"]);
+        git(&repo, &["commit", "-qm", "Publish large tracked tree"]);
+        let published: Head = git(&repo, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+
+        let worktrees = worktrees(root.path());
+        let storage = SettingsFile::open(root.path()).unwrap().storage().unwrap();
+        let checkout = worktrees
+            .checkout(&repo, "example/fixture", "task-1155")
+            .unwrap();
+        let sibling = worktrees
+            .checkout(&repo, "example/fixture", "task-sibling")
+            .unwrap();
+        checkout.allocate(&published).unwrap();
+        sibling.allocate(&published).unwrap();
+
+        // Leave sibling prunable to confirm recovery never runs repository-wide prune.
+        let sibling_admin = PathBuf::from(
+            git(sibling.path(), &["rev-parse", "--absolute-git-dir"]).trim_end_matches('\n'),
+        );
+        fs::rename(sibling.path(), root.path().join("sibling-moved")).unwrap();
+
+        fs::create_dir_all(checkout.path().join("node_modules/pkg")).unwrap();
+        fs::write(checkout.path().join("node_modules/pkg/index.js"), "dep").unwrap();
+        fs::remove_dir_all(checkout.path().join("tracked")).unwrap();
+        fs::remove_file(checkout.path().join(".git")).unwrap();
+        if delete_gitignore {
+            fs::remove_file(checkout.path().join(".gitignore")).unwrap();
+        }
+
+        // Active observation still refuses a checkout missing .git.
+        assert!(checkout.observe().is_err());
+        assert!(checkout.allocate(&published).is_err());
+
+        // Unpublished work must still block retirement even with .git missing.
+        let draft = checkout.path().join("draft.md");
+        fs::write(&draft, "unpublished draft").unwrap();
+        assert_eq!(checkout.deletion_only_head().unwrap(), None);
+        assert_eq!(checkout.retire(&published).unwrap(), Retirement::Retained);
+        assert_eq!(fs::read_to_string(&draft).unwrap(), "unpublished draft");
+        fs::remove_file(&draft).unwrap();
+
+        let readme = checkout.path().join("README.md");
+        fs::write(&readme, "modified tracked file").unwrap();
+        assert_eq!(checkout.deletion_only_head().unwrap(), None);
+        assert_eq!(checkout.retire(&published).unwrap(), Retirement::Retained);
+        assert_eq!(
+            fs::read_to_string(&readme).unwrap(),
+            "modified tracked file"
+        );
+        fs::remove_file(&readme).unwrap();
+
+        let other: Head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".parse().unwrap();
+        assert_eq!(
+            checkout.deletion_only_head().unwrap(),
+            Some(published.clone())
+        );
+        assert_eq!(checkout.retire(&other).unwrap(), Retirement::Retained);
+        assert!(checkout.path().is_dir());
+
+        assert_eq!(checkout.retire(&published).unwrap(), Retirement::Removed);
+        assert!(!checkout.path().exists());
+        assert!(sibling_admin.is_dir());
+        let listed = git(&repo, &["worktree", "list", "--porcelain"]);
+        assert!(!listed.contains("ns-task-1155"));
+        assert!(listed.contains("ns-task-sibling"));
+
+        nucleus_work::prune_trash(storage.work(), u64::MAX).unwrap();
+    }
+}
+
+#[test]
+fn retire_missing_dot_git_keeps_hidden_index_edits_and_foreign_directories() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let published = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-hidden")
+        .unwrap();
+    checkout.allocate(&published).unwrap();
+    git(
+        checkout.path(),
+        &["update-index", "--skip-worktree", "README.md"],
+    );
+    let readme = checkout.path().join("README.md");
+    fs::write(&readme, "hidden edit").unwrap();
+    fs::remove_file(checkout.path().join(".git")).unwrap();
+
+    assert_eq!(checkout.observe_for_retirement().unwrap(), Workspace::Dirty);
+    assert_eq!(checkout.deletion_only_head().unwrap(), None);
+    assert_eq!(checkout.retire(&published).unwrap(), Retirement::Retained);
+    assert_eq!(fs::read_to_string(&readme).unwrap(), "hidden edit");
+
+    let foreign = worktrees
+        .checkout(&repo, "example/fixture", "task-foreign")
+        .unwrap();
+    fs::create_dir_all(foreign.path()).unwrap();
+    fs::write(foreign.path().join("keep"), "foreign").unwrap();
+    assert!(foreign.observe_for_retirement().is_err());
+    assert!(foreign.retire(&published).is_err());
+    assert_eq!(
+        fs::read_to_string(foreign.path().join("keep")).unwrap(),
+        "foreign"
+    );
+}
+
+#[test]
+fn prunable_registration_after_directory_move_cleans_up_on_retire_and_allocate() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let head = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-prunable")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+
+    // Simulate interruption after renaming the directory away before removing Git registration.
+    fs::rename(checkout.path(), root.path().join("moved-away")).unwrap();
+    assert!(checkout.has_prunable_registration().unwrap());
+    assert_eq!(checkout.retire(&head).unwrap(), Retirement::Removed);
+    assert!(!checkout.has_prunable_registration().unwrap());
+    assert_eq!(checkout.retire(&head).unwrap(), Retirement::Absent);
+
+    checkout.allocate(&head).unwrap();
+    fs::rename(checkout.path(), root.path().join("moved-again")).unwrap();
+    assert!(checkout.has_prunable_registration().unwrap());
+    assert_eq!(checkout.allocate(&head).unwrap(), Workspace::Clean(head));
+}
+
+#[test]
+fn retire_refuses_locked_worktree_without_moving_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let head = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-locked")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    let admin = PathBuf::from(
+        git(checkout.path(), &["rev-parse", "--absolute-git-dir"]).trim_end_matches('\n'),
+    );
+    fs::write(admin.join("locked"), "manual lock").unwrap();
+
+    assert!(checkout.retire(&head).is_err());
+    assert!(checkout.path().is_dir());
+    assert!(checkout.path().join("README.md").is_file());
 }

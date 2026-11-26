@@ -2763,6 +2763,100 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
     native.abort();
 }
 
+#[tokio::test]
+async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_trash() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    {
+        let repo = &service.fixture().checkout;
+        std::fs::write(repo.join(".gitignore"), "node_modules/\n").unwrap();
+        std::fs::write(repo.join("tracked.txt"), "published").unwrap();
+        crate::tests::git(repo, &["add", ".gitignore", "tracked.txt"]);
+        crate::tests::git(
+            repo,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-m",
+                "Add tracked inputs",
+            ],
+        );
+        service.fixture_mut().start = crate::tests::git(repo, &["rev-parse", "HEAD"])
+            .parse()
+            .unwrap();
+    }
+    let (done, _) = fixture_at_done(&service).await;
+    assert!(matches!(
+        service
+            .command(
+                &done.task.identity().id,
+                &Authority::Operator {
+                    actor: "fixture".into(),
+                },
+                Command::Release,
+            )
+            .await
+            .expect("release hold"),
+        CommandOutcome::Applied(_)
+    ));
+    let done = service.task(&done.task.identity().id).await.unwrap();
+    service.host = service.host.with_quiet_fixture_processes();
+    service.host.use_held_shell();
+    service.host.fixture_project_shell(
+        &json!({
+            "snapshotSequence": 1,
+            "projects": [{"id": "local-fixture", "workspaceRoot": service.fixture().checkout}],
+            "threads": []
+        }),
+        "fixture-acp",
+    );
+    let (forge, readable, _, _, server) = serve_merged_forge(&service.fixture().start).await;
+    readable.store(true, Ordering::Relaxed);
+    service.forge = forge;
+
+    let checkout_path = {
+        let work = service.worktrees().unwrap();
+        let project = service.fixture();
+        let identity = done.task.identity();
+        let checkout = work
+            .checkout(&project.checkout, &identity.repository, &identity.id)
+            .unwrap();
+        checkout.allocate(&project.start).unwrap();
+        checkout.path().to_owned()
+    };
+    let deps = checkout_path.join("node_modules/pkg");
+    std::fs::create_dir_all(&deps).unwrap();
+    std::fs::write(deps.join("index.js"), "ignored build artifact").unwrap();
+    std::fs::remove_file(checkout_path.join("tracked.txt")).unwrap();
+    std::fs::remove_file(checkout_path.join(".git")).unwrap();
+
+    // Unpublished work must still retain the checkout even when .git was already deleted.
+    let draft = checkout_path.join("draft.md");
+    std::fs::write(&draft, "keep local work").unwrap();
+    let retained_outcome = service.archive_done(&done).await;
+    assert!(
+        matches!(
+            &retained_outcome,
+            Err(ServiceError::ArchiveEvidence(cause)) if cause.contains("retained")
+        ),
+        "{retained_outcome:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&draft).unwrap(), "keep local work");
+    std::fs::remove_file(&draft).unwrap();
+
+    assert_eq!(service.archive_done(&done).await.unwrap(), Action::Nothing);
+    assert!(!checkout_path.exists());
+
+    let trash_root = service.storage.work().path().join(".trash");
+    assert!(trash_root.is_dir());
+    nucleus_work::prune_trash(service.storage.work(), crate::now_ms()).unwrap();
+    assert_eq!(std::fs::read_dir(&trash_root).unwrap().count(), 0);
+    server.abort();
+}
+
 async fn reopen_and_finish_review(
     service: &Service,
     done: &nucleus_store::TaskRow,

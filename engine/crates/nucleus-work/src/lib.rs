@@ -1,11 +1,13 @@
 //! Own the default task worktrees beneath the configured work root.
 
 use std::{
+    ffi::OsStr,
     fs,
     io::{ErrorKind, Read, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    time::Duration,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use longhorn_git_workspace::{Git, GitFailure, GitFailureCode, GitPolicy, WorktreeIdentity};
@@ -22,6 +24,12 @@ const QUARANTINE: &str = "quarantine";
 const QUARANTINE_MARKER: &str = ".nucleus-quarantine";
 const QUARANTINE_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 const QUARANTINE_REF: &str = "--format=%(refname)%00%(objectname)%00%(symref)%00%(worktreepath)";
+const TRASH: &str = ".trash";
+const TRASH_CHECKOUT: &str = "checkout";
+const TRASH_MARKER: &str = ".nucleus-trash";
+// Grace window before sweeping a trash entry whose checkout rename has not completed yet.
+const TRASH_ORPHAN_GRACE_MS: u64 = 60_000;
+static TRASH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 // Keep Git's bounded command runner without collecting one filename per entry.
 // `ls-files` quotes embedded newlines. Its records cannot look like the marker
 // which confirms that the whole scan completed successfully.
@@ -36,14 +44,25 @@ const INDEX_VISIBILITY: &str = concat!(
 
 // Reduce potentially thousands of names to one answer. The sentinel requires
 // successful Git completion. Porcelain quotes newlines inside file names.
-const DELETIONS_ONLY: &str = concat!(
-    r#"alias.nucleus-deletions-only=! { git ls-files -v --stage && "#,
-    r#"git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none && printf '%s\n' 'Nucleus scan complete'; } | "#,
-    r#"awk '$0 == "Nucleus scan complete" { complete=1; next } "#,
-    r#"/^H (100644|100755|120000) [0-9a-f]+ 0\t/ { next } "#,
-    r#"substr($0,1,3) == " D " { deleted=1; next } { other=1 } "#,
-    r#"END { if (!complete) exit 1; if (deleted && !other) print "deletions" }'"#,
-);
+macro_rules! deletions_only_alias {
+    ($name:literal, $untracked:literal) => {
+        concat!(
+            "alias.",
+            $name,
+            r#"=! { git ls-files -v --stage && "#,
+            "git --no-optional-locks status --porcelain=v1 --untracked-files=",
+            $untracked,
+            r#" --ignore-submodules=none && printf '%s\n' 'Nucleus scan complete'; } | "#,
+            r#"awk '$0 == "Nucleus scan complete" { complete=1; next } "#,
+            r#"/^H (100644|100755|120000) [0-9a-f]+ 0\t/ { next } "#,
+            r#"substr($0,1,3) == " D " { deleted=1; next } { other=1 } "#,
+            r#"END { if (!complete) exit 1; if (deleted && !other) print "deletions" }'"#,
+        )
+    };
+}
+
+const DELETIONS_ONLY: &str = deletions_only_alias!("nucleus-deletions-only", "all");
+const TRACKED_DELETIONS_ONLY: &str = deletions_only_alias!("nucleus-tracked-deletions-only", "no");
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkError {
@@ -122,19 +141,83 @@ fn quarantine_stamp(name: &str, directory: &fs::Metadata) -> String {
     )
 }
 
-fn owns_quarantine(marker: &Path, expected: &str) -> bool {
+fn trash_stamp(name: &str, entry: &fs::Metadata, checkout: &fs::Metadata) -> String {
+    format!(
+        "nucleus checkout trash {name} {}:{} {}:{}\n",
+        entry.dev(),
+        entry.ino(),
+        checkout.dev(),
+        checkout.ino()
+    )
+}
+
+fn read_verified_stamp(marker: &Path, max_len: u64) -> Option<Vec<u8>> {
     let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    let Ok(file) = open(marker, flags, Mode::empty()).map(fs::File::from) else {
-        return false;
-    };
-    let Ok(info) = file.metadata() else {
-        return false;
-    };
+    let file = open(marker, flags, Mode::empty())
+        .map(fs::File::from)
+        .ok()?;
+    let info = file.metadata().ok()?;
+    if !info.is_file() || info.len() > max_len {
+        return None;
+    }
     let mut stamp = Vec::new();
-    info.is_file()
-        && info.len() == expected.len() as u64
-        && file.take(info.len() + 1).read_to_end(&mut stamp).is_ok()
-        && stamp == expected.as_bytes()
+    file.take(max_len + 1).read_to_end(&mut stamp).ok()?;
+    (stamp.len() as u64 == info.len()).then_some(stamp)
+}
+
+fn owns_quarantine(marker: &Path, expected: &str) -> bool {
+    read_verified_stamp(marker, expected.len() as u64)
+        .is_some_and(|stamp| stamp == expected.as_bytes())
+}
+
+fn owns_trash(
+    marker: &Path,
+    name: &str,
+    entry: &fs::Metadata,
+    checkout: Option<&fs::Metadata>,
+) -> bool {
+    if let Some(checkout) = checkout {
+        let expected = trash_stamp(name, entry, checkout);
+        return read_verified_stamp(marker, expected.len() as u64)
+            .is_some_and(|stamp| stamp == expected.as_bytes());
+    }
+    let prefix = format!(
+        "nucleus checkout trash {name} {}:{} ",
+        entry.dev(),
+        entry.ino()
+    );
+    let Some(bytes) = read_verified_stamp(marker, 256) else {
+        return false;
+    };
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    let Some(rest) = text
+        .strip_prefix(&prefix)
+        .and_then(|s| s.strip_suffix('\n'))
+    else {
+        return false;
+    };
+    let Some((dev, ino)) = rest.split_once(':') else {
+        return false;
+    };
+    dev.parse::<u64>().is_ok() && ino.parse::<u64>().is_ok()
+}
+
+fn trash_timestamp_ms(name: &str) -> Option<u64> {
+    let (prefix, _) = name.rsplit_once('-')?;
+    let (_, at) = prefix.rsplit_once('-')?;
+    at.parse().ok()
+}
+
+fn unix_now_ms() -> u64 {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
 }
 
 /// Expire owned checkout quarantines after seven days on the configured scratch volume.
@@ -169,6 +252,60 @@ pub fn prune_quarantines(scratch: &StorageDirectory, now_ms: u64) -> Result<(), 
         {
             fs::remove_dir_all(entry.path())?;
         }
+    }
+    Ok(())
+}
+
+/// Remove owned retired checkout trees staged in the work volume's trash directory.
+///
+/// # Errors
+/// Returns an error if the work root or a verified trash removal cannot be completed.
+pub fn prune_trash(work: &StorageDirectory, now_ms: u64) -> Result<(), WorkError> {
+    let root = work.path().join(TRASH);
+    if missing(&root)? {
+        return Ok(());
+    }
+    work.verify()?;
+    let device = work.path().metadata()?.dev();
+    let root_info = root.symlink_metadata()?;
+    if !root_info.is_dir() || root_info.dev() != device {
+        return Err(WorkError::WrongCheckout);
+    }
+    for entry in fs::read_dir(&root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(at) = trash_timestamp_ms(name) else {
+            continue;
+        };
+        let entry_path = entry.path();
+        let Ok(entry_info) = entry_path.symlink_metadata() else {
+            continue;
+        };
+        if !entry_info.is_dir() || entry_info.dev() != device {
+            continue;
+        }
+        let checkout = entry_path.join(TRASH_CHECKOUT);
+        let checkout_info = match checkout.symlink_metadata() {
+            Ok(info) if info.is_dir() && info.dev() == device => Some(info),
+            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Ok(_) | Err(_) => continue,
+        };
+        // Avoid racing with an in-progress move into a newly created trash entry.
+        if checkout_info.is_none() && now_ms.saturating_sub(at) < TRASH_ORPHAN_GRACE_MS {
+            continue;
+        }
+        let marker = entry_path.join(TRASH_MARKER);
+        if !owns_trash(&marker, name, &entry_info, checkout_info.as_ref()) {
+            continue;
+        }
+        if checkout_info.is_some() {
+            fs::remove_dir_all(&checkout)?;
+        }
+        fs::remove_file(&marker)?;
+        fs::remove_dir(&entry_path)?;
     }
     Ok(())
 }
@@ -277,6 +414,70 @@ impl Checkout<'_> {
         }
     }
 
+    /// Observe the owned checkout for retirement, including an interrupted removal
+    /// whose `.git` link was unlinked while its prunable Git registration remains.
+    ///
+    /// # Errors
+    /// Returns an error if the checkout cannot be verified or belongs elsewhere.
+    pub fn observe_for_retirement(&self) -> Result<Workspace, WorkError> {
+        self.worktrees.root.verify()?;
+        let metadata = match fs::symlink_metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                return Ok(Workspace::Absent);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if !metadata.is_dir() || self.path.canonicalize()? != self.path {
+            return Err(WorkError::WrongCheckout);
+        }
+        if !missing(&self.path.join(".git"))? {
+            return self.observe();
+        }
+        let Some((admin, head)) = self.prunable_identity()? else {
+            return self.observe();
+        };
+        let dirty = self.status_dirty_with_git_dir(
+            &self.path,
+            Some(&admin),
+            &["--untracked-files=all", "--ignore-submodules=none"],
+        )?;
+        if !dirty && self.index_visible_with_git_dir(&self.path, Some(&admin))? {
+            Ok(Workspace::Clean(head))
+        } else {
+            Ok(Workspace::Dirty)
+        }
+    }
+
+    /// Check whether an absent checkout still holds an owned prunable Git registration.
+    ///
+    /// # Errors
+    /// Returns an error if the repository or registration cannot be verified.
+    pub fn has_prunable_registration(&self) -> Result<bool, WorkError> {
+        self.worktrees.root.verify()?;
+        if !missing(&self.path)? {
+            return Ok(false);
+        }
+        Ok(self.prunable_identity()?.is_some())
+    }
+
+    /// Remove an owned prunable Git registration after verifying the checkout directory is absent.
+    ///
+    /// # Errors
+    /// Returns an error if the registration cannot be verified, is locked, or cannot be removed.
+    pub fn retire_prunable_registration(&self) -> Result<Retirement, WorkError> {
+        self.worktrees.root.verify()?;
+        if !missing(&self.path)? {
+            return Err(WorkError::WrongCheckout);
+        }
+        let Some((admin, _)) = self.prunable_identity()? else {
+            return Ok(Retirement::Absent);
+        };
+        self.require_unlocked(&admin)?;
+        self.remove(&["--force"])?;
+        Ok(Retirement::Removed)
+    }
+
     /// Allocate the task branch at a known commit. An existing owned checkout
     /// is adopted on retry, including any work in it.
     ///
@@ -287,6 +488,10 @@ impl Checkout<'_> {
         let existing = self.observe()?;
         if existing != Workspace::Absent {
             return Ok(existing);
+        }
+        if let Some((admin, _)) = self.prunable_identity()? {
+            self.require_unlocked(&admin)?;
+            self.remove(&["--force"])?;
         }
         let parent = self.path.parent().ok_or(WorkError::InvalidPath)?;
         let bucket = parent
@@ -381,12 +586,26 @@ impl Checkout<'_> {
     }
 
     fn index_visible(&self, root: &Path) -> Result<bool, WorkError> {
+        self.index_visible_with_git_dir(root, None)
+    }
+
+    fn index_visible_with_git_dir(
+        &self,
+        root: &Path,
+        admin: Option<&Path>,
+    ) -> Result<bool, WorkError> {
+        let mut args = Vec::new();
+        if let Some(admin) = admin {
+            args.extend([
+                "--git-dir",
+                admin.to_str().ok_or(WorkError::InvalidPath)?,
+                "--work-tree",
+                root.to_str().ok_or(WorkError::InvalidPath)?,
+            ]);
+        }
+        args.extend(["-c", INDEX_VISIBILITY, "nucleus-index-visibility"]);
         Ok(self
-            .git_named(
-                root,
-                &["-c", INDEX_VISIBILITY, "nucleus-index-visibility"],
-                "git ls-files -v".into(),
-            )?
+            .git_named(root, &args, "git ls-files -v".into())?
             .is_empty())
     }
 
@@ -446,15 +665,101 @@ impl Checkout<'_> {
     /// # Errors
     /// Returns a Git or custody error if the state cannot be verified.
     pub fn deletion_only_head(&self) -> Result<Option<Head>, WorkError> {
+        if !missing(&self.path.join(".git"))? {
+            if self.git_named(
+                &self.path,
+                &["-c", DELETIONS_ONLY, "nucleus-deletions-only"],
+                "git status for tracked deletions".into(),
+            )? != "deletions"
+            {
+                return Ok(None);
+            }
+            return Ok(Some(self.owned_identity()?.head_oid().parse()?));
+        }
+        let Some((admin, head)) = self.prunable_identity()? else {
+            return Err(WorkError::WrongCheckout);
+        };
+        let admin_str = admin.to_str().ok_or(WorkError::InvalidPath)?;
+        let path_str = self.path.to_str().ok_or(WorkError::InvalidPath)?;
         if self.git_named(
             &self.path,
-            &["-c", DELETIONS_ONLY, "nucleus-deletions-only"],
+            &[
+                "--git-dir",
+                admin_str,
+                "--work-tree",
+                path_str,
+                "-c",
+                DELETIONS_ONLY,
+                "nucleus-deletions-only",
+            ],
             "git status for tracked deletions".into(),
-        )? != "deletions"
+        )? == "deletions"
         {
-            return Ok(None);
+            return Ok(Some(head));
         }
-        Ok(Some(self.owned_identity()?.head_oid().parse()?))
+        if missing(&self.path.join(".gitignore"))?
+            && self.git_named(
+                &self.path,
+                &[
+                    "--git-dir",
+                    admin_str,
+                    "--work-tree",
+                    path_str,
+                    "-c",
+                    TRACKED_DELETIONS_ONLY,
+                    "nucleus-tracked-deletions-only",
+                ],
+                "git status for tracked deletions".into(),
+            )? == "deletions"
+            && !self.untracked_with_head_gitignore(&admin)?
+        {
+            return Ok(Some(head));
+        }
+        Ok(None)
+    }
+
+    fn untracked_with_head_gitignore(&self, admin: &Path) -> Result<bool, WorkError> {
+        let admin_str = admin.to_str().ok_or(WorkError::InvalidPath)?;
+        let path_str = self.path.to_str().ok_or(WorkError::InvalidPath)?;
+        let ignore = match self.git(
+            &self.repository,
+            &["--git-dir", admin_str, "cat-file", "-p", "HEAD:.gitignore"],
+        ) {
+            Ok(ignore) => ignore,
+            Err(WorkError::Git {
+                source: GitFailure::Refused { .. } | GitFailure::Unavailable { .. },
+                ..
+            }) => return Ok(true),
+            Err(error) => return Err(error),
+        };
+        self.worktrees.scratch.ensure()?;
+        let mut temp = tempfile::NamedTempFile::new_in(self.worktrees.scratch.path())?;
+        temp.write_all(ignore.as_bytes())?;
+        temp.flush()?;
+        let exclude = temp.path().to_str().ok_or(WorkError::InvalidPath)?;
+        match self.git_named(
+            &self.path,
+            &[
+                "--git-dir",
+                admin_str,
+                "--work-tree",
+                path_str,
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "--exclude-from",
+                exclude,
+            ],
+            "git ls-files --others".into(),
+        ) {
+            Ok(output) => Ok(!output.is_empty()),
+            Err(WorkError::Git { source, .. })
+                if source.code() == GitFailureCode::OutputTooLarge =>
+            {
+                Ok(true)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Remove an idle checkout only if it is still clean at the published head.
@@ -474,23 +779,117 @@ impl Checkout<'_> {
         &'a self,
         published: &Head,
     ) -> Result<impl FnOnce() -> Result<Retirement, WorkError> + 'a, WorkError> {
-        let initial = self.observe()?;
+        let initial = self.observe_for_retirement()?;
         let published = published.clone();
-        Ok(move || {
-            let flags: &[&str] = match initial {
-                Workspace::Absent => return Ok(Retirement::Absent),
-                Workspace::Clean(head) if head == published => &[],
-                Workspace::Dirty if self.deletion_only_head()?.as_ref() == Some(&published) => {
-                    &["--force"]
+        Ok(move || match initial {
+            Workspace::Absent => self.retire_prunable_registration(),
+            Workspace::Clean(head) if head == published => match self.observe_for_retirement()? {
+                Workspace::Absent => self.retire_prunable_registration(),
+                Workspace::Clean(current) if current == published => {
+                    self.retire_to_trash(&published)
                 }
-                Workspace::Clean(_) | Workspace::Dirty => return Ok(Retirement::Retained),
-            };
-            if self.owned_identity()?.head_oid() != published.as_str() {
-                return Ok(Retirement::Retained);
+                Workspace::Clean(_) | Workspace::Dirty => Ok(Retirement::Retained),
+            },
+            Workspace::Dirty => {
+                if missing(&self.path)? {
+                    return self.retire_prunable_registration();
+                }
+                if self.deletion_only_head()?.as_ref() != Some(&published) {
+                    return Ok(Retirement::Retained);
+                }
+                self.retire_to_trash(&published)
             }
-            self.remove(flags)?;
-            Ok(Retirement::Removed)
+            Workspace::Clean(_) => Ok(Retirement::Retained),
         })
+    }
+
+    fn retire_to_trash(&self, published: &Head) -> Result<Retirement, WorkError> {
+        let (admin, head) = self.verified_admin_for_retirement()?;
+        if head != *published {
+            return Ok(Retirement::Retained);
+        }
+        self.require_unlocked(&admin)?;
+        self.worktrees.root.verify()?;
+        self.worktrees.root.ensure_child(Path::new(TRASH))?;
+        let device = self.worktrees.root.path().metadata()?.dev();
+        let trash_root = self.worktrees.root.path().join(TRASH);
+        let trash_info = trash_root.symlink_metadata()?;
+        if !trash_info.is_dir() || trash_info.dev() != device {
+            return Err(WorkError::WrongCheckout);
+        }
+        let checkout_info = self.path.symlink_metadata()?;
+        if !checkout_info.is_dir()
+            || checkout_info.dev() != device
+            || self.path.canonicalize()? != self.path
+        {
+            return Err(WorkError::WrongCheckout);
+        }
+
+        let stamp_ms = unix_now_ms();
+        let mut entry;
+        let mut name;
+        loop {
+            let seq = TRASH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            name = format!("{}-{stamp_ms}-{seq}", &self.branch["ns-".len()..]);
+            entry = trash_root.join(&name);
+            match fs::create_dir(&entry) {
+                Ok(()) => break,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let result = (|| -> Result<(), WorkError> {
+            let entry_info = entry.symlink_metadata()?;
+            let mut marker = fs::File::create_new(entry.join(TRASH_MARKER))?;
+            marker.write_all(trash_stamp(&name, &entry_info, &checkout_info).as_bytes())?;
+            marker.sync_all()?;
+            renameat_with(
+                CWD,
+                &self.path,
+                CWD,
+                entry.join(TRASH_CHECKOUT),
+                RenameFlags::NOREPLACE,
+            )
+            .map_err(std::io::Error::from)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let _ = fs::remove_file(entry.join(TRASH_MARKER));
+            let _ = fs::remove_dir(&entry);
+            return Err(error);
+        }
+        if !missing(&self.path)? {
+            return Err(WorkError::WrongCheckout);
+        }
+        self.remove(&["--force"])?;
+        Ok(Retirement::Removed)
+    }
+
+    fn verified_admin_for_retirement(&self) -> Result<(PathBuf, Head), WorkError> {
+        if !missing(&self.path.join(".git"))? {
+            let identity = self.owned_identity()?;
+            let admin = self.admin_directory(&identity)?;
+            return Ok((admin, identity.head_oid().parse()?));
+        }
+        self.prunable_identity()?.ok_or(WorkError::WrongCheckout)
+    }
+
+    fn require_unlocked(&self, admin: &Path) -> Result<(), WorkError> {
+        if initializing(admin)? {
+            return Err(WorkError::Initializing);
+        }
+        if !missing(&admin.join("locked"))? {
+            return Err(self.git_failure(
+                &self.repository,
+                GitOperation::Other,
+                "git worktree remove".into(),
+                GitFailure::Refused {
+                    code: GitFailureCode::RepositoryUnavailable,
+                    detail: "worktree is locked".into(),
+                },
+            ));
+        }
+        Ok(())
     }
 
     fn remove(&self, flags: &[&str]) -> Result<(), WorkError> {
@@ -514,6 +913,118 @@ impl Checkout<'_> {
         Ok(checkout)
     }
 
+    fn prunable_identity(&self) -> Result<Option<(PathBuf, Head)>, WorkError> {
+        let repository = self.git_identity(&self.repository)?;
+        if repository.root() != self.repository {
+            return Err(WorkError::WrongCheckout);
+        }
+        let Some(admin) = self.find_worktree_admin(&repository)? else {
+            return Ok(None);
+        };
+        if initializing(&admin)? {
+            return Err(WorkError::Initializing);
+        }
+        if missing(&admin.join("index"))? {
+            return Err(WorkError::MissingIndex);
+        }
+        let commondir = read_small_regular_file(&admin.join("commondir"))?;
+        let resolved_common = admin
+            .join(commondir.trim_end_matches('\n'))
+            .canonicalize()?;
+        if resolved_common != repository.common_dir() {
+            return Err(WorkError::WrongCheckout);
+        }
+        if let Some(expected_fs) = repository.common_dir_filesystem_id() {
+            let meta = resolved_common.metadata()?;
+            if (meta.dev(), meta.ino()) != (expected_fs.device, expected_fs.inode) {
+                return Err(WorkError::WrongCheckout);
+            }
+        }
+        let dir = if missing(&self.path)? {
+            &self.repository
+        } else {
+            &self.path
+        };
+        let admin_str = admin.to_str().ok_or(WorkError::InvalidPath)?;
+        let branch = match self.git(
+            dir,
+            &[
+                "--git-dir",
+                admin_str,
+                "symbolic-ref",
+                "--quiet",
+                "--short",
+                "HEAD",
+            ],
+        ) {
+            Ok(branch) => branch,
+            Err(WorkError::Git {
+                source: GitFailure::Refused { .. },
+                ..
+            }) => return Err(WorkError::WrongCheckout),
+            Err(error) => return Err(error),
+        };
+        if branch.trim_end_matches('\n') != self.branch {
+            return Err(WorkError::WrongCheckout);
+        }
+        let head = self.git(
+            dir,
+            &["--git-dir", admin_str, "rev-parse", "--verify", "HEAD"],
+        )?;
+        Ok(Some((admin, head.trim_end_matches('\n').parse()?)))
+    }
+
+    fn find_worktree_admin(
+        &self,
+        repository: &WorktreeIdentity,
+    ) -> Result<Option<PathBuf>, WorkError> {
+        let worktrees_dir = repository.common_dir().join("worktrees");
+        if missing(&worktrees_dir)? {
+            return Ok(None);
+        }
+        let worktrees_meta = worktrees_dir.symlink_metadata()?;
+        if !worktrees_meta.is_dir() || worktrees_dir.canonicalize()? != worktrees_dir {
+            return Err(WorkError::WrongCheckout);
+        }
+        let path_absent = missing(&self.path)?;
+        for entry in fs::read_dir(&worktrees_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let candidate = entry.path();
+            let gitdir_path = candidate.join("gitdir");
+            if missing(&gitdir_path)? {
+                continue;
+            }
+            let Ok(backlink) = read_small_regular_file(&gitdir_path) else {
+                continue;
+            };
+            let target = candidate.join(backlink.trim_end_matches('\n'));
+            if target.file_name() != Some(OsStr::new(".git")) {
+                continue;
+            }
+            let Some(parent) = target.parent() else {
+                continue;
+            };
+            let matches = if path_absent {
+                parent == self.path
+                    || (parent.file_name() == self.path.file_name()
+                        && parent
+                            .parent()
+                            .and_then(|bucket| bucket.canonicalize().ok())
+                            .as_deref()
+                            == self.path.parent())
+            } else {
+                parent.canonicalize().ok().as_deref() == Some(self.path.as_path())
+            };
+            if matches {
+                return Ok(Some(candidate));
+            }
+        }
+        Ok(None)
+    }
+
     fn admin_directory(&self, identity: &WorktreeIdentity) -> Result<PathBuf, WorkError> {
         let link = fs::read_to_string(self.path.join(".git"))?;
         let directory = link
@@ -528,7 +1039,25 @@ impl Checkout<'_> {
     }
 
     fn status_dirty(&self, directory: &Path, flags: &[&str]) -> Result<bool, WorkError> {
-        let mut args = vec!["--no-optional-locks", "status", "--porcelain=v1"];
+        self.status_dirty_with_git_dir(directory, None, flags)
+    }
+
+    fn status_dirty_with_git_dir(
+        &self,
+        directory: &Path,
+        admin: Option<&Path>,
+        flags: &[&str],
+    ) -> Result<bool, WorkError> {
+        let mut args = Vec::new();
+        if let Some(admin) = admin {
+            args.extend([
+                "--git-dir",
+                admin.to_str().ok_or(WorkError::InvalidPath)?,
+                "--work-tree",
+                directory.to_str().ok_or(WorkError::InvalidPath)?,
+            ]);
+        }
+        args.extend(["--no-optional-locks", "status", "--porcelain=v1"]);
         args.extend_from_slice(flags);
         match self.git_named(directory, &args, "git status".into()) {
             Ok(status) => Ok(!status.is_empty()),
@@ -569,7 +1098,16 @@ impl Checkout<'_> {
         let (operation, timeout) = match args {
             ["fetch", ..] => (GitOperation::Fetch, GIT_TIMEOUT),
             ["worktree", "add", ..] => (GitOperation::Add, WORKTREE_TIMEOUT),
-            ["--no-optional-locks", "status", ..] => (GitOperation::Status, GIT_TIMEOUT),
+            ["--no-optional-locks", "status", ..]
+            | [
+                "--git-dir",
+                _,
+                "--work-tree",
+                _,
+                "--no-optional-locks",
+                "status",
+                ..,
+            ] => (GitOperation::Status, GIT_TIMEOUT),
             _ => (GitOperation::Other, GIT_TIMEOUT),
         };
         self.worktrees
@@ -593,6 +1131,23 @@ impl Checkout<'_> {
             source,
         }
     }
+}
+
+fn read_small_regular_file(path: &Path) -> Result<String, WorkError> {
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let file = open(path, flags, Mode::empty())
+        .map(fs::File::from)
+        .map_err(std::io::Error::from)?;
+    let info = file.metadata()?;
+    if !info.is_file() || info.len() > 8192 {
+        return Err(WorkError::WrongCheckout);
+    }
+    let mut bytes = Vec::with_capacity(usize::try_from(info.len()).unwrap_or(0));
+    file.take(8193).read_to_end(&mut bytes)?;
+    if bytes.len() > 8192 {
+        return Err(WorkError::WrongCheckout);
+    }
+    String::from_utf8(bytes).map_err(|_| WorkError::WrongCheckout)
 }
 
 fn missing(path: &Path) -> Result<bool, WorkError> {

@@ -1,0 +1,1 @@
+Retire task checkouts by renaming the directory into same-volume work trash and removing the Git registration synchronously while deleting the trash tree asynchronously, and recover interrupted cleanups whose `.git` link was already removed when their prunable Git registration still proves custody at the published head.
