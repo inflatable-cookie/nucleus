@@ -135,35 +135,53 @@ impl fmt::Display for BriefPolicyError {
 impl std::error::Error for BriefPolicyError {}
 
 impl BriefPolicy {
-    /// Validate routing keys on a new or amended brief. Stored briefs stay readable.
+    /// Validate routing keys on a new brief.
     ///
     /// # Errors
     /// Returns an error for unsupported keys or invalid policy.
     pub fn submitted(brief: &str) -> Result<Self, BriefPolicyError> {
-        let policy = Self::parse(brief)?;
-        if policy.preferred_profile_id.is_some() {
+        Self::parse(brief)?.validate(&BTreeMap::new())
+    }
+
+    /// Validate a replacement brief against the stored policy.
+    ///
+    /// # Errors
+    /// Returns an error for new or changed unknown keys or invalid policy.
+    pub fn amended(&self, brief: &str) -> Result<Self, BriefPolicyError> {
+        Self::parse(brief)?.validate(&self.unknown)
+    }
+
+    fn validate(
+        self,
+        stored_unknown: &BTreeMap<String, yaml_serde::Value>,
+    ) -> Result<Self, BriefPolicyError> {
+        if self.preferred_profile_id.is_some() {
             return Err(BriefPolicyError::RetiredProfile);
         }
-        if policy.interactive.is_some() {
+        if self.interactive.is_some() {
             return Err(BriefPolicyError::RetiredInteractive);
         }
-        if let Some((key, _)) = policy.unknown.first_key_value() {
+        if let Some((key, _)) = self
+            .unknown
+            .iter()
+            .find(|(key, value)| stored_unknown.get(*key) != Some(*value))
+        {
             return Err(BriefPolicyError::UnknownQueueKey(key.clone()));
         }
-        if policy.merge_hold == Some(true) {
-            if policy
+        if self.merge_hold == Some(true) {
+            if self
                 .merge_hold_reason()
                 .is_none_or(|reason| reason.is_empty() || reason.chars().count() > 4000)
             {
                 return Err(BriefPolicyError::MergeHoldReason);
             }
-            if policy.report_only == Some(true) {
+            if self.report_only == Some(true) {
                 return Err(BriefPolicyError::ReportPolicy(
                     "queue.mergeHold cannot be combined with queue.reportOnly",
                 ));
             }
         }
-        Ok(policy)
+        Ok(self)
     }
 
     /// Return the reason when the brief declares a merge hold.
@@ -328,6 +346,32 @@ mod submission_tests {
             BriefPolicy::submitted(brief).unwrap_err().to_string(),
             "unknown queue key: queue.scope"
         );
+    }
+
+    #[test]
+    fn amendments_can_keep_or_remove_but_cannot_add_or_change_unknown_queue_keys() {
+        let brief = "---\nqueue:\n  complexity: high\n  scope: complex\n---\nHeld work";
+        let stored = BriefPolicy::parse(brief).unwrap();
+        assert!(
+            stored
+                .amended(&brief.replace("Held work", "Amended work"))
+                .is_ok()
+        );
+        assert!(
+            stored
+                .amended(&brief.replace("  scope: complex\n", ""))
+                .is_ok()
+        );
+        for (entry, key) in [
+            ("scope: general", "scope"),
+            ("scope: complex\n  mergeHlod: true", "mergeHlod"),
+        ] {
+            let replacement = brief.replace("scope: complex", entry);
+            assert_eq!(
+                stored.amended(&replacement).unwrap_err().to_string(),
+                format!("unknown queue key: queue.{key}")
+            );
+        }
     }
 
     #[test]

@@ -43,7 +43,9 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   Set `queue.mergeHold: true` with a nonblank `queue.mergeHoldReason` to wait
   for a named condition after work, review and required checks finish.
   The submitting planner or the operator lifts the hold with `nucleus release REF`.
-  Submission and amendment reject unknown `queue` keys by name.
+  Submission rejects unknown `queue` keys by name. An amendment may keep or
+  remove an existing legacy key. Adding a key or changing its value requires
+  a supported key.
 
   For review entry, add `--review PR_URL HEAD` with the named PR and exact full
   head. Choose the repository explicitly when the project or brief needs it.

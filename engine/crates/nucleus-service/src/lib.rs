@@ -1884,7 +1884,7 @@ impl Service {
         use nucleus_core::profiles::BriefPolicy;
 
         let before = BriefPolicy::parse(&prior.task.brief().text).unwrap_or_default();
-        let after = BriefPolicy::submitted(&task.brief().text)?;
+        let after = before.amended(&task.brief().text)?;
         let reason = after.merge_hold_reason();
         if before.merge_hold_reason() != reason {
             task.set_brief_merge_hold(reason, authority, now_ms())?;
