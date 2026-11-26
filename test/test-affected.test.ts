@@ -230,3 +230,48 @@ test('a changed test file does not select tests that only walk test/', () => {
   });
   assert.deepEqual(selected(selectAffected({ changed: ['test/edited.test.ts'], files, sources })), ['test/edited.test.ts']);
 });
+
+test('a test that loads a production entry by its literal path is selected for a change inside the entry', () => {
+  const { files, sources } = tree({
+    'client/child.tsx': 'export const child = 1;',
+    'client/screen.tsx': "import { child } from './child';\nexport const screen = child;",
+    'client/other.tsx': 'export const other = 1;',
+    'test/bundles.test.ts': "const entry = new URL('../client/screen.tsx', import.meta.url);\n",
+    'test/unrelated.test.ts': "const entry = new URL('../client/other.tsx', import.meta.url);\n",
+  });
+  const result = selectAffected({ changed: ['client/child.tsx'], files, sources });
+  assert.deepEqual(selected(result), ['test/bundles.test.ts']);
+  assert.deepEqual(result.tests[0]?.reasons, ['bundles client/screen.tsx → client/child.tsx']);
+});
+
+test('a bundled entry written into a template string or loaded dynamically is selected', () => {
+  const { files, sources } = tree({
+    'client/child.tsx': 'export const child = 1;',
+    'client/screen.tsx': "import { child } from './child';\nexport const screen = child;",
+    'test/template.test.ts': 'const contents = `export * from "../client/screen.tsx";`;\n',
+    'test/dynamic.test.ts': "const screen = await import('../client/screen');\n",
+  });
+  assert.deepEqual(selected(selectAffected({ changed: ['client/child.tsx'], files, sources })), ['test/dynamic.test.ts', 'test/template.test.ts']);
+});
+
+test('a static import of a production entry does not select a test: the hub rule holds for bundled entries too', () => {
+  const { files, sources } = tree({
+    'client/child.tsx': 'export const child = 1;',
+    'client/screen.tsx': "import { child } from './child';\nexport const screen = child;",
+    'test/static.test.ts': "import { screen } from '../client/screen';\n",
+    'test/type-only.test.ts': "type Screen = typeof import('../client/screen');\n",
+  });
+  assert.deepEqual(selectAffected({ changed: ['client/child.tsx'], files, sources }).tests, []);
+});
+
+test('the nearest bundled entry names the reason, and a test is selected once', () => {
+  const { files, sources } = tree({
+    'client/child.tsx': 'export const child = 1;',
+    'client/leaf.tsx': "import { child } from './child';\nexport const leaf = child;",
+    'client/screen.tsx': "import { leaf } from './leaf';\nexport const screen = leaf;",
+    'test/both.test.ts': "const a = new URL('../client/screen.tsx', import.meta.url);\nconst b = new URL('../client/leaf.tsx', import.meta.url);\n",
+  });
+  const result = selectAffected({ changed: ['client/child.tsx'], files, sources });
+  assert.deepEqual(selected(result), ['test/both.test.ts']);
+  assert.deepEqual(result.tests[0]?.reasons, ['bundles client/leaf.tsx → client/child.tsx']);
+});
