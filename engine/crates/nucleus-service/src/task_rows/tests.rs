@@ -216,6 +216,10 @@ impl Fixture {
 
     async fn sync(&self) -> nucleus_hosts::HostCalls {
         self.publish_shell();
+        self.sync_held().await
+    }
+
+    async fn sync_held(&self) -> nucleus_hosts::HostCalls {
         let (result, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
             self.service
                 .reconcile_task_rows(PROVIDER, std::slice::from_ref(&self.thread)),
@@ -1672,12 +1676,23 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
     {
         let mut native = fixture.native.lock().unwrap();
         let child = native.child.as_mut().unwrap();
+        // The captured thread.updated shell row is completed despite the thread read waiting.
+        child.as_object_mut().unwrap().remove("parentThreadId");
+        child["lineage"] = json!({"parentThreadId":fixture.thread,
+            "rootThreadId":fixture.thread,"relationshipToParent":"subagent"});
+        child["archivedAt"] = Value::Null;
+        child["deletedAt"] = Value::Null;
         child["latestRunId"] = json!("worker-run");
+        child["latestRunStartedAt"] = json!("2029-12-31T23:59:50Z");
         child["latestRunCompletedAt"] = json!("2030-01-01T00:00:00Z");
         child["pendingBackgroundTasks"] =
             json!([{"kind":"monitor", "taskId":"monitor", "awaited":true}]);
     }
-    let calls = fixture.sync().await;
+    let child = fixture.native.lock().unwrap().child.clone().unwrap();
+    fixture.service.host.fixture_shell_delta(
+        &json!({"kind":"thread.updated", "sequence":1, "location":"active", "thread":child}),
+    );
+    let calls = fixture.sync_held().await;
     assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
     assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
     assert!(fixture.sync().await.is_empty());
@@ -1697,7 +1712,7 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
     fixture.service.host.fixture_shell_delta(
         &json!({"kind":"thread.updated", "sequence":2, "location":"active", "thread":child}),
     );
-    let calls = fixture.sync().await;
+    let calls = fixture.sync_held().await;
     assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
     assert_eq!(
         fixture.commands(),
@@ -1720,7 +1735,7 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
     fixture.service.host.fixture_shell_delta(
         &json!({"kind":"thread.updated", "sequence":3, "location":"active", "thread":child}),
     );
-    let calls = fixture.sync().await;
+    let calls = fixture.sync_held().await;
     assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
     assert_eq!(
         fixture.commands(),
