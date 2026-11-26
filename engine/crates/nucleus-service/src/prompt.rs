@@ -16,6 +16,7 @@ use crate::DependencyStatus;
 const SKILL: &str = include_str!("../../../../skills/nucleus/SKILL.md");
 const REPORTING: &str = "Reporting and contact";
 const WORKER_QUESTION: &str = "Ask the planner only about a failure you cannot resolve, missing access, or a scope decision, not to retry or reassign.";
+const FOREGROUND_RULE: &str = "Run checks and long commands in the foreground and wait for them. Don't end your turn while a background command is still running. Push and report before you stop.";
 
 #[derive(Default)]
 pub(super) struct LaneContext {
@@ -174,6 +175,8 @@ impl Prompt<'_> {
         });
         section(&mut sections, "standingRules", &mut text, |text| {
             text.push_str("\nKeep the Nucleus-held brief unchanged. Stay on the assigned branch. Never push to another branch or repository. Report only through this run's binding.\n");
+            text.push_str(FOREGROUND_RULE);
+            text.push('\n');
         });
         section(&mut sections, "report", &mut text, |text| {
             self.write_report(text, task.report_task());
@@ -558,6 +561,7 @@ mod tests {
             "PR title: 042: Repair delivery worker",
             "Deliver the exact result.",
             "'/bin/nucleus engine' report --ticket '/scratch/a quote'\\''s ticket'",
+            FOREGROUND_RULE,
             "### Worker",
             "### Reporting and contact",
         ] {
@@ -594,6 +598,7 @@ mod tests {
         .render()
         .text;
         assert!(text.contains(&format!("PR: {PR}\nPR head: {HEAD}")));
+        assert!(text.contains(FOREGROUND_RULE));
         assert!(text.contains("Never read the\nworker's private transcript."));
         assert!(!text.contains("### Worker"));
         assert!(!text.contains("Ready for review:"));
