@@ -656,3 +656,33 @@ test("a cancelled, unreported attempt with no time stays unknown rather than 0m"
   assert.equal(ui.get(/^Step Working:/).props.accessibilityLabel, "Step Working: current · stopped");
   assert.doesNotMatch(ui.text(), /\b0m\b/);
 });
+
+test("an open prerequisite draft survives a refresh that empties the list, and the conflict that follows", async () => {
+  const dependency = { taskId: "t-1", reference: "fixture#1", title: "Fixture 1", phase: "working", status: "pending" };
+  const fixture = (dependencies: Fixture["dependencies"]): Fixture => ({
+    phase: "queued", stateLabel: "Queued · prerequisite", attention: "waiting", wait: "prerequisite",
+    steps: steps({ key: "queued", state: "current", visits: [{ enteredAtMs: now - HOUR, leftAtMs: null }] },
+      { key: "working", state: "todo" }, { key: "review", state: "todo" }, { key: "merge", state: "todo" }, { key: "close", state: "todo" }),
+    dependencies,
+    commands: [{ name: "cancel", preflight: "ready" }, { name: "set_dependencies", preflight: "ready" }],
+  });
+  const { ui, client } = await open("prereq-empty", fixture([dependency]));
+  ui.press("Edit prerequisites");
+  ui.type("Prerequisites", "fixture#1\nfixture#3");
+  // Another editor clears the last prerequisite; the task stays queued at version 8.
+  const { detail, next } = engineTask("prereq-empty", { ...fixture([]), stateLabel: "Queued", wait: null });
+  responses.set("/tasks/prereq-empty", { ...detail, version: 8 });
+  responses.set("/tasks/prereq-empty/next", { ...next, version: 8 });
+  await client.invalidateQueries();
+  await waitFor(() => ui.text().includes("Changed since you opened this"), 5000, "the refresh arrives");
+  assert.equal(ui.get("Prerequisites").props.value, "fixture#1\nfixture#3", "the refresh keeps the open draft");
+  postReplies.set("/tasks/prereq-empty/commands", { status: 409, body: { error: "The task changed. Reopen to edit." } });
+  ui.press("Save prerequisites");
+  await waitFor(() => ui.text().includes("The task changed"), 5000, "the conflict is shown");
+  assert.deepEqual(posts.find(({ path }) => path === "/tasks/prereq-empty/commands")?.command, {
+    set_dependencies: { version: 7, depends_on: ["fixture#1", "fixture#3"] },
+  });
+  assert.equal(ui.get("Prerequisites").props.value, "fixture#1\nfixture#3", "the draft survives the refusal");
+  ui.press("Close prerequisites");
+  assert.equal(ui.query("Prerequisites"), undefined, "closing the draft leaves no empty editor");
+});

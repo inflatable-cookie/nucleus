@@ -190,12 +190,16 @@ const dependencyTone = (dependency: RustDependency): TimelineTone =>
       ? "accent"
       : "danger";
 
+export type PrerequisiteDraft = { text: string; openedAt: number };
+
 export function Prerequisites({
   c,
   dependencies,
   version,
   canEdit,
   busy,
+  draft: open,
+  onDraft,
   onSave,
   onOpenTask,
 }: {
@@ -205,15 +209,21 @@ export function Prerequisites({
   version: number;
   canEdit: boolean;
   busy: boolean;
+  /**
+   * The open draft and the version it was read at, held by the dialog so a refresh
+   * that empties the live list cannot drop it. The save carries that version, so the
+   * engine's version check refuses it if someone else changed the list meanwhile.
+   */
+  draft: PrerequisiteDraft | null;
+  onDraft: (draft: PrerequisiteDraft | null) => void;
   /** Resolves true once saved; the editor keeps the draft otherwise. */
   onSave: (references: string[], version: number) => Promise<boolean>;
   onOpenTask?: (id: string) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  // The save carries the version the draft was read at, so the engine's
-  // version check refuses it if someone else changed the list meanwhile.
-  const [openedAt, setOpenedAt] = useState(version);
+  const editing = open !== null;
+  const draft = open?.text ?? "";
+  const openedAt = open?.openedAt ?? version;
+  const setDraft = (text: string) => onDraft({ text, openedAt });
   const [saving, setSaving] = useState(false);
   const r = roles(c);
   return (
@@ -226,13 +236,9 @@ export function Prerequisites({
             c={c}
             text={editing ? "Done" : "Edit"}
             label={editing ? "Close prerequisites" : "Edit prerequisites"}
-            onPress={() => {
-              if (!editing) {
-                setDraft(dependencies.map((dependency) => dependency.reference).join("\n"));
-                setOpenedAt(version);
-              }
-              setEditing(!editing);
-            }}
+            onPress={() =>
+              onDraft(editing ? null : { text: dependencies.map((dependency) => dependency.reference).join("\n"), openedAt: version })
+            }
           />
         )}
       </View>
@@ -252,7 +258,7 @@ export function Prerequisites({
               setSaving(true);
               void onSave(draft.split(/[\s,]+/).filter(Boolean), openedAt).then((saved) => {
                 setSaving(false);
-                if (saved) setEditing(false);
+                if (saved) onDraft(null);
               });
             }}
           />

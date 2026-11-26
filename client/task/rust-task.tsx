@@ -45,6 +45,7 @@ import {
   ProgressCard,
   PullRequestCard,
   activityEntries,
+  type PrerequisiteDraft,
 } from "./rust-task-cards";
 import { clockTime, type TimelineTone } from "./rust-timeline";
 
@@ -183,6 +184,7 @@ export function RustTaskDialog({
   const [activityOpen, setActivityOpen] = useState<boolean | null>(null);
   const [activityAll, setActivityAll] = useState(false);
   const [reason, setReason] = useState("");
+  const [prerequisiteDraft, setPrerequisiteDraft] = useState<PrerequisiteDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
   const [notice, setNotice] = useState("");
@@ -330,11 +332,14 @@ export function RustTaskDialog({
       waitLine={waitLine}
       recheck={!attention ? recheck : null}
       dependencies={
-        detail.phase === "queued" && dependencies.length > 0 ? (
+        (detail.phase === "queued" && dependencies.length > 0) || prerequisiteDraft !== null ? (
           <Prerequisites
             c={c}
             dependencies={dependencies}
-            canEdit={offered("set_dependencies")}
+            draft={prerequisiteDraft}
+            onDraft={setPrerequisiteDraft}
+            // An open draft can always be closed, even once Edit is no longer offered.
+            canEdit={offered("set_dependencies") || prerequisiteDraft !== null}
             busy={locked}
             onOpenTask={onOpenTask}
             version={detail.version}
