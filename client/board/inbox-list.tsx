@@ -796,7 +796,8 @@ export function InboxList({
       >
         <BoardCardVariantContext.Provider value="row">
           {rust && <RustListRows key={view} view={view} rust={rust} c={c} />}
-          {closedFilter ? (
+          {closedFilter && (
+            // Closed has no board cards (triageCards returns none), so these rows are the list.
             <View style={{ gap: space.xxs }}>
               {(closedQuery.data ?? []).map((item) => {
                 const word = item.kind === "papercut" ? "Papercut" : "Lead";
@@ -833,7 +834,8 @@ export function InboxList({
                   onPress={() => void closedQuery.refetch()} status={{ state: "Retry", tone: "warning" }} />
               ) : null}
             </View>
-          ) : view === "queue" ? (
+          )}
+          {view === "queue" ? (
             <View style={{ gap: space.xxs }}>{queuedList()}</View>
           ) : (
             sections.map((section) => {
