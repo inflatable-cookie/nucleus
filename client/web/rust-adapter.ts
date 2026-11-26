@@ -588,12 +588,12 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         unknown: "unknown",
       } as const;
       return {
-        hosts: [
+        hosts: t3 ? [
           {
             id: "t3",
             kind: "t3code",
             label: "T3 Code",
-            endpoint: t3?.endpoint ?? hosts.active.endpoint,
+            endpoint: t3.endpoint,
             state: state[hosts.active.status],
             reason: "",
             isDefault: true,
@@ -601,8 +601,8 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
             dependents: [],
             removalBlockers: ["T3 is the engine's only host (Spec 070 ruling 5)."],
           },
-        ],
-        defaultHostKind: "t3code",
+        ] : [],
+        defaultHostKind: t3 ? "t3code" : null,
         removals: [],
       };
     },
