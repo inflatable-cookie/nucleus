@@ -724,27 +724,75 @@ async fn a_selected_check_rollup_must_be_present_even_when_null() {
 }
 
 #[tokio::test]
-async fn named_project_checks_need_passing_github_branch_rules_at_the_head() {
-    for (required, expected) in [(true, CheckState::Ready), (false, CheckState::Unreported)] {
-        let mut response = checks('a', "SUCCESS");
-        response["data"]["repository"]["pullRequest"]["statusCheckRollup"]["contexts"] = json!({
-            "pageInfo": {"hasNextPage": false, "endCursor": null},
-            "nodes": [{"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS", "isRequired": required}],
-        });
-        let (forge, calls) = server(vec![Some(pull('a', false)), Some(response)]);
-        let target = branches()
-            .target(PR_URL)
-            .expect("target")
-            .with_required_checks(vec!["CI".into()]);
-        assert!(
-            matches!(forge.observe(&target).await, Ok(Forge::Open { checks, .. }) if checks == expected)
-        );
-        let requests = calls.join().expect("HTTP requests");
-        assert_eq!(
-            requests[1].body.as_ref().expect("GraphQL request")["variables"]["namedChecks"],
-            true
-        );
-    }
+async fn merge_gate_blocks_github_required_failure_and_allows_non_required_failure() {
+    let target = branches().target(PR_URL).expect("target");
+
+    // Required check failing on GitHub blocks merge without sending PUT /merge.
+    let mut required_failed = checks('a', "FAILURE");
+    let wire = &mut required_failed["data"]["repository"]["pullRequest"];
+    wire["mergeStateStatus"] = json!("BLOCKED");
+    wire["statusCheckRollup"]["contexts"] = json!({
+        "pageInfo": {"hasNextPage": false, "endCursor": null},
+        "nodes": [
+            {"__typename": "CheckRun", "name": "CI", "conclusion": "FAILURE", "isRequired": true},
+            {"__typename": "StatusContext", "context": "advisory", "state": "SUCCESS", "isRequired": false}
+        ],
+    });
+    let (forge, calls) = server(vec![Some(pull('a', false)), Some(required_failed)]);
+    let attempt = forge
+        .merge(&task_with_approval(), &target)
+        .await
+        .expect("observe blocked merge");
+    assert_eq!(attempt.write, MergeWrite::Skipped);
+    assert!(matches!(
+        attempt.observed,
+        Ok(Forge::Open {
+            checks: CheckState::FailedRequired(ref names),
+            ..
+        }) if names == &vec!["CI".to_owned()]
+    ));
+    let requests = calls.join().expect("HTTP requests");
+    assert_eq!(
+        requests[1].body.as_ref().expect("GraphQL request")["variables"]["namedChecks"],
+        true
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|r| !r.method_and_path.starts_with("PUT "))
+    );
+
+    // Non-required check failing on GitHub (UNSTABLE rollup) still merges when required checks pass.
+    let mut optional_failed = checks('a', "FAILURE");
+    let wire = &mut optional_failed["data"]["repository"]["pullRequest"];
+    wire["mergeStateStatus"] = json!("UNSTABLE");
+    wire["statusCheckRollup"]["contexts"] = json!({
+        "pageInfo": {"hasNextPage": false, "endCursor": null},
+        "nodes": [
+            {"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS", "isRequired": true},
+            {"__typename": "CheckRun", "name": "optional-lint", "conclusion": "FAILURE", "isRequired": false}
+        ],
+    });
+    let (forge, calls) = server(vec![
+        Some(pull('a', false)),
+        Some(optional_failed),
+        Some(pull('a', false)),
+        Some(json!({"merged": true, "sha": sha('f')})),
+        Some(pull('a', true)),
+    ]);
+    let attempt = forge
+        .merge(&task_with_approval(), &target)
+        .await
+        .expect("merge with non-required failure");
+    assert_eq!(attempt.write, MergeWrite::Merged { commit: sha('f') });
+    assert!(matches!(attempt.observed, Ok(Forge::Merged { .. })));
+    let requests = calls.join().expect("HTTP requests");
+    assert_eq!(
+        requests[1].body.as_ref().expect("GraphQL request")["variables"]["namedChecks"],
+        true
+    );
+    assert!(requests[3].method_and_path.starts_with("PUT "));
+    assert_eq!(requests[3].body.as_ref().unwrap()["sha"], json!(sha('a')));
 }
 
 #[tokio::test]
@@ -863,10 +911,8 @@ async fn merge_checks_read_the_required_context_on_the_second_page() {
         Some(json!({"merged": true, "sha": sha('f')})),
         Some(pull('a', true)),
     ]);
-    let mut branches = branches();
-    branches.required_checks = vec!["ci".into()];
     let result = forge
-        .merge(&task_with_approval(), &branches.target(PR_URL).unwrap())
+        .merge(&task_with_approval(), &branches().target(PR_URL).unwrap())
         .await
         .expect("merge");
     assert!(matches!(result.observed, Ok(Forge::Merged { .. })));
@@ -942,10 +988,8 @@ async fn a_successful_partial_inventory_stays_unknown_at_either_paging_bound() {
             replies.push(Some(check_page('a', 'b', Some(&cursor), &success)));
         }
         let (forge, calls) = server(replies);
-        let mut branches = branches();
-        branches.required_checks = vec!["ci".into()];
         let observed = forge
-            .observe_for_merge(&branches.target(PR_URL).unwrap())
+            .observe_for_merge(&branches().target(PR_URL).unwrap())
             .await
             .unwrap();
         assert!(matches!(

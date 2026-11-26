@@ -198,7 +198,9 @@ Later decisions carry their own attribution.
     a conflict or a read verifies that the base moved at the approved head.
     The ordinary readback after a refused merge can supply that evidence.
     Confirmed required check failures return with the check names GitHub marks
-    required at that head. Pending and unreported checks wait. Incomplete
+    required at that head. Pending checks wait. Non-required check failures do
+    not block merge when GitHub reports the PR mergeable; there is no
+    Nucleus-side checks list (ruling 53). Incomplete
     evidence and unrelated branch protection keep their own gates.
     Recovery retires the old merge authority and freezes the instruction in
     the retained worker's next run. It uses the same provider and model and
