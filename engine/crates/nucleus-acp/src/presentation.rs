@@ -132,7 +132,7 @@ impl Card {
             title.push_str(" · Duration unavailable");
         }
         let status = match run.outcome {
-            Some(Outcome::Blocked { .. } | Outcome::ProviderLimit { .. }) => "failed",
+            Some(Outcome::Blocked { .. }) => "failed",
             _ if finished => "completed",
             _ => "in_progress",
         };
@@ -226,16 +226,6 @@ fn outcome_text(outcome: &Outcome, answer: Option<&str>) -> String {
             }
             line
         }
-        Outcome::ProviderLimit { cause, group, .. } => cause
-            .as_deref()
-            .filter(|text| !text.trim().is_empty())
-            .map_or_else(
-                || match group.as_deref() {
-                    Some(group) => format!("Provider usage limit for subscription group {group}."),
-                    None => "Provider usage limit.".into(),
-                },
-                str::to_owned,
-            ),
     }
 }
 

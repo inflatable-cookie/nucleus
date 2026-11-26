@@ -28,8 +28,13 @@ use axum::{
 };
 use futures_util::{Stream, TryStreamExt, stream};
 use nucleus_core::{
-    Answer, Authority, Brief, Command, Hold, Identity, Observation, Phase, PullRequest, Question,
-    QueuePriority, Report, ReportAcceptance, ReportDelivery, ReportTask, Task, Verdict, WaitReason,
+    Answer, Authority, Brief, Command, Entry, Hold, Identity, Observation, Phase, PullRequest,
+    Question, QueuePriority, Report, ReportAcceptance, ReportDelivery, ReportTask, Task, Verdict,
+    WaitReason,
+    acp::lifecycle::{
+        Lifecycle, Milestone, Outcome, Participant, RoleCard, Step, StepKey, Transcript,
+    },
+    profiles::Provider,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -650,6 +655,18 @@ async fn detail(
     });
     let summary = Summary::read(&row, &state, &scope, authority.as_deref(), transcript)?;
     let run = RunView::read(&row, activity, summary.card.lifecycle.review_round);
+    let events = state
+        .store
+        .lifecycle_events(&id)
+        .map_err(ServiceError::from)?;
+    let summary = Summary {
+        card: summary.card.into_board(|lifecycle| {
+            board_lifecycle(task, &events, lifecycle, credential.is_none())
+        }),
+        next_check_at: summary.next_check_at,
+        dependency_status: summary.dependency_status,
+        dependency_edits: summary.dependency_edits,
+    };
     let (parent_hold, active_child) = if credential.is_some() {
         api.service.acp_turn_view(&state, &row)?
     } else {
@@ -1147,7 +1164,7 @@ struct Summary<C = Card> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Card {
+struct Card<L = Lifecycle> {
     identity: Identity,
     title: String,
     number: Option<i64>,
@@ -1163,9 +1180,37 @@ struct Card {
     wait: Option<WaitReason>,
     wait_detail: Option<String>,
     attention: crate::attention::TaskAttention,
-    lifecycle: nucleus_core::acp::lifecycle::Lifecycle,
+    lifecycle: L,
     question: Option<Question>,
     hold: Option<Hold>,
+}
+
+impl Card {
+    fn into_board(
+        self,
+        map_lifecycle: impl FnOnce(Lifecycle) -> BoardLifecycle,
+    ) -> Card<BoardLifecycle> {
+        let lifecycle = map_lifecycle(self.lifecycle);
+        Card {
+            identity: self.identity,
+            title: self.title,
+            number: self.number,
+            reference: self.reference,
+            version: self.version,
+            phase: self.phase,
+            queue_priority: self.queue_priority,
+            state_label: self.state_label,
+            state_since_ms: self.state_since_ms,
+            latest_event_at_ms: self.latest_event_at_ms,
+            created_at_ms: self.created_at_ms,
+            wait: self.wait,
+            wait_detail: self.wait_detail,
+            attention: self.attention,
+            lifecycle,
+            question: self.question,
+            hold: self.hold,
+        }
+    }
 }
 
 impl Summary {
@@ -1359,7 +1404,7 @@ impl Card {
 #[serde(rename_all = "camelCase")]
 struct Detail {
     #[serde(flatten)]
-    summary: Summary,
+    summary: Summary<Card<BoardLifecycle>>,
     created_at_ms: Option<u64>,
     brief: Brief,
     operator_inbox: bool,
@@ -1379,6 +1424,453 @@ struct Detail {
     critical_review_fallbacks: Vec<nucleus_store::CriticalReviewFallback>,
     allowance: nucleus_store::AllowanceView,
     run: Option<RunView>,
+}
+
+#[derive(Default, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StepVisit {
+    entered_at_ms: Option<u64>,
+    left_at_ms: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardStep {
+    #[serde(flatten)]
+    step: Step,
+    entered_at_ms: Option<u64>,
+    left_at_ms: Option<u64>,
+    visits: Vec<StepVisit>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum BoardOutcome {
+    Core(Outcome),
+    ProviderLimit(ProviderLimitOutcome),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename = "provider_limit")]
+struct ProviderLimitOutcome {
+    group: Option<String>,
+    reset_at_ms: Option<u64>,
+    cause: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardRoleCard {
+    instance: String,
+    role: nucleus_core::Role,
+    round: Option<u64>,
+    purpose: String,
+    thread_url: Option<String>,
+    provider: Option<Provider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_instance: Option<String>,
+    model: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    model_observed: bool,
+    started_at_ms: Option<u64>,
+    ended_at_ms: Option<u64>,
+    elapsed_ms: Option<u64>,
+    ended: bool,
+    outcome: Option<BoardOutcome>,
+    activity: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardTranscript {
+    cards: Vec<BoardRoleCard>,
+    completed_reviews: u64,
+    merged: bool,
+    question: Option<Question>,
+    question_url: Option<String>,
+    question_owner: Option<String>,
+    external_acceptances: Vec<(i64, String)>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardLifecycle {
+    steps: Vec<BoardStep>,
+    admitted_at_ms: Option<u64>,
+    finished_at_ms: Option<u64>,
+    review_round: Option<u64>,
+    worker: Option<Participant>,
+    reviewer: Option<Participant>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transcript: Option<BoardTranscript>,
+}
+
+#[derive(Deserialize)]
+struct StepTransitionFact {
+    from: Phase,
+    to: Phase,
+}
+
+#[derive(Default)]
+struct BoardAuditFacts {
+    step_visits: [Vec<StepVisit>; 7],
+    rounds: HashMap<String, u64>,
+    ended_at: HashMap<String, Option<u64>>,
+    extra_outcomes: HashMap<String, BoardOutcome>,
+    completed_reviews: u64,
+    last_started: Option<String>,
+}
+
+fn board_lifecycle(
+    task: &Task,
+    events: &[nucleus_store::Event],
+    lifecycle: Lifecycle,
+    include_provider_limit: bool,
+) -> BoardLifecycle {
+    let mut facts = BoardAuditFacts::collect(
+        task,
+        events,
+        lifecycle.admitted_at_ms,
+        include_provider_limit,
+    );
+    let steps = lifecycle
+        .steps
+        .into_iter()
+        .map(|step| {
+            let visits = std::mem::take(&mut facts.step_visits[board_step_slot(step.key)]);
+            let (entered_at_ms, left_at_ms) = visits.last().map_or((None, None), |visit| {
+                (visit.entered_at_ms, visit.left_at_ms)
+            });
+            BoardStep {
+                step,
+                entered_at_ms,
+                left_at_ms,
+                visits,
+            }
+        })
+        .collect();
+    let transcript = lifecycle
+        .transcript
+        .map(|transcript| facts.into_transcript(transcript));
+    BoardLifecycle {
+        steps,
+        admitted_at_ms: lifecycle.admitted_at_ms,
+        finished_at_ms: lifecycle.finished_at_ms,
+        review_round: lifecycle.review_round,
+        worker: lifecycle.worker,
+        reviewer: lifecycle.reviewer,
+        transcript,
+    }
+}
+
+impl BoardAuditFacts {
+    fn collect(
+        task: &Task,
+        events: &[nucleus_store::Event],
+        admitted_at_ms: Option<u64>,
+        include_provider_limit: bool,
+    ) -> Self {
+        let mut facts = Self::default();
+        let report_only = task.report_task().is_some();
+        let initial_step = board_step_key(
+            match task.identity().entry {
+                Entry::Brief => Phase::Queued,
+                Entry::ReviewEntry => Phase::Reviewing,
+            },
+            report_only,
+        );
+        open_visit(
+            &mut facts.step_visits[board_step_slot(initial_step)],
+            admitted_at_ms,
+        );
+        for event in events {
+            facts.apply(event, report_only, include_provider_limit);
+        }
+        facts
+    }
+
+    fn apply(
+        &mut self,
+        event: &nucleus_store::Event,
+        report_only: bool,
+        include_provider_limit: bool,
+    ) {
+        let at = u64::try_from(event.content.at).ok();
+        let kind = event.content.kind.as_str();
+        let detail: Option<Value> = serde_json::from_str(&event.content.detail).ok();
+        if kind == "phase_transition"
+            && let Some(Ok(transition)) = detail
+                .as_ref()
+                .map(|value| serde_json::from_value::<StepTransitionFact>(value.clone()))
+        {
+            self.record_transition(at, transition.from, transition.to, report_only);
+        }
+        let presentation: Vec<Milestone> = detail
+            .as_ref()
+            .and_then(|value| value.get("presentation"))
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default();
+        let mut ended_instance = None;
+        for record in presentation {
+            match record {
+                Milestone::RunStarted {
+                    instance, round, ..
+                } => {
+                    let resolved =
+                        round.unwrap_or_else(|| self.completed_reviews.saturating_add(1));
+                    self.rounds.insert(instance.clone(), resolved);
+                    self.last_started = Some(instance);
+                }
+                Milestone::RunEnded { instance } => {
+                    self.ended_at.insert(instance.clone(), at);
+                    ended_instance = Some(instance);
+                }
+                Milestone::Verdict {
+                    verdict: Verdict::Reviewed { .. },
+                } if kind == "phase_reconciled" => {
+                    self.completed_reviews += 1;
+                }
+                Milestone::Finished {
+                    phase,
+                    previous_phase,
+                } => {
+                    self.record_finished(at, phase, previous_phase, report_only);
+                }
+                _ => {}
+            }
+        }
+        self.record_unreported(
+            kind,
+            detail.as_ref(),
+            ended_instance,
+            include_provider_limit,
+        );
+    }
+
+    fn record_transition(&mut self, at: Option<u64>, from: Phase, to: Phase, report_only: bool) {
+        let from_step = board_step_key(from, report_only);
+        let to_step = board_step_key(to, report_only);
+        if to == Phase::Cancelled {
+            if !from.is_terminal() {
+                ensure_closed(&mut self.step_visits[board_step_slot(from_step)], at);
+            }
+            return;
+        }
+        if to == Phase::Done {
+            if report_only {
+                if from_step != StepKey::Done {
+                    ensure_closed(&mut self.step_visits[board_step_slot(from_step)], at);
+                }
+                let done = &mut self.step_visits[board_step_slot(StepKey::Done)];
+                if done.is_empty() {
+                    open_visit(done, at);
+                }
+            } else {
+                if from_step != StepKey::Close {
+                    close_visit(&mut self.step_visits[board_step_slot(from_step)], at);
+                    open_visit(&mut self.step_visits[board_step_slot(StepKey::Close)], at);
+                }
+                ensure_closed(&mut self.step_visits[board_step_slot(StepKey::Close)], at);
+            }
+            return;
+        }
+        if from_step != to_step {
+            if !from.is_terminal() {
+                close_visit(&mut self.step_visits[board_step_slot(from_step)], at);
+            }
+            open_visit(&mut self.step_visits[board_step_slot(to_step)], at);
+        }
+    }
+
+    fn record_finished(
+        &mut self,
+        at: Option<u64>,
+        phase: Phase,
+        previous_phase: Option<Phase>,
+        report_only: bool,
+    ) {
+        match (phase, previous_phase) {
+            (Phase::Done, _) if !report_only => {
+                ensure_closed(&mut self.step_visits[board_step_slot(StepKey::Close)], at);
+            }
+            (Phase::Done, prev) if report_only => {
+                if prev == Some(Phase::ReportReady) {
+                    ensure_closed(
+                        &mut self.step_visits[board_step_slot(StepKey::ReportReady)],
+                        at,
+                    );
+                }
+                let done = &mut self.step_visits[board_step_slot(StepKey::Done)];
+                if done.is_empty() {
+                    open_visit(done, at);
+                }
+            }
+            (Phase::Cancelled, Some(prev)) if !prev.is_terminal() => {
+                let slot = board_step_slot(board_step_key(prev, report_only));
+                ensure_closed(&mut self.step_visits[slot], at);
+            }
+            _ => {}
+        }
+    }
+
+    fn record_unreported(
+        &mut self,
+        kind: &str,
+        detail: Option<&Value>,
+        ended_instance: Option<String>,
+        include_provider_limit: bool,
+    ) {
+        if kind == "provider_limit" {
+            if !include_provider_limit {
+                return;
+            }
+            let limit = detail.and_then(|value| value.get("providerLimit"));
+            let target = limit
+                .and_then(|value| value.get("instance"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or(ended_instance)
+                .or_else(|| self.last_started.clone());
+            if let Some(instance) = target {
+                self.extra_outcomes.insert(
+                    instance,
+                    BoardOutcome::ProviderLimit(ProviderLimitOutcome {
+                        group: limit
+                            .and_then(|value| value.get("group"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        reset_at_ms: limit
+                            .and_then(|value| value.get("resetAtMs"))
+                            .and_then(Value::as_u64),
+                        cause: detail
+                            .and_then(|value| value.get("cause"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    }),
+                );
+            }
+            return;
+        }
+        let Some(instance) = ended_instance else {
+            return;
+        };
+        let reason = match kind {
+            "delegated_parent_ended" | "assignment_input_rejected" => detail
+                .and_then(|value| value.get("outcome"))
+                .and_then(Value::as_str)
+                .map_or_else(|| "The run could not start.".into(), str::to_owned),
+            "run_failed" => "The run ended without reporting.".into(),
+            "report_only_worker_returned" => {
+                "The worker did not deliver an authenticated report.".into()
+            }
+            _ => return,
+        };
+        self.extra_outcomes
+            .entry(instance)
+            .or_insert(BoardOutcome::Core(Outcome::Blocked { reason }));
+    }
+
+    fn into_transcript(mut self, transcript: Transcript) -> BoardTranscript {
+        let fallback_round = self.completed_reviews.saturating_add(1);
+        let cards = transcript
+            .cards
+            .into_iter()
+            .map(|card| self.map_card(card, fallback_round))
+            .collect();
+        BoardTranscript {
+            cards,
+            completed_reviews: transcript.completed_reviews,
+            merged: transcript.merged,
+            question: transcript.question,
+            question_url: transcript.question_url,
+            question_owner: transcript.question_owner,
+            external_acceptances: transcript.external_acceptances,
+        }
+    }
+
+    fn map_card(&mut self, card: RoleCard, fallback_round: u64) -> BoardRoleCard {
+        let round = Some(
+            self.rounds
+                .get(&card.instance)
+                .copied()
+                .unwrap_or(fallback_round),
+        );
+        let ended_at_ms = self.ended_at.get(&card.instance).and_then(|at| *at);
+        let outcome = card
+            .outcome
+            .map(BoardOutcome::Core)
+            .or_else(|| self.extra_outcomes.remove(&card.instance));
+        BoardRoleCard {
+            instance: card.instance,
+            role: card.role,
+            round,
+            purpose: card.purpose,
+            thread_url: card.thread_url,
+            provider: card.provider,
+            provider_instance: card.provider_instance,
+            model: card.model,
+            model_observed: card.model_observed,
+            started_at_ms: card.started_at_ms,
+            ended_at_ms,
+            elapsed_ms: card.elapsed_ms,
+            ended: card.ended,
+            outcome,
+            activity: card.activity,
+        }
+    }
+}
+
+fn open_visit(visits: &mut Vec<StepVisit>, at: Option<u64>) {
+    if let Some(at) = at {
+        visits.push(StepVisit {
+            entered_at_ms: Some(at),
+            left_at_ms: None,
+        });
+    }
+}
+
+fn close_visit(visits: &mut Vec<StepVisit>, at: Option<u64>) {
+    if let Some(last) = visits.last_mut().filter(|visit| visit.left_at_ms.is_none()) {
+        last.left_at_ms = at;
+    } else if let Some(at) = at {
+        visits.push(StepVisit {
+            entered_at_ms: None,
+            left_at_ms: Some(at),
+        });
+    }
+}
+
+fn ensure_closed(visits: &mut Vec<StepVisit>, at: Option<u64>) {
+    let already_closed = visits
+        .last()
+        .is_some_and(|visit| visit.left_at_ms.is_some());
+    if !already_closed {
+        close_visit(visits, at);
+    }
+}
+
+const fn board_step_slot(key: StepKey) -> usize {
+    match key {
+        StepKey::Queued => 0,
+        StepKey::Working => 1,
+        StepKey::Review => 2,
+        StepKey::Merge => 3,
+        StepKey::Close => 4,
+        StepKey::ReportReady => 5,
+        StepKey::Done => 6,
+    }
+}
+
+const fn board_step_key(phase: Phase, report_only: bool) -> StepKey {
+    match phase {
+        Phase::Queued | Phase::Cancelled => StepKey::Queued,
+        Phase::Working | Phase::Blocked | Phase::Error => StepKey::Working,
+        Phase::Reviewing => StepKey::Review,
+        Phase::Merging => StepKey::Merge,
+        Phase::ReportReady => StepKey::ReportReady,
+        Phase::Done if report_only => StepKey::Done,
+        Phase::Closing | Phase::Done => StepKey::Close,
+    }
 }
 
 #[derive(Serialize)]

@@ -428,7 +428,24 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
 fn assert_worker_detail(detail: &Value, list: &Value, thread: &str) {
     let lifecycle = &detail["lifecycle"];
     assert!(list[0]["lifecycle"].get("transcript").is_none());
-    assert_eq!(list[0]["lifecycle"]["steps"], lifecycle["steps"]);
+    let detail_steps = lifecycle["steps"].as_array().unwrap();
+    let list_steps = list[0]["lifecycle"]["steps"].as_array().unwrap();
+    assert_eq!(detail_steps.len(), list_steps.len());
+    for (detail_step, list_step) in detail_steps.iter().zip(list_steps.iter()) {
+        for key in [
+            "key",
+            "label",
+            "state",
+            "tone",
+            "note",
+            "roundLabel",
+            "elapsedMs",
+            "activeSinceMs",
+        ] {
+            assert_eq!(detail_step[key], list_step[key]);
+        }
+        assert!(detail_step["visits"].is_array());
+    }
     assert_eq!(list[0]["lifecycle"]["worker"], lifecycle["worker"]);
     assert_eq!(
         lifecycle["transcript"]["cards"].as_array().unwrap().len(),
@@ -4470,11 +4487,25 @@ fn assert_full_cycle_detail(detail: &Value) {
         bounds,
         [
             (&json!("queued"), &json!(1_000), &json!(2_000)),
-            (&json!("working"), &json!(2_000), &json!(31_000)),
-            (&json!("review"), &json!(11_000), &json!(41_000)),
+            (&json!("working"), &json!(21_000), &json!(31_000)),
+            (&json!("review"), &json!(31_000), &json!(41_000)),
             (&json!("merge"), &json!(41_000), &json!(42_000)),
             (&json!("close"), &json!(42_000), &json!(43_000)),
         ]
+    );
+    assert_eq!(
+        steps[1]["visits"],
+        json!([
+            { "enteredAtMs": 2_000, "leftAtMs": 11_000 },
+            { "enteredAtMs": 21_000, "leftAtMs": 31_000 },
+        ])
+    );
+    assert_eq!(
+        steps[2]["visits"],
+        json!([
+            { "enteredAtMs": 11_000, "leftAtMs": 21_000 },
+            { "enteredAtMs": 31_000, "leftAtMs": 41_000 },
+        ])
     );
     let transcript = &detail["lifecycle"]["transcript"];
     assert_eq!(transcript["completedReviews"], 2);

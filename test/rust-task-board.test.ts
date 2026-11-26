@@ -14,16 +14,10 @@ import {
   type RustCommand,
   type RustTask,
 } from "../client/web/rust-board";
-import {
-  projectActive,
-  PROJECT_ACTIVITY_WINDOW_MS,
-} from "../shared/project-activity";
+import { projectActive, PROJECT_ACTIVITY_WINDOW_MS } from "../shared/project-activity";
 import { projectSchema } from "../shared/schema/projects";
 import { inboxListWidth } from "../shared/inbox-board";
-import {
-  generatedProjectBadge,
-  projectBadgeWebStyle,
-} from "../shared/t3/project-badge";
+import { generatedProjectBadge, projectBadgeWebStyle } from "../shared/t3/project-badge";
 
 const repository = "https://github.com/example/board-fixture";
 
@@ -31,12 +25,8 @@ test("Rust board settings retain imported profile fields across edits", () => {
   const profile = {
     name: "Fixture",
     selection: {
-      id: "fixture",
-      provider: "claude",
-      model: "fixture-model",
-      effort: "high",
-      capability: "worker",
-      weight: "fewer",
+      id: "fixture", provider: "claude", model: "fixture-model",
+      effort: "high", capability: "worker", weight: "fewer",
     },
     group: "fixture-group",
     enabled: false,
@@ -51,9 +41,7 @@ test("Rust board settings retain imported profile fields across edits", () => {
   const saved = { profiles: [profile], pausedGroups: ["fixture-group"] };
   const settings = profilesSnapshot.parse({
     effectiveGroups: {},
-    revision: "fixture-revision",
-    configured: true,
-    value: saved,
+    revision: "fixture-revision", configured: true, value: saved,
   });
   assert.deepEqual(settings.value, saved);
 });
@@ -62,52 +50,30 @@ const head = "a".repeat(40);
 
 test("project activity counts distinct recent tasks and linked planning items", () => {
   const repo = { origin: "example/board-fixture", path: "/fixture" };
-  const project = projectSchema.parse({
-    key: "app",
-    name: "App",
-    repositories: [repo],
-    primary: repo,
-  });
+  const project = projectSchema.parse({ key: "app", name: "App", repositories: [repo], primary: repo });
   const now = Date.UTC(2026, 10, 24);
   const cutoff = now - PROJECT_ACTIVITY_WINDOW_MS;
   const running = { ...task("one", "working"), latestEventAtMs: cutoff - 1 };
   const done = { ...task("two", "done"), latestEventAtMs: now - 1 };
-  const lead = {
-    project: "app",
-    id: "lead",
-    at: new Date(now).toISOString(),
-    taskIds: [],
-  };
-  const active = (
-    tasks: RustTask[],
-    leads: Parameters<typeof rustProjectActivity>[2],
-  ) => projectActive(rustProjectActivity([project], tasks, leads)[0], now);
+  const lead = { project: "app", id: "lead", at: new Date(now).toISOString(), taskIds: [] };
+  const active = (tasks: RustTask[], leads: Parameters<typeof rustProjectActivity>[2]) =>
+    projectActive(rustProjectActivity([project], tasks, leads)[0], now);
   assert.equal(active([running], []), false);
   assert.equal(active([running, done], []), true);
   assert.equal(active([running], [lead]), true);
   assert.equal(active([running], [{ ...lead, taskIds: ["one"] }]), false);
-  assert.equal(
-    active([running, done], [{ ...lead, taskIds: ["one", "two"] }]),
-    false,
-  );
-  assert.equal(
-    active([running, { ...done, latestEventAtMs: cutoff }], []),
-    false,
-  );
+  assert.equal(active([running, done], [{ ...lead, taskIds: ["one", "two"] }]), false);
+  assert.equal(active([running, { ...done, latestEventAtMs: cutoff }], []), false);
 });
 
 test("Rust task status names the check and only shows a time while it is scheduled", () => {
   const row = task("retained", "working");
   const checking = rustWaitDetail({
-    ...row,
-    wait: "host_unknown",
+    ...row, wait: "host_unknown",
     waitDetail: "Checking whether the message reached the task thread.",
     nextCheckAt: Date.UTC(2026, 10, 24, 17, 45),
   });
-  assert.match(
-    checking ?? "",
-    /^Checking whether the message reached the task thread\. Next check at .+\.$/,
-  );
+  assert.match(checking ?? "", /^Checking whether the message reached the task thread\. Next check at .+\.$/);
   const blocked = rustWaitDetail({ ...row, wait: "host_observation_blocked" });
   assert.equal(blocked, "Open the task thread to check.");
 });
@@ -201,20 +167,29 @@ test("Rust task detail schema accepts full transcripts, per-step times, and pre-
           tone: "success",
           enteredAtMs: 1_000,
           leftAtMs: 2_000,
+          visits: [{ enteredAtMs: 1_000, leftAtMs: 2_000 }],
         },
         {
           ...baseTask.lifecycle.steps[1]!,
           state: "done",
           tone: "success",
-          enteredAtMs: 2_000,
+          enteredAtMs: 21_000,
           leftAtMs: 31_000,
+          visits: [
+            { enteredAtMs: 2_000, leftAtMs: 11_000 },
+            { enteredAtMs: 21_000, leftAtMs: 31_000 },
+          ],
         },
         {
           ...baseTask.lifecycle.steps[2]!,
           state: "done",
           tone: "success",
-          enteredAtMs: 11_000,
+          enteredAtMs: 31_000,
           leftAtMs: 41_000,
+          visits: [
+            { enteredAtMs: 11_000, leftAtMs: 21_000 },
+            { enteredAtMs: 31_000, leftAtMs: 41_000 },
+          ],
         },
         {
           ...baseTask.lifecycle.steps[3]!,
@@ -222,6 +197,7 @@ test("Rust task detail schema accepts full transcripts, per-step times, and pre-
           tone: "success",
           enteredAtMs: 41_000,
           leftAtMs: 42_000,
+          visits: [{ enteredAtMs: 41_000, leftAtMs: 42_000 }],
         },
         {
           ...baseTask.lifecycle.steps[4]!,
@@ -229,6 +205,7 @@ test("Rust task detail schema accepts full transcripts, per-step times, and pre-
           tone: "success",
           enteredAtMs: 42_000,
           leftAtMs: 43_000,
+          visits: [{ enteredAtMs: 42_000, leftAtMs: 43_000 }],
         },
       ],
       transcript: {
@@ -280,8 +257,7 @@ test("Rust task detail schema accepts full transcripts, per-step times, and pre-
               decision: "changes",
               summary: "Fix edge case",
               finding_titles: ["Missing null guard"],
-              change_url:
-                "https://github.com/example/repo/pull/1/commits/" + head,
+              change_url: "https://github.com/example/repo/pull/1/commits/" + head,
             },
             activity: null,
           },
@@ -347,6 +323,7 @@ test("Rust task detail schema accepts full transcripts, per-step times, and pre-
         tone: "success",
         enteredAtMs: index === 0 ? 1_000 : null,
         leftAtMs: index === 4 ? 10_000 : null,
+        visits: index === 0 ? [{ enteredAtMs: 1_000, leftAtMs: null }] : index === 4 ? [{ enteredAtMs: null, leftAtMs: 10_000 }] : [],
       })),
       transcript: {
         completedReviews: 0,
@@ -373,8 +350,9 @@ test("Rust task detail schema accepts full transcripts, per-step times, and pre-
   );
   const { signal } = new AbortController();
   const parsedFull = await transport.detail(fullId, signal);
-  assert.equal(parsedFull.lifecycle.steps[1]?.enteredAtMs, 2_000);
+  assert.equal(parsedFull.lifecycle.steps[1]?.enteredAtMs, 21_000);
   assert.equal(parsedFull.lifecycle.steps[1]?.leftAtMs, 31_000);
+  assert.equal(parsedFull.lifecycle.steps[1]?.visits?.length, 2);
   assert.equal(parsedFull.lifecycle.transcript?.cards.length, 4);
   assert.equal(parsedFull.lifecycle.transcript?.cards[1]?.round, 1);
   assert.equal(
@@ -420,23 +398,10 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     blocked,
     task("reviewing", "reviewing"),
     task("merging", "merging"),
-    {
-      ...task("closing", "closing"),
-      wait: "workspace_blocked",
-      attention: "attention" as const,
-    },
-    {
-      ...task("history-oldest", "done"),
-      stateSinceMs: 1_790_000_000_000,
-      latestEventAtMs: 1_799_000_000_000,
-    },
-    {
-      ...task("history-middle", "cancelled"),
-      latestEventAtMs: 1_795_000_000_000,
-    },
-    ...Array.from({ length: 23 }, (_, i) =>
-      task(`past-${String(i).padStart(2, "0")}`, "done"),
-    ),
+    { ...task("closing", "closing"), wait: "workspace_blocked", attention: "attention" as const },
+    { ...task("history-oldest", "done"), stateSinceMs: 1_790_000_000_000, latestEventAtMs: 1_799_000_000_000 },
+    { ...task("history-middle", "cancelled"), latestEventAtMs: 1_795_000_000_000 },
+    ...Array.from({ length: 23 }, (_, i) => task(`past-${String(i).padStart(2, "0")}`, "done")),
     { ...task("history-newest", "done"), stateSinceMs: 1_796_000_000_000 },
     ...Array.from({ length: 25 }, (_, index) =>
       task(`queued-${index}`, "queued"),
@@ -462,15 +427,8 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       authorization: req.headers.authorization,
       cookie: req.headers.cookie,
     });
-    if (
-      path === "/api/engine/pair" &&
-      req.headers.authorization === `Bearer ${key}`
-    ) {
-      res
-        .writeHead(204, {
-          "set-cookie": "board_session=fixture; HttpOnly; SameSite=Strict",
-        })
-        .end();
+    if (path === "/api/engine/pair" && req.headers.authorization === `Bearer ${key}`) {
+      res.writeHead(204, { "set-cookie": "board_session=fixture; HttpOnly; SameSite=Strict" }).end();
       return;
     }
     if (req.headers.cookie !== "board_session=fixture") {
@@ -482,57 +440,21 @@ test("the paired Board tracks Rust task changes and uses the next command contra
         .writeHead(status, { "content-type": "application/json" })
         .end(JSON.stringify(value));
     if (path === "/api/engine/session") {
-      json({
-        id: "fixture-session",
-        canEditSettings: true,
-        planningProjects: null,
-      });
+      json({ id: "fixture-session", canEditSettings: true, planningProjects: null });
       return;
     }
     if (path === "/api/engine/settings") {
-      const snapshot = (value: unknown) => ({
-        configured: true,
-        revision: "1",
-        value,
-      });
+      const snapshot = (value: unknown) => ({ configured: true, revision: "1", value });
       json({
-        profiles: {
-          ...snapshot({ profiles: [], pausedGroups: [] }),
-          effectiveGroups: {},
-        },
-        dispatch: snapshot({
-          usage: "normal",
-          usageUntilMs: null,
-          globalSlots: 4,
-          projectDefaultSlots: 4,
-          projectSlotOverrides: {},
-          providerLimitCooldownSeconds: 300,
-          mode: "running",
-        }),
-        projects: {
-          settings: snapshot({ projects: {} }),
-          resolvedPlanners: {},
-        },
-        hosts: {
-          settings: snapshot({ t3: null }),
-          active: { endpoint: "", status: "reachable" },
-        },
-        storage: {
-          settings: snapshot({
-            enabled: true,
-            workRoot: null,
-            logRoot: null,
-            scratchRoot: null,
-            retention: { keepNewest: 5, maxAgeDays: null },
-          }),
-          active: {
-            databaseRoot: "/fixture/db",
-            workRoot: "/fixture/work",
-            backupRoot: "/fixture/backups",
-            scratchRoot: "/fixture/scratch",
-            logRoot: "/fixture/logs",
-          },
-        },
+        profiles: { ...snapshot({ profiles: [], pausedGroups: [] }), effectiveGroups: {} },
+        dispatch: snapshot({ usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 4,
+          projectSlotOverrides: {}, providerLimitCooldownSeconds: 300, mode: "running" }),
+        projects: { settings: snapshot({ projects: {} }), resolvedPlanners: {} },
+        hosts: { settings: snapshot({ t3: null }), active: { endpoint: "", status: "reachable" } },
+        storage: { settings: snapshot({ enabled: true, workRoot: null, logRoot: null, scratchRoot: null,
+          retention: { keepNewest: 5, maxAgeDays: null } }),
+          active: { databaseRoot: "/fixture/db", workRoot: "/fixture/work", backupRoot: "/fixture/backups",
+            scratchRoot: "/fixture/scratch", logRoot: "/fixture/logs" } },
       });
       return;
     }
@@ -569,21 +491,10 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       for await (const part of req) parts.push(part);
       const command: unknown = JSON.parse(Buffer.concat(parts).toString());
       posts.push({ path, command });
-      if (
-        typeof command === "object" &&
-        command !== null &&
-        "amend" in command &&
-        typeof command.amend === "string" &&
-        "briefVersion" in command
-      ) {
+      if (typeof command === "object" && command !== null && "amend" in command &&
+          typeof command.amend === "string" && "briefVersion" in command) {
         if (command.briefVersion !== briefVersion) {
-          json(
-            {
-              error:
-                "The brief changed. Reopen Amend to edit the latest version.",
-            },
-            409,
-          );
+          json({ error: "The brief changed. Reopen Amend to edit the latest version." }, 409);
           return;
         }
         briefText = command.amend;
@@ -656,9 +567,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
         commands: [
           { name: "move", phase: "reviewing", preflight: moveReadiness },
           { name: "move", phase: "done", preflight: "unavailable" },
-          ...(row.wait === "workspace_blocked"
-            ? [{ name: "recheck", preflight: "ready" }]
-            : []),
+          ...(row.wait === "workspace_blocked" ? [{ name: "recheck", preflight: "ready" }] : []),
           { name: "cancel", preflight: "ready" },
           { name: "amend", preflight: "ready" },
           { name: "hold", preflight: "ready" },
@@ -730,11 +639,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     json({
       ...row,
       createdAtMs: 1_700_000_000_000,
-      brief: {
-        text: briefText,
-        version: briefVersion,
-        digest: Array(32).fill(1),
-      },
+      brief: { text: briefText, version: briefVersion, digest: Array(32).fill(1) },
       pullRequest:
         id === "running"
           ? { url: "https://github.com/example/board-fixture/pull/1", head }
@@ -823,19 +728,12 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   );
   await click("Working, 1");
   // The card shows the task number alone; the project shows beside it.
-  assert.equal(
-    dom.window.document.querySelector('[aria-label^="Step Working:"]'),
-    null,
-  );
+  assert.equal(dom.window.document.querySelector('[aria-label^="Step Working:"]'), null);
   await click("#81");
   await eventually(() => text().includes(activity), "initial activity");
-  const detail = dom.window.document.querySelector(
-    '[aria-label="Task detail"]',
-  );
+  const detail = dom.window.document.querySelector('[aria-label="Task detail"]');
   assert.ok(detail);
-  assert.ok(
-    detail.querySelector('[aria-label="Step Working: current · 13m 51s"]'),
-  );
+  assert.ok(detail.querySelector('[aria-label="Step Working: current · 13m 51s"]'));
   assert.match(text(), /fixture-worker-model/);
   assert.match(text(), /fixture-review-model/);
   assert.ok(detail.querySelector('[aria-label="Step Review: todo · Round 2"]'));
@@ -900,8 +798,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       reads("/api/engine/tasks") > beforeReconnect.list &&
       reads("/api/engine/tasks/running") > beforeReconnect.detail &&
       reads("/api/engine/tasks/running/next") > beforeReconnect.next &&
-      reads("/api/engine/tasks/running/history?limit=30") >
-        beforeReconnect.history,
+      reads("/api/engine/tasks/running/history?limit=30") > beforeReconnect.history,
     "reconnect refreshes the list and every visible read",
     7000,
   );
@@ -918,79 +815,47 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   assert.deepEqual(posts[1]?.command, { move: "reviewing" });
   const amendReady = () => {
     const button = dom.window.document.querySelector('[aria-label="Amend"]');
-    return Boolean(
-      button &&
-        button.getAttribute("aria-disabled") !== "true" &&
-        !button.hasAttribute("disabled"),
-    );
+    return Boolean(button && button.getAttribute("aria-disabled") !== "true" && !button.hasAttribute("disabled"));
   };
   await eventually(amendReady, "the move settled and Amend is available");
   await click("Amend");
-  const briefField = () =>
-    dom.window.document.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Brief"]',
-    );
+  const briefField = () => dom.window.document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Brief"]');
   await eventually(() => Boolean(briefField()), "brief editor opened");
   briefVersion++; // A second editor committed before this board received an invalidation.
   const draft = "My unsaved brief";
   briefText = draft + " "; // Even a trailing space is a different stored brief.
   const editBrief = (value: string) => {
-    Object.getOwnPropertyDescriptor(
-      dom.window.HTMLTextAreaElement.prototype,
-      "value",
-    )!.set!.call(briefField(), value);
-    briefField()!.dispatchEvent(
-      new dom.window.Event("input", { bubbles: true }),
-    );
+    Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(briefField(), value);
+    briefField()!.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
   };
   editBrief(draft);
-  await eventually(
-    () => text().includes("Reopen Amend"),
-    "conflict reaches the editor",
-  );
+  await eventually(() => text().includes("Reopen Amend"), "conflict reaches the editor");
   assert.deepEqual(posts[2]?.command, { amend: draft, briefVersion: 3 });
   assert.equal(briefField()?.value, draft);
   await click("Amend");
   await eventually(() => !briefField(), "stale editor closed");
   await click("Amend");
-  await eventually(
-    () => briefField()?.value === briefText,
-    "editor reopened on the current version",
-  );
+  await eventually(() => briefField()?.value === briefText, "editor reopened on the current version");
   const replacement = "Line one\nLine two  ";
   loseAmendReply = true;
   editBrief(replacement);
-  await eventually(
-    () => text().includes("Not saved") && briefText === replacement,
-    "save applied before reply loss",
-  );
+  await eventually(() => text().includes("Not saved") && briefText === replacement, "save applied before reply loss");
   await click("Retry");
-  await eventually(
-    () => text().includes("Saved") && !text().includes("Not saved"),
-    "identical fresh readback acknowledges the save",
-  );
+  await eventually(() => text().includes("Saved") && !text().includes("Not saved"), "identical fresh readback acknowledges the save");
   assert.equal(briefField()?.value, replacement);
   assert.equal(briefVersion, 5);
   editBrief("Another edit");
-  await eventually(
-    () => briefText === "Another edit" && amendReady(),
-    "editor adopted the readback version",
-  );
-  assert.deepEqual(
-    posts.slice(3).map((post) => post.command),
-    [
-      { amend: replacement, briefVersion: 4 },
-      { amend: replacement, briefVersion: 4 },
-      { amend: "Another edit", briefVersion: 5 },
-    ],
-  );
+  await eventually(() => briefText === "Another edit" && amendReady(), "editor adopted the readback version");
+  assert.deepEqual(posts.slice(3).map(post => post.command), [
+    { amend: replacement, briefVersion: 4 }, { amend: replacement, briefVersion: 4 },
+    { amend: "Another edit", briefVersion: 5 },
+  ]);
   await click("Amend");
   await click("Needs you, 2");
   await click("Blocked task, The worker could not finish. Try again?");
   await click("Answer");
   await eventually(
-    () =>
-      posts.some(({ path }) => path === "/api/engine/tasks/blocked/commands"),
+    () => posts.some(({ path }) => path === "/api/engine/tasks/blocked/commands"),
     "answer posted",
   );
   assert.deepEqual(posts[6]?.command, { answer: "retry" });
@@ -998,45 +863,28 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   await click("closing");
   await click("Recheck");
   await eventually(() => posts.length === 8, "the owner requested a recheck");
-  assert.deepEqual(posts[7], {
-    path: "/api/engine/tasks/closing/commands",
-    command: { recheck: 7 },
-  });
+  assert.deepEqual(posts[7], { path: "/api/engine/tasks/closing/commands", command: { recheck: 7 } });
   await click("History, 26");
-  const historyCards = () =>
-    Array.from(
-      dom.window.document.querySelectorAll(
-        '[aria-label^="history-"], [aria-label^="past-"]',
-      ),
-      (card) => card.getAttribute("aria-label"),
-    );
+  const historyCards = () => Array.from(
+    dom.window.document.querySelectorAll('[aria-label^="history-"], [aria-label^="past-"]'),
+    (card) => card.getAttribute("aria-label"),
+  );
   await eventually(() => historyCards().length === 25, "History first page");
-  assert.deepEqual(historyCards().slice(0, 3), [
-    "history-newest",
-    "history-middle",
-    "past-22",
-  ]);
+  assert.deepEqual(historyCards().slice(0, 3), ["history-newest", "history-middle", "past-22"]);
   assert.ok(!historyCards().includes("history-oldest"));
   await click("Show 1 more task");
   await eventually(() => historyCards().length === 26, "History second page");
-  assert.deepEqual(
-    historyCards().filter((label) => label?.startsWith("history-")),
-    ["history-newest", "history-middle", "history-oldest"],
-  );
+  assert.deepEqual(historyCards().filter(label => label?.startsWith("history-")), [
+    "history-newest", "history-middle", "history-oldest",
+  ]);
   assert.equal(historyCards().at(-1), "history-oldest");
 
   assert.equal(posts.length, 8);
   await click("Queue, 26");
   await click("Promote queued-0");
   const demoteReady = () => {
-    const button = dom.window.document.querySelector(
-      '[aria-label="Demote queued-0"]',
-    );
-    return Boolean(
-      button &&
-        button.getAttribute("aria-disabled") !== "true" &&
-        !button.hasAttribute("disabled"),
-    );
+    const button = dom.window.document.querySelector('[aria-label="Demote queued-0"]');
+    return Boolean(button && button.getAttribute("aria-disabled") !== "true" && !button.hasAttribute("disabled"));
   };
   await eventually(
     () => text().includes("Promoted") && demoteReady(),
@@ -1050,9 +898,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   await eventually(
     () =>
       !text().includes("Promoted") &&
-      Boolean(
-        dom.window.document.querySelector('[aria-label="Promote queued-0"]'),
-      ),
+      Boolean(dom.window.document.querySelector('[aria-label="Promote queued-0"]')),
     "demote returns the queued card to normal order",
   );
   assert.deepEqual(posts[9], {
@@ -1064,18 +910,9 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     createRustBoardTransport(fetcher).command("running", { hold: "Fixture" }),
     { message: "planner authority is not yet known. Retry shortly." },
   );
-  assert.deepEqual(
-    calls.filter((call) => call.authorization).map((call) => call.path),
-    ["/api/engine/pair"],
-  );
-  assert.ok(
-    calls
-      .filter(({ path }) => path !== "/api/engine/pair")
-      .every(
-        ({ authorization, cookie }) =>
-          !authorization && cookie === "board_session=fixture",
-      ),
-  );
+  assert.deepEqual(calls.filter(call => call.authorization).map(call => call.path), ["/api/engine/pair"]);
+  assert.ok(calls.filter(({ path }) => path !== "/api/engine/pair")
+    .every(({ authorization, cookie }) => !authorization && cookie === "board_session=fixture"));
 
   // Only a stream event should refresh a settled task.
   await eventually(
@@ -1134,10 +971,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     pretendToBeVisual: true,
   });
   t.after(() => dom.window.close());
-  const writes: Array<{
-    path: string;
-    body: { revision: string; value: Record<string, unknown> };
-  }> = [];
+  const writes: Array<{ path: string; body: { revision: string; value: Record<string, unknown> } }> = [];
   const requests: string[] = [];
   let taskPhase: RustTask["phase"] = "queued";
   let workerRunning = false;
@@ -1155,52 +989,32 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   let reconnectGate: Promise<void> | undefined;
   let answeredOption: string | null = null;
   const decision = () => ({
-    id: "fixture-decision",
-    projectId: "fixture",
-    author: "Fixture planner",
-    question: decisionQuestion,
-    createdAtMs: now,
+    id: "fixture-decision", projectId: "fixture", author: "Fixture planner",
+    question: decisionQuestion, createdAtMs: now,
     options: [
-      { id: "first", label: "Same label" },
-      { id: "second", label: " Same label " },
-      { id: "third", label: "Third" },
-      { id: "fourth", label: "Fourth" },
+      { id: "first", label: "Same label" }, { id: "second", label: " Same label " },
+      { id: "third", label: "Third" }, { id: "fourth", label: "Fourth" },
     ],
-    answer:
-      answeredOption === null
-        ? null
-        : {
-            optionId: answeredOption,
-            note: null,
-            author: "Fixture operator",
-            answeredAtMs: now,
-          },
+    answer: answeredOption === null ? null : {
+      optionId: answeredOption, note: null, author: "Fixture operator", answeredAtMs: now,
+    },
   });
   let projectArchived = false;
   let projectRemoved = false;
   let removalWrites = 0;
   const boundRepository = "example/bound-control";
   const boundTitle = "Native Control";
-  const longLead =
-    "A lead title long enough to overflow the sidebar and verify that the entire record title is available on hover and in detail";
+  const longLead = "A lead title long enough to overflow the sidebar and verify that the entire record title is available on hover and in detail";
   const parkReason = "Paused until the dependency ships.";
   const parkedLead = "Parked lead between open leads";
   const parkedCut = "Parked papercut between open papercuts";
   const secondCut = "A second open papercut";
   const leadItem = (id: string, title: string, origin: string) => ({
-    id,
-    title,
-    repositories: [origin],
-    kind: "lead",
-    author: "Fixture planner",
-    body: itemBody,
-    lanes: [],
-    state: "open",
-    createdAtMs: now - 4 * 3_600_000,
-    updatedAtMs: now - 36 * 60_000,
+    id, title, repositories: [origin], kind: "lead", author: "Fixture planner",
+    body: itemBody, lanes: [], state: "open",
+    createdAtMs: now - 4 * 3_600_000, updatedAtMs: now - 36 * 60_000,
   });
-  const papercut =
-    "A papercut title long enough to verify the sidebar ellipsis and the browser’s built-in full-title hover";
+  const papercut = "A papercut title long enough to verify the sidebar ellipsis and the browser’s built-in full-title hover";
   let editableCut = {
     ...leadItem("second-cut", secondCut, boundRepository),
     kind: "papercut",
@@ -1222,60 +1036,28 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     stateSinceMs: now - 3 * 3_600_000 - 60_000,
   };
   let dispatch = {
-    usage: "normal",
-    usageUntilMs: null,
-    globalSlots: 2,
-    projectDefaultSlots: 2,
+    usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
     projectSlotOverrides: {},
-    providerLimitCooldownSeconds: 300,
-    mode: "running",
+    providerLimitCooldownSeconds: 300, mode: "running",
   };
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   let closeStream: (() => void) | undefined;
-  const snap = <T>(value: T, revision: string) => ({
-    value,
-    revision,
-    configured: true,
-  });
+  const snap = <T>(value: T, revision: string) => ({ value, revision, configured: true });
   let fixtureOrigin = "example/board-fixture";
-  const fixtureProject = () => ({
-    name: "Fixture project",
-    archived: projectArchived,
-    repositories: [
-      {
-        origin: fixtureOrigin,
-        path: "/work/fixture",
-        base: "main",
-        requiredChecks: [],
-        hungToolMinutes: 30,
-      },
-      {
-        origin: boundRepository,
-        path: "/work/bound",
-        base: "main",
-        requiredChecks: [],
-        hungToolMinutes: 30,
-        hostProject: "fixture-bound",
-        hostProjectTitle: boundTitle,
-      },
-    ],
-  });
+  const fixtureProject = () => ({ name: "Fixture project", archived: projectArchived, repositories: [
+    { origin: fixtureOrigin, path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
+    { origin: boundRepository, path: "/work/bound", base: "main", requiredChecks: [], hungToolMinutes: 30,
+      hostProject: "fixture-bound", hostProjectTitle: boundTitle },
+  ] });
   const scratchOverride = "/custom/run-scratch";
   let activePlacement: "internal" | "barge" = "internal";
   const githubPath = "/settings/github-accounts";
-  const reviewer = {
-    host: "github.com",
-    userId: "27",
-    login: "fixture-reviewer",
-  };
+  const reviewer = { host: "github.com", userId: "27", login: "fixture-reviewer" };
   const reviewerId = "github.com:27";
-  const githubCalls: Array<{ method: string; route: string; body?: unknown }> =
-    [];
+  const githubCalls: Array<{ method: string; route: string; body?: unknown }> = [];
   let githubSettings = {
     revision: "github-1",
-    accounts: [] as Array<
-      typeof reviewer & { presence: "present" | "missing" | "unavailable" }
-    >,
+    accounts: [] as Array<typeof reviewer & { presence: "present" | "missing" | "unavailable" }>,
     reviewerAccountId: null as string | null,
     workerAccountId: null as string | null,
     canSignIn: false,
@@ -1288,23 +1070,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const githubFlowView = () => {
     const id = `fixture-flow-${githubFlowCount}`;
     switch (githubFlow) {
-      case "starting":
-        return { id, status: githubFlow };
-      case "waiting":
-        return {
-          id,
-          status: githubFlow,
-          verificationUri: "https://github.com/login/device",
-          userCode: "ABCD-EFGH",
-        };
-      case "confirm":
-        return { id, status: githubFlow, account: reviewer };
-      case "failed":
-        return {
-          id,
-          status: githubFlow,
-          message: "GitHub sign-in expired. Start again.",
-        };
+      case "starting": return { id, status: githubFlow };
+      case "waiting": return { id, status: githubFlow, verificationUri: "https://github.com/login/device",
+        userCode: "ABCD-EFGH" };
+      case "confirm": return { id, status: githubFlow, account: reviewer };
+      case "failed": return { id, status: githubFlow, message: "GitHub sign-in expired. Start again." };
     }
   };
   let storage: ReturnType<typeof storageView.parse>["settings"]["value"] = {
@@ -1317,41 +1087,20 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     retention: { keepNewest: 5, maxAgeDays: null },
   };
   const views = {
-    profiles: () => ({
-      ...snap(
-        {
-          profiles: [
-            {
-              name: "Fixture worker",
-              group: "fixture team",
-              selection: {
-                id: "fixture-worker",
-                provider: "codex",
-                model: "m",
-                effort: "high",
-                capability: "worker",
-                weight: "default",
-              },
-            },
-          ],
-          pausedGroups,
-        },
-        "profiles-1",
-      ),
-      effectiveGroups: { "fixture-worker": "fixture team" },
-    }),
+    profiles: () => ({ ...snap({
+      profiles: [{
+        name: "Fixture worker", group: "fixture team",
+        selection: { id: "fixture-worker", provider: "codex", model: "m", effort: "high", capability: "worker", weight: "default" },
+      }],
+      pausedGroups,
+    }, "profiles-1"), effectiveGroups: { "fixture-worker": "fixture team" } }),
     dispatch: () => snap(dispatch, "dispatch-" + dispatch.globalSlots),
     projects: () => ({
-      settings: snap(
-        { projects: projectRemoved ? {} : { fixture: fixtureProject() } },
-        projectRemoved ? "projects-removed" : "projects-1",
-      ),
+      settings: snap({ projects: projectRemoved ? {} : { fixture: fixtureProject() } },
+        projectRemoved ? "projects-removed" : "projects-1"),
       resolvedPlanners: { fixture: "fixture-planner" },
     }),
-    hosts: () => ({
-      settings: snap({ t3: null }, "hosts-1"),
-      active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" },
-    }),
+    hosts: () => ({ settings: snap({ t3: null }, "hosts-1"), active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" } }),
     storage: () => {
       const barge = activePlacement === "barge";
       return {
@@ -1365,14 +1114,12 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
           scratchRoot: scratchOverride,
           backupRoot: "/e/backups",
           logRoot: "/e/logs",
-          ...(barge
-            ? {
-                bargePaths: {
-                  worktrees: "/pool/worktrees/nucleus",
-                  builds: "/pool/builds/nucleus",
-                },
-              }
-            : {}),
+          ...(barge ? {
+            bargePaths: {
+              worktrees: "/pool/worktrees/nucleus",
+              builds: "/pool/builds/nucleus",
+            },
+          } : {}),
         },
         backups: { complete: true, issues: 0, verified: [] },
       };
@@ -1403,12 +1150,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
             controller.close();
           };
           init?.signal?.addEventListener("abort", closeStream, { once: true });
-          controller.enqueue(
-            new TextEncoder().encode("event: refresh\ndata: {}\n\n"),
-          );
+          controller.enqueue(new TextEncoder().encode("event: refresh\ndata: {}\n\n"));
         },
       });
-      return new Response(body);
+        return new Response(body);
     }
     if (path === "/api/engine/session")
       return Response.json({
@@ -1416,70 +1161,38 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         canEditSettings: operator,
         planningProjects: operator ? null : ["fixture"],
       });
-    if (path === "/api/engine/theme")
-      return Response.json({
-        theme: hostThemeAvailable
-          ? {
-              settings: { defaultTheme: "t3-code", defaultAppearance: "dark" },
-              theme: {
-                id: "t3-code",
-                appearance: "dark",
-                colors: {
-                  text: "#f5f5f5",
-                  textMuted: "#a3a3a3",
-                  secondaryLabel: "#818181",
-                  sidebar: "#000000",
-                  surfaceRaised: "#111111",
-                  sidebarRowHover: "#111111",
-                  sidebarRowSelected: "#111111",
-                },
-              },
-            }
-          : null,
-      });
+    if (path === "/api/engine/theme") return Response.json({
+      theme: hostThemeAvailable ? {
+        settings: { defaultTheme: "t3-code", defaultAppearance: "dark" },
+        theme: { id: "t3-code", appearance: "dark", colors: {
+          text: "#f5f5f5", textMuted: "#a3a3a3", secondaryLabel: "#818181", sidebar: "#000000",
+          surfaceRaised: "#111111", sidebarRowHover: "#111111", sidebarRowSelected: "#111111",
+        } },
+      } : null,
+    });
     if (path === "/api/engine/profiles/usage") {
       const empty = { counts: {}, groups: {}, sample: 0 };
       const counts = { "fixture-worker": usageCount };
       const groups = { "fixture team": usageCount };
       const recorded = { counts, groups, sample: Math.min(50, usageCount) };
       return Response.json({
-        recent: recorded,
-        worker: recorded,
-        reviewer: empty,
-        totals: counts,
-        groupTotals: groups,
+        recent: recorded, worker: recorded, reviewer: empty,
+        totals: counts, groupTotals: groups,
         limitedGroups: resetAt ? { "fixture team": resetAt } : {},
       });
     }
     if (path === "/api/engine/profiles/catalog")
-      return Response.json({
-        providers: null,
-        readAtMs: null,
-        status: "pending",
-      });
+      return Response.json({ providers: null, readAtMs: null, status: "pending" });
     if (path.startsWith("/api/engine/tasks")) {
       const card = {
         ...task("board-task", taskPhase, "board-fixture#80"),
         number: 80,
         title: "Standalone task",
-        stateLabel:
-          taskPhase === "queued"
-            ? "Waiting for capacity"
-            : workerRunning
-              ? "Working"
-              : "Working*",
+        stateLabel: taskPhase === "queued" ? "Waiting for capacity" : workerRunning ? "Working" : "Working*",
         stateSinceMs: taskPhase === "queued" ? null : now - 12 * 60_000,
         latestEventAtMs: now - 4 * 60_000,
-        wait:
-          taskPhase === "queued"
-            ? "capacity"
-            : workerRunning
-              ? "running"
-              : "hold",
-        hold:
-          taskPhase === "queued" || workerRunning
-            ? null
-            : { reason: "Wait before dispatching again." },
+        wait: taskPhase === "queued" ? "capacity" : workerRunning ? "running" : "hold",
+        hold: taskPhase === "queued" || workerRunning ? null : { reason: "Wait before dispatching again." },
       };
       if (taskPhase === "working") {
         card.lifecycle.steps = card.lifecycle.steps.map((step) => {
@@ -1490,12 +1203,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       }
       if (path === "/api/engine/tasks/board-task") {
         return Response.json({
-          ...card,
-          createdAtMs: now,
-          brief: { text: "Fixture brief", version: 1 },
-          pullRequest: null,
-          verdict: null,
-          run: null,
+          ...card, createdAtMs: now, brief: { text: "Fixture brief", version: 1 },
+          pullRequest: null, verdict: null, run: null,
         });
       }
       if (path === "/api/engine/tasks/board-task/next")
@@ -1504,34 +1213,20 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       const completed = task("finished-task", "done", "board-fixture#79");
       completed.attention = "finished";
       completed.lifecycle.finishedAtMs = now - 3_600_000;
-      return Response.json([
-        card,
-        held,
-        { ...completed, title: "Completed fixture", lanes: ["delivery"] },
-      ]);
+      return Response.json([card, held, { ...completed, title: "Completed fixture", lanes: ["delivery"] }]);
     }
     if (path === "/api/engine/settings/projects/fixture/removal") {
       assert.ok(operator);
       const project = fixtureProject();
       if (init?.method !== "POST") {
-        return Response.json({
-          project,
-          digest: "confirmed-project-revision",
-          tasks: [],
-        });
+        return Response.json({ project, digest: "confirmed-project-revision", tasks: [] });
       }
       const body = JSON.parse(String(init.body));
-      assert.deepEqual(body, {
-        digest: "confirmed-project-revision",
-        reason: "Fixture retired",
-      });
+      assert.deepEqual(body, { digest: "confirmed-project-revision", reason: "Fixture retired" });
       removalWrites += 1;
       projectRemoved = true;
       return Response.json({
-        repositories: project.repositories.map(({ origin, path }) => ({
-          origin,
-          path,
-        })),
+        repositories: project.repositories.map(({ origin, path }) => ({ origin, path })),
         removedAtMs: now,
       });
     }
@@ -1539,16 +1234,12 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       assert.ok(operator, "planner sessions make no GitHub settings requests");
       const route = path.slice(("/api/engine" + githubPath).length);
       const method = init?.method ?? "GET";
-      const body: unknown = init?.body
-        ? JSON.parse(String(init.body))
-        : undefined;
+      const body: unknown = init?.body ? JSON.parse(String(init.body)) : undefined;
       githubCalls.push({ method, route, body });
       if (method === "GET" && route === "")
-        return Response.json(
-          invalidGitHubResponse
-            ? { ...githubSettings, refreshToken: "fixture-unexpected-secret" }
-            : githubSettings,
-        );
+        return Response.json(invalidGitHubResponse
+          ? { ...githubSettings, refreshToken: "fixture-unexpected-secret" }
+          : githubSettings);
       if (method === "POST" && route === "/sign-in") {
         assert.deepEqual(body, {});
         githubFlowCount += 1;
@@ -1562,80 +1253,43 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         return Response.json(githubFlowView());
       }
       if (method === "PUT" && route === "/reviewer") {
-        const next =
-          githubSettings.reviewerAccountId === null ? reviewerId : null;
-        assert.deepEqual(body, {
-          revision: githubSettings.revision,
-          accountId: next,
-        });
-        githubSettings = {
-          ...githubSettings,
-          revision: githubSettings.revision + "-changed",
-          reviewerAccountId: next,
-        };
+        const next = githubSettings.reviewerAccountId === null ? reviewerId : null;
+        assert.deepEqual(body, { revision: githubSettings.revision, accountId: next });
+        githubSettings = { ...githubSettings, revision: githubSettings.revision + "-changed", reviewerAccountId: next };
         return Response.json(githubSettings);
       }
       if (method === "POST" && route === "/accounts/github.com%3A27/sign-out") {
         assert.deepEqual(body, { revision: githubSettings.revision });
         assert.equal(githubSettings.workerAccountId, null);
         await githubSignOutGate;
-        githubSettings = {
-          ...githubSettings,
-          revision: githubSettings.revision + "-signed-out",
-          accounts: [],
-          reviewerAccountId: null,
-        };
+        githubSettings = { ...githubSettings, revision: githubSettings.revision + "-signed-out",
+          accounts: [], reviewerAccountId: null };
         return Response.json(githubSettings);
       }
-      if (
-        method === "GET" &&
-        route === `/flows/fixture-flow-${githubFlowCount}`
-      )
+      if (method === "GET" && route === `/flows/fixture-flow-${githubFlowCount}`)
         return Response.json(githubFlowView());
-      if (
-        method === "DELETE" &&
-        route === `/flows/fixture-flow-${githubFlowCount}`
-      ) {
+      if (method === "DELETE" && route === `/flows/fixture-flow-${githubFlowCount}`) {
         assert.equal(body, undefined);
         return new Response(null, { status: 204 });
       }
-      if (
-        method === "POST" &&
-        route === `/flows/fixture-flow-${githubFlowCount}/confirm`
-      ) {
+      if (method === "POST" && route === `/flows/fixture-flow-${githubFlowCount}/confirm`) {
         assert.deepEqual(body, { revision: githubSettings.revision });
-        githubSettings = {
-          ...githubSettings,
-          revision: githubSettings.revision + "-confirmed",
-          accounts: [{ ...reviewer, presence: "present" }],
-          reviewerAccountId: reviewerId,
-        };
+        githubSettings = { ...githubSettings, revision: githubSettings.revision + "-confirmed",
+          accounts: [{ ...reviewer, presence: "present" }], reviewerAccountId: reviewerId };
         return Response.json(githubSettings);
       }
       assert.fail("Unexpected GitHub settings request " + method + " " + route);
     }
     if (path === "/api/engine/settings") {
-      const settings = Object.fromEntries(
-        Object.entries(views).map(([key, view]) => [key, view()]),
-      );
+      const settings = Object.fromEntries(Object.entries(views).map(([key, view]) => [key, view()]));
       const projects = views.projects();
-      return Response.json({
-        ...settings,
-        projects: {
-          ...projects,
-          settings: {
-            ...projects.settings,
-            value: {
-              ...projects.settings.value,
-              projects: { ...projects.settings.value.projects, damaged: {} },
-            },
-          },
-        },
-      });
+      return Response.json({ ...settings, projects: {
+        ...projects, settings: { ...projects.settings, value: {
+          ...projects.settings.value, projects: { ...projects.settings.value.projects, damaged: {} },
+        } },
+      } });
     }
-    const domain = /^\/api\/engine\/settings\/(\w+)$/.exec(path)?.[1] as
-      | keyof typeof views
-      | undefined;
+    const domain = /^\/api\/engine\/settings\/(\w+)$/.exec(path)?.[1] as keyof typeof views | undefined;
     if (domain) {
       if (init?.method === "PUT") {
         const body = JSON.parse(String(init.body));
@@ -1643,106 +1297,46 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         if (domain === "dispatch") dispatch = body.value;
         if (domain === "storage") storage = body.value;
         if (domain === "profiles") pausedGroups = body.value.pausedGroups;
-        if (domain === "projects")
-          projectArchived = body.value.projects.fixture.archived;
-        stream?.enqueue(
-          new TextEncoder().encode("event: settings\ndata: {}\n\n"),
-        );
+        if (domain === "projects") projectArchived = body.value.projects.fixture.archived;
+        stream?.enqueue(new TextEncoder().encode("event: settings\ndata: {}\n\n"));
       }
       return Response.json(views[domain]());
     }
     if (path === "/api/engine/planning/fixture/plan")
       return Response.json({
-        version: 1,
-        idle: false,
-        lanes: [
-          {
-            key: "delivery",
-            horizon: "now",
-            doneWhen: "",
-            statusNote: "In progress",
-          },
-        ],
-        documents: [
-          {
-            key: "delivery",
-            version: 1,
-            title: "Delivery",
-            aim: "Ship the fixture",
-            document: "",
-            status: "open",
-          },
-        ],
+        version: 1, idle: false,
+        lanes: [{ key: "delivery", horizon: "now", doneWhen: "", statusNote: "In progress" }],
+        documents: [{ key: "delivery", version: 1, title: "Delivery", aim: "Ship the fixture", document: "", status: "open" }],
       });
-    if (path === "/api/engine/planning/fixture/items")
-      return Response.json([
-        leadItem("unbound", longLead, "example/board-fixture"),
-        {
-          ...leadItem("parked-lead", parkedLead, boundRepository),
-          state: "parked",
-          reason: parkReason,
-        },
-        leadItem("bound", "Lead with a saved T3 title", boundRepository),
-        {
-          ...leadItem("mixed", "Lead spanning mixed bindings", boundRepository),
-          repositories: [boundRepository, "example/board-fixture"],
-        },
-        {
-          ...leadItem("cut", papercut, "example/board-fixture"),
-          kind: "papercut",
-          updatedAtMs: null,
-          version: 22,
-        },
-        {
-          ...leadItem("parked-cut", parkedCut, boundRepository),
-          kind: "papercut",
-          state: "parked",
-          reason: parkReason,
-          version: 21,
-        },
-        editableCut,
-      ]);
-    if (
-      init?.method === "PUT" &&
-      path.startsWith("/api/engine/planning/fixture/items/")
-    ) {
+    if (path === "/api/engine/planning/fixture/items") return Response.json([
+      leadItem("unbound", longLead, "example/board-fixture"),
+      { ...leadItem("parked-lead", parkedLead, boundRepository), state: "parked", reason: parkReason },
+      leadItem("bound", "Lead with a saved T3 title", boundRepository),
+      { ...leadItem("mixed", "Lead spanning mixed bindings", boundRepository), repositories: [boundRepository, "example/board-fixture"] },
+      { ...leadItem("cut", papercut, "example/board-fixture"), kind: "papercut", updatedAtMs: null, version: 22 },
+      { ...leadItem("parked-cut", parkedCut, boundRepository), kind: "papercut", state: "parked", reason: parkReason, version: 21 },
+      editableCut,
+    ]);
+    if (init?.method === "PUT" && path.startsWith("/api/engine/planning/fixture/items/")) {
       const body = JSON.parse(String(init.body));
       papercutWrites.push({ path, body });
       assert.equal(path, "/api/engine/planning/fixture/items/second-cut");
       assert.equal(body.version, editableCut.version);
-      editableCut = {
-        ...editableCut,
-        ...body,
-        version: body.version + 1,
-        updatedAtMs: now,
-      };
+      editableCut = { ...editableCut, ...body, version: body.version + 1, updatedAtMs: now };
       return Response.json(editableCut);
     }
-    if (
-      path === "/api/engine/planning/fixture/decisions" ||
-      path === "/api/engine/planning/fixture/decisions?pending=true"
-    )
-      return Response.json([
-        ...(decisionOpen ? [decision()] : []),
-        ...(damagedDecision ? [{ id: "damaged-decision" }] : []),
-      ]);
-    if (
-      path === "/api/engine/planning/fixture/decisions/fixture-decision/answer"
-    ) {
+    if (path === "/api/engine/planning/fixture/decisions" || path === "/api/engine/planning/fixture/decisions?pending=true")
+      return Response.json([...(decisionOpen ? [decision()] : []), ...(damagedDecision ? [{ id: "damaged-decision" }] : [])]);
+    if (path === "/api/engine/planning/fixture/decisions/fixture-decision/answer") {
       assert.equal(init?.method, "POST");
-      const answer = JSON.parse(String(init.body)) as {
-        optionId: string;
-        note: string | null;
-      };
+      const answer = JSON.parse(String(init.body)) as { optionId: string; note: string | null };
       assert.deepEqual(answer, { optionId: "second", note: null });
       answeredOption = answer.optionId;
       return Response.json(decision());
     }
     assert.fail("Unexpected standalone route " + path);
   };
-  const systemTheme = Object.assign(new dom.window.EventTarget(), {
-    matches: true,
-  });
+  const systemTheme = Object.assign(new dom.window.EventTarget(), { matches: true });
   Object.assign(dom.window, {
     innerWidth: 1280,
     matchMedia: () => systemTheme,
@@ -1758,121 +1352,56 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const selector = (label: string) =>
     dom.window.document.querySelector<HTMLElement>(`[aria-label="${label}"]`);
   const click = async (label: string) => {
-    await eventually(
-      () => Boolean(selector(label)),
-      "visible control: " + label,
-    );
+    await eventually(() => Boolean(selector(label)), "visible control: " + label);
     selector(label)?.click();
   };
   const text = () => dom.window.document.body.textContent ?? "";
-  const count = (route: string) =>
-    requests.filter((path) => path === "/api/engine" + route).length;
-  const emit = (event: string, value: object = {}) =>
-    stream!.enqueue(
-      new TextEncoder().encode(
-        `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`,
-      ),
-    );
-  const wait = (ms: number) =>
-    new Promise<void>((resolve) => setTimeout(resolve, ms));
+  const count = (route: string) => requests.filter((path) => path === "/api/engine" + route).length;
+  const emit = (event: string, value: object = {}) => stream!.enqueue(
+    new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(value)}\n\n`),
+  );
+  const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   dom.window.eval(`(() => { ${script} })()`);
-  const planningReads = () =>
-    requests.filter((path) => path.startsWith("/api/engine/planning/"));
-  const menuCounts = [
-    "Planning, 1 open lanes",
-    "Leads, 4",
-    "Papercuts, 3",
-    "Needs you, 1",
-  ];
-  await eventually(
-    () => menuCounts.every((label) => Boolean(selector(label))),
-    "planning and decision counts settle before any navigation",
-  );
+  const planningReads = () => requests.filter((path) => path.startsWith("/api/engine/planning/"));
+  const menuCounts = ["Planning, 1 open lanes", "Leads, 4", "Papercuts, 3", "Needs you, 1"];
+  await eventually(() => menuCounts.every((label) => Boolean(selector(label))),
+    "planning and decision counts settle before any navigation");
   assert.ok(stream, "the board subscribed to engine changes");
-  const initialPlanningReads = ["decisions?pending=true", "items", "plan"].map(
-    (key) => `/api/engine/planning/fixture/${key}`,
-  );
-  assert.deepEqual(
-    planningReads().sort(),
-    initialPlanningReads,
-    "one store read per collection in scope",
-  );
-  const notices = () =>
-    [...dom.window.document.querySelectorAll('[role="alert"]')].map(
-      (alert) => alert.textContent ?? "",
-    );
-  assert.ok(
-    notices().some(
-      (message) =>
-        message.includes("Project damaged") &&
-        message.includes("fixture decision damaged-decision"),
-    ),
-  );
+  const initialPlanningReads = ["decisions?pending=true", "items", "plan"].map((key) => `/api/engine/planning/fixture/${key}`);
+  assert.deepEqual(planningReads().sort(), initialPlanningReads, "one store read per collection in scope");
+  const notices = () => [...dom.window.document.querySelectorAll('[role="alert"]')].map(alert => alert.textContent ?? "");
+  assert.ok(notices().some(message => message.includes("Project damaged") && message.includes("fixture decision damaged-decision")));
   const taskReads = () => count("/tasks");
   // Let the startup resync settle before observing the steady-state window.
   await wait(150);
-  const routes = [
-    "/tasks",
-    "/profiles/usage",
-    "/settings",
-    "/settings/storage",
-  ];
+  const routes = ["/tasks", "/profiles/usage", "/settings", "/settings/storage"];
   const beforeIdle = routes.map(count);
-  assert.deepEqual(
-    beforeIdle,
-    [1, 0, 1, 0],
-    "entry reads the task list and board settings once",
-  );
+  assert.deepEqual(beforeIdle, [1, 0, 1, 0], "entry reads the task list and board settings once");
   for (let i = 0; i < 5; i++) {
     emit("invalidate", { taskId: "board-task", version: 8, detailOnly: true });
     await wait(1000);
   }
   const idleReads = routes.map((route, i) => count(route) - beforeIdle[i]!);
-  t.diagnostic(
-    "5s idle with detail events: " +
-      JSON.stringify(
-        Object.fromEntries(routes.map((route, i) => [route, idleReads[i]])),
-      ),
-  );
+  t.diagnostic("5s idle with detail events: " + JSON.stringify(Object.fromEntries(
+    routes.map((route, i) => [route, idleReads[i]]),
+  )));
   assert.deepEqual(idleReads, [0, 0, 0, 0]);
-  assert.deepEqual(
-    planningReads().sort(),
-    initialPlanningReads,
-    "idle and task activity make no collection reads",
-  );
+  assert.deepEqual(planningReads().sort(), initialPlanningReads, "idle and task activity make no collection reads");
   // The shared navigation, header and project filter render from the Rust data.
   await click("Queue, 2");
   decisionOpen = false;
   damagedDecision = false;
   emit("decisions");
-  await eventually(
-    () => !text().includes("damaged-decision"),
-    "a successful read clears the record warning",
-  );
-  assert.ok(notices().some((message) => message.includes("Project damaged")));
-  await eventually(
-    () => Boolean(selector("Needs you, 0")),
-    "a decision change updates the menu outside Needs you",
-  );
+  await eventually(() => !text().includes("damaged-decision"), "a successful read clears the record warning");
+  assert.ok(notices().some(message => message.includes("Project damaged")));
+  await eventually(() => Boolean(selector("Needs you, 0")), "a decision change updates the menu outside Needs you");
   assert.deepEqual(planningReads().slice(3), [initialPlanningReads[0]]);
   const beforeSourceEdit = taskReads();
   emit("planning");
-  await eventually(
-    () => taskReads() > beforeSourceEdit,
-    "a source item edit refreshes task lane membership",
-  );
-  await eventually(
-    () => planningReads().length >= 6,
-    "a planning change refreshes plans and items",
-  );
-  assert.deepEqual(
-    planningReads().slice(4).sort(),
-    initialPlanningReads.slice(1),
-  );
-  await eventually(
-    () => text().includes("Standalone task"),
-    "task title renders",
-  );
+  await eventually(() => taskReads() > beforeSourceEdit, "a source item edit refreshes task lane membership");
+  await eventually(() => planningReads().length >= 6, "a planning change refreshes plans and items");
+  assert.deepEqual(planningReads().slice(4).sort(), initialPlanningReads.slice(1));
+  await eventually(() => text().includes("Standalone task"), "task title renders");
   const header = (card: HTMLElement, state: string, age: string) => {
     const ageText = [...card.querySelectorAll("div")].find(
       (node) => node.childElementCount === 0 && node.textContent === age,
@@ -1888,40 +1417,22 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.match(heldHeader.textContent ?? "", /^#81/);
   assert.doesNotMatch(heldHeader.textContent ?? "", /Held task|schema review/);
   assert.match(heldCard.textContent ?? "", /Held taskHeld by planner$/);
-  assert.equal(
-    heldCard.querySelector(
-      '[title="Wait for the schema review. Then continue with the API."]',
-    )?.textContent,
-    "Held by planner",
-  );
-  assert.doesNotMatch(
-    heldCard.textContent ?? "",
-    /Then continue|Queued|On hold/,
-  );
+  assert.equal(heldCard.querySelector('[title="Wait for the schema review. Then continue with the API."]')?.textContent, "Held by planner");
+  assert.doesNotMatch(heldCard.textContent ?? "", /Then continue|Queued|On hold/);
   const capacityCard = selector("#80, Standalone task")!;
   header(capacityCard, "Waiting for capacity", "4m ago");
   assert.doesNotMatch(capacityCard.textContent ?? "", /Queued|work slot/);
-  assert.ok(
-    selector("Queue controls menu"),
-    "the shared pause split button renders",
-  );
-  assert.ok(
-    text().includes("All projects"),
-    "the shared project filter renders",
-  );
+  assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
+  assert.ok(text().includes("All projects"), "the shared project filter renders");
   taskPhase = "working";
   const beforeTransition = routes.map(count);
   emit("invalidate", { taskId: "board-task", version: 9 });
   await click("Working, 1");
-  await eventually(
-    () => Boolean(selector("#80, Standalone task")),
-    "working view renders",
-  );
+  await eventually(() => Boolean(selector("#80, Standalone task")), "working view renders");
   const workingCard = selector("#80, Standalone task")!;
   const workingHeader = header(workingCard, "Working*", "12m ago");
   const title = [...workingCard.querySelectorAll("div")].find(
-    (node) =>
-      node.childElementCount === 0 && node.textContent === "Standalone task",
+    (node) => node.childElementCount === 0 && node.textContent === "Standalone task",
   );
   assert.ok(title);
   const style = (element: Element) => dom.window.getComputedStyle(element);
@@ -1933,206 +1444,104 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.equal(style(title).whiteSpace, "nowrap");
   assert.equal(style(title).textOverflow, "ellipsis");
   for (const label of ["#80", "Fixture project", "12m ago"]) {
-    const node = [...workingHeader.querySelectorAll("div")].find(
-      (item) => item.textContent === label,
-    );
+    const node = [...workingHeader.querySelectorAll("div")].find((item) => item.textContent === label);
     assert.ok(node, label);
     assert.equal(style(node).color, "rgb(129, 129, 129)");
   }
-  const statusLine = title.nextElementSibling?.querySelector(
-    '[title="Wait before dispatching again."]',
-  );
+  const statusLine = title.nextElementSibling?.querySelector('[title="Wait before dispatching again."]');
   assert.equal(statusLine?.textContent, "Working*");
-  assert.equal(
-    style(statusLine!.lastElementChild!).color,
-    "rgb(129, 129, 129)",
-  );
+  assert.equal(style(statusLine!.lastElementChild!).color, "rgb(129, 129, 129)");
   assert.doesNotMatch(workingCard.textContent ?? "", /On hold/);
-  assert.deepEqual(
-    routes.map((route, i) => count(route) - beforeTransition[i]!),
-    [1, 0, 0, 0],
-  );
-  const cardStrip = workingCard.parentElement?.querySelector(
-    '[role="img"][aria-label^="Progress:"]',
-  );
+  assert.deepEqual(routes.map((route, i) => count(route) - beforeTransition[i]!), [1, 0, 0, 0]);
+  const cardStrip = workingCard.parentElement?.querySelector('[role="img"][aria-label^="Progress:"]');
   assert.ok(cardStrip, "the card has an accessible progress strip");
   assert.ok(
-    workingCard.compareDocumentPosition(cardStrip) &
-      dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    workingCard.compareDocumentPosition(cardStrip) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
     "the strip follows the compact card body",
   );
-  assert.ok(
-    workingCard.parentElement?.lastElementChild?.contains(cardStrip),
-    "the strip is at the bottom of the card",
-  );
+  assert.ok(workingCard.parentElement?.lastElementChild?.contains(cardStrip), "the strip is at the bottom of the card");
   assert.equal(cardStrip.children.length, 5, "one bar per code task step");
   assert.equal(cardStrip.textContent, "", "card bars have no visible text");
-  assert.match(
-    cardStrip.getAttribute("aria-label") ?? "",
-    /Working \(current, 13m 51s\).*Review \(todo, Round 2 · 7m 10s\)/,
-  );
+  assert.match(cardStrip.getAttribute("aria-label") ?? "", /Working \(current, 13m 51s\).*Review \(todo, Round 2 · 7m 10s\)/);
   const footer = cardStrip.parentElement!;
   const body = workingCard.firstElementChild!;
   const tile = body.firstElementChild!;
-  const leftPadding = (element: Element) =>
-    Number.parseFloat(style(element).paddingLeft) || 0;
-  assert.equal(
-    leftPadding(footer),
-    leftPadding(workingCard) +
-      Number.parseFloat(style(tile).width) +
-      Number.parseFloat(style(body).gap),
-  );
-  assert.equal(
-    Number.parseFloat(style(footer).paddingRight) || 0,
-    Number.parseFloat(style(workingCard).paddingRight) || 0,
-  );
+  const leftPadding = (element: Element) => Number.parseFloat(style(element).paddingLeft) || 0;
+  assert.equal(leftPadding(footer), leftPadding(workingCard) + Number.parseFloat(style(tile).width) + Number.parseFloat(style(body).gap));
+  assert.equal(Number.parseFloat(style(footer).paddingRight) || 0, Number.parseFloat(style(workingCard).paddingRight) || 0);
   for (const segment of cardStrip.children)
     assert.equal(style(segment.firstElementChild!).height, "2px");
 
   const tooltip = () => dom.window.document.querySelector('[role="tooltip"]');
-  for (const [index, text] of [
-    [1, "Working · 13m 51s"],
-    [2, "Review · round 2 · 7m 10s"],
-    [3, "Merge · not started"],
-  ] as const) {
+  for (const [index, text] of [[1, "Working · 13m 51s"], [2, "Review · round 2 · 7m 10s"], [3, "Merge · not started"]] as const) {
     const segment = cardStrip.children[index]!;
-    segment.dispatchEvent(
-      new dom.window.PointerEvent("pointerenter", { pointerType: "mouse" }),
-    );
-    await eventually(
-      () => tooltip()?.textContent === text,
-      "hover shows " + text,
-    );
-    segment.dispatchEvent(
-      new dom.window.PointerEvent("pointerleave", { pointerType: "mouse" }),
-    );
-    await eventually(
-      () => !tooltip(),
-      "leaving the segment dismisses the tooltip",
-    );
+    segment.dispatchEvent(new dom.window.PointerEvent("pointerenter", { pointerType: "mouse" }));
+    await eventually(() => tooltip()?.textContent === text, "hover shows " + text);
+    segment.dispatchEvent(new dom.window.PointerEvent("pointerleave", { pointerType: "mouse" }));
+    await eventually(() => !tooltip(), "leaving the segment dismisses the tooltip");
   }
 
   await click("#80, Standalone task");
-  const detailProgress = () =>
-    selector("Task detail")?.querySelector('[aria-label^="Progress:"]');
-  await eventually(
-    () => Boolean(detailProgress()?.textContent?.includes("13m 51s")),
-    "the selected task displays its run duration in the timeline",
-  );
+  const detailProgress = () => selector("Task detail")?.querySelector('[aria-label^="Progress:"]');
+  await eventually(() => Boolean(detailProgress()?.textContent?.includes("13m 51s")),
+    "the selected task displays its run duration in the timeline");
   const fullStrip = detailProgress()!;
   assert.equal(style(title).fontWeight, "400");
   assert.equal(style(title).color, "rgb(245, 245, 245)");
-  const taskHeading =
-    selector("Task detail")?.querySelector('[role="heading"]');
-  assert.match(
-    taskHeading?.textContent ?? "",
-    /board-fixture#80 · Standalone task/,
-  );
+  const taskHeading = selector("Task detail")?.querySelector('[role="heading"]');
+  assert.match(taskHeading?.textContent ?? "", /board-fixture#80 · Standalone task/);
   assert.notEqual(style(taskHeading!).whiteSpace, "nowrap");
-  assert.match(
-    selector("Task detail")?.textContent ?? "",
-    /Wait before dispatching again\./,
-  );
-  assert.match(
-    fullStrip.textContent ?? "",
-    /Queued.*Working.*13m 51s.*Review.*Round 2.*Merge.*Close/,
-  );
-  const colours = (strip: Element) =>
-    Array.from(strip.children, (step) => {
-      assert.ok(step.firstElementChild);
-      return dom.window.getComputedStyle(step.firstElementChild)
-        .backgroundColor;
-    });
-  assert.equal(
-    new Set(colours(cardStrip)).size,
-    3,
-    "done, current and future bars have different colours",
-  );
-  assert.deepEqual(
-    colours(cardStrip),
-    colours(fullStrip),
-    "card and detail use the same step colours",
-  );
+  assert.match(selector("Task detail")?.textContent ?? "", /Wait before dispatching again\./);
+  assert.match(fullStrip.textContent ?? "", /Queued.*Working.*13m 51s.*Review.*Round 2.*Merge.*Close/);
+  const colours = (strip: Element) => Array.from(strip.children, (step) => {
+    assert.ok(step.firstElementChild);
+    return dom.window.getComputedStyle(step.firstElementChild).backgroundColor;
+  });
+  assert.equal(new Set(colours(cardStrip)).size, 3, "done, current and future bars have different colours");
+  assert.deepEqual(colours(cardStrip), colours(fullStrip), "card and detail use the same step colours");
   const beforeClock = requests.length;
   clock += 2000;
-  await eventually(
-    () => text().includes("13m 53s"),
-    "run duration ticks locally",
-  );
+  await eventually(() => text().includes("13m 53s"), "run duration ticks locally");
   assert.equal(requests.length, beforeClock);
 
   const beforeDetail = routes.map(count);
   const detailReads = count("/tasks/board-task");
   emit("invalidate", { taskId: "board-task", version: 9, detailOnly: true });
-  await eventually(
-    () => count("/tasks/board-task") === detailReads + 1,
-    "detail changes refresh the open task",
-  );
-  assert.deepEqual(
-    routes.map((route, i) => count(route) - beforeDetail[i]!),
-    [0, 0, 0, 0],
-  );
+  await eventually(() => count("/tasks/board-task") === detailReads + 1, "detail changes refresh the open task");
+  assert.deepEqual(routes.map((route, i) => count(route) - beforeDetail[i]!), [0, 0, 0, 0]);
   workerRunning = true;
   emit("invalidate", { taskId: "board-task", version: 10 });
-  await eventually(
-    () =>
-      Boolean(
-        selector("#80, Standalone task")?.textContent?.endsWith(
-          "Standalone taskWorking",
-        ),
-      ),
-    "the task list shows the running worker",
-  );
+  await eventually(() => Boolean(selector("#80, Standalone task")?.textContent?.endsWith("Standalone taskWorking")),
+    "the task list shows the running worker");
   const beforePause = taskReads();
   dispatch = { ...dispatch, mode: "paused" };
   emit("settings");
-  await eventually(
-    () => Boolean(selector("Draining · 1 active · 0 unconfirmed")),
-    "the paused header keeps the live worker count",
-  );
+  await eventually(() => Boolean(selector("Draining · 1 active · 0 unconfirmed")), "the paused header keeps the live worker count");
   assert.equal(taskReads(), beforePause, "pausing reuses the loaded task list");
   dispatch = { ...dispatch, mode: "running" };
   emit("settings");
-  await eventually(
-    () => !selector("Draining · 1 active · 0 unconfirmed"),
-    "resuming clears the draining pill",
-  );
+  await eventually(() => !selector("Draining · 1 active · 0 unconfirmed"), "resuming clears the draining pill");
 
   const beforeLeads = planningReads().length;
   await click("Leads, 4");
-  await eventually(
-    () =>
-      Boolean(
-        selector(`Lead: ${longLead}, Status: Unchecked · awaiting a check`),
-      ),
-    "the Leads view uses the loaded items",
-  );
-  assert.equal(
-    planningReads().length,
-    beforeLeads,
-    "opening Leads makes no collection reads",
-  );
+  await eventually(() => Boolean(selector(`Lead: ${longLead}, Status: Unchecked · awaiting a check`)),
+    "the Leads view uses the loaded items");
+  assert.equal(planningReads().length, beforeLeads, "opening Leads makes no collection reads");
   const triageTitles = (view: string, kind: string) => {
     const list = selector(view + " list");
     assert.ok(list);
-    return [
-      ...list.querySelectorAll(`[role="button"][aria-label^="${kind}: "]`),
-    ].map((card) => card.querySelector("[title]")?.getAttribute("title"));
+    return [...list.querySelectorAll(`[role="button"][aria-label^="${kind}: "]`)]
+      .map((card) => card.querySelector("[title]")?.getAttribute("title"));
   };
   const expectParked = (kind: string, title: string, openLabel: string) => {
-    const parked = selector(
-      `${kind}: ${title}, Status: Parked · ${parkReason}`,
-    );
+    const parked = selector(`${kind}: ${title}, Status: Parked · ${parkReason}`);
     const open = selector(openLabel);
     assert.ok(parked && open);
     const body = parked.firstElementChild!;
     assert.equal(style(body).filter, "grayscale(1)");
     assert.equal(style(body).opacity, "0.75");
     assert.notEqual(style(open.firstElementChild!).filter, "grayscale(1)");
-    assert.equal(
-      parked.querySelector(`[title="${parkReason}"]`)?.textContent,
-      "Parked",
-    );
+    assert.equal(parked.querySelector(`[title="${parkReason}"]`)?.textContent, "Parked");
     assert.doesNotMatch(parked.textContent ?? "", /Paused until/);
   };
   const filterState = async (name: string, from: string, to: string) => {
@@ -2140,14 +1549,10 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     await click(`Filter ${name} by state: ${to}`);
   };
   const expectLeadBadge = (title: string, badgeTitle: string) => {
-    const card = selector(
-      `Lead: ${title}, Status: Unchecked · awaiting a check`,
-    );
+    const card = selector(`Lead: ${title}, Status: Unchecked · awaiting a check`);
     assert.ok(card, title);
     const badge = generatedProjectBadge(badgeTitle);
-    const mark = [...card.querySelectorAll("div")].find(
-      (node) => node.textContent === badge.monogram,
-    );
+    const mark = [...card.querySelectorAll("div")].find((node) => node.textContent === badge.monogram);
     assert.ok(mark, `badge for ${badgeTitle}`);
     assert.equal(style(mark).color, projectBadgeWebStyle(badge, true).color);
     const text = card.querySelector(`[title="${title}"]`);
@@ -2155,93 +1560,43 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     assert.equal(style(text).whiteSpace, "nowrap");
     assert.equal(style(text).textOverflow, "ellipsis");
     header(card, "Unchecked", "36m ago");
-    assert.equal(
-      card.querySelector('[title="awaiting a check"]')?.textContent,
-      "Unchecked",
-    );
+    assert.equal(card.querySelector('[title="awaiting a check"]')?.textContent, "Unchecked");
   };
   expectLeadBadge(longLead, "Fixture project");
   expectLeadBadge("Lead with a saved T3 title", boundTitle);
   expectLeadBadge("Lead spanning mixed bindings", "Fixture project");
   const leadOrder = triageTitles("Leads", "Lead");
-  assert.deepEqual(leadOrder.slice(0, 3), [
-    longLead,
-    parkedLead,
-    "Lead with a saved T3 title",
-  ]);
-  expectParked(
-    "Lead",
-    parkedLead,
-    `Lead: ${longLead}, Status: Unchecked · awaiting a check`,
-  );
+  assert.deepEqual(leadOrder.slice(0, 3), [longLead, parkedLead, "Lead with a saved T3 title"]);
+  expectParked("Lead", parkedLead, `Lead: ${longLead}, Status: Unchecked · awaiting a check`);
   const beforeFilters = planningReads().length;
   await filterState("leads", "All", "Open");
-  await eventually(
-    () => !triageTitles("Leads", "Lead").includes(parkedLead),
-    "open leads exclude parked",
-  );
-  assert.deepEqual(
-    triageTitles("Leads", "Lead"),
-    leadOrder.filter((name) => name !== parkedLead),
-  );
+  await eventually(() => !triageTitles("Leads", "Lead").includes(parkedLead), "open leads exclude parked");
+  assert.deepEqual(triageTitles("Leads", "Lead"), leadOrder.filter((name) => name !== parkedLead));
   await filterState("leads", "Open", "Parked");
-  await eventually(
-    () => triageTitles("Leads", "Lead").length === 1,
-    "parked leads filter settles",
-  );
+  await eventually(() => triageTitles("Leads", "Lead").length === 1, "parked leads filter settles");
   assert.deepEqual(triageTitles("Leads", "Lead"), [parkedLead]);
   await filterState("leads", "Parked", "All");
-  await eventually(
-    () => triageTitles("Leads", "Lead").length === leadOrder.length,
-    "all leads restored",
-  );
-  assert.equal(
-    planningReads().length,
-    beforeFilters,
-    "state filters do not read the API",
-  );
+  await eventually(() => triageTitles("Leads", "Lead").length === leadOrder.length, "all leads restored");
+  assert.equal(planningReads().length, beforeFilters, "state filters do not read the API");
   await click(`Lead: ${parkedLead}, Status: Parked · ${parkReason}`);
-  await eventually(
-    () => selector("Parked lead")?.textContent?.includes(parkReason) ?? false,
-    "the parked lead detail shows the reason",
-  );
+  await eventually(() => selector("Parked lead")?.textContent?.includes(parkReason) ?? false,
+    "the parked lead detail shows the reason");
   await click(`Lead: ${longLead}, Status: Unchecked · awaiting a check`);
-  await eventually(
-    () =>
-      selector("Lead detail")?.querySelector('[role="heading"]')
-        ?.textContent === longLead,
-    "the entire lead title is shown in detail",
-  );
-  const leadHeading =
-    selector("Lead detail")!.querySelector('[role="heading"]')!;
+  await eventually(() => selector("Lead detail")?.querySelector('[role="heading"]')?.textContent === longLead,
+    "the entire lead title is shown in detail");
+  const leadHeading = selector("Lead detail")!.querySelector('[role="heading"]')!;
   assert.notEqual(style(leadHeading).whiteSpace, "nowrap");
   assert.equal(style(leadHeading).getPropertyValue("-webkit-line-clamp"), "");
   await click("Papercuts, 3");
-  await eventually(
-    () => triageTitles("Papercuts", "Papercut").length === 3,
-    "all papercuts shown",
-  );
-  assert.deepEqual(triageTitles("Papercuts", "Papercut"), [
-    papercut,
-    parkedCut,
-    secondCut,
-  ]);
+  await eventually(() => triageTitles("Papercuts", "Papercut").length === 3, "all papercuts shown");
+  assert.deepEqual(triageTitles("Papercuts", "Papercut"), [papercut, parkedCut, secondCut]);
   expectParked("Papercut", parkedCut, `Papercut: ${papercut}, Status: Open`);
   await filterState("papercuts", "All", "Parked");
-  await eventually(
-    () => triageTitles("Papercuts", "Papercut").length === 1,
-    "parked papercuts filter settles",
-  );
+  await eventually(() => triageTitles("Papercuts", "Papercut").length === 1, "parked papercuts filter settles");
   assert.deepEqual(triageTitles("Papercuts", "Papercut"), [parkedCut]);
   await filterState("papercuts", "Parked", "Open");
-  await eventually(
-    () => triageTitles("Papercuts", "Papercut").length === 2,
-    "open papercuts filter settles",
-  );
-  assert.deepEqual(triageTitles("Papercuts", "Papercut"), [
-    papercut,
-    secondCut,
-  ]);
+  await eventually(() => triageTitles("Papercuts", "Papercut").length === 2, "open papercuts filter settles");
+  assert.deepEqual(triageTitles("Papercuts", "Papercut"), [papercut, secondCut]);
   const cutCard = selector(`Papercut: ${papercut}, Status: Open`);
   assert.ok(cutCard);
   header(cutCard, "Open", "4h ago");
@@ -2252,66 +1607,32 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Edit");
   const editField = (label: string, value: string) => {
     const field = selector(label) as HTMLInputElement | HTMLTextAreaElement;
-    const prototype =
-      field instanceof dom.window.HTMLTextAreaElement
-        ? dom.window.HTMLTextAreaElement.prototype
-        : dom.window.HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(
-      field,
-      value,
-    );
+    const prototype = field instanceof dom.window.HTMLTextAreaElement
+      ? dom.window.HTMLTextAreaElement.prototype : dom.window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(field, value);
     field.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     return field;
   };
   const editedTitle = "Revised papercut";
   const editedBody = "    first line is an indented code block\n";
-  assert.ok(
-    !selector("Impact"),
-    "the Rust editor has title and Markdown body fields",
-  );
+  assert.ok(!selector("Impact"), "the Rust editor has title and Markdown body fields");
   editField("Title", editedTitle);
   editField("What happened", editedBody);
   await click("Save changes");
-  await eventually(
-    () => text().includes("Saved version 12"),
-    "uses the saved Rust item version",
-  );
-  assert.deepEqual(papercutWrites, [
-    {
-      path: "/api/engine/planning/fixture/items/second-cut",
-      body: {
-        version: 11,
-        title: editedTitle,
-        body: editedBody,
-        lanes: ["delivery"],
-      },
-    },
-  ]);
-  await eventually(
-    () => Boolean(selector(`Papercut: ${editedTitle}, Status: Open`)),
-    "list shows the saved title",
-  );
+  await eventually(() => text().includes("Saved version 12"), "uses the saved Rust item version");
+  assert.deepEqual(papercutWrites, [{
+    path: "/api/engine/planning/fixture/items/second-cut",
+    body: { version: 11, title: editedTitle, body: editedBody, lanes: ["delivery"] },
+  }]);
+  await eventually(() => Boolean(selector(`Papercut: ${editedTitle}, Status: Open`)), "list shows the saved title");
   await click("Edit");
   const draft = "Keep my draft after a conflict";
   const draftField = editField("What happened", draft);
-  editableCut = {
-    ...editableCut,
-    title: "Concurrent papercut title",
-    version: 13,
-  };
+  editableCut = { ...editableCut, title: "Concurrent papercut title", version: 13 };
   emit("planning");
-  await eventually(
-    () =>
-      Boolean(
-        selector("Papercut detail")?.textContent?.includes(editableCut.title),
-      ),
-    "detail refreshes during editing",
-  );
+  await eventually(() => Boolean(selector("Papercut detail")?.textContent?.includes(editableCut.title)), "detail refreshes during editing");
   await click("Save changes");
-  await eventually(
-    () => text().includes("The papercut changed since you started editing."),
-    "refuses the version that opened the form",
-  );
+  await eventually(() => text().includes("The papercut changed since you started editing."), "refuses the version that opened the form");
   assert.equal(draftField.value, draft);
   assert.equal(papercutWrites.length, 1, "a stale draft writes neither item");
   await click("Working, 1");
@@ -2319,19 +1640,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   // Dispatch hold writes the Rust Dispatch mode through Settings.
   await click("Queue controls menu");
   await click("Dispatch hold");
-  await eventually(
-    () => writes.length === 1,
-    "the hold is written to the Dispatch domain",
-  );
+  await eventually(() => writes.length === 1, "the hold is written to the Dispatch domain");
   assert.equal(writes[0]!.path, "/api/engine/settings/dispatch");
   assert.equal(writes[0]!.body.value.mode, "held");
   const beforeSettings = planningReads().length;
   await click("Settings");
   assert.equal(dom.window.location.pathname, "/settings");
-  await eventually(
-    () => text().includes("Usage level"),
-    "the shared Limits section renders",
-  );
+  await eventually(() => text().includes("Usage level"), "the shared Limits section renders");
   const settings = selector("Standalone Nucleus settings");
   const back = selector("Back to board");
   assert.ok(settings && back);
@@ -2340,407 +1655,190 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.equal(style(settings).paddingLeft, "24px");
   hostThemeAvailable = false;
   emit("theme");
-  await eventually(
-    () => style(back).backgroundColor === "rgb(37, 41, 50)",
-    "Settings uses the dark system palette when the host has no theme",
-  );
+  await eventually(() => style(back).backgroundColor === "rgb(37, 41, 50)",
+    "Settings uses the dark system palette when the host has no theme");
   systemTheme.matches = false;
   systemTheme.dispatchEvent(new dom.window.Event("change"));
-  await eventually(
-    () => style(back).backgroundColor === "rgb(231, 235, 240)",
-    "open Settings follows a system appearance change",
-  );
+  await eventually(() => style(back).backgroundColor === "rgb(231, 235, 240)",
+    "open Settings follows a system appearance change");
   hostThemeAvailable = true;
   emit("theme");
   assert.doesNotMatch(text(), /Concurrent host calls|Advanced limits/);
   assert.ok(!text().includes("Telemetry"), "retired sections stay hidden");
   await click("Storage");
-  await eventually(
-    () => Boolean(selector("Placement, Internal")),
-    "Storage shows Internal placement",
-  );
+  await eventually(() => Boolean(selector("Placement, Internal")), "Storage shows Internal placement");
   const pathField = (label: string) => {
-    const inputs = dom.window.document.querySelectorAll<HTMLInputElement>(
-      `input[aria-label="${label}"]`,
-    );
+    const inputs = dom.window.document.querySelectorAll<HTMLInputElement>(`input[aria-label="${label}"]`);
     assert.equal(inputs.length, 1, label + " has one path control");
     return inputs[0]!;
   };
-  assert.match(
-    selector("Placement in force")!.textContent!,
-    /^In force: Internal ·/,
-  );
+  assert.match(selector("Placement in force")!.textContent!, /^In force: Internal ·/);
   assert.equal(pathField("Worktrees").placeholder, "/e/work");
   assert.equal(pathField("Build output").placeholder, "/e/builds");
-  await eventually(
-    () => pathField("Run scratch").value === scratchOverride,
-    "the saved scratch override is restored",
-  );
-  assert.ok(
-    !selector("Storage help text"),
-    "the explanation opens from the help control",
-  );
+  await eventually(() => pathField("Run scratch").value === scratchOverride, "the saved scratch override is restored");
+  assert.ok(!selector("Storage help text"), "the explanation opens from the help control");
   await click("Storage help");
   const storageHelp = () => selector("Storage help text")?.textContent ?? "";
-  await eventually(
-    () =>
-      storageHelp().includes(
-        "With Barge, each default comes from its storage class.",
-      ),
-    "Storage help opens in the bundle",
-  );
-  assert.match(
-    storageHelp(),
-    /defaults for worktrees, scratch and build output/,
-  );
+  await eventually(() => storageHelp().includes("With Barge, each default comes from its storage class."), "Storage help opens in the bundle");
+  assert.match(storageHelp(), /defaults for worktrees, scratch and build output/);
   assert.match(storageHelp(), /Internal uses the platform defaults/);
   assert.match(storageHelp(), /absolute path to override a default/);
-  assert.match(
-    storageHelp(),
-    /clears individual path overrides and keeps Worktrees/,
-  );
+  assert.match(storageHelp(), /clears individual path overrides and keeps Worktrees/);
   await click("Storage help");
   await click("Placement, Internal");
   await click("Placement: Barge");
-  await eventually(
-    () => Boolean(selector("Placement, Barge")),
-    "Storage shows the saved Barge placement",
-  );
-  assert.match(
-    selector("Placement in force")!.textContent!,
-    /^In force: Internal ·/,
-  );
-  const storageWrite = writes.find(({ path }) =>
-    path.endsWith("/settings/storage"),
-  );
+  await eventually(() => Boolean(selector("Placement, Barge")), "Storage shows the saved Barge placement");
+  assert.match(selector("Placement in force")!.textContent!, /^In force: Internal ·/);
+  const storageWrite = writes.find(({ path }) => path.endsWith("/settings/storage"));
   assert.equal(storageWrite?.body.value.placement, "barge");
   assert.equal(storageWrite?.body.value.scratchRoot, scratchOverride);
   activePlacement = "barge";
   emit("storage");
-  await eventually(
-    () =>
-      selector("Placement in force")?.textContent?.startsWith(
-        "In force: Barge ·",
-      ) === true,
-    "the board refreshes the active placement",
-  );
+  await eventually(() => selector("Placement in force")?.textContent?.startsWith("In force: Barge ·") === true,
+    "the board refreshes the active placement");
   assert.equal(pathField("Worktrees").placeholder, "/pool/worktrees/nucleus");
   assert.equal(pathField("Build output").placeholder, "/pool/builds/nucleus");
   assert.equal(pathField("Run scratch").placeholder, scratchOverride);
   assert.equal(pathField("Run scratch").value, scratchOverride);
-  t.diagnostic(
-    "Storage help covered Internal defaults, saved and active Barge placement, and the retained scratch override.",
-  );
+  t.diagnostic("Storage help covered Internal defaults, saved and active Barge placement, and the retained scratch override.");
 
-  assert.equal(
-    githubCalls.length,
-    0,
-    "GitHub account status is read only when its settings open",
-  );
+  assert.equal(githubCalls.length, 0, "GitHub account status is read only when its settings open");
   await click("GitHub");
-  await eventually(
-    () => Boolean(selector("Reviewer, Installed gh")),
-    "the default reviewer uses Installed gh",
-  );
+  await eventually(() => Boolean(selector("Reviewer, Installed gh")), "the default reviewer uses Installed gh");
   assert.match(text(), /GitHub sign-in is unavailable/);
   assert.equal(selector("Sign in"), null);
   assert.equal(selector("Import existing reviewer"), null);
   await click("Reviewer help");
-  await eventually(
-    () =>
-      selector("Reviewer help text")?.textContent?.includes(
-        "where the Nucleus Agents GitHub App is installed",
-      ) === true,
-    "reviewer help explains the account and app-installation access requirement",
-  );
+  await eventually(() => selector("Reviewer help text")?.textContent?.includes("where the Nucleus Agents GitHub App is installed") === true,
+    "reviewer help explains the account and app-installation access requirement");
   await click("Reviewer help");
 
   const refreshGitHub = async () => {
     await click("Storage");
     await click("GitHub");
   };
-  githubSettings = {
-    ...githubSettings,
-    canSignIn: true,
-    canImportReviewer: true,
-  };
+  githubSettings = { ...githubSettings, canSignIn: true, canImportReviewer: true };
   await refreshGitHub();
   await click("Sign in");
-  await eventually(
-    () => text().includes("Starting GitHub sign-in"),
-    "sign-in shows progress before the code arrives",
-  );
+  await eventually(() => text().includes("Starting GitHub sign-in"), "sign-in shows progress before the code arrives");
   githubFlow = "waiting";
-  await eventually(
-    () => selector("GitHub device code")?.textContent === "ABCD-EFGH",
-    "the device code arrives",
-  );
-  const verificationLink = dom.window.document.querySelector<HTMLAnchorElement>(
-    'a[href="https://github.com/login/device"]',
-  );
-  assert.equal(
-    verificationLink?.textContent,
-    "https://github.com/login/device",
-  );
+  await eventually(() => selector("GitHub device code")?.textContent === "ABCD-EFGH", "the device code arrives");
+  const verificationLink = dom.window.document.querySelector<HTMLAnchorElement>('a[href="https://github.com/login/device"]');
+  assert.equal(verificationLink?.textContent, "https://github.com/login/device");
   assert.equal(verificationLink?.target, "_blank");
   assert.equal(verificationLink?.rel, "noreferrer");
-  assert.match(
-    text(),
-    /Waiting for GitHub authorization/,
-    "device-code progress works without a TTL",
-  );
+  assert.match(text(), /Waiting for GitHub authorization/, "device-code progress works without a TTL");
   await click("Cancel");
-  await eventually(
-    () => !selector("GitHub device code") && Boolean(selector("Sign in")),
-    "cancellation clears the code",
-  );
-  assert.equal(
-    githubCalls.filter(({ method }) => method === "DELETE").length,
-    1,
-  );
+  await eventually(() => !selector("GitHub device code") && Boolean(selector("Sign in")), "cancellation clears the code");
+  assert.equal(githubCalls.filter(({ method }) => method === "DELETE").length, 1);
   assert.equal(githubSettings.reviewerAccountId, null);
 
   await click("Sign in");
   await eventually(() => githubFlowCount === 2, "the second sign-in starts");
   githubFlow = "failed";
-  await eventually(
-    () => text().includes("GitHub sign-in expired."),
-    "expired sign-in is actionable",
-  );
+  await eventually(() => text().includes("GitHub sign-in expired."), "expired sign-in is actionable");
   assert.equal(selector("GitHub device code"), null);
   await click("Dismiss");
 
   await click("Sign in");
   await eventually(() => githubFlowCount === 3, "the third sign-in starts");
   githubFlow = "confirm";
-  await eventually(
-    () => text().includes("Use @fixture-reviewer for reviews?"),
-    "confirmation names the verified account",
-  );
-  assert.equal(
-    githubSettings.reviewerAccountId,
-    null,
-    "sign-in does not select until confirmed",
-  );
+  await eventually(() => text().includes("Use @fixture-reviewer for reviews?"), "confirmation names the verified account");
+  assert.equal(githubSettings.reviewerAccountId, null, "sign-in does not select until confirmed");
   await click("Use account");
-  await eventually(
-    () => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")),
-    "confirmed reviewer is connected",
-  );
+  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")), "confirmed reviewer is connected");
   assert.equal(githubSettings.reviewerAccountId, reviewerId);
   await click("Reviewer, @fixture-reviewer, Saved sign-in");
   await click("Reviewer: Installed gh");
-  await eventually(
-    () => Boolean(selector("Reviewer, Installed gh")),
-    "Installed gh unlinks reviewer selection",
-  );
-  assert.equal(
-    githubSettings.accounts.length,
-    1,
-    "unlink keeps the saved account",
-  );
+  await eventually(() => Boolean(selector("Reviewer, Installed gh")), "Installed gh unlinks reviewer selection");
+  assert.equal(githubSettings.accounts.length, 1, "unlink keeps the saved account");
 
-  githubSettings = {
-    ...githubSettings,
-    accounts: [{ ...reviewer, presence: "missing" }],
-  };
+  githubSettings = { ...githubSettings, accounts: [{ ...reviewer, presence: "missing" }] };
   await refreshGitHub();
   await click("Reviewer, Installed gh");
   await click("Reviewer: @fixture-reviewer, Sign-in required");
-  await eventually(
-    () => Boolean(selector("Reconnect")),
-    "missing credentials offer reconnect for the selected reviewer",
-  );
+  await eventually(() => Boolean(selector("Reconnect")), "missing credentials offer reconnect for the selected reviewer");
   await click("Reconnect");
-  await eventually(
-    () => githubFlowCount === 4,
-    "reconnect starts a new sign-in",
-  );
+  await eventually(() => githubFlowCount === 4, "reconnect starts a new sign-in");
   await click("Cancel");
-  await eventually(
-    () => Boolean(selector("Import existing reviewer")),
-    "cancel returns to accounts",
-  );
+  await eventually(() => Boolean(selector("Import existing reviewer")), "cancel returns to accounts");
 
-  githubSettings = {
-    ...githubSettings,
-    accounts: [{ ...reviewer, presence: "unavailable" }],
-  };
+  githubSettings = { ...githubSettings, accounts: [{ ...reviewer, presence: "unavailable" }] };
   emit("settings");
-  await eventually(
-    () =>
-      Boolean(
-        selector("Reviewer, @fixture-reviewer, Account storage unavailable"),
-      ),
-    "a settings push refreshes credential status and preserves the selected reviewer",
-  );
-  assert.ok(
-    selector("Reconnect"),
-    "unavailable credentials offer an explicit reconnect",
-  );
-  assert.equal(
-    selector("Reviewer, Installed gh"),
-    null,
-    "unavailable credentials never select Installed gh",
-  );
+  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Account storage unavailable")),
+    "a settings push refreshes credential status and preserves the selected reviewer");
+  assert.ok(selector("Reconnect"), "unavailable credentials offer an explicit reconnect");
+  assert.equal(selector("Reviewer, Installed gh"), null, "unavailable credentials never select Installed gh");
 
   await click("Import existing reviewer");
-  await eventually(
-    () => Boolean(selector("Organization")),
-    "legacy import asks for an organization",
-  );
-  assert.equal(
-    githubCalls.filter(({ route }) => route === "/import-reviewer").length,
-    0,
-    "opening the import form does not look up a legacy item",
-  );
-  const organization = dom.window.document.querySelector<HTMLInputElement>(
-    'input[aria-label="Organization"]',
-  );
+  await eventually(() => Boolean(selector("Organization")), "legacy import asks for an organization");
+  assert.equal(githubCalls.filter(({ route }) => route === "/import-reviewer").length, 0,
+    "opening the import form does not look up a legacy item");
+  const organization = dom.window.document.querySelector<HTMLInputElement>('input[aria-label="Organization"]');
   assert.ok(organization);
-  Object.getOwnPropertyDescriptor(
-    dom.window.HTMLInputElement.prototype,
-    "value",
-  )?.set?.call(organization, "fixture-org");
+  Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set?.call(organization, "fixture-org");
   organization.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-  await eventually(
-    () =>
-      selector("Look up reviewer")?.getAttribute("aria-disabled") !== "true",
-    "organization enables lookup",
-  );
+  await eventually(() => selector("Look up reviewer")?.getAttribute("aria-disabled") !== "true", "organization enables lookup");
   await click("Look up reviewer");
-  await eventually(
-    () => text().includes("Use @fixture-reviewer for reviews?"),
-    "legacy import shows the verified login before saving",
-  );
+  await eventually(() => text().includes("Use @fixture-reviewer for reviews?"), "legacy import shows the verified login before saving");
   await click("Use account");
-  await eventually(
-    () => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")),
-    "confirmed import reconnects the reviewer",
-  );
-  assert.ok(
-    githubCalls.every(
-      ({ body }) =>
-        !JSON.stringify(body)?.includes("fixture-unexpected-secret"),
-    ),
-  );
+  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")), "confirmed import reconnects the reviewer");
+  assert.ok(githubCalls.every(({ body }) => !JSON.stringify(body)?.includes("fixture-unexpected-secret")));
 
   invalidGitHubResponse = true;
   await refreshGitHub();
-  await eventually(
-    () => text().includes("The task engine returned an invalid response."),
-    "the browser rejects a response outside the public shape",
-  );
+  await eventually(() => text().includes("The task engine returned an invalid response."), "the browser rejects a response outside the public shape");
   assert.ok(!text().includes("fixture-unexpected-secret"));
   assert.equal(selector("Reviewer, @fixture-reviewer, Saved sign-in"), null);
   invalidGitHubResponse = false;
   await click("Retry GitHub accounts");
-  await eventually(
-    () => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")),
-    "the public response restores Settings",
-  );
-  const githubReads = () =>
-    githubCalls.filter(({ method, route }) => method === "GET" && route === "")
-      .length;
+  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")), "the public response restores Settings");
+  const githubReads = () => githubCalls.filter(({ method, route }) => method === "GET" && route === "").length;
   const priorReads = githubReads();
   githubSettings = { ...githubSettings, workerAccountId: reviewerId };
   await refreshGitHub();
-  await eventually(
-    () =>
-      githubReads() > priorReads &&
-      Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")) &&
-      !selector("Sign out"),
-    "an account still selected by the worker cannot be signed out",
-  );
+  await eventually(() => githubReads() > priorReads && Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")) && !selector("Sign out"),
+    "an account still selected by the worker cannot be signed out");
   githubSettings = { ...githubSettings, workerAccountId: null };
   await refreshGitHub();
   await click("Sign out");
-  await eventually(
-    () =>
-      text().includes(
-        "Sign out of @fixture-reviewer and use Installed gh for reviews?",
-      ),
-    "sign-out confirms the named account",
-  );
+  await eventually(() => text().includes("Sign out of @fixture-reviewer and use Installed gh for reviews?"), "sign-out confirms the named account");
   assert.ok(!githubCalls.some(({ route }) => route.endsWith("/sign-out")));
   assert.equal(githubSettings.reviewerAccountId, reviewerId);
   let finishSignOut: () => void = () => {};
-  githubSignOutGate = new Promise<void>((resolve) => {
-    finishSignOut = resolve;
-  });
+  githubSignOutGate = new Promise<void>((resolve) => { finishSignOut = resolve; });
   await click("Sign out");
-  await eventually(
-    () => githubCalls.some(({ route }) => route.endsWith("/sign-out")),
-    "confirmed sign-out calls the engine",
-  );
-  assert.ok(
-    selector("Reviewer, @fixture-reviewer, Saved sign-in"),
-    "a pending sign-out keeps the selected reviewer",
-  );
-  assert.equal(
-    selector("Reviewer, Installed gh"),
-    null,
-    "the UI waits for confirmed sign-out",
-  );
+  await eventually(() => githubCalls.some(({ route }) => route.endsWith("/sign-out")), "confirmed sign-out calls the engine");
+  assert.ok(selector("Reviewer, @fixture-reviewer, Saved sign-in"), "a pending sign-out keeps the selected reviewer");
+  assert.equal(selector("Reviewer, Installed gh"), null, "the UI waits for confirmed sign-out");
   finishSignOut();
-  await eventually(
-    () => Boolean(selector("Reviewer, Installed gh")),
-    "sign-out clears the reviewer selection",
-  );
+  await eventually(() => Boolean(selector("Reviewer, Installed gh")), "sign-out clears the reviewer selection");
   assert.equal(githubSettings.accounts.length, 0);
-  t.diagnostic(
-    "GitHub Settings covered default and configured reviewers, device sign-in, cancel, expiry, reconnect, import, explicit sign-out and public fields.",
-  );
+  t.diagnostic("GitHub Settings covered default and configured reviewers, device sign-in, cancel, expiry, reconnect, import, explicit sign-out and public fields.");
 
   await click("Profiles");
-  await eventually(
-    () =>
-      Boolean(
-        selector("Fixture worker, all roles: 49 of 49 recent assignments"),
-      ),
-    "profile usage renders",
-  );
+  await eventually(() => Boolean(selector("Fixture worker, all roles: 49 of 49 recent assignments")), "profile usage renders");
   const toggle = selector("Disable Fixture worker");
   assert.ok(toggle && toggle.getAttribute("aria-disabled") !== "true");
   assert.ok(text().includes("Unavailable"), "the subscription pause renders");
   assert.doesNotMatch(text(), /Reading subscriptions/);
   await click("Reset fixture team");
-  await eventually(
-    () => pausedGroups.length === 0 && !selector("Reset fixture team"),
-    "manual subscription reset renders",
-  );
+  await eventually(() => pausedGroups.length === 0 && !selector("Reset fixture team"), "manual subscription reset renders");
   const beforeUsage = routes.map(count);
   usageCount = 50;
   resetAt = now + 60_000;
   emit("profile-usage");
-  await eventually(
-    () => text().includes("Unavailable until"),
-    "runtime subscription pause renders",
-  );
+  await eventually(() => text().includes("Unavailable until"), "runtime subscription pause renders");
   assert.ok(selector("Fixture worker, all roles: 50 of 50 recent assignments"));
-  assert.deepEqual(
-    routes.map((route, i) => count(route) - beforeUsage[i]!),
-    [0, 1, 0, 0],
-  );
+  assert.deepEqual(routes.map((route, i) => count(route) - beforeUsage[i]!), [0, 1, 0, 0]);
 
   const beforeReconnect = routes.map(count);
   assert.ok(closeStream);
   closeStream();
-  await eventually(
-    () =>
-      count("/events") === 2 && count("/profiles/usage") > beforeReconnect[1]!,
-    "a reconnected stream refreshes visible Settings",
-    5500,
-  );
-  assert.deepEqual(
-    routes.map((route, i) => count(route) - beforeReconnect[i]!),
-    [0, 1, 1, 1],
-  );
-  assert.equal(
-    planningReads().length,
-    beforeSettings,
-    "operator Settings makes no planning requests, including on reconnect",
-  );
+  await eventually(() => count("/events") === 2 && count("/profiles/usage") > beforeReconnect[1]!,
+    "a reconnected stream refreshes visible Settings", 5500);
+  assert.deepEqual(routes.map((route, i) => count(route) - beforeReconnect[i]!), [0, 1, 1, 1]);
+  assert.equal(planningReads().length, beforeSettings, "operator Settings makes no planning requests, including on reconnect");
 
   await click("Back to board");
   // Advance the record polling interval in the browser without disturbing
@@ -2750,9 +1848,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const recordTimers = new Map<number, { next: number; run: () => void }>();
   let intervalId = 0;
   let intervalClock = 0;
-  t.mock.method(
-    dom.window,
-    "setInterval",
+  t.mock.method(dom.window, "setInterval",
     (run: () => void, delay?: number) => {
       if (delay !== 4000) return setInterval(run, delay);
       const id = --intervalId;
@@ -2771,44 +1867,26 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       timer.next += 4000;
       timer.run();
     }
-    await new Promise<void>((resolve) =>
-      dom.window.requestAnimationFrame(() => resolve()),
-    );
+    await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
   };
 
   decisionOpen = true;
   emit("decisions");
-  await eventually(
-    () => Boolean(selector("Needs you, 1")),
-    "the decision is back on the board",
-  );
-  const decisionCard = () =>
-    dom.window.document.querySelector<HTMLElement>(
-      '[aria-label^="Decision: Which route should we take?"]',
-    );
+  await eventually(() => Boolean(selector("Needs you, 1")), "the decision is back on the board");
+  const decisionCard = () => dom.window.document.querySelector<HTMLElement>('[aria-label^="Decision: Which route should we take?"]');
   const itemRoute = "/planning/fixture/items";
   const decisionRoute = "/planning/fixture/decisions";
   const records = [
     {
-      detail: "Lead detail",
-      view: "Leads, 4",
-      event: "planning",
-      route: itemRoute,
-      card: () =>
-        selector(`Lead: ${longLead}, Status: Unchecked · awaiting a check`),
+      detail: "Lead detail", view: "Leads, 4", event: "planning", route: itemRoute,
+      card: () => selector(`Lead: ${longLead}, Status: Unchecked · awaiting a check`),
     },
     {
-      detail: "Papercut detail",
-      view: "Papercuts, 3",
-      event: "planning",
-      route: itemRoute,
+      detail: "Papercut detail", view: "Papercuts, 3", event: "planning", route: itemRoute,
       card: () => selector(`Papercut: ${papercut}, Status: Open`),
     },
     {
-      detail: "Decision detail",
-      view: "Needs you, 1",
-      event: "decisions",
-      route: decisionRoute,
+      detail: "Decision detail", view: "Needs you, 1", event: "decisions", route: decisionRoute,
       card: decisionCard,
     },
   ];
@@ -2818,74 +1896,41 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     const beforeOpen = count(route);
     card()!.click();
     const current = event === "planning" ? itemBody : decisionQuestion;
-    await eventually(
-      () => selector(detail)?.textContent?.includes(current) === true,
-      detail + " initial read",
-    );
-    assert.equal(
-      count(route) - beforeOpen,
-      1,
-      detail + " reads once on opening",
-    );
+    await eventually(() => selector(detail)?.textContent?.includes(current) === true, detail + " initial read");
+    assert.equal(count(route) - beforeOpen, 1, detail + " reads once on opening");
     if (detail === "Lead detail") {
-      assert.doesNotMatch(
-        selector(detail)!.textContent!,
-        /Check brief|Not checked|Not approved/,
-      );
+      assert.doesNotMatch(selector(detail)!.textContent!, /Check brief|Not checked|Not approved/);
       assert.equal(selector("Approve the checked version"), null);
     }
-    if (detail === "Decision detail")
-      assert.equal(selector("Withdraw reason"), null);
+    if (detail === "Decision detail") assert.equal(selector("Withdraw reason"), null);
 
-    const collectionRoute =
-      event === "decisions" ? route + "?pending=true" : route;
+    const collectionRoute = event === "decisions" ? route + "?pending=true" : route;
     const beforeIdle = count(route);
     const beforeList = count(collectionRoute);
     await advanceRecordClock();
-    assert.equal(
-      count(route) - beforeIdle,
-      0,
-      detail + " has no interval reads on a healthy stream",
-    );
+    assert.equal(count(route) - beforeIdle, 0, detail + " has no interval reads on a healthy stream");
 
     const changed = detail + " from a push";
     if (event === "planning") itemBody = changed;
     else decisionQuestion = changed;
     emit(event);
-    await eventually(
-      () => selector(detail)?.textContent?.includes(changed) === true,
-      detail + " refreshes on its event",
-    );
-    assert.equal(
-      count(route) - beforeIdle,
-      route === collectionRoute ? 2 : 1,
-      detail + " refreshes on the event",
-    );
-    if (route !== collectionRoute)
-      assert.equal(count(collectionRoute) - beforeList, 1);
+    await eventually(() => selector(detail)?.textContent?.includes(changed) === true, detail + " refreshes on its event");
+    assert.equal(count(route) - beforeIdle, route === collectionRoute ? 2 : 1, detail + " refreshes on the event");
+    if (route !== collectionRoute) assert.equal(count(collectionRoute) - beforeList, 1);
   }
 
   let resumeEvents!: () => void;
-  reconnectGate = new Promise<void>((resolve) => {
-    resumeEvents = resolve;
-  });
+  reconnectGate = new Promise<void>((resolve) => { resumeEvents = resolve; });
   t.after(() => resumeEvents());
   closeStream!();
-  const channel = (state: string) =>
-    dom.window.document.querySelector(`[data-live-channel="${state}"]`);
-  await eventually(
-    () => Boolean(channel("disconnected")) && recordTimers.size === 1,
-    "the open decision starts its fallback read interval when the stream drops",
-  );
+  const channel = (state: string) => dom.window.document.querySelector(`[data-live-channel="${state}"]`);
+  await eventually(() => Boolean(channel("disconnected")) && recordTimers.size === 1,
+    "the open decision starts its fallback read interval when the stream drops");
   const beforeFallback = count(decisionRoute);
   decisionQuestion = "Decision detail during disconnection";
   await advanceRecordClock();
-  await eventually(
-    () =>
-      selector("Decision detail")?.textContent?.includes(decisionQuestion) ===
-      true,
-    "the open decision refreshes during disconnection",
-  );
+  await eventually(() => selector("Decision detail")?.textContent?.includes(decisionQuestion) === true,
+    "the open decision refreshes during disconnection");
   assert.equal(count(decisionRoute) - beforeFallback, 1);
 
   const beforeRecovery = count(decisionRoute);
@@ -2893,57 +1938,36 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   decisionQuestion = "Decision detail after reconnect";
   resumeEvents();
   reconnectGate = undefined;
-  await eventually(
-    () =>
-      Boolean(channel("connected")) &&
-      recordTimers.size === 0 &&
-      selector("Decision detail")?.textContent?.includes(decisionQuestion) ===
-        true,
-    "stream reconnection refreshes the open decision and stops its fallback timer",
-  );
+  await eventually(() => Boolean(channel("connected")) && recordTimers.size === 0 &&
+    selector("Decision detail")?.textContent?.includes(decisionQuestion) === true,
+    "stream reconnection refreshes the open decision and stops its fallback timer");
   assert.equal(count(decisionRoute) - beforeRecovery, 1);
   assert.equal(count(decisionRoute + "?pending=true") - beforeListRecovery, 1);
 
   const afterRecovery = count(decisionRoute);
   await advanceRecordClock();
-  assert.equal(
-    count(decisionRoute) - afterRecovery,
-    0,
-    "reconnection stops the fallback interval",
-  );
+  assert.equal(count(decisionRoute) - afterRecovery, 0, "reconnection stops the fallback interval");
   await click("Use option: Same label (first)");
-  assert.equal(
-    answeredOption,
-    null,
-    "selecting a choice waits for confirmation",
-  );
+  assert.equal(answeredOption, null, "selecting a choice waits for confirmation");
   await click("Use option: Same label (second)");
   assert.ok(selector("Use option: Third") && selector("Use option: Fourth"));
   await click("Answer");
-  await eventually(
-    () => answeredOption === "second",
-    "the board posts the second duplicate's ID",
-  );
+  await eventually(() => answeredOption === "second", "the board posts the second duplicate's ID");
   await click("Working, 1");
   decisionOpen = false;
   emit("decisions");
   fixtureOrigin = "Example/Board-Fixture";
   emit("settings");
   await click("Projects, All projects");
-  const projectRow = () =>
-    selector("Project selector")?.querySelector<HTMLElement>(
-      '[role="checkbox"][aria-label^="Project Fixture project,"]',
-    );
-  await eventually(
-    () => Boolean(projectRow()),
-    "the picker shows the active project",
+  const projectRow = () => selector("Project selector")?.querySelector<HTMLElement>(
+    '[role="checkbox"][aria-label^="Project Fixture project,"]',
   );
+  await eventually(() => Boolean(projectRow()), "the picker shows the active project");
   const picker = selector("Project selector")!.parentElement!;
   const project = projectRow()!;
   const frame = project.parentElement!.parentElement!;
   const name = [...project.querySelectorAll("*")].find(
-    (node) =>
-      node.childElementCount === 0 && node.textContent === "Fixture project",
+    node => node.childElementCount === 0 && node.textContent === "Fixture project",
   );
   assert.ok(name);
   const activeName = "rgb(245, 245, 245)";
@@ -2953,63 +1977,34 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.equal(popoverFill, "rgb(17, 17, 17)");
   assert.equal(style(picker).borderTopColor, "rgba(245, 245, 245, 0.08)");
   const pointer = (element: Element, kind: "pointerenter" | "pointerleave") =>
-    element.dispatchEvent(
-      new dom.window.PointerEvent(kind, { pointerType: "mouse" }),
-    );
+    element.dispatchEvent(new dom.window.PointerEvent(kind, { pointerType: "mouse" }));
   pointer(project, "pointerenter");
   const hover = "rgba(245, 245, 245, 0.06)";
-  await eventually(
-    () => style(frame).backgroundColor === hover,
-    "hover uses the popover tint",
-  );
+  await eventually(() => style(frame).backgroundColor === hover, "hover uses the popover tint");
   assert.equal(style(name).color, activeName);
   pointer(project, "pointerleave");
   project.focus();
-  await eventually(
-    () => style(frame).backgroundColor === hover,
-    "focus uses the popover tint",
-  );
+  await eventually(() => style(frame).backgroundColor === hover, "focus uses the popover tint");
   assert.equal(style(name).color, activeName);
   project.blur();
-  project.dispatchEvent(
-    new dom.window.MouseEvent("click", { bubbles: true, shiftKey: true }),
-  );
+  project.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, shiftKey: true }));
   const selected = "rgba(245, 245, 245, 0.1)";
-  await eventually(
-    () => style(frame).backgroundColor === selected,
-    "the checked row uses a stronger tint",
-  );
+  await eventually(() => style(frame).backgroundColor === selected, "the checked row uses a stronger tint");
   assert.equal(style(name).color, activeName);
-  assert.ok(
-    selector("Working, 1"),
-    "the selected project owns its mixed-case repository's working task",
-  );
-  assert.ok(
-    selector("#80, Standalone task"),
-    "filtering keeps the task visible",
-  );
+  assert.ok(selector("Working, 1"), "the selected project owns its mixed-case repository's working task");
+  assert.ok(selector("#80, Standalone task"), "filtering keeps the task visible");
   await click("Clear project selection");
   await click("Project actions for Fixture project");
   const actions = selector("Actions for Fixture project")!;
   const archive = selector("Archive Fixture project")!;
   assert.ok(archive && frame.contains(actions));
-  assert.equal(
-    style(frame).backgroundColor,
-    hover,
-    "open row and panel share a single tinted frame",
-  );
+  assert.equal(style(frame).backgroundColor, hover, "open row and panel share a single tinted frame");
   assert.equal(style(name).color, activeName);
   assert.equal(style(actions).backgroundColor, "rgba(0, 0, 0, 0)");
   assert.equal(style(archive).backgroundColor, "rgba(0, 0, 0, 0)");
-  assert.ok(
-    selector("Remove Fixture project from Nucleus"),
-    "Remove is separate from Archive",
-  );
+  assert.ok(selector("Remove Fixture project from Nucleus"), "Remove is separate from Archive");
   pointer(archive, "pointerenter");
-  await eventually(
-    () => style(archive).backgroundColor === hover,
-    "action hover adds a tint to the open panel",
-  );
+  await eventually(() => style(archive).backgroundColor === hover, "action hover adds a tint to the open panel");
   const grey = (color: string) => Number(color.match(/[\d.]+/)?.[0]);
   const blend = (color: string, background: number) => {
     const channels = color.match(/[\d.]+/g)!.map(Number);
@@ -3019,140 +2014,72 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const hoverGrey = blend(style(frame).backgroundColor, base);
   const selectedGrey = blend(selected, base);
   const actionGrey = blend(style(archive).backgroundColor, hoverGrey);
-  assert.ok(
-    base < hoverGrey && hoverGrey < selectedGrey && selectedGrey < actionGrey,
-  );
-  const luminance = (channel: number) =>
-    ((channel / 255 + 0.055) / 1.055) ** 2.4;
+  assert.ok(base < hoverGrey && hoverGrey < selectedGrey && selectedGrey < actionGrey);
+  const luminance = (channel: number) => ((channel / 255 + 0.055) / 1.055) ** 2.4;
   const actionText = grey(style(archive.lastElementChild!).color);
-  assert.ok(
-    (luminance(actionText) + 0.05) / (luminance(actionGrey) + 0.05) >= 4.5,
-    "action text stays readable over the strongest tint",
-  );
+  assert.ok((luminance(actionText) + 0.05) / (luminance(actionGrey) + 0.05) >= 4.5,
+    "action text stays readable over the strongest tint");
 
-  const archiveWrites = () =>
-    writes.filter(({ path }) => path === "/api/engine/settings/projects");
+  const archiveWrites = () => writes.filter(({ path }) => path === "/api/engine/settings/projects");
   await click("Archive Fixture project");
-  await eventually(
-    () => projectArchived && !projectRow() && Boolean(selector("Leads, 0")),
-    "archive removes the project from the picker and refreshes the menu counts",
-  );
+  await eventually(() => projectArchived && !projectRow() && Boolean(selector("Leads, 0")),
+    "archive removes the project from the picker and refreshes the menu counts");
   assert.equal(archiveWrites().length, 1);
   assert.ok(selector("Project selector"), "archive leaves the picker open");
   await click("Project settings");
   assert.equal(dom.window.location.pathname, "/settings");
   await click("Restore Fixture project");
-  await eventually(
-    () => !projectArchived && Boolean(selector("Archive Fixture project")),
-    "Settings restores the project using the same domain write",
-  );
+  await eventually(() => !projectArchived && Boolean(selector("Archive Fixture project")),
+    "Settings restores the project using the same domain write");
   assert.equal(archiveWrites().length, 2);
   await click("Back to board");
-  await eventually(
-    () => Boolean(selector("Leads, 4")),
-    "restored project is counted on the board",
-  );
+  await eventually(() => Boolean(selector("Leads, 4")), "restored project is counted on the board");
   await click("Projects, All projects");
-  await eventually(
-    () => Boolean(projectRow()),
-    "the restored project is in the picker",
-  );
+  await eventually(() => Boolean(projectRow()), "the restored project is in the picker");
   await click("Project settings");
   await click("Profiles");
-  await eventually(
-    () => Boolean(selector("Disable Fixture worker")),
-    "operator controls are visible before the session changes",
-  );
+  await eventually(() => Boolean(selector("Disable Fixture worker")), "operator controls are visible before the session changes");
   const afterProjectSettings = planningReads().length;
 
   operator = false;
   emit("refresh");
-  await eventually(
-    () => !selector("Disable Fixture worker"),
-    "a new planner session clears operator controls",
-  );
+  await eventually(() => !selector("Disable Fixture worker"), "a new planner session clears operator controls");
   await click("Profiles");
-  await eventually(
-    () => Boolean(selector("Fixture worker: On")),
-    "the scoped planner sees the stored profile",
-  );
-  assert.equal(
-    selector("Fixture worker: On")?.getAttribute("aria-disabled"),
-    "true",
-  );
-  assert.equal(
-    selector("GitHub"),
-    null,
-    "a planner session never has the GitHub Settings tab",
-  );
-  await eventually(
-    () =>
-      Boolean(
-        selector("Fixture worker, all roles: 50 of 50 recent assignments"),
-      ),
-    "the planner also sees recorded usage",
-  );
+  await eventually(() => Boolean(selector("Fixture worker: On")), "the scoped planner sees the stored profile");
+  assert.equal(selector("Fixture worker: On")?.getAttribute("aria-disabled"), "true");
+  assert.equal(selector("GitHub"), null, "a planner session never has the GitHub Settings tab");
+  await eventually(() => Boolean(selector("Fixture worker, all roles: 50 of 50 recent assignments")), "the planner also sees recorded usage");
   assert.equal(planningReads().length, afterProjectSettings);
 
   const plannerStream = stream;
   operator = true;
   emit("refresh");
-  await eventually(
-    () => stream !== plannerStream,
-    "the operator session resubscribed",
-  );
+  await eventually(() => stream !== plannerStream, "the operator session resubscribed");
   await click("Profiles");
-  await eventually(
-    () => Boolean(selector("Disable Fixture worker")),
-    "the operator session is restored",
-  );
+  await eventually(() => Boolean(selector("Disable Fixture worker")), "the operator session is restored");
   await click("Back to board");
   await click("Planning, 1 open lanes");
-  await eventually(
-    () => text().includes("2 tasks live"),
-    "Planning counts both unfinished tasks from the native list",
-  );
+  await eventually(() => text().includes("2 tasks live"), "Planning counts both unfinished tasks from the native list");
   await click("Open lane Delivery");
-  await eventually(
-    () =>
-      selector("Recently finished")?.textContent?.includes(
-        "Completed fixture",
-      ) === true,
-    "the terminal card appears in its lane",
-  );
+  await eventually(() => selector("Recently finished")?.textContent?.includes("Completed fixture") === true,
+    "the terminal card appears in its lane");
   assert.match(selector("Recently finished")!.textContent!, /1 in total/);
   await click("Working, 1");
   await click("Projects, All projects");
   await click("Project actions for Fixture project");
   await click("Remove Fixture project from Nucleus");
-  await eventually(
-    () =>
-      Boolean(selector("Remove Fixture project dialog")) &&
-      text().includes("No open work"),
-    "the shared dialog parsed the native preview",
-  );
+  await eventually(() => Boolean(selector("Remove Fixture project dialog")) && text().includes("No open work"),
+    "the shared dialog parsed the native preview");
   const reason = selector("Reason") as HTMLInputElement;
-  Object.getOwnPropertyDescriptor(
-    dom.window.HTMLInputElement.prototype,
-    "value",
-  )!.set!.call(reason, "Fixture retired");
+  Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(reason, "Fixture retired");
   reason.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
   await click("Delete project");
-  assert.equal(
-    projectRemoved,
-    false,
-    "a preview and the first click do not delete",
-  );
+  assert.equal(projectRemoved, false, "a preview and the first click do not delete");
   await click("Delete project Fixture project");
-  await eventually(
-    () => projectRemoved && !selector("Remove Fixture project dialog"),
-    "the board parsed the durable removal receipt and closed the dialog",
-  );
+  await eventually(() => projectRemoved && !selector("Remove Fixture project dialog"),
+    "the board parsed the durable removal receipt and closed the dialog");
   assert.equal(removalWrites, 1);
   if (!selector("Project selector")) await click("Projects, All projects");
-  await eventually(
-    () => text().includes("No projects yet."),
-    "the removed project is absent from the refreshed selector",
-  );
+  await eventually(() => text().includes("No projects yet."), "the removed project is absent from the refreshed selector");
   assert.ok(requests.every((path) => path.startsWith("/api/engine/")));
 });

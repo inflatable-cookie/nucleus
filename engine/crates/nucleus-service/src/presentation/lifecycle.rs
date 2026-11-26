@@ -1,5 +1,5 @@
 use nucleus_core::{
-    Entry, Phase, Review, Role, Task, Verdict, WaitReason,
+    Phase, Review, Role, Task, Verdict, WaitReason,
     acp::lifecycle::{
         Lifecycle, Milestone, Outcome, Participant, RoleCard, Step, StepKey, StepState, StepTone,
         Transcript,
@@ -7,22 +7,9 @@ use nucleus_core::{
     profiles::Profile,
 };
 use nucleus_store::{Store, StoreError};
-use serde::Deserialize;
 
 use super::{HistoryEvent, TranscriptRequest, purpose, redact_question};
 use crate::titles::phase_label;
-
-#[derive(Default, Clone, Copy)]
-struct StepTimes {
-    entered_at_ms: Option<u64>,
-    left_at_ms: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct PhaseTransition {
-    from: Phase,
-    to: Phase,
-}
 
 #[derive(Default)]
 pub(super) struct Audit {
@@ -32,29 +19,11 @@ pub(super) struct Audit {
     last_phase: Option<Phase>,
     sent_at_ms: Option<u64>,
     pull_request_url: Option<String>,
-    step_times: [StepTimes; 7],
 }
 
 impl Audit {
     pub(super) fn read(store: &Store, task: &Task) -> Result<Self, StoreError> {
-        Self::read_from(store, task, None)
-    }
-
-    fn read_from(
-        store: &Store,
-        task: &Task,
-        admitted_at_ms: Option<u64>,
-    ) -> Result<Self, StoreError> {
         let mut audit = Self::default();
-        let report_only = task.report_task().is_some();
-        let initial_step = step_key(
-            match task.identity().entry {
-                Entry::Brief => Phase::Queued,
-                Entry::ReviewEntry => Phase::Reviewing,
-            },
-            report_only,
-        );
-        audit.step_times[step_slot(initial_step)].entered_at_ms = admitted_at_ms;
         for event in store.lifecycle_events(&task.identity().id)? {
             audit.apply(HistoryEvent::from(event), task);
         }
@@ -68,15 +37,9 @@ impl Audit {
     fn apply(&mut self, event: HistoryEvent, task: &Task) {
         let at = u64::try_from(event.event.content.at).ok();
         let kind = event.event.content.kind.as_str();
-        let report_only = task.report_task().is_some();
-        if kind == "phase_transition"
-            && let Ok(transition) =
-                serde_json::from_str::<PhaseTransition>(&event.event.content.detail)
-        {
-            self.record_phase_transition(at, transition.from, transition.to, report_only);
-        }
+        let cards = &mut self.transcript.cards;
         if event.presentation.is_empty()
-            && let Some(card) = self.transcript.cards.last_mut().filter(|card| !card.ended)
+            && let Some(card) = cards.last_mut().filter(|card| !card.ended)
         {
             match kind {
                 "host_send" => self.sent_at_ms = at,
@@ -86,6 +49,7 @@ impl Audit {
         }
         let mut ended = None;
         for record in event.presentation {
+            let cards = &mut self.transcript.cards;
             match record {
                 Milestone::RunStarted {
                     instance,
@@ -96,7 +60,6 @@ impl Audit {
                     model,
                     model_observed,
                     started_at_ms,
-                    round,
                     ..
                 } => {
                     self.last_phase = Some(if role == Role::Worker {
@@ -105,11 +68,9 @@ impl Audit {
                         Phase::Reviewing
                     });
                     self.sent_at_ms = started_at_ms.or(at);
-                    let resolved_round = round.unwrap_or_else(|| self.next_review_round());
-                    self.transcript.cards.push(RoleCard {
+                    cards.push(RoleCard {
                         instance,
                         role,
-                        round: Some(resolved_round),
                         purpose,
                         thread_url: thread.as_deref().and_then(nucleus_hosts::thread_link),
                         provider,
@@ -117,7 +78,6 @@ impl Audit {
                         model,
                         model_observed,
                         started_at_ms: self.sent_at_ms,
-                        ended_at_ms: None,
                         elapsed_ms: None,
                         ended: false,
                         outcome: None,
@@ -130,9 +90,7 @@ impl Audit {
                     provider,
                     model,
                 } => {
-                    if let Some(card) = self
-                        .transcript
-                        .cards
+                    if let Some(card) = cards
                         .iter_mut()
                         .rev()
                         .find(|card| card.instance == instance)
@@ -148,33 +106,22 @@ impl Audit {
                     sent_at_ms,
                     outcome,
                 } => {
-                    if let Some(card) = self
-                        .transcript
-                        .cards
-                        .last_mut()
-                        .filter(|card| card.instance == instance)
-                    {
+                    if let Some(card) = cards.last_mut().filter(|card| card.instance == instance) {
                         record_duration(card, Some(sent_at_ms), at);
                         card.outcome = outcome;
                     }
                 }
                 Milestone::RunEnded { instance } => {
-                    let index = self.transcript.cards.len().checked_sub(1);
-                    if let Some(card) = self
-                        .transcript
-                        .cards
-                        .last_mut()
-                        .filter(|card| card.instance == instance)
-                    {
+                    let index = cards.len().checked_sub(1);
+                    if let Some(card) = cards.last_mut().filter(|card| card.instance == instance) {
                         card.ended = true;
-                        card.ended_at_ms = at;
                         ended = index;
                     }
                 }
                 Milestone::PullRequest { url } => {
                     self.last_phase = Some(Phase::Reviewing);
                     if let Some(card) = ended
-                        .map(|i| &mut self.transcript.cards[i])
+                        .map(|i| &mut cards[i])
                         .filter(|card| card.role == Role::Worker)
                     {
                         card.outcome.get_or_insert_with(|| Outcome::Work {
@@ -190,7 +137,7 @@ impl Audit {
                 }
                 Milestone::Question { question } => {
                     if let Some(i) = ended {
-                        self.transcript.cards[i]
+                        cards[i]
                             .outcome
                             .get_or_insert(Outcome::Question { question });
                     }
@@ -199,152 +146,12 @@ impl Audit {
                     self.last_phase = Some(Phase::Closing);
                     self.transcript.merged = true;
                 }
-                Milestone::Finished {
-                    phase,
-                    previous_phase,
-                } => {
+                Milestone::Finished { previous_phase, .. } => {
                     self.finished_at_ms = at;
                     self.phase_before_finish = previous_phase.or(self.last_phase);
-                    self.record_finished(at, phase, previous_phase, report_only);
                 }
             }
         }
-        self.record_unreported_outcome(kind, &event.event.content.detail, ended);
-    }
-
-    fn record_phase_transition(
-        &mut self,
-        at: Option<u64>,
-        from: Phase,
-        to: Phase,
-        report_only: bool,
-    ) {
-        let from_step = step_key(from, report_only);
-        let to_step = step_key(to, report_only);
-        if to == Phase::Cancelled {
-            if !from.is_terminal() {
-                self.step_times[step_slot(from_step)].left_at_ms = at;
-            }
-            return;
-        }
-        if to == Phase::Done {
-            if report_only {
-                if from_step != StepKey::Done {
-                    self.step_times[step_slot(from_step)].left_at_ms = at;
-                }
-                let done = &mut self.step_times[step_slot(StepKey::Done)];
-                if let Some(at) = at {
-                    done.entered_at_ms.get_or_insert(at);
-                }
-                done.left_at_ms = None;
-            } else {
-                if from_step != StepKey::Close {
-                    self.step_times[step_slot(from_step)].left_at_ms = at;
-                    if let Some(at) = at {
-                        self.step_times[step_slot(StepKey::Close)]
-                            .entered_at_ms
-                            .get_or_insert(at);
-                    }
-                }
-                self.step_times[step_slot(StepKey::Close)].left_at_ms = at;
-            }
-            return;
-        }
-        if from_step != to_step {
-            if !from.is_terminal() {
-                self.step_times[step_slot(from_step)].left_at_ms = at;
-            }
-            let entered = &mut self.step_times[step_slot(to_step)];
-            if let Some(at) = at {
-                entered.entered_at_ms.get_or_insert(at);
-            }
-            entered.left_at_ms = None;
-        }
-    }
-
-    fn record_finished(
-        &mut self,
-        at: Option<u64>,
-        phase: Phase,
-        previous_phase: Option<Phase>,
-        report_only: bool,
-    ) {
-        let Some(at) = at else { return };
-        match (phase, previous_phase) {
-            (Phase::Done, _) if !report_only => {
-                self.step_times[step_slot(StepKey::Close)]
-                    .left_at_ms
-                    .get_or_insert(at);
-            }
-            (Phase::Done, prev) if report_only => {
-                if prev == Some(Phase::ReportReady) {
-                    self.step_times[step_slot(StepKey::ReportReady)]
-                        .left_at_ms
-                        .get_or_insert(at);
-                }
-                self.step_times[step_slot(StepKey::Done)]
-                    .entered_at_ms
-                    .get_or_insert(at);
-            }
-            (Phase::Cancelled, Some(prev)) if !prev.is_terminal() => {
-                self.step_times[step_slot(step_key(prev, report_only))]
-                    .left_at_ms
-                    .get_or_insert(at);
-            }
-            _ => {}
-        }
-    }
-
-    fn record_unreported_outcome(&mut self, kind: &str, raw_detail: &str, ended: Option<usize>) {
-        if kind == "provider_limit" {
-            let detail: Option<serde_json::Value> = serde_json::from_str(raw_detail).ok();
-            let limit = detail.as_ref().and_then(|value| value.get("providerLimit"));
-            let instance = limit
-                .and_then(|value| value.get("instance"))
-                .and_then(serde_json::Value::as_str);
-            let target = instance
-                .and_then(|id| {
-                    self.transcript
-                        .cards
-                        .iter()
-                        .rposition(|card| card.instance == id)
-                })
-                .or(ended);
-            if let Some(card) = target.map(|i| &mut self.transcript.cards[i]) {
-                card.outcome = Some(Outcome::ProviderLimit {
-                    group: limit
-                        .and_then(|value| value.get("group"))
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned),
-                    reset_at_ms: limit
-                        .and_then(|value| value.get("resetAtMs"))
-                        .and_then(serde_json::Value::as_u64),
-                    cause: detail
-                        .as_ref()
-                        .and_then(|value| value.get("cause"))
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned),
-                });
-            }
-            return;
-        }
-        let Some(i) = ended.filter(|&i| self.transcript.cards[i].outcome.is_none()) else {
-            return;
-        };
-        let reason = match kind {
-            "delegated_parent_ended" | "assignment_input_rejected" => {
-                serde_json::from_str::<serde_json::Value>(raw_detail)
-                    .ok()
-                    .and_then(|detail| detail["outcome"].as_str().map(str::to_owned))
-                    .unwrap_or_else(|| "The run could not start.".into())
-            }
-            "run_failed" => "The run ended without reporting.".into(),
-            "report_only_worker_returned" => {
-                "The worker did not deliver an authenticated report.".into()
-            }
-            _ => return,
-        };
-        self.transcript.cards[i].outcome = Some(Outcome::Blocked { reason });
     }
 
     fn verdict(
@@ -416,7 +223,6 @@ impl Audit {
         review_round: Option<u64>,
         request: TranscriptRequest<'_>,
     ) -> Transcript {
-        let next_round = self.next_review_round();
         let cards = &mut self.transcript.cards;
         if let Some(run) = task.run()
             && let Some(sent) = run.last_send_at_ms()
@@ -429,7 +235,6 @@ impl Audit {
                 cards.push(RoleCard {
                     instance: launch.instance.clone(),
                     role: launch.role,
-                    round: Some(next_round),
                     purpose: purpose(task, launch.role, review_round),
                     thread_url: None,
                     provider: None,
@@ -437,7 +242,6 @@ impl Audit {
                     model: None,
                     model_observed: false,
                     started_at_ms: Some(sent),
-                    ended_at_ms: None,
                     elapsed_ms: None,
                     ended: false,
                     outcome: None,
@@ -507,7 +311,7 @@ pub(crate) fn read(
     admitted_at_ms: Option<u64>,
     transcript: Option<TranscriptRequest<'_>>,
 ) -> Result<Lifecycle, StoreError> {
-    let audit = Audit::read_from(store, task, admitted_at_ms)?;
+    let audit = Audit::read(store, task)?;
     let phase = task.phase();
     let report_only = task.report_task().is_some();
     let step_phase = if phase == Phase::Cancelled {
@@ -578,7 +382,6 @@ pub(crate) fn read(
             } else {
                 None
             };
-            let times = audit.step_times[step_slot(key)];
             Step {
                 key,
                 label: key.label().into(),
@@ -588,8 +391,6 @@ pub(crate) fn read(
                 round_label,
                 elapsed_ms,
                 active_since_ms,
-                entered_at_ms: times.entered_at_ms,
-                left_at_ms: times.left_at_ms,
             }
         })
         .collect();
@@ -666,18 +467,6 @@ fn participant(task: &Task, role: Role, audit: &Audit) -> Option<Participant> {
             |card| card.model.clone(),
         ),
     })
-}
-
-const fn step_slot(key: StepKey) -> usize {
-    match key {
-        StepKey::Queued => 0,
-        StepKey::Working => 1,
-        StepKey::Review => 2,
-        StepKey::Merge => 3,
-        StepKey::Close => 4,
-        StepKey::ReportReady => 5,
-        StepKey::Done => 6,
-    }
 }
 
 const fn step_key(phase: Phase, report_only: bool) -> StepKey {
