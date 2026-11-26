@@ -537,6 +537,9 @@ Later decisions carry their own attribution.
       The journal retains the review POST’s HTTP status and bounded GitHub error
       message when available. A marker check on a responsive forge reads “confirming review”.
       A definite throttle preserves the attempt and deadline across restarts.
+      Publication errors classify the scheduler wait and card detail together;
+      changing the wording does not change the wait or its deadline. Wait
+      retention follows the task's authority, not its rendered label.
       Nucleus verifies the review ID, author, head, state and body
       before applying the verdict, and rechecks a published approval before
       merging. Previously applied approvals keep their original exact-head gate.
