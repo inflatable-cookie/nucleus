@@ -172,9 +172,15 @@ Both bugs are briefed as their own fix ahead of the rebuild.
 The Rust board's task view follows this layout. Elements still marked
 **engine** below render only once the engine serves them: the task thread
 button, the checks list, the forge's blocking reason and the explicit
-answerer. Until then the eyebrow reads the answerer from the state label, and a
-step time the journal never recorded shows as "—". Prerequisite Edit takes
-references separated by spaces, commas or new lines.
+answerer. Until then the eyebrow reads the answerer from the state label
+("· Tom", "· planner", "· declined"), and a step or round time the journal
+never recorded shows as "—" rather than a partial sum. The PR pill states only
+the committed verdict; reported review rounds stay evidence beneath it. The
+timeline ticks only while the engine reports an active run, and a cancelled
+task's timeline stops at the step it was cancelled from. The wait line names the
+engine's wait when it sends no sentence, and Recheck shows wherever preflight
+offers it. Prerequisite Edit takes references separated by spaces, commas or new
+lines.
 
 ### Data mapping
 

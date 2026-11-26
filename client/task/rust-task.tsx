@@ -4,7 +4,7 @@
  * An attention panel appears only when a person has to act; routine actions sit
  * in the footer, and Cancel stands apart and asks first.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Linking, Text, View } from "react-native";
 import {
   Button,
@@ -71,25 +71,34 @@ function attentionFor(
   detail: RustTaskDetail,
   question: RustQuestion | null,
 ): Attention | null {
+  // Finished tasks need no one; their evidence stays in the cards.
+  if (detail.phase === "done" || detail.phase === "cancelled") return null;
+  // The engine's label names who answers ("· Tom", "· planner", "· declined").
   const toTom = /·\s*Tom\b/.test(detail.stateLabel);
-  const cause = detail.waitDetail ?? null;
+  const declined = detail.wait === "operator_declined" || /·\s*declined\b/.test(detail.stateLabel);
+  if (declined) {
+    return {
+      eyebrow: "Declined",
+      tone: "warning",
+      text: "Tom declined this decision. Move or cancel the task.",
+      detail: question ? rustQuestionText(question) : null,
+      answerOpen: false,
+    };
+  }
   if (question) {
-    if ("work" in question) {
-      return toTom
-        ? { eyebrow: "Your decision", tone: "warning", text: question.work.prompt, detail: null, answerOpen: true }
-        : {
-            eyebrow: "Planner question",
-            tone: "warning",
-            text: question.work.prompt,
-            detail: null,
-            help: "The task's planner answers this. You can answer instead.",
-            answerOpen: false,
-          };
+    if ("repair" in question || "retry" in question) {
+      return { eyebrow: "Needs attention", tone: "danger", text: rustQuestionText(question), detail: detail.waitDetail ?? null, answerOpen: false };
     }
-    if ("accept" in question || "allowance" in question) {
-      return { eyebrow: "Your decision", tone: "warning", text: rustQuestionText(question), detail: null, answerOpen: true };
-    }
-    return { eyebrow: "Needs attention", tone: "danger", text: rustQuestionText(question), detail: cause, answerOpen: false };
+    return toTom
+      ? { eyebrow: "Your decision", tone: "warning", text: rustQuestionText(question), detail: null, answerOpen: true }
+      : {
+          eyebrow: "Planner question",
+          tone: "warning",
+          text: rustQuestionText(question),
+          detail: null,
+          help: "The task's planner answers this. You can answer instead.",
+          answerOpen: false,
+        };
   }
   if (detail.hold) {
     return {
@@ -107,7 +116,7 @@ function attentionFor(
     return {
       eyebrow: "Needs attention",
       tone: "danger",
-      text: cause ?? detail.report?.failure ?? detail.stateLabel,
+      text: detail.waitDetail ?? waitWords(detail.wait) ?? detail.report?.failure ?? detail.stateLabel,
       detail: null,
       answerOpen: false,
     };
@@ -115,20 +124,35 @@ function attentionFor(
   return null;
 }
 
-/** The fallback wording for waits the engine names without a sentence. */
-function waitWords(detail: RustTaskDetail): string | null {
-  if (detail.waitDetail) return detail.waitDetail;
-  switch (detail.wait) {
-    case "host_observation_blocked":
-      return "Open the task thread to check.";
-    case "operator_declined":
-      return "Move or cancel the task.";
-    case "assignment_too_large":
-      return "The assignment exceeds the T3 message limit.";
-    default:
-      return null;
-  }
+/** Plain words for each engine wait, used when the engine sends no sentence of its own. */
+const WAIT_WORDS: Record<string, string> = {
+  checks_pending: "Waiting for required checks",
+  checks_unreported: "Waiting for checks to report",
+  forge_unknown: "Checking GitHub",
+  external_merge_blocked: "Waiting for the external merge",
+  review_publication_blocked: "Waiting to publish the review",
+  workspace_unknown: "Checking the workspace",
+  workspace_blocked: "The workspace needs attention",
+  host_unknown: "Confirming delivery to T3",
+  host_observation_blocked: "Open the task thread to check",
+  starting: "Starting the run",
+  idle_without_terminal_run: "Waiting for the run to finish its turn",
+  retained_thread_busy: "Waiting for the thread to be free",
+  permission: "Waiting for a permission answer",
+  usage_permission: "Waiting for a usage decision",
+  input: "Waiting for input",
+  stopping: "Stopping the run",
+  capacity: "Waiting for a free slot",
+  prerequisite: "Waiting for prerequisites",
+  assignment_too_large: "The assignment exceeds the T3 message limit",
+};
+
+function waitWords(wait: string | null): string | null {
+  return wait ? (WAIT_WORDS[wait] ?? null) : null;
 }
+
+/** Waits the attention panel already explains. */
+const PANEL_WAITS = new Set(["hold", "question", "operator_declined"]);
 
 export function RustTaskDialog({
   id,
@@ -138,10 +162,13 @@ export function RustTaskDialog({
   c,
   onClose,
   invalidate,
+  onOpenTask,
 }: {
   id: string;
   summary: RustTask | undefined;
   project?: (task: RustTask) => RustTaskProject;
+  /** Opens another task in this view: a prerequisite's reference. */
+  onOpenTask?: (id: string) => void;
   inline: boolean;
   compact?: boolean;
   c: Colors;
@@ -162,9 +189,23 @@ export function RustTaskDialog({
   const { task, next, history } = useRustDetail(id, true);
   const detail = task.data;
   const card = detail ?? summary;
-  const commands =
+  const fresh =
     next.data && detail?.version === next.data.version && !next.error && !task.error ? next.data : undefined;
-  const question = (commands ? commands.question : detail?.question) ?? null;
+  // While a refetch brings the two reads back to one version, keep the last commands in
+  // view (locked) so the footer and Amend do not flicker out from under a click.
+  const lastCommands = useRef<RustNext | undefined>(undefined);
+  if (fresh) lastCommands.current = fresh;
+  const commands = fresh ?? lastCommands.current;
+  const stale = !fresh;
+  const question = (fresh ? fresh.question : detail?.question) ?? null;
+  const questionKey = question ? JSON.stringify(question) : "";
+  const shownQuestion = useRef(questionKey);
+  useEffect(() => {
+    // A new question starts with its form closed and empty (the form is keyed by it too).
+    if (shownQuestion.current === questionKey) return;
+    shownQuestion.current = questionKey;
+    setPanel((current) => (current === "answer" ? null : current));
+  }, [questionKey]);
   const allowance = commands?.allowance ?? detail?.allowance;
 
   const submit = async (command: RustCommand) => {
@@ -243,21 +284,37 @@ export function RustTaskDialog({
   }
 
   const finished = detail.phase === "done" || detail.phase === "cancelled";
+  const locked = busy || stale;
   const attention = attentionFor(detail, question);
   const recheck =
-    commands && offered("recheck") ? (
-      <Button c={c} small text="Recheck" hint="Look once more at the current state" disabled={busy}
+    commands && offered("recheck") && !finished ? (
+      <Button c={c} small text="Recheck" hint="Look once more at the current state" disabled={locked}
         onPress={() => run({ recheck: commands.version })} />
     ) : null;
-  const currentStep = detail.lifecycle.steps.find((step) => step.state === "current");
-  const waiting = currentStep && (detail.attention === "waiting" || (detail.attention === "attention" && !attention));
-  const waitText = waitWords(detail);
+  const pages = history.data?.pages ?? [];
+  const finishedRecord = pages
+    .flat()
+    .flatMap((entry) => entry.presentation.map((record) => ({ record, at: entry.content.at })))
+    .find(({ record }) => record.kind === "finished");
+  // The wait line names the engine's actual wait; the panel already explains a person's wait.
+  const waitText =
+    detail.phase === "cancelled"
+      ? [
+          "Cancelled",
+          finishedRecord?.record.kind === "finished" && finishedRecord.record.previousPhase
+            ? `from ${rustPhaseLabels[finishedRecord.record.previousPhase]}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : finished || (detail.wait !== null && PANEL_WAITS.has(detail.wait))
+        ? null
+        : (detail.waitDetail ?? waitWords(detail.wait));
   const waitLine =
-    (waiting || (recheck && !attention)) && (waitText || detail.nextCheckAt !== null)
-      ? { text: waitText ?? "Waiting", nextCheckAt: detail.nextCheckAt }
+    waitText || (!finished && detail.nextCheckAt !== null) || (recheck && !attention)
+      ? { text: waitText ?? "", nextCheckAt: finished ? null : detail.nextCheckAt }
       : null;
   const dependencies = detail.dependencyStatus?.dependencies ?? [];
-  const pages = history.data?.pages ?? [];
   const entries = activityEntries(pages);
   const mergedCommit =
     pages.flat().flatMap((entry) => entry.presentation).find((record) => record.kind === "merged")?.commit ?? null;
@@ -278,7 +335,8 @@ export function RustTaskDialog({
             c={c}
             dependencies={dependencies}
             canEdit={offered("set_dependencies")}
-            busy={busy}
+            busy={locked}
+            onOpenTask={onOpenTask}
             onSave={(references) =>
               run({ set_dependencies: { version: detail.version, depends_on: references } })
             }
@@ -303,9 +361,9 @@ export function RustTaskDialog({
         {footer === "hold" ? (
           <>
             <View style={{ flex: 1, minWidth: 180 }}>
-              <Field c={c} label="Reason" hideLabel value={reason} onChange={setReason} disabled={busy} />
+              <Field c={c} label="Reason" hideLabel value={reason} onChange={setReason} disabled={locked} />
             </View>
-            <Button c={c} small text="Hold" label="Hold task" disabled={busy}
+            <Button c={c} small text="Hold" label="Hold task" disabled={locked}
               onPress={() => run({ hold: reason.trim() })} />
             <Button c={c} small text="Keep" label="Keep running" onPress={() => setFooter(null)} />
           </>
@@ -318,12 +376,12 @@ export function RustTaskDialog({
                 text="Promoted"
                 checked={promoted}
                 hint="Take the next free slot first"
-                disabled={busy}
+                disabled={locked}
                 onPress={() => run(promoted ? { demote: commands.version } : { promote: commands.version })}
               />
             )}
             {offered("hold") && (
-              <Button c={c} small text="Hold" disabled={busy} onPress={() => setFooter("hold")} />
+              <Button c={c} small text="Hold" disabled={locked} onPress={() => setFooter("hold")} />
             )}
             {moves.length > 0 && (
               <DropdownSelect
@@ -335,7 +393,7 @@ export function RustTaskDialog({
                 placeholder="Move"
                 value=""
                 options={moves}
-                disabled={busy}
+                disabled={locked}
                 onChange={(value) => {
                   const move = moves.find((option) => option.value === value);
                   if (move) run({ move: move.value });
@@ -347,11 +405,11 @@ export function RustTaskDialog({
               (footer === "cancel" ? (
                 <View accessibilityRole="alert" style={{ ...row, gap: space.xs }}>
                   <Text style={{ ...typeScale.body, color: r.foreground }}>Cancel this task?</Text>
-                  <Button c={c} small danger text="Cancel task" disabled={busy} onPress={() => run("cancel")} />
+                  <Button c={c} small danger text="Cancel task" disabled={locked} onPress={() => run("cancel")} />
                   <Button c={c} small text="Keep" label="Keep task" onPress={() => setFooter(null)} />
                 </View>
               ) : (
-                <QuietButton c={c} danger text="Cancel" disabled={busy} onPress={() => setFooter("cancel")} />
+                <QuietButton c={c} danger text="Cancel" disabled={locked} onPress={() => setFooter("cancel")} />
               ))}
           </>
         )}
@@ -386,7 +444,7 @@ export function RustTaskDialog({
           sinceMs={detail.stateSinceMs}
           question={question}
           canAnswer={offered("answer")}
-          busy={busy}
+          busy={locked}
           panel={panel}
           setPanel={setPanel}
           onAnswer={run}
@@ -397,7 +455,7 @@ export function RustTaskDialog({
               onPress={() => void Linking.openURL(detail.pullRequest!.url)} />
           )}
           {detail.hold && offered("release") && (
-            <Button c={c} small selected text="Release" disabled={busy} onPress={() => run("release")} />
+            <Button c={c} small selected text="Release" disabled={locked} onPress={() => run("release")} />
           )}
           {attention.eyebrow === "Report ready" && (
             <ReportActions
@@ -407,7 +465,7 @@ export function RustTaskDialog({
               setPanel={setPanel}
               canComplete={offered("complete")}
               canReturn={offered("move_work")}
-              busy={busy}
+              busy={locked}
               reason={reason}
               setReason={setReason}
               run={run}
@@ -445,7 +503,7 @@ export function RustTaskDialog({
           )}
         </Collapsible>
       )}
-      {(entries.length > 0 || history.error) && (
+      {(entries.length > 0 || history.error || history.hasNextPage) && (
         attention ? (
           <Collapsible c={c} title="Activity" open={activityExpanded} onToggle={() => setActivityOpen(!activityExpanded)}>
             {activityBody()}
@@ -495,7 +553,9 @@ export function RustTaskDialog({
       <>
         {history.error && <ReadError error={history.error} retry={() => void history.refetch()} c={c} />}
         <ActivityList c={c} entries={entries} limit={activityAll ? null : ACTIVITY_PREVIEW} />
-        {(entries.length > ACTIVITY_PREVIEW && !activityAll) || (activityAll && history.hasNextPage) ? (
+        {entries.length === 0 && !history.error && <Text style={metaText(c)}>No milestones on this page.</Text>}
+        {/* The server pages raw records, so a page can hold no milestones and still have a next. */}
+        {(entries.length > ACTIVITY_PREVIEW && !activityAll) || history.hasNextPage ? (
           <View style={{ alignSelf: "flex-start" }}>
             <QuietButton
               c={c}
@@ -503,8 +563,9 @@ export function RustTaskDialog({
               label="More activity"
               disabled={history.isFetching}
               onPress={() => {
-                if (activityAll) void history.fetchNextPage();
+                const hidden = !activityAll && entries.length > ACTIVITY_PREVIEW;
                 setActivityAll(true);
+                if (!hidden && history.hasNextPage) void history.fetchNextPage();
               }}
             />
           </View>
@@ -658,7 +719,7 @@ function AttentionPanel({
         )}
       </View>
       {question && canAnswer && !direct && formOpen && (
-        <AnswerForm c={c} question={question} busy={busy} onAnswer={onAnswer} />
+        <AnswerForm key={JSON.stringify(question)} c={c} question={question} busy={busy} onAnswer={onAnswer} />
       )}
     </View>
   );

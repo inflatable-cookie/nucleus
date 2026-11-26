@@ -153,4 +153,3 @@ export function engineTask(id: string, fixture: Fixture) {
   const next = { ...current, allowance, dependencyStatus, dependencyEdits: detail.dependencyEdits, commands: fixture.commands };
   return { detail, next, history: fixture.history ?? [] };
 }
-

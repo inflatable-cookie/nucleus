@@ -312,7 +312,7 @@ const historyRecord = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("verdict"), verdict }),
   z.object({ kind: z.literal("question"), question }),
   z.object({ kind: z.literal("merged"), commit: head }),
-  z.object({ kind: z.literal("finished"), phase }),
+  z.object({ kind: z.literal("finished"), phase, previousPhase: phase.nullish() }),
 ]);
 const warnedUnknownHistoryRecords = new Set<string>();
 // One record the board cannot read is dropped alone, so the page keeps its other entries.

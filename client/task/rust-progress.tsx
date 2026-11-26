@@ -2,7 +2,7 @@ import { StyleSheet, Text, View, type ViewStyle } from "react-native";
 import type { Colors } from "../controls";
 import { roles, space, taskDetail, toneSurface, rustTimeline as timelineSize, type as typeScale } from "../design";
 import { useTick } from "../use-tick";
-import type { RustLifecycle } from "../web/rust-board";
+import type { RustLifecycle, RustTask } from "../web/rust-board";
 import { ProgressStrip } from "./progress-strip";
 import { Hint, metaText, toneColor } from "./rust-detail-parts";
 import {
@@ -16,15 +16,13 @@ const stepStatus = { todo: "not started", current: "in progress", done: "complet
 
 /** The board card's slim bars, from the same reading as the detail timeline. */
 export function RustTaskProgress({
-  progress,
+  task,
   c,
 }: {
-  progress: RustLifecycle;
-  compact?: boolean;
-  barsOnly?: boolean;
+  task: RustTask;
   c: Colors;
 }) {
-  const steps = rustTimeline(progress, { attention: "active", stateSinceMs: null, now: Date.now() });
+  const steps = rustTimeline(task.lifecycle, { ...timelineContext(task), stateSinceMs: null, now: Date.now() });
   return (
     <ProgressStrip
       c={c}
@@ -40,6 +38,18 @@ export function RustTaskProgress({
       }))}
     />
   );
+}
+
+/** The engine facts the timeline reads beside the lifecycle. */
+export function timelineContext(task: RustTask): Omit<TimelineContext, "now"> {
+  return {
+    phase: task.phase,
+    attention: task.attention,
+    wait: task.wait,
+    question: task.question,
+    held: task.hold !== null,
+    stateSinceMs: task.stateSinceMs,
+  };
 }
 
 /**
@@ -142,6 +152,8 @@ function Segment({ segment, c }: { segment: TimelineSegment; c: Colors }) {
       c={c}
       text={segment.hint}
       label={segment.label}
+      testID={`segment ${segment.fill} ${segment.tone}`}
+      focusable
       style={{ flex: 1, minWidth: 0, paddingVertical: space.xs - 2 }}
     >
       <View

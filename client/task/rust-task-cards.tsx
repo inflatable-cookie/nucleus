@@ -1,6 +1,6 @@
 /** The cards of the Rust task view (Spec 071): progress, pull request, activity and brief. */
 import { useRef, useState, type ReactNode } from "react";
-import { Linking, Text, View } from "react-native";
+import { Linking, Pressable, Text, View } from "react-native";
 import {
   Button,
   Disclosure,
@@ -23,7 +23,7 @@ import {
   type RustTaskDetail,
   type RustTranscriptCard,
 } from "../web/rust-board";
-import { RustTimeline } from "./rust-progress";
+import { RustTimeline, timelineContext } from "./rust-progress";
 import { Dot, Hint, LabelRow, Meter, Pill, QuietButton, metaText } from "./rust-detail-parts";
 import { clockTime, roundsFor, type TimelineTone } from "./rust-timeline";
 
@@ -113,7 +113,7 @@ export function ProgressCard({
       <RustTimeline
         c={c}
         lifecycle={detail.lifecycle}
-        context={{ attention: detail.attention, stateSinceMs: detail.stateSinceMs }}
+        context={timelineContext(detail)}
       />
       {waitLine && (
         <View style={{ ...row, flexWrap: "nowrap", gap: space.xs }}>
@@ -134,9 +134,8 @@ export function ProgressCard({
         const model = card?.model ?? participant?.model ?? null;
         const provider = card?.provider ?? participant?.provider ?? null;
         const activity = detail.run?.role === role && !finished ? detail.run.activity?.label : null;
-        const thread = [...(detail.lifecycle.transcript?.cards ?? [])]
-          .reverse()
-          .find((candidate) => candidate.role === role && candidate.threadUrl)?.threadUrl;
+        // Only the displayed turn's own thread; an older turn's link would open the wrong one.
+        const thread = card?.threadUrl ?? null;
         return (
           <LabelRow key={role} c={c} label={roleNames[role]}>
             <Hint c={c} text={provider ?? ""} style={{ flexShrink: 1, minWidth: 0 }}>
@@ -197,12 +196,14 @@ export function Prerequisites({
   canEdit,
   busy,
   onSave,
+  onOpenTask,
 }: {
   c: Colors;
   dependencies: readonly RustDependency[];
   canEdit: boolean;
   busy: boolean;
   onSave: (references: string[]) => void;
+  onOpenTask?: (id: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -242,7 +243,19 @@ export function Prerequisites({
       ) : (
         dependencies.map((dependency) => (
           <View key={dependency.taskId} style={{ ...row, flexWrap: "nowrap", gap: space.sm, minHeight: 28 }}>
-            <Text style={{ ...typeScale.body, color: r.foreground }}>{dependency.reference}</Text>
+            {onOpenTask && dependency.status !== "missing" ? (
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel={`Open ${dependency.reference}`}
+                onPress={() => onOpenTask(dependency.taskId)}
+              >
+                <Text style={{ ...typeScale.body, color: r.foreground, textDecorationLine: "underline" }}>
+                  {dependency.reference}
+                </Text>
+              </Pressable>
+            ) : (
+              <Text style={{ ...typeScale.body, color: r.foreground }}>{dependency.reference}</Text>
+            )}
             <Text numberOfLines={1} style={{ ...typeScale.body, color: metaText(c).color, flex: 1, minWidth: 0 }}>
               {dependency.title ?? ""}
             </Text>
@@ -340,13 +353,16 @@ export function PullRequestCard({
   const reviews = reviewRounds(detail);
   const latest = reviews.at(-1);
   const merged = detail.phase === "done" && (Boolean(mergedCommit) || detail.lifecycle.transcript?.merged !== false);
+  // Current status comes from the committed verdict; reported rounds stay evidence.
+  // The engine clears the verdict when GitHub refuses its head, so none means no approval.
+  const committed = verdict && "reviewed" in verdict ? verdict.reviewed : null;
   const pill: { tone: TimelineTone; text: string } | null = merged
     ? { tone: "success", text: "Merged" }
     : verdict && "accepted" in verdict
       ? { tone: "success", text: "Accepted" }
-      : latest?.decision === "approve"
+      : committed?.decision === "approve"
         ? { tone: "success", text: "Approved" }
-        : latest?.decision === "changes"
+        : committed?.decision === "changes"
           ? { tone: "warning", text: "Changes requested" }
           : null;
   const shown = merged && mergedCommit ? mergedCommit : pr.head;
@@ -357,9 +373,11 @@ export function PullRequestCard({
       ? [latest.decision === "approve" ? "Approved" : "Changes requested", latest.round >= 2 ? `round ${latest.round}` : null]
           .filter(Boolean)
           .join(" · ")
-      : latest.round >= 2
-        ? `Round ${latest.round}`
-        : null
+      : !committed || committed.decision !== latest.decision
+        ? `Round ${latest.round} · ${decisionWords[latest.decision]}`
+        : latest.round >= 2
+          ? `Round ${latest.round}`
+          : null
     : null;
   return (
     <Card c={c} label="Pull request">

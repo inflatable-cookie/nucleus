@@ -28,6 +28,7 @@ export function Hint({
   children,
   style,
   focusable = false,
+  testID,
 }: {
   c: Colors;
   text: string;
@@ -35,6 +36,7 @@ export function Hint({
   children: ReactNode;
   style?: ViewStyle;
   focusable?: boolean;
+  testID?: string;
 }) {
   const [hovered, setHovered] = useState(false);
   const focus = useFocusVisible();
@@ -43,6 +45,7 @@ export function Hint({
   return (
     <Pressable
       ref={anchor}
+      testID={testID}
       accessibilityLabel={label ?? (text.replace(/\n/g, " · ") || undefined)}
       tabIndex={focusable ? 0 : -1}
       onHoverIn={() => setHovered(true)}

@@ -17,6 +17,7 @@ import {
   type Fixture, type Step,
 } from "./support/rust-task-detail-fixtures";
 
+const opened: string[] = [];
 const responses = new Map<string, unknown>();
 const posts: Array<{ path: string; command: unknown }> = [];
 // The board's module transport reads the global fetch when it loads.
@@ -26,7 +27,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     posts.push({ path, command: JSON.parse(String(init.body)) });
     return Response.json({ status: "pending", version: 7 }, { status: 202 });
   }
-  const key = path.replace(/\?.*$/, "");
+  const before = path.match(/[?&]before=(\d+)/)?.[1];
+  const key = path.replace(/\?.*$/, "") + (before ? `?before=${before}` : "");
   if (!responses.has(key)) return Response.json({ error: "missing" }, { status: 404 });
   return Response.json(responses.get(key));
 }) as typeof fetch;
@@ -68,6 +70,7 @@ async function open(id: string, fixture: Fixture) {
         inline: true,
         c: colors,
         onClose: () => {},
+        onOpenTask: (task: string) => opened.push(task),
         invalidate: () => {},
       }),
     }),
@@ -84,8 +87,11 @@ async function open(id: string, fixture: Fixture) {
 
 const segments = (ui: ReturnType<typeof mount>) =>
   ui.all(/^(Queued|Working|Review|Merge|Close)( round \d+)? · /).map((node) => node.props.accessibilityLabel as string);
+/** Each segment's fill and tone, in order: "solid success", "wait warning", "track muted". */
+const looks = (ui: ReturnType<typeof mount>) =>
+  ui.all(/^(Queued|Working|Review|Merge|Close)( round \d+)? · /).map((node) => String(node.props.testID).replace(/^segment /, ""));
 const panel = (ui: ReturnType<typeof mount>) =>
-  ["Planner question", "Your decision", "Needs attention", "Held", "Report ready"].filter((name) => ui.query(name));
+  ["Planner question", "Your decision", "Needs attention", "Declined", "Held", "Report ready"].filter((name) => ui.query(name));
 const actions = (ui: ReturnType<typeof mount>) =>
   ["Promoted", "Hold", "Move, Move", "Cancel", "Recheck", "Release", "Amend", "Open answer"].filter((name) => ui.query(name));
 
@@ -121,6 +127,7 @@ test("working: no panel, a live round, the worker's activity and routine actions
     "Working round 1 · in progress",
     "Review · not started", "Merge · not started", "Close · not started",
   ]);
+  assert.deepEqual(looks(ui), ["solid success", "solid accent", "track muted", "track muted", "track muted"]);
   assert.match(ui.get(/^Step Queued:/).props.accessibilityLabel, /^Step Queued: done · 17h 9m$/);
   assert.match(ui.get(/^Step Working:/).props.accessibilityLabel, /^Step Working: current · 5[01]m \d+s$/);
   assert.match(ui.text(), /Running engine tests/);
@@ -154,6 +161,7 @@ test("planner question: a warning panel with the Answer form collapsed, then ans
   assert.deepEqual(panel(ui), ["Planner question"]);
   assert.match(ui.text(), /Delete the v1 importer now/);
   assert.deepEqual(segments(ui).slice(1, 2), ["Working round 1 · asked a question"]);
+  assert.deepEqual(looks(ui).slice(1, 2), ["wait warning"]);
   assert.match(ui.get(/^Step Working:/).props.accessibilityLabel, /^Step Working: current · waiting 14m \d+s · 1h 50m$/);
   assert.deepEqual(actions(ui), ["Hold", "Move, Move", "Cancel", "Amend", "Open answer"]);
   assert.equal(ui.query("Option, Option"), undefined, "the form starts collapsed");
@@ -206,6 +214,9 @@ test("changes on round 2: Review stays lit amber, the PR card shows the latest f
     "Review round 2 · changes requested",
     "Merge · not started", "Close · not started",
   ]);
+  assert.deepEqual(looks(ui), [
+    "solid success", "solid success", "solid success", "solid accent", "solid warning", "solid warning", "track muted", "track muted",
+  ]);
   assert.match(ui.get(/^Step Working:/).props.accessibilityLabel, /^Step Working: current · Round 3 · 1[12]m \d+s$/);
   assert.equal(ui.get(/^Step Review:/).props.accessibilityLabel, "Step Review: done · Round 2 · 1h 18m");
   assert.match(ui.text(), /PR #233/);
@@ -219,8 +230,9 @@ test("changes on round 2: Review stays lit amber, the PR card shows the latest f
 
 test("merging with checks pending: a drifting merge step and the wait line, no panel", async () => {
   const { ui } = await open("merging", {
-    phase: "merging", stateLabel: "Merging · checks", attention: "waiting", wait: "checks",
-    waitDetail: "Waiting for required checks.", nextCheckAt: now + 4 * MINUTE,
+    // As the engine serves it: the checks wait carries no sentence of its own.
+    phase: "merging", stateLabel: "Merging · checks", attention: "waiting", wait: "checks_pending",
+    nextCheckAt: now + 4 * MINUTE,
     steps: steps(
       done("queued", now - HOUR, now - 58 * MINUTE),
       { key: "working", state: "done", elapsedMs: 46 * MINUTE },
@@ -241,8 +253,9 @@ test("merging with checks pending: a drifting merge step and the wait line, no p
     "Queued · complete", "Working round 1 · work submitted", "Review round 1 · approved",
     "Merge · in progress", "Close · not started",
   ]);
+  assert.deepEqual(looks(ui), ["solid success", "solid success", "solid success", "wait accent", "track muted"]);
   assert.match(ui.get(/^Step Merge:/).props.accessibilityLabel, /^Step Merge: current · [78]m \d+s$/);
-  assert.match(ui.text(), /Waiting for required checks\./);
+  assert.match(ui.text(), /Waiting for required checks/);
   assert.match(ui.text(), /Next check/);
   assert.match(ui.text(), /Approved/);
   assert.deepEqual(actions(ui), ["Hold", "Move, Move", "Cancel"]);
@@ -282,6 +295,9 @@ test("done: the merged PR comes first, steps are complete and there is no footer
     "Review round 1 · changes requested", "Review round 2 · approved",
     "Merge · complete", "Close · complete",
   ]);
+  assert.deepEqual(looks(ui), [
+    "solid success", "solid success", "solid success", "solid warning", "solid success", "solid success", "solid success",
+  ]);
   assert.equal(ui.get(/^Step Close:/).props.accessibilityLabel, "Step Close: done", "an unrecorded time stays unknown");
   assert.equal(ui.get(/^Step Review:/).props.accessibilityLabel, "Step Review: done · Round 2 · 52m");
   assert.match(ui.text(), /Merged/);
@@ -293,14 +309,15 @@ test("done: the merged PR comes first, steps are complete and there is no footer
 
 test("blocked with Recheck: a danger panel leads with Recheck, which posts the version", async () => {
   const { ui } = await open("blocked", {
+    // As the engine serves it: `wait: question` tones the step warning and withholds waitDetail.
     phase: "merging", stateLabel: "Merging · planner", attention: "attention", wait: "question",
-    waitDetail: "Required check “e2e” failed.", stateSinceMs: now - 47 * MINUTE,
+    stateSinceMs: now - 47 * MINUTE,
     question: { repair: "merge_blocked" },
     steps: steps(
       done("queued", now - 5 * HOUR, now - 5 * HOUR + 3 * MINUTE),
       { key: "working", state: "done", elapsedMs: 160 * MINUTE },
       { key: "review", state: "done", elapsedMs: 29 * MINUTE },
-      { key: "merge", state: "current", tone: "danger", visits: [{ enteredAtMs: now - HOUR, leftAtMs: null }] },
+      { key: "merge", state: "current", tone: "warning", visits: [{ enteredAtMs: now - HOUR, leftAtMs: null }] },
       { key: "close", state: "todo" },
     ),
     cards: [
@@ -313,8 +330,9 @@ test("blocked with Recheck: a danger panel leads with Recheck, which posts the v
   });
   assert.deepEqual(panel(ui), ["Needs attention"]);
   assert.match(ui.text(), /GitHub is blocking the merge\./);
-  assert.match(ui.text(), /Required check “e2e” failed\./);
-  assert.deepEqual(segments(ui).slice(3, 4), ["Merge · in progress"]);
+  assert.deepEqual(segments(ui).slice(3, 4), ["Merge · blocked"]);
+  assert.deepEqual(looks(ui).slice(3, 4), ["solid danger"]);
+  assert.equal(ui.get("Merge · blocked").props.tabIndex, 0, "round and step evidence is keyboard reachable");
   assert.match(ui.get(/^Step Merge:/).props.accessibilityLabel, /^Step Merge: current · blocked · 4[78]m \d+s$/);
   assert.deepEqual(actions(ui), ["Hold", "Move, Move", "Cancel", "Recheck", "Amend", "Open answer"]);
   assert.ok(ui.query("Open pull request"));
@@ -344,10 +362,13 @@ test("queued on a prerequisite: the prerequisites, Promoted, and Cancel asks fir
   assert.deepEqual(segments(ui), [
     "Queued · in progress", "Working · not started", "Review · not started", "Merge · not started", "Close · not started",
   ]);
+  assert.deepEqual(looks(ui), ["wait accent", "track muted", "track muted", "track muted", "track muted"]);
   assert.match(ui.get(/^Step Queued:/).props.accessibilityLabel, /^Step Queued: current · 1d 2h$/);
   assert.match(ui.text(), /board-fixture#87.*Pin the publishing wire.*Merging/);
   assert.match(ui.text(), /silo#41.*Cut the release.*Done/);
   assert.ok(ui.query("Edit prerequisites"));
+  ui.press("Open board-fixture#87");
+  assert.deepEqual(opened, ["t-pin"], "a prerequisite reference opens that task");
   assert.deepEqual(actions(ui), ["Promoted", "Hold", "Cancel", "Amend"]);
   ui.press("Cancel");
   assert.match(ui.text(), /Cancel this task\?/);
@@ -395,4 +416,127 @@ test("every history record kind renders, and an unknown one is skipped", async (
   ]) assert.match(ui.text(), new RegExp(text));
   assert.equal(ui.text().match(/Approved/g)?.length, 1, "a review outcome and its verdict show once");
   assert.doesNotMatch(ui.text(), /invalid response|future_|codex-fixture/);
+});
+
+const reviewSteps = (merge: Step["state"]) =>
+  steps(
+    done("queued", now - 3 * HOUR, now - 3 * HOUR + MINUTE),
+    { key: "working", state: "done" },
+    { key: "review", state: merge === "current" ? "done" : "current" },
+    { key: "merge", state: merge === "current" ? "current" : "todo" },
+    { key: "close", state: "todo" },
+  );
+
+test("a new question resets the answer form, so an old draft never pairs with a new head", async () => {
+  const accept = (sha: string) => ({ accept: { head: sha } });
+  const fixture = (sha: string): Fixture => ({
+    phase: "merging", stateLabel: "Merging · Tom", attention: "attention", wait: "question",
+    question: accept(sha), steps: reviewSteps("current"),
+    pullRequest: { url: prUrl, head: sha },
+    commands: [...baseCommands, { name: "answer", preflight: "ready" }],
+  });
+  const { ui, client } = await open("accept", fixture(head));
+  assert.deepEqual(panel(ui), ["Your decision"], "the engine's label names Tom as the answerer");
+  ui.type("Reason", "Merged by hand at the first head");
+  const { detail, next } = engineTask("accept", fixture(pushed));
+  responses.set("/tasks/accept", { ...detail, version: 8 });
+  responses.set("/tasks/accept/next", { ...next, version: 8 });
+  await client.invalidateQueries();
+  await waitFor(() => ui.text().includes(pushed), 5000, "the new question arrives");
+  assert.equal(ui.get("Reason").props.value, "", "the draft cleared with the old question");
+  ui.type("Reason", "Merged by hand at the new head");
+  ui.press("Answer");
+  await waitFor(() => posts.some(({ path }) => path === "/tasks/accept/commands"), 5000, "answer posted");
+  assert.deepEqual(posts.find(({ path }) => path === "/tasks/accept/commands")?.command, {
+    answer: { accept: { head: pushed, reason: "Merged by hand at the new head" } },
+  });
+});
+
+test("without a committed verdict the PR shows no approval, and a reported review is evidence only", async () => {
+  const { ui } = await open("no-verdict", {
+    // The engine cleared the verdict after GitHub refused the head, keeping the PR binding.
+    phase: "merging", stateLabel: "Merging", attention: "active", steps: reviewSteps("current"),
+    cards: [
+      card("worker", 1, { elapsedMs: 30 * MINUTE, outcome: work(false) }),
+      card("reviewer", 1, { elapsedMs: 10 * MINUTE, outcome: review("approve", "Looks right.") }),
+    ],
+    pullRequest: { url: prUrl, head },
+    verdict: null,
+    commands: baseCommands,
+  });
+  assert.doesNotMatch(ui.text(), /Approved/);
+  assert.match(ui.text(), /Round 1 · approved/);
+});
+
+test("a reported run stops ticking, and an unrecorded attempt keeps the total unknown", async () => {
+  const { ui } = await open("reported", {
+    phase: "reviewing", stateLabel: "Reviewing", attention: "active",
+    steps: steps(
+      done("queued", now - 3 * HOUR, now - 3 * HOUR + MINUTE),
+      { key: "working", state: "done" },
+      // The report recorded five minutes and cleared the engine's active-run time.
+      { key: "review", state: "current", activeSinceMs: null },
+      { key: "merge", state: "todo" }, { key: "close", state: "todo" },
+    ),
+    cards: [
+      card("worker", 1, { elapsedMs: null, outcome: work(false) }),
+      card("worker", 2, { elapsedMs: 20 * MINUTE, outcome: work(true) }),
+      card("reviewer", 1, { startedAtMs: now - 9 * MINUTE, ended: false, elapsedMs: 5 * MINUTE, outcome: review("approve", "Fine.") }),
+    ],
+    commands: baseCommands,
+  });
+  assert.deepEqual(segments(ui).slice(3, 5), ["Review round 1 · approved", "Merge · not started"]);
+  assert.equal(ui.get(/^Step Review:/).props.accessibilityLabel, "Step Review: current · 5m");
+  assert.equal(ui.get(/^Step Working:/).props.accessibilityLabel, "Step Working: done · Round 2", "a round without a time keeps the total unknown");
+});
+
+test("a cancelled task stops its timeline, shows where it stopped and keeps no panel", async () => {
+  const cancelled = now - HOUR;
+  const { ui } = await open("cancelled", {
+    phase: "cancelled", stateLabel: "Cancelled", attention: "finished", finishedAtMs: cancelled,
+    hold: { reason: "Waiting on the vendor", by: "operator" },
+    steps: steps(
+      done("queued", now - 3 * HOUR, now - 3 * HOUR + MINUTE),
+      { key: "working", state: "current", tone: "muted" },
+      { key: "review", state: "todo" }, { key: "merge", state: "todo" }, { key: "close", state: "todo" },
+    ),
+    cards: [card("worker", 1, { elapsedMs: 40 * MINUTE, outcome: work(false) })],
+    commands: [],
+    history: [{ sequence: 9, content: { at: cancelled }, presentation: [{ kind: "finished", phase: "cancelled", previousPhase: "working" }] }],
+  });
+  await waitFor(() => ui.text().includes("Cancelled from Working"), 5000, "cancellation evidence");
+  assert.deepEqual(panel(ui), [], "a cancelled hold needs no one");
+  assert.deepEqual(segments(ui).slice(1, 2), ["Working round 1 · work submitted"], "no new round after cancellation");
+  assert.match(ui.get(/^Step Working:/).props.accessibilityLabel, /stopped/);
+  assert.deepEqual(actions(ui), []);
+});
+
+test("a declined decision tells the planner to move or cancel, with no Answer", async () => {
+  const { ui } = await open("declined", {
+    phase: "merging", stateLabel: "Merging · declined", attention: "attention", wait: "operator_declined",
+    question: { accept: { head } }, steps: reviewSteps("current"),
+    commands: baseCommands,
+  });
+  assert.deepEqual(panel(ui), ["Declined"]);
+  assert.match(ui.text(), /Move or cancel the task/);
+  assert.doesNotMatch(ui.text(), /Your decision/);
+  assert.equal(ui.query("Answer"), undefined);
+});
+
+test("a full history page with no milestones still offers the next page", async () => {
+  const sparse = Array.from({ length: 30 }, (_, index) => ({
+    sequence: 100 - index, content: { at: now - index * MINUTE }, presentation: [{ kind: "run_ended", instance: `run-${index}` }],
+  }));
+  responses.set("/tasks/sparse/history?before=71", [
+    { sequence: 70, content: { at: now - HOUR }, presentation: [{ kind: "merged", commit: mergeCommit }] },
+  ]);
+  const { ui } = await open("sparse", {
+    phase: "working", stateLabel: "Working", attention: "active",
+    steps: steps(done("queued", now - HOUR, now - 50 * MINUTE), { key: "working", state: "current" },
+      { key: "review", state: "todo" }, { key: "merge", state: "todo" }, { key: "close", state: "todo" }),
+    commands: baseCommands, history: sparse,
+  });
+  await waitFor(() => Boolean(ui.query("More activity")), 5000, "More is offered on a sparse page");
+  ui.press("More activity");
+  await waitFor(() => ui.text().includes("Merged"), 5000, "the next page loads");
 });
