@@ -743,6 +743,8 @@ Later decisions carry their own attribution.
 
 51. **Step up a tier when every eligible profile is paused.** On 2026-11-26, 15 tasks waited until 5 December because the only eligible reviewer or worker profiles at their tier were in a paused subscription group. Tom was asked: “How should Nucleus handle 'every eligible profile is paused'?” He chose “Step up one tier (Recommended)”: when every eligible profile for a role is paused, use the next tier up, still with a different model from the author. It reverts automatically when the group unpauses. A required profile in the brief still waits. A task waiting on a paused group shows “paused” with the group and its reset, not “capacity”.
 
+52. **Decision answers notify the asking planner.** Planner ruling, 2026-11-26: when an operator answers a decision from the board, the Inbox or the CLI, Nucleus records one notice in the same store transaction for the planner message queue (`tell`) to the decision's asking planner thread (or the task's origin thread for a task-linked decision). The notice states the decision ID, brief question, chosen option label and ID, any note, and the answer time, with no reply route, and is exempt from the 20-per-hour direct `tell` recipient cap so an operator answer always commits, wakes any linked task, and queues its notice even when the planner thread is at the cap. If the asking thread is archived or gone, delivery falls back to the project's planner under rulings 40 and 41. Uncertain delivery never resends, replaying the same answer sends nothing more, and a task-linked decision still wakes its task.
+
 ## The model
 
 ### Stored state per task
@@ -1214,9 +1216,11 @@ across projects. `item.list` and `decision.list` read the current records.
 New decisions require at least two options with distinct IDs and labels.
 Labels are compared after trimming. The board retains each option's ID from
 the read through the answer, including older decisions whose labels repeat.
-Answering requires an operator binding and an explicit project. A decision
-that belongs to a task question accepts one answer for the bound task version,
-then wakes the ordinary answer path.
+Answering requires an operator binding and an explicit project. Answering a
+planner-authored or task-linked decision also delivers one answer notice
+through the planner message queue under ruling 52. A decision that belongs to a
+task question accepts one answer for the bound task version, then wakes the
+ordinary answer path.
 
 `task.add` reads a brief from stdin. `item.promote` admits the current item
 body and commits the task, source link and item history together. When the

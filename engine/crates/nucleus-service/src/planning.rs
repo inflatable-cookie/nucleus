@@ -1,10 +1,12 @@
+use std::fmt::Write as _;
+
 use nucleus_core::{
     Authority, Entry, Head, Identity, PullRequest, Task, WaitReason,
     profiles::{BriefPolicy, Complexity, UsageLevel},
 };
 use nucleus_forge::Branches;
 use nucleus_store::{
-    StoreError, TaskAdmissionFacts, TaskRow,
+    StoreError, TaskAdmissionFacts, TaskRow, TellSubmission,
     planning::{
         Decision, DecisionAnswerInput, DecisionInput, DecisionKind, Item, ItemKind, ItemSource,
         ItemState, USAGE_APPROVE, UsagePermission, WriteAt, valid_key,
@@ -419,21 +421,59 @@ impl Service {
         if !matches!(caller, Authority::Operator { .. }) {
             return Err(ServiceError::DecisionOperator);
         }
-        if let Some(decision) = state.store.decision(project, id)?
+        let stamp = stamp(caller);
+        let prior = state.store.decision(project, id)?;
+        if let Some(decision) = &prior
             && let Some(target) = decision.task.as_ref()
             && target.kind == DecisionKind::UsagePermission
         {
             let row = self.lookup(state, &target.task_id)?;
             if self
-                .reconcile_usage_permission(state, &row.task, decision)?
+                .reconcile_usage_permission(state, &row.task, decision.clone())?
                 .is_none()
             {
                 return Err(StoreError::PlanningConflict.into());
             }
         }
-        let decision = state
-            .store
-            .answer_decision(project, id, input, stamp(caller))?;
+        let notice = if let Some(decision) = &prior
+            && let Some(thread) = self.decision_notice_target(state, decision)?
+        {
+            let text = decision_answer_text(decision, &input, stamp.at_ms);
+            let key = new_id("decision")?;
+            let tell_id = new_id("tell")?;
+            let recorded_at = i64::try_from(stamp.at_ms).unwrap_or(i64::MAX);
+            Some((thread, text, key, tell_id, recorded_at))
+        } else {
+            None
+        };
+        let (decision, queued) = {
+            let from_project = prior
+                .as_ref()
+                .map_or(project, |decision| decision.project_id.as_str());
+            let submission =
+                notice
+                    .as_ref()
+                    .map(|(thread, text, key, _, recorded_at)| TellSubmission {
+                        key,
+                        sender: "Nucleus",
+                        direct: Some(thread),
+                        from_project,
+                        text,
+                        recorded_at: *recorded_at,
+                        no_live_planners: &[],
+                    });
+            state.store.answer_decision_with_notice(
+                project,
+                id,
+                input,
+                stamp,
+                submission.as_ref().zip(
+                    notice
+                        .as_ref()
+                        .map(|(_, _, _, tell_id, _)| tell_id.as_str()),
+                ),
+            )?
+        };
         if let Some(target) = &decision.task {
             state.schedule.wake(
                 &target.task_id,
@@ -442,8 +482,36 @@ impl Service {
             );
             self.wake.notify_one();
         }
+        if queued {
+            self.tell_wake.notify_one();
+        }
         self.decision_changed();
         Ok(decision)
+    }
+
+    fn decision_notice_target(
+        &self,
+        state: &State,
+        decision: &Decision,
+    ) -> Result<Option<String>, ServiceError> {
+        if decision.author == "Nucleus" {
+            let Some(target) = &decision.task else {
+                return Ok(None);
+            };
+            return Ok(self
+                .lookup(state, &target.task_id)?
+                .task
+                .identity()
+                .origin_thread
+                .clone());
+        }
+        if decision.author == "operator"
+            || decision.author == "fixture-operator"
+            || decision.author.starts_with("operator via ")
+        {
+            return Ok(None);
+        }
+        Ok(Some(decision.author.clone()))
     }
 
     pub(super) fn usage_permission_wait(
@@ -496,6 +564,71 @@ impl Service {
             .is_none_or(|answer| answer.input.option_id != USAGE_APPROVE)
             .then_some(WaitReason::UsagePermission))
     }
+}
+
+fn trimmed_note(note: Option<&str>) -> Option<&str> {
+    note.map(str::trim).filter(|note| !note.is_empty())
+}
+
+fn truncate_chars(text: &str, max: usize) -> String {
+    let mut chars = text.chars();
+    let prefix: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        format!("{prefix}…")
+    } else {
+        prefix
+    }
+}
+
+fn format_utc_minute(at_ms: u64) -> String {
+    let total_minutes = i64::try_from(at_ms / 60_000).unwrap_or(i64::MAX);
+    let days = total_minutes.div_euclid(1_440);
+    let minute_of_day = total_minutes.rem_euclid(1_440);
+    let (hour, minute) = (minute_of_day / 60, minute_of_day % 60);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02} UTC")
+}
+
+fn decision_answer_text(
+    decision: &Decision,
+    input: &DecisionAnswerInput,
+    answered_at_ms: u64,
+) -> String {
+    const MAX_QUESTION_CHARS: usize = 160;
+    const MAX_NOTE_CHARS: usize = 2000;
+    let option_id = &input.option_id;
+    let label = decision
+        .input
+        .options
+        .iter()
+        .find(|option| option.id == *option_id)
+        .map_or(option_id.as_str(), |option| option.label.trim());
+    let collapsed: String = decision
+        .input
+        .question
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let question = truncate_chars(&collapsed, MAX_QUESTION_CHARS);
+    let answered_at = format_utc_minute(answered_at_ms);
+    let mut text = format!(
+        "Decision {} answered at {answered_at}\n\nQuestion: {question}\nAnswer: {label} ({option_id})",
+        decision.id
+    );
+    if let Some(note) = trimmed_note(input.note.as_deref()) {
+        let note = truncate_chars(note, MAX_NOTE_CHARS);
+        let _ = write!(text, "\nNote: {note}");
+    }
+    text
 }
 
 pub(crate) fn stamp(caller: &Authority) -> WriteAt<'_> {
@@ -635,5 +768,17 @@ fn gated_complexity(complexity: Option<Complexity>) -> Option<&'static str> {
         Some(Complexity::High) => Some("high"),
         Some(Complexity::VeryHigh) => Some("very-high"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn utc_minute_formatter_matches_calendar_timestamps() {
+        assert_eq!(super::format_utc_minute(0), "1970-01-01 00:00 UTC");
+        assert_eq!(
+            super::format_utc_minute(1_795_693_620_000),
+            "2026-11-26 11:47 UTC"
+        );
     }
 }
