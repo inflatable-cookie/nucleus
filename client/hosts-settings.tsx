@@ -17,6 +17,7 @@ import {
 import { radius, roles, space, type } from "./design";
 import { formatLocalDateTime } from "./date-time-field";
 import { errorText } from "./error-text";
+import { useEngineFeatures } from "./engine-features";
 import type * as api from "../shared/contracts";
 import type { HostDependency, HostView } from "../shared/rpc/hosts";
 
@@ -53,18 +54,33 @@ const DEPENDENTS_HELP =
 export function HostDefault({
   c,
   values,
+  hosts,
   save,
 }: {
   c: Colors;
   values: api.CapacityAuthorityValues | null;
+  hosts: HostView[];
   save: (
     host: api.CapacityAuthorityValues["operatorDefaultHostKind"],
   ) => Promise<void>;
 }) {
+  const rust = useEngineFeatures().engine === "rust";
   const [host, setHost] = useState<
     api.CapacityAuthorityValues["operatorDefaultHostKind"]
   >(values ? values.operatorDefaultHostKind : null);
   const auto = useSectionAutoSave(save);
+  const registeredKinds = new Set(hosts.map(({ kind }) => kind));
+  const options = rust
+    ? [
+        ...hosts.map(({ kind, label }) => ({ value: kind, label })),
+        { value: "inherit", label: "Planner's host" },
+      ]
+    : [
+        { value: "paseo", label: "Paseo" },
+        { value: "t3code", label: "T3Code" },
+        { value: "bb", label: "BB" },
+        { value: "inherit", label: "Planner's host" },
+      ];
   useEffect(() => {
     if (values && !auto.saver.busy && !auto.failed)
       setHost(values.operatorDefaultHostKind);
@@ -82,16 +98,17 @@ export function HostDefault({
         c={c}
         label="Default host"
         value={host ?? "inherit"}
+        placeholder={
+          rust && host !== null && !registeredKinds.has(host)
+            ? "Unavailable"
+            : undefined
+        }
         disabled={!values}
-        options={[
-          { value: "paseo", label: "Paseo" },
-          { value: "t3code", label: "T3Code" },
-          { value: "bb", label: "BB" },
-          { value: "inherit", label: "Planner's host" },
-        ]}
+        options={options}
         onChange={(value) => {
-          const next =
-            value === "paseo" || value === "t3code" || value === "bb"
+          const next = rust
+            ? (hosts.find(({ kind }) => kind === value)?.kind ?? null)
+            : value === "paseo" || value === "t3code" || value === "bb"
               ? value
               : null;
           setHost(next);
@@ -552,7 +569,12 @@ export function HostsPanel({
 }) {
   return (
     <View>
-      <HostDefault c={c} values={defaultValues} save={saveDefaultHost} />
+      <HostDefault
+        c={c}
+        values={defaultValues}
+        hosts={list?.hosts ?? []}
+        save={saveDefaultHost}
+      />
       <Section
         c={c}
         title="Registered hosts"

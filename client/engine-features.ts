@@ -28,7 +28,7 @@ export interface EngineFeatures {
   coordinatorRole: boolean;
   /** Projects: agent registration, planner picking and legacy project management. */
   projectAgents: boolean;
-  /** Hosts: the multi-host catalogue, default host and host removal. */
+  /** Hosts: the legacy multi-host catalogue and its removal control. */
   hostCatalog: boolean;
   /** Lead check and approve steps, lane keeps and drain prompts. */
   planningCeremony: boolean;
@@ -65,7 +65,8 @@ export const RUST_ENGINE_FEATURES: EngineFeatures = {
   backupsTab: false,
   // Tom retired Papercuts slots, Stall threshold, Hold reminder, Hold escalation
   // and Host outage notice on 2026-11-24. Ruling 12 retires Lane drain and its
-  // escalation. Ruling 5 retires Default host (hostCatalog below).
+  // escalation. Ruling 5 retires the legacy host catalogue, but Default host
+  // remains a preference over the engine's registered hosts.
   advancedLimits: false,
   projectDefaultLimit: true,
   // Ruling 11: the board reads no run custody beyond each task's own summary.

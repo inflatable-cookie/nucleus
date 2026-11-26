@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
+import {
+  EngineFeaturesContext,
+  RUST_ENGINE_FEATURES,
+  TYPESCRIPT_ENGINE_FEATURES,
+} from "../client/engine-features";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
 import { hostList } from "../shared/rpc/hosts";
 import type { CapacityAuthorityValues } from "../shared/contracts";
@@ -107,7 +112,10 @@ const LIST = hostList.output.parse({
   ],
 });
 
-async function mountHosts(overrides: Record<string, unknown> = {}) {
+async function mountHosts(
+  overrides: Record<string, unknown> = {},
+  rust = false,
+) {
   const { HostsPanel } = await hosts();
   const removed: string[] = [];
   const invoke = async () => ({});
@@ -134,7 +142,10 @@ async function mountHosts(overrides: Record<string, unknown> = {}) {
       client,
       children: h(PluginRpcProvider, {
         invoke,
-        children: renderPanel(props),
+        children: h(EngineFeaturesContext.Provider, {
+          value: rust ? RUST_ENGINE_FEATURES : TYPESCRIPT_ENGINE_FEATURES,
+          children: renderPanel(props),
+        }),
       }),
     });
   const ui = mount(tree());
@@ -287,6 +298,71 @@ test("the default host picker lives here and saves through the Settings capacity
     assert.equal(saved, "bb");
   } finally {
     done();
+  }
+});
+
+test("Rust default host choices are registered hosts plus Planner's host", async () => {
+  const oneHost = { ...LIST, hosts: [LIST.hosts[2]!] };
+  const single = await mountHosts(
+    {
+      list: oneHost,
+      defaultValues: { ...CAPACITY, operatorDefaultHostKind: "t3code" },
+    },
+    true,
+  );
+  try {
+    assert.ok(single.ui.get("Default host, T3Code"));
+    single.ui.press("Default host, T3Code");
+    assert.match(single.ui.text(), /Planner's host/);
+    assert.doesNotMatch(single.ui.text(), /Paseo|BB/);
+  } finally {
+    single.done();
+  }
+
+  const withSecondHost = {
+    ...LIST,
+    hosts: [LIST.hosts[2]!, LIST.hosts[1]!],
+  };
+  const multiple = await mountHosts(
+    {
+      list: withSecondHost,
+      defaultValues: { ...CAPACITY, operatorDefaultHostKind: "t3code" },
+    },
+    true,
+  );
+  try {
+    multiple.ui.press("Default host, T3Code");
+    assert.match(multiple.ui.text(), /T3Code/);
+    assert.match(multiple.ui.text(), /BB/);
+    assert.match(multiple.ui.text(), /Planner's host/);
+    assert.doesNotMatch(multiple.ui.text(), /Paseo/);
+  } finally {
+    multiple.done();
+  }
+});
+
+test("an unregistered Rust default stays unavailable until the operator changes it", async () => {
+  let saves = 0;
+  const onlyT3 = { ...LIST, hosts: [LIST.hosts[2]!] };
+  const unavailable = await mountHosts(
+    {
+      list: onlyT3,
+      defaultValues: { ...CAPACITY, operatorDefaultHostKind: "bb" },
+      saveDefaultHost: async () => {
+        saves++;
+      },
+    },
+    true,
+  );
+  try {
+    assert.ok(unavailable.ui.query("Default host, Unavailable"));
+    unavailable.ui.press("Default host, Unavailable");
+    assert.match(unavailable.ui.text(), /T3Code/);
+    assert.match(unavailable.ui.text(), /Planner's host/);
+    assert.doesNotMatch(unavailable.ui.text(), /Paseo|BB/);
+    assert.equal(saves, 0);
+  } finally {
+    unavailable.done();
   }
 });
 

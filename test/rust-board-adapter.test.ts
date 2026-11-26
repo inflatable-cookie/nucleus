@@ -248,6 +248,47 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
   assert.ok(board.repositoryBadges?.["/work/orbit"]);
 });
 
+test("the Rust Hosts panel uses only the host returned by its settings adapter", async () => {
+  useNativeStubs();
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const list = await adapter.rpc(api.hostList, {});
+  assert.deepEqual(list.hosts.map(({ kind }) => kind), ["t3code"]);
+  const { HostsPanel } = await import("../client/hosts-settings");
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const h = React.createElement;
+  const ui = mount(h(QueryClientProvider, {
+    client,
+    children: h(PluginRpcProvider, {
+      invoke: (async () => ({})) as never,
+      children: h(EngineFeaturesContext.Provider, {
+        value: RUST_ENGINE_FEATURES,
+        children: h(HostsPanel, {
+          c: new Proxy({}, { get: () => "#123" }) as never,
+          list,
+          loading: false,
+          loadError: null,
+          retry: () => {},
+          defaultValues: { operatorDefaultHostKind: "t3code" } as api.CapacityAuthorityValues,
+          saveDefaultHost: async () => {},
+          remove: async () => {},
+        }),
+      }),
+    }),
+  }));
+  try {
+    assert.ok(ui.query("T3 Code host t3, Online, default"));
+    assert.ok(ui.get("Default host, T3 Code"));
+    assert.doesNotMatch(ui.text(), /Paseo|BB/);
+    ui.press("Default host, T3 Code");
+    assert.match(ui.text(), /Planner's host/);
+    assert.doesNotMatch(ui.text(), /Paseo|BB/);
+  } finally {
+    ui.update(h(React.Fragment));
+    client.clear();
+  }
+});
+
 test("Projects reads and writes the full positive Rust hung-tool range", async () => {
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
