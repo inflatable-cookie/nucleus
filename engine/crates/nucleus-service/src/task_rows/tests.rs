@@ -216,6 +216,10 @@ impl Fixture {
 
     async fn sync(&self) -> nucleus_hosts::HostCalls {
         self.publish_shell();
+        self.sync_held().await
+    }
+
+    async fn sync_held(&self) -> nucleus_hosts::HostCalls {
         let (result, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
             self.service
                 .reconcile_task_rows(PROVIDER, std::slice::from_ref(&self.thread)),
@@ -1657,6 +1661,101 @@ async fn active_child_keeps_ownership_until_the_shell_observes_the_clear() {
     fixture.sync().await;
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
     assert_eq!(fixture.commands().len(), 2);
+}
+
+#[tokio::test]
+async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let (task, _, _) = crate::tests::reserved_reviewer(ID, &fixture.service.fixture().start);
+    fixture
+        .service
+        .visibility_time
+        .store(1_893_456_000_000, std::sync::atomic::Ordering::Relaxed);
+    create_visibility_row(&fixture, &task).await;
+    fixture.child("worker", false);
+    {
+        let mut native = fixture.native.lock().unwrap();
+        let child = native.child.as_mut().unwrap();
+        // The captured thread.updated shell row is completed despite the thread read waiting.
+        child.as_object_mut().unwrap().remove("parentThreadId");
+        child["lineage"] = json!({"parentThreadId":fixture.thread,
+            "rootThreadId":fixture.thread,"relationshipToParent":"subagent"});
+        child["archivedAt"] = Value::Null;
+        child["deletedAt"] = Value::Null;
+        child["latestRunId"] = json!("worker-run");
+        child["latestRunStartedAt"] = json!("2029-12-31T23:59:50Z");
+        child["latestRunCompletedAt"] = json!("2030-01-01T00:00:00Z");
+        child["pendingBackgroundTasks"] =
+            json!([{"kind":"monitor", "taskId":"monitor", "awaited":true}]);
+    }
+    let child = fixture.native.lock().unwrap().child.clone().unwrap();
+    fixture.service.host.fixture_shell_delta(
+        &json!({"kind":"thread.updated", "sequence":1, "location":"active", "thread":child}),
+    );
+    let calls = fixture.sync_held().await;
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
+    assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
+    assert!(fixture.sync().await.is_empty());
+    fixture.elapse_visibility_ms(120_001);
+    assert!(fixture.sync().await.is_empty());
+    {
+        let state = fixture.service.state.lock().await;
+        assert_eq!(fixture.service.working_row_count(&state).unwrap(), 1);
+    }
+
+    let child = {
+        let mut native = fixture.native.lock().unwrap();
+        let child = native.child.as_mut().unwrap();
+        child["pendingBackgroundTasks"] = json!([]);
+        child.clone()
+    };
+    fixture.service.host.fixture_shell_delta(
+        &json!({"kind":"thread.updated", "sequence":2, "location":"active", "thread":child}),
+    );
+    let calls = fixture.sync_held().await;
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
+    assert_eq!(
+        fixture.commands(),
+        ["thread.snooze", "thread.unsnooze", "thread.snooze"]
+    );
+    assert!(fixture.sync().await.is_empty());
+    fixture.observed_snooze().await;
+    {
+        let state = fixture.service.state.lock().await;
+        assert_eq!(fixture.service.working_row_count(&state).unwrap(), 0);
+    }
+
+    let child = {
+        let mut native = fixture.native.lock().unwrap();
+        let child = native.child.as_mut().unwrap();
+        child["pendingBackgroundTasks"] =
+            json!([{"kind":"monitor", "taskId":"monitor", "awaited":true}]);
+        child.clone()
+    };
+    fixture.service.host.fixture_shell_delta(
+        &json!({"kind":"thread.updated", "sequence":3, "location":"active", "thread":child}),
+    );
+    let calls = fixture.sync_held().await;
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
+    assert_eq!(
+        fixture.commands(),
+        [
+            "thread.snooze",
+            "thread.unsnooze",
+            "thread.snooze",
+            "thread.unsnooze"
+        ]
+    );
+    assert!(fixture.sync().await.is_empty());
+    let state = fixture.service.state.lock().await;
+    assert_eq!(fixture.service.working_row_count(&state).unwrap(), 1);
+    assert!(
+        state
+            .store
+            .row_snooze(ID, &fixture.thread)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
