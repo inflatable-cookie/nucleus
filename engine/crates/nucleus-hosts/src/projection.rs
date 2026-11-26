@@ -59,8 +59,36 @@ pub(crate) struct Projection {
 
 struct ShellFailure {
     run: String,
-    class: String,
+    limited: bool,
     reset_at_ms: Option<u64>,
+}
+
+fn subscription_limit(class: &str, message: Option<&str>) -> bool {
+    if class == "usage_limit" {
+        return true;
+    }
+    let Some((status, body)) = message.and_then(|text| text.split_once(':')) else {
+        return false;
+    };
+    if class != "provider_error" {
+        return false;
+    }
+    match status {
+        "402" => true,
+        "429" if body.len() <= 8192 => {
+            let Ok(reply) = serde_json::from_str::<Value>(body) else {
+                return false;
+            };
+            let error = reply.get("error").unwrap_or(&reply);
+            ["code", "type"].iter().any(|key| {
+                matches!(
+                    error[*key].as_str(),
+                    Some("usage_limit" | "insufficient_quota" | "quota_exceeded")
+                )
+            })
+        }
+        _ => false,
+    }
 }
 
 #[derive(Deserialize)]
@@ -474,7 +502,7 @@ impl Projection {
             {
                 self.shell_failure = Some(ShellFailure {
                     run: run.into(),
-                    class: class.into(),
+                    limited: subscription_limit(class, row["lastError"].as_str()),
                     reset_at_ms: timestamp_ms(row["usageLimitResetAt"].as_str()),
                 });
             }
@@ -733,7 +761,7 @@ impl Projection {
             .filter(|node| !node.is_empty())?;
         let (reset_at_ms, ended_at_ms) =
             if let Some(shell) = self.shell_failure.as_ref().filter(|f| f.run == run.id) {
-                if shell.class != "usage_limit" {
+                if !shell.limited {
                     return None;
                 }
                 (
@@ -753,7 +781,7 @@ impl Projection {
                     })
                     .max_by_key(|item| (&item.updated_at, item.ordinal, &item.id))?;
                 let failure = terminal.failure.as_ref()?;
-                if failure["class"] != "usage_limit" {
+                if !subscription_limit(failure["class"].as_str()?, failure["message"].as_str()) {
                     return None;
                 }
                 (

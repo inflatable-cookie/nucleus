@@ -227,6 +227,35 @@ impl ProfileCatalog {
             .then_some(path)
     }
 
+    pub(crate) fn exhausted_reset(&self, routing: &crate::RunRouting, ended: u64) -> Option<u64> {
+        let provider = self
+            .0
+            .iter()
+            .find(|p| p["instanceId"] == routing.provider)?;
+        let model = routing.model.as_str();
+        let family = model.split('/').next()?;
+        provider
+            .pointer("/usageLimits/windows")?
+            .as_array()?
+            .iter()
+            .filter(|w| {
+                let applies = |key: &str, id: &str| {
+                    w.get(key).is_none_or(|ids| {
+                        ids.as_array()
+                            .is_some_and(|ids| ids.iter().any(|entry| entry == id))
+                    })
+                };
+                w["usedPercent"].as_f64().is_some_and(|used| used >= 100.0)
+                    && applies("modelIds", model)
+                    && applies("providerIds", family)
+                    && (!w["id"].as_str().is_some_and(|id| id.starts_with("go_"))
+                        || family == "opencode-go")
+            })
+            .filter_map(|w| crate::task_row::timestamp_ms(w["resetsAt"].as_str()?).ok())
+            .filter(|reset| *reset > ended)
+            .max()
+    }
+
     pub(crate) fn provider_family(&self, instance: &str) -> Option<Provider> {
         let driver = self
             .0
@@ -536,5 +565,34 @@ mod tests {
                 },
             )]
         );
+    }
+}
+
+#[cfg(test)]
+mod exhausted_window_tests {
+    use super::*;
+
+    #[test]
+    fn reset_belongs_to_the_exhausted_subscription_and_observed_model() {
+        let window =
+            json!({"id":"go_monthly", "usedPercent":100, "resetsAt":"2026-12-05T17:24:37Z"});
+        let mut foreign = window.clone();
+        foreign["modelIds"] = json!(["different/model"]);
+        foreign["resetsAt"] = json!("2099-01-01T00:00:00Z");
+        let mut available = foreign.clone();
+        available["modelIds"] = json!(["opencode-go/fixture"]);
+        available["usedPercent"] = json!(10);
+        let catalog = ProfileCatalog(vec![json!({"instanceId":"pi","usageLimits":{
+            "windows":[window, foreign, available]
+        }})]);
+        let mut selected = crate::RunRouting {
+            provider: "pi".into(),
+            model: "opencode-go/fixture".into(),
+        };
+        let reset = crate::task_row::timestamp_ms("2026-12-05T17:24:37Z").unwrap();
+        assert_eq!(catalog.exhausted_reset(&selected, 0), Some(reset));
+        assert_eq!(catalog.exhausted_reset(&selected, reset), None);
+        selected.model = "other/fixture".into();
+        assert_eq!(catalog.exhausted_reset(&selected, 0), None);
     }
 }
