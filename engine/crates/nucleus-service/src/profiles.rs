@@ -489,29 +489,20 @@ fn earliest_eligible_pause(
         .flatten()
         .filter_map(GroupPause::reset)
         .collect();
-    for reset in deadlines {
+    for reset in deadlines.into_iter().map(Some).chain([None]) {
         for (candidate, pause) in candidates.iter_mut().zip(pauses) {
-            candidate.group_available = pause.as_ref().is_none_or(|pause| !pause.remaining(reset));
+            candidate.group_available = reset
+                .is_none_or(|reset| pause.as_ref().is_none_or(|pause| !pause.remaining(reset)));
         }
-        if matches!(choose(candidates), Ok(Some(_))) {
-            return pauses
+        if let Ok(Some(intent)) = choose(candidates) {
+            return candidates
                 .iter()
-                .flatten()
-                .find(|pause| pause.reset() == Some(reset))
-                .cloned();
+                .zip(pauses)
+                .find(|(candidate, _)| candidate.profile.id == intent.profile().id)
+                .and_then(|(_, pause)| pause.clone());
         }
     }
-    for candidate in &mut *candidates {
-        candidate.group_available = true;
-    }
-    if !matches!(choose(candidates), Ok(Some(_))) {
-        return None;
-    }
-    pauses
-        .iter()
-        .flatten()
-        .find(|pause| matches!(pause, GroupPause::Manual { .. }))
-        .cloned()
+    None
 }
 
 pub(super) fn usage(state: &State) -> UsageLevel {
