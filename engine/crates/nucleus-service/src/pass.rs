@@ -533,6 +533,10 @@ impl Service {
         route: &ProjectRoute,
     ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
         let mut limited = None;
+        // Only a continuing worker reuses a parent turn that may already have ended.
+        let reuses_parent =
+            self.acp_provider().is_some() && nucleus_hosts::retained_worker_continuation(run);
+        let mut unproven = false;
         let (state, activity, error, active_child) = match host.observe_run(run, now_ms()).await {
             Ok(seen) => {
                 if run.launch().role == Role::Worker
@@ -553,6 +557,14 @@ impl Service {
                         }));
                     }
                 }
+                unproven = reuses_parent
+                    && matches!(
+                        &seen.host,
+                        Host::Current {
+                            state: RunState::Running,
+                            ..
+                        }
+                    );
                 (
                     Observed::Known(seen.host),
                     seen.activity,
@@ -575,6 +587,10 @@ impl Service {
         self.observe_activity(row, activity).await?;
         if let Some(child) = active_child {
             self.reenter_active_parent(row, route, &child).await?;
+        } else if crate::schedule::reentry_recheck_due(unproven, run.last_send_at_ms(), now_ms()) {
+            // The continuation's native run may not be visible yet. Look again
+            // soon instead of waiting for the live check that may come after it ends.
+            self.recheck_reentry(row).await;
         }
         Ok((limited.unwrap_or(state), error))
     }

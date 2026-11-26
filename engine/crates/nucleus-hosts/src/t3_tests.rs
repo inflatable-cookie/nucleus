@@ -2336,6 +2336,7 @@ async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody()
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, instance) = reserved_worker_continuation(&binding, true);
+    assert!(crate::retained_worker_continuation(task.run().unwrap()));
     let mut busy = snapshot(&binding, "other-message", "running", false);
     busy["projection"]["thread"]["providerInstanceId"] = json!("alternate-provider");
     busy["projection"]["thread"]["modelSelection"] =

@@ -1894,6 +1894,17 @@ impl Service {
         )
     }
 
+    /// Observe a live role again soon, so an unproven parent hold is not left
+    /// until the normal live check after a short run has already ended.
+    async fn recheck_reentry(&self, row: &TaskRow) {
+        self.state.lock().await.schedule.wake(
+            &row.task.identity().id,
+            Instant::now() + schedule::REENTRY_CHECK,
+            Priority::Refresh,
+        );
+        self.wake.notify_one();
+    }
+
     async fn recheck_effect(&self, row: &TaskRow, wait: WaitReason) {
         let (delay, _) = schedule::retry(Some(wait));
         self.state.lock().await.schedule.wake(
