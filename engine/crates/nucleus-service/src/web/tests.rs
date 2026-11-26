@@ -3220,6 +3220,20 @@ async fn mounted_task_detail_uses_the_paired_stored_task() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
     let server = tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
+    let output = run_mounted_task_board(address, &cookie).await;
+    server.abort();
+    assert!(
+        output.status.success(),
+        "mounted board failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+async fn run_mounted_task_board(
+    address: std::net::SocketAddr,
+    cookie: &str,
+) -> std::process::Output {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let mut child = tokio::process::Command::new("node");
     child
@@ -3228,17 +3242,10 @@ async fn mounted_task_detail_uses_the_paired_stored_task() {
         .env("BOARD_FIXTURE_ORIGIN", format!("http://{address}"))
         .env("BOARD_FIXTURE_COOKIE", cookie)
         .kill_on_drop(true);
-    let output = tokio::time::timeout(std::time::Duration::from_secs(90), child.output()).await;
-    server.abort();
-    let output = output
+    tokio::time::timeout(std::time::Duration::from_secs(90), child.output())
+        .await
         .expect("mounted board timed out")
-        .expect("run mounted board fixture");
-    assert!(
-        output.status.success(),
-        "mounted board failed:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+        .expect("run mounted board fixture")
 }
 
 #[tokio::test]
