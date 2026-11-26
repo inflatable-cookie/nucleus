@@ -420,6 +420,39 @@ impl Projection {
         })
     }
 
+    pub(crate) fn parent_unavailable(&self, message_id: &str, provider: &str) -> bool {
+        let Some(run) = self.delivery(message_id).1.filter(|run| {
+            run.user_message_id.as_deref() == Some(message_id)
+                && run.status == Status::Failed
+                && run.provider_instance_id.as_deref() == Some(provider)
+                && run
+                    .model_selection
+                    .as_ref()
+                    .is_some_and(|selection| selection.instance_id == provider)
+        }) else {
+            return false;
+        };
+        let Some(root) = run.root_node_id.as_deref().filter(|root| !root.is_empty()) else {
+            return false;
+        };
+        self.turn_items
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|item| {
+                item.kind == "error"
+                    && item.status == "failed"
+                    && item.run_id.as_ref() == Some(&run.id)
+                    && item.node_id.as_deref() == Some(root)
+            })
+            .max_by_key(|item| (&item.updated_at, item.ordinal, &item.id))
+            .and_then(|item| item.failure.as_ref())
+            .is_some_and(|failure| {
+                failure["class"] == "provider_error"
+                    && failure["message"] == "Nucleus is unavailable."
+            })
+    }
+
     pub(crate) fn turn_completed(&self, message_id: &str) -> bool {
         self.delivery(message_id).1.is_some_and(|run| {
             run.user_message_id.as_deref() == Some(message_id)

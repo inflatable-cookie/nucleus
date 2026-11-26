@@ -1675,6 +1675,141 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "exercise the parent, service restart and worker dispatch in one trace"
+)]
+async fn unavailable_parent_turn_recovers_after_service_restart() {
+    for recover in [true, false] {
+        let (forge, forge_server) = serve_forge(Router::new().route(
+            &format!("/repos/{REPOSITORY}/pulls"),
+            get(|| async { Json(Vec::<Value>::new()) }),
+        ))
+        .await;
+        let (home, mut service) = fixture(forge);
+        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        let project = service.fixture().clone();
+        let shell = json!({"projects":[{"id":project.host_project,"workspaceRoot":project.checkout}],"threads":[]});
+        let launches = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let holds = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let children = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let (writes, messages, workers) = (
+            Arc::clone(&launches),
+            Arc::clone(&holds),
+            Arc::clone(&children),
+        );
+        let (host, native) = native_fixture(move |request| {
+            let id = &request["id"];
+            let payload = &request["payload"];
+            let value = match request["tag"].as_str() {
+                Some("server.getConfig") => json!({"environment":{"orchestrationProtocolVersion":2},"providers":[
+                    {"instanceId":"provider","enabled":true,"status":"ready","models":[{"slug":"fixture"}]},
+                    {"instanceId":"fixture-acp","driver":"acpRegistry","enabled":true,"status":"ready","models":[{"slug":"nucleus"}]}
+                ]}),
+                Some("orchestration.subscribeThread") => {
+                    let launches = writes.lock().unwrap();
+                    let parent = launches.first().filter(|parent| parent["threadId"] == payload["threadId"]);
+                    let Some(parent) = parent else {
+                        let thread = &payload["threadId"];
+                        return json!({"_tag":"Exit","requestId":id,"exit":{"_tag":"Failure","cause":[
+                            {"_tag":"Fail","error":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":thread,
+                                "cause":{"name":"ProjectionStoreThreadNotFoundError",
+                                    "message":format!("No orchestration projection exists for thread {}.", thread.as_str().unwrap())}}}
+                        ]}});
+                    };
+                    let holds = messages.lock().unwrap();
+                    let mut runs = vec![json!({"id":"failed-run","status":"failed","rootNodeId":"failed-root",
+                        "userMessageId":parent["initialMessage"]["messageId"], "providerInstanceId":"fixture-acp",
+                        "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"}})];
+                    if let Some(hold) = holds.first() { runs.push(json!({"id":"continued-run","status":"running",
+                        "rootNodeId":"continued-root","userMessageId":hold["messageId"]})); }
+                    return json!({"_tag":"Chunk","requestId":id,"values":[{"kind":"snapshot","snapshotSequence":17 + holds.len(),"projection":{
+                        "thread":{"id":parent["threadId"],"projectId":parent["projectId"],
+                            "branch":parent["workspaceStrategy"]["branch"],"worktreePath":parent["workspaceStrategy"]["worktreePath"],
+                            "modelSelection":parent["modelSelection"],"providerInstanceId":"fixture-acp"},
+                        "runs":runs,"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[{
+                            "id":"error","type":"error","status":"failed","runId":"failed-run","nodeId":"failed-root",
+                            "ordinal":1,"updatedAt":"2026-11-26T04:07:04Z","failure":{"class":"provider_error",
+                                "message":if recover {"Nucleus is unavailable."} else {"Another provider failed."}}}]
+                    }},{"kind":"synchronized"}]});
+                }
+                Some("orchestration.launchThread") => { writes.lock().unwrap().push(payload.clone()); json!({"sequence":1}) }
+                Some("orchestration.dispatchCommand") if payload["type"] == "message.dispatch" => { messages.lock().unwrap().push(payload.clone()); json!({"sequence":18}) }
+                Some("orchestration.dispatchCommand") if payload["type"] == "delegated_task.request" => { workers.lock().unwrap().push(payload.clone()); json!({"sequence":19}) }
+                tag => panic!("unexpected RPC {tag:?}"),
+            };
+            json!({"_tag":"Exit","requestId":id,"exit":{"_tag":"Success","value":value}})
+        }).await;
+        host.fixture_project_shell(&shell, "fixture-acp");
+        service.host = verified_native_fixture(host, home.path());
+        let (shape, _, _) = reservation("restart-parent", Entry::Brief, &project.start);
+        let task = Task::new(shape.identity().clone(), shape.brief().text.clone(), None);
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .unwrap();
+        let pass = async |service: &Service| service.pass().await.unwrap();
+        assert!(matches!(
+            pass(&service).await[0].result,
+            Ok(Action::Advance(Phase::Working))
+        ));
+        assert!(matches!(
+            pass(&service).await[0].result,
+            Ok(Action::Wait(WaitReason::Starting))
+        ));
+        assert_eq!(launches.lock().unwrap().len(), 1);
+        let endpoint = service.host.endpoint().to_owned();
+        let forge = std::mem::replace(&mut service.forge, GitHub::new("fixture").unwrap());
+        drop(service);
+        let settings = SettingsFile::open(&home.path().canonicalize().unwrap()).unwrap();
+        let host = verified_native_fixture(T3::new(&endpoint, "fixture").unwrap(), home.path());
+        host.fixture_project_shell(&shell, "fixture-acp");
+        let service = Service::open(
+            &settings,
+            project,
+            host,
+            forge,
+            "127.0.0.1:9".parse().unwrap(),
+            std::env::current_exe().unwrap(),
+        )
+        .unwrap();
+        let advance = async || {
+            let row = service.task("restart-parent").await.unwrap();
+            Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await
+        };
+        if recover {
+            assert!(matches!(
+                advance().await.unwrap(),
+                Action::Wait(WaitReason::Starting)
+            ));
+            assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
+            assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
+            assert_eq!(holds.lock().unwrap().len(), 1);
+            assert_eq!(children.lock().unwrap().len(), 1);
+        } else {
+            let result = advance().await;
+            let row = service.task("restart-parent").await.unwrap();
+            assert!(matches!(
+                task_wait(&row, &result),
+                (
+                    Some(WaitReason::HostObservationBlocked),
+                    Some(WaitDetail::Observation(
+                        "The T3 task turn failed. Open the task thread to check, then update the task to retry."
+                    ))
+                )
+            ));
+            assert!(holds.lock().unwrap().is_empty());
+            assert!(children.lock().unwrap().is_empty());
+        }
+        native.abort();
+        forge_server.abort();
+    }
+}
+
+#[tokio::test]
 async fn full_checkout_budget_does_not_peek_at_t3() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
     let (host, native) = native_fixture(|request| {

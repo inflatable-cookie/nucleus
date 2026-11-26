@@ -689,7 +689,11 @@ impl T3 {
                 let message = message_id(attempt.command);
                 completed_prior = projection.turn_completed(&message);
                 if projection.turn_failed(&message) {
-                    return Ok(ParentStep::Failed);
+                    if projection.parent_unavailable(&message, provider) {
+                        completed_prior = true;
+                    } else {
+                        return Ok(ParentStep::Failed);
+                    }
                 }
                 if !completed_prior {
                     if projection.has_delivery(&message) {
