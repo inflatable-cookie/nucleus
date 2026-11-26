@@ -478,3 +478,97 @@ async fn planning_decision_history_identifies_authenticated_actors() {
     assert_eq!(history[1]["snapshot"]["answer"]["optionId"], "yes");
     assert_eq!(history[2]["snapshot"]["answer"]["optionId"], "no");
 }
+
+// Pause the real Git invocation after admission has released the state lock.
+fn gated_git(service: &mut Service, home: &std::path::Path) -> Arc<crate::project::git_gate::Gate> {
+    service.git = crate::project::LocalGit(home.to_path_buf());
+    crate::project::git_gate::install(home.to_path_buf())
+}
+
+async fn wait_for_git(gate: &crate::project::git_gate::Gate, count: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while gate.entered.load(Ordering::SeqCst) < count {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Git consultations entered");
+}
+
+#[tokio::test]
+async fn concurrent_promotions_return_one_task_and_publish_one_wake() {
+    let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let gate = gated_git(&mut service, home.path());
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [planner_controller(PLANNER_KEY, "planner")],
+    );
+    let items = format!("{PROJECT}/items");
+    let item = json_body(
+        post_as(
+            &api,
+            &items,
+            &PLANNER_KEY,
+            &json!({
+                "kind":"papercut", "title":"Concurrent", "body":"A fixture."
+            }),
+        )
+        .await,
+    )
+    .await;
+    let path = format!("{items}/{}/promote", item["id"].as_str().unwrap());
+    let mut changes = service.changes.subscribe();
+    let request = |api: Router, path: String| {
+        tokio::spawn(async move {
+            post_as(&api, &path, &PLANNER_KEY, &json!({"complexity":"low"})).await
+        })
+    };
+    let first = request(api.clone(), path.clone());
+    let second = request(api.clone(), path);
+    wait_for_git(&gate, 2).await;
+    gate.release();
+    let first = first.await.unwrap();
+    let second = second.await.unwrap();
+    assert!(matches!(
+        (first.status(), second.status()),
+        (StatusCode::CREATED, StatusCode::OK) | (StatusCode::OK, StatusCode::CREATED)
+    ));
+    let first = json_body(first).await;
+    let second = json_body(second).await;
+    assert_eq!(first["identity"], second["identity"]);
+    assert_eq!(first["number"], second["number"]);
+    assert_eq!(first["number"], 1);
+    let change = changes.try_recv().expect("one admission wake");
+    assert_eq!(change.task_id, first["identity"]["id"].as_str().unwrap());
+    assert!(changes.try_recv().is_err());
+    let state = service.state.lock().await;
+    assert_eq!(state.capacity_waiters.len(), 1);
+}
+
+#[tokio::test]
+async fn admission_rechecks_scope_after_git_consultation() {
+    let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let gate = gated_git(&mut service, home.path());
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [planner_controller(PLANNER_KEY, "planner")],
+    );
+    let request = tokio::spawn(async move {
+        post_as(
+            &api,
+            &format!("{PROJECT}/tasks"),
+            &PLANNER_KEY,
+            &json!({"brief":"---\nqueue:\n  complexity: low\n---\nA fixture."}),
+        )
+        .await
+    });
+    wait_for_git(&gate, 1).await;
+    service.state.lock().await.settings.projects = Some(nucleus_store::Projects::default());
+    gate.release();
+    let response = request.await.unwrap();
+    assert_ne!(response.status(), StatusCode::CREATED);
+    let state = service.state.lock().await;
+    assert!(state.capacity_waiters.is_empty());
+}
