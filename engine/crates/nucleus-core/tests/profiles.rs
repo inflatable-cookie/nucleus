@@ -1040,9 +1040,9 @@ fn required_profile_in_a_paused_group_still_waits_after_a_step() {
     let worker = profile("luna-mechanic", Mechanical);
     let muse = profile("muse-mechanic", Mechanical);
     let peer = profile("peer-worker", Worker);
-    let mut task = working(&format!(
-        "---\nqueue: {{complexity: low, profileRequests: {{reviewer: {{profileId: muse-mechanic, reason: independent, required: true}}}}}}\n---\nFix a typo."
-    ));
+    let mut task = working(
+        "---\nqueue: {complexity: low, profileRequests: {reviewer: {profileId: muse-mechanic, reason: independent, required: true}}}\n---\nFix a typo.",
+    );
     finish_worker(&mut task, &worker);
     let mut paused = candidate(&muse);
     paused.group_available = false;
