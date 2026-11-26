@@ -193,6 +193,7 @@ const dependencyTone = (dependency: RustDependency): TimelineTone =>
 export function Prerequisites({
   c,
   dependencies,
+  version,
   canEdit,
   busy,
   onSave,
@@ -200,13 +201,20 @@ export function Prerequisites({
 }: {
   c: Colors;
   dependencies: readonly RustDependency[];
+  /** The task version these prerequisites were read at. */
+  version: number;
   canEdit: boolean;
   busy: boolean;
-  onSave: (references: string[]) => void;
+  /** Resolves true once saved; the editor keeps the draft otherwise. */
+  onSave: (references: string[], version: number) => Promise<boolean>;
   onOpenTask?: (id: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  // The save carries the version the draft was read at, so the engine's
+  // version check refuses it if someone else changed the list meanwhile.
+  const [openedAt, setOpenedAt] = useState(version);
+  const [saving, setSaving] = useState(false);
   const r = roles(c);
   return (
     <View style={{ gap: space.xxs }}>
@@ -219,7 +227,10 @@ export function Prerequisites({
             text={editing ? "Done" : "Edit"}
             label={editing ? "Close prerequisites" : "Edit prerequisites"}
             onPress={() => {
-              setDraft(dependencies.map((dependency) => dependency.reference).join("\n"));
+              if (!editing) {
+                setDraft(dependencies.map((dependency) => dependency.reference).join("\n"));
+                setOpenedAt(version);
+              }
               setEditing(!editing);
             }}
           />
@@ -227,16 +238,22 @@ export function Prerequisites({
       </View>
       {editing ? (
         <View style={{ gap: space.xs }}>
-          <Field c={c} label="Prerequisites" hideLabel multiline value={draft} onChange={setDraft} disabled={busy} />
+          <Field c={c} label="Prerequisites" hideLabel multiline value={draft} onChange={setDraft} disabled={busy || saving} />
+          {version !== openedAt && (
+            <Text style={metaText(c)}>Changed since you opened this. Reopen to edit the latest.</Text>
+          )}
           <Button
             c={c}
             small
             text="Save"
             label="Save prerequisites"
-            disabled={busy}
+            disabled={busy || saving}
             onPress={() => {
-              onSave(draft.split(/[\s,]+/).filter(Boolean));
-              setEditing(false);
+              setSaving(true);
+              void onSave(draft.split(/[\s,]+/).filter(Boolean), openedAt).then((saved) => {
+                setSaving(false);
+                if (saved) setEditing(false);
+              });
             }}
           />
         </View>

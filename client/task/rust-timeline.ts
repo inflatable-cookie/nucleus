@@ -53,8 +53,6 @@ export type TimelineContext = {
 type Round = {
   round: number;
   cards: RustTranscriptCard[];
-  /** Null when any finished attempt in the round has no recorded time. */
-  elapsedMs: number | null;
   startedAtMs: number | null;
   endedAtMs: number | null;
   ended: boolean;
@@ -97,7 +95,6 @@ export function roundsFor(
       round = {
         round: number,
         cards: [],
-        elapsedMs: 0,
         startedAtMs: null,
         endedAtMs: null,
         ended: true,
@@ -108,17 +105,11 @@ export function roundsFor(
     }
     round.cards.push(card);
     if (round.startedAtMs === null) round.startedAtMs = card.startedAtMs;
-    round.endedAtMs = card.endedAtMs ?? round.endedAtMs;
+    // The round's end and model are its latest attempt's, never an earlier attempt's.
+    round.endedAtMs = card.endedAtMs ?? null;
     round.ended = card.ended;
     round.outcome = card.outcome ?? round.outcome;
-    round.model = card.model ?? round.model;
-  }
-  for (const round of rounds) {
-    // A card still unreported is the live attempt; every other attempt needs a time.
-    const settled = round.cards.filter((card) => card.ended || card.outcome !== null);
-    round.elapsedMs = settled.some((card) => card.elapsedMs === null)
-      ? null
-      : settled.reduce((sum, card) => sum + (card.elapsedMs ?? 0), 0);
+    round.model = card.model;
   }
   return rounds.sort((a, b) => a.round - b.round);
 }
@@ -220,7 +211,12 @@ export function rustTimeline(
     const currentFill = waiting ? "wait" : "solid";
 
     const segments: TimelineSegment[] = [];
+    /** The live attempt's own time, from the engine's active-run start. */
+    let attemptMs: number | null = null;
+    /** The live round's whole time; null when an earlier attempt has no recorded time. */
     let liveMs: number | null = null;
+    /** Each round's recorded time, null when any attempt that is not live lacks one. */
+    const roundMs = new Map<number, number | null>();
     const lastRound = rounds.at(-1);
     for (const round of rounds) {
       const last = round === lastRound;
@@ -228,7 +224,15 @@ export function rustTimeline(
       // Live only while the engine reports an active run and the attempt has not reported.
       const live =
         active && last && latest !== undefined && !latest.ended && latest.outcome === null && step.activeSinceMs !== null;
-      if (live) liveMs = (round.elapsedMs ?? 0) + Math.max(0, now - (step.activeSinceMs ?? now));
+      const counted = round.cards.filter((card) => !(live && card === latest));
+      const recorded = counted.some((card) => card.elapsedMs === null)
+        ? null
+        : counted.reduce((sum, card) => sum + (card.elapsedMs ?? 0), 0);
+      roundMs.set(round.round, recorded);
+      if (live) {
+        attemptMs = Math.max(0, now - (step.activeSinceMs ?? now));
+        liveMs = recorded === null ? null : recorded + attemptMs;
+      }
       const resting = active && last && !live && paused(round.outcome);
       const unreported = !live && latest !== undefined && !latest.ended && latest.outcome === null;
       const words = live
@@ -238,21 +242,27 @@ export function rustTimeline(
             ? "stopped"
             : "not reported"
           : outcomeWords(round.outcome);
-      const ms = live ? liveMs : round.elapsedMs;
+      const ms = live ? liveMs : recorded;
+      const timing =
+        ms !== null
+          ? duration(ms)
+          : live && attemptMs !== null
+            ? `round time not recorded, this attempt ${duration(attemptMs)}`
+            : "time not recorded";
       segments.push({
         fill: live || resting ? currentFill : "solid",
         tone: live || resting ? tone : unreported ? "muted" : outcomeTone(round.outcome),
         label: [`${step.label} round ${round.round}`, words].filter(Boolean).join(" · "),
         hint: [
           [`Round ${round.round}`, words].filter(Boolean).join(" · "),
-          [round.model, ms === null ? "time not recorded" : duration(ms)].filter(Boolean).join(" · "),
-          span(round.startedAtMs, round.endedAtMs, now),
+          [round.model, timing].filter(Boolean).join(" · "),
+          span(round.startedAtMs, live ? null : round.endedAtMs, now),
         ]
           .filter(Boolean)
           .join("\n"),
       });
     }
-    const lastLive = liveMs !== null;
+    const lastLive = attemptMs !== null;
     const lastResting = lastRound !== undefined && paused(lastRound.outcome);
     // A reported run that has not ended yet keeps its outcome; the next round waits for the end.
     if (active && !lastLive && !lastResting && (lastRound === undefined || lastRound.ended)) {
@@ -291,12 +301,11 @@ export function rustTimeline(
     let ms: number | null = null;
     let live = false;
     if (role && rounds.length > 0) {
-      const unknown = rounds.some((round) => round.elapsedMs === null);
-      if (!unknown) {
-        ms = rounds.reduce((sum, round) => sum + (round.elapsedMs ?? 0), 0);
-        if (liveMs !== null) ms += liveMs - (lastRound?.elapsedMs ?? 0);
+      const totals = rounds.map((round) => roundMs.get(round.round) ?? null);
+      if (!totals.includes(null)) {
+        ms = totals.reduce<number>((sum, value) => sum + (value ?? 0), 0) + (attemptMs ?? 0);
       }
-      live = liveMs !== null;
+      live = attemptMs !== null;
     } else if (role && (step.elapsedMs !== null || step.activeSinceMs !== null)) {
       const running = active && step.activeSinceMs !== null;
       ms = (step.elapsedMs ?? 0) + (running ? Math.max(0, now - (step.activeSinceMs ?? now)) : 0);
@@ -308,14 +317,19 @@ export function rustTimeline(
     const labelled = Number(step.roundLabel?.match(/\d+/)?.[0] ?? 0);
     const lastNumber = lastRound?.round ?? labelled;
     const roundPrefix = role && lastNumber >= 2 ? `Round ${lastNumber}` : null;
+    // An unknown round total stays unknown; the live attempt's own time is named as such.
     const shown =
-      liveMs !== null && roundPrefix
-        ? duration(liveMs)
-        : ms === null
-          ? null
-          : live
-            ? duration(ms)
-            : formatSpan(ms);
+      attemptMs !== null && (liveMs === null || ms === null)
+        ? liveMs !== null && roundPrefix
+          ? duration(liveMs)
+          : `attempt ${duration(attemptMs)}`
+        : liveMs !== null && roundPrefix
+          ? duration(liveMs)
+          : ms === null
+            ? null
+            : live
+              ? duration(ms)
+              : formatSpan(ms);
     const since = active && context.stateSinceMs !== null ? duration(now - context.stateSinceMs) : null;
     let waitingText: string | null = null;
     let value: string | null;

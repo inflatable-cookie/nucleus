@@ -337,8 +337,19 @@ export function RustTaskDialog({
             canEdit={offered("set_dependencies")}
             busy={locked}
             onOpenTask={onOpenTask}
-            onSave={(references) =>
-              run({ set_dependencies: { version: detail.version, depends_on: references } })
+            version={detail.version}
+            onSave={(references, version) =>
+              submit({ set_dependencies: { version, depends_on: references } }).then(
+                (outcome) => {
+                  if (!("status" in outcome)) return true;
+                  setNotice("The engine is checking the task. Try again when the command is ready.");
+                  return false;
+                },
+                (error: unknown) => {
+                  setNotice(errorText(error));
+                  return false;
+                },
+              )
             }
           />
         ) : null

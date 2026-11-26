@@ -179,8 +179,11 @@ the committed verdict; reported review rounds stay evidence beneath it. The
 timeline ticks only while the engine reports an active run, and a cancelled
 task's timeline stops at the step it was cancelled from. The wait line names the
 engine's wait when it sends no sentence, and Recheck shows wherever preflight
-offers it. Prerequisite Edit takes references separated by spaces, commas or new
-lines.
+offers it. A round whose earlier attempt has no recorded time keeps its total
+unknown and shows the live attempt's time as "attempt". Prerequisite Edit takes
+references separated by spaces, commas or new lines, saves at the task version
+it opened at (so the engine refuses a stale list) and keeps the draft when a
+save fails.
 
 ### Data mapping
 

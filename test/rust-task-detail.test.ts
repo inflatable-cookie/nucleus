@@ -11,6 +11,7 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { mount, useNativeStubs } from "./support/render";
 import { waitFor } from "./support/budgets";
+import type { RustTaskDetail } from "../client/web/rust-board";
 
 import {
   HOUR, MINUTE, card, engineTask, head, mergeCommit, now, prUrl, pushed, review, steps, work,
@@ -18,6 +19,7 @@ import {
 } from "./support/rust-task-detail-fixtures";
 
 const opened: string[] = [];
+const postReplies = new Map<string, { status: number; body: unknown }>();
 const responses = new Map<string, unknown>();
 const posts: Array<{ path: string; command: unknown }> = [];
 // The board's module transport reads the global fetch when it loads.
@@ -25,6 +27,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const path = String(input).replace(/^\/api\/engine/, "");
   if (init?.method === "POST") {
     posts.push({ path, command: JSON.parse(String(init.body)) });
+    const reply = postReplies.get(path);
+    if (reply) return Response.json(reply.body, { status: reply.status });
     return Response.json({ status: "pending", version: 7 }, { status: 202 });
   }
   const before = path.match(/[?&]before=(\d+)/)?.[1];
@@ -307,12 +311,48 @@ test("done: the merged PR comes first, steps are complete and there is no footer
   assert.deepEqual(order, ["Pull request", "Progress"]);
 });
 
-test("blocked with Recheck: a danger panel leads with Recheck, which posts the version", async () => {
+const mergeSteps = () =>
+  steps(
+    done("queued", now - 5 * HOUR, now - 5 * HOUR + 3 * MINUTE),
+    { key: "working", state: "done", elapsedMs: 160 * MINUTE },
+    { key: "review", state: "done", elapsedMs: 29 * MINUTE },
+    // The engine tones these merge waits as accent; the block reads from the wait and attention.
+    { key: "merge", state: "current", visits: [{ enteredAtMs: now - 47 * MINUTE, leftAtMs: null }] },
+    { key: "close", state: "todo" },
+  );
+const mergeCards = () => [
+  card("worker", 1, { elapsedMs: 160 * MINUTE, outcome: work(false) }),
+  card("reviewer", 1, { elapsedMs: 29 * MINUTE, outcome: review("approve", "Drops the endpoint.") }),
+];
+
+test("blocked with Recheck: a mechanical merge block leads with Recheck, which posts the version", async () => {
   const { ui } = await open("blocked", {
-    // As the engine serves it: `wait: question` tones the step warning and withholds waitDetail.
+    // As the engine serves a forge refusal: `external_merge_blocked`, its sentence, and Recheck offered.
+    phase: "merging", stateLabel: "Merging · source", attention: "attention", wait: "external_merge_blocked",
+    waitDetail: "the external merge commit is no longer on the task’s base branch. Use Recheck after the repair.",
+    steps: mergeSteps(), cards: mergeCards(),
+    pullRequest: { url: prUrl, head },
+    verdict: { reviewed: { head, decision: "approve", summary: "Drops the endpoint." } },
+    commands: [...baseCommands, { name: "recheck", preflight: "ready" }],
+  });
+  assert.deepEqual(panel(ui), ["Needs attention"]);
+  assert.match(ui.text(), /no longer on the task’s base branch\. Use Recheck after the repair\./);
+  assert.deepEqual(segments(ui).slice(3, 4), ["Merge · blocked"]);
+  assert.deepEqual(looks(ui).slice(3, 4), ["solid danger"]);
+  assert.equal(ui.get("Merge · blocked").props.tabIndex, 0, "round and step evidence is keyboard reachable");
+  assert.match(ui.get(/^Step Merge:/).props.accessibilityLabel, /^Step Merge: current · blocked · 4[78]m \d+s$/);
+  assert.deepEqual(actions(ui), ["Hold", "Move, Move", "Cancel", "Recheck", "Amend"]);
+  assert.ok(ui.query("Open pull request"));
+  ui.press("Recheck");
+  await waitFor(() => posts.some(({ path }) => path === "/tasks/blocked/commands"), 5000, "recheck posted");
+  assert.deepEqual(posts.find(({ path }) => path === "/tasks/blocked/commands")?.command, { recheck: 7 });
+});
+
+test("a repair question is a block with Answer and no Recheck, as the engine offers it", async () => {
+  const { ui } = await open("repair", {
+    // As the engine serves it: `wait: question`, a warning step, no sentence, and no Recheck.
     phase: "merging", stateLabel: "Merging · planner", attention: "attention", wait: "question",
-    stateSinceMs: now - 47 * MINUTE,
-    question: { repair: "merge_blocked" },
+    stateSinceMs: now - 12 * MINUTE, question: { repair: "merge_blocked" },
     steps: steps(
       done("queued", now - 5 * HOUR, now - 5 * HOUR + 3 * MINUTE),
       { key: "working", state: "done", elapsedMs: 160 * MINUTE },
@@ -320,25 +360,23 @@ test("blocked with Recheck: a danger panel leads with Recheck, which posts the v
       { key: "merge", state: "current", tone: "warning", visits: [{ enteredAtMs: now - HOUR, leftAtMs: null }] },
       { key: "close", state: "todo" },
     ),
-    cards: [
-      card("worker", 1, { elapsedMs: 160 * MINUTE, outcome: work(false) }),
-      card("reviewer", 1, { elapsedMs: 29 * MINUTE, outcome: review("approve", "Drops the endpoint.") }),
-    ],
+    cards: mergeCards(),
     pullRequest: { url: prUrl, head },
     verdict: { reviewed: { head, decision: "approve", summary: "Drops the endpoint." } },
-    commands: [...baseCommands, { name: "recheck", preflight: "ready" }, { name: "answer", preflight: "ready" }],
+    commands: [...baseCommands, { name: "answer", preflight: "ready" }],
   });
   assert.deepEqual(panel(ui), ["Needs attention"]);
   assert.match(ui.text(), /GitHub is blocking the merge\./);
-  assert.deepEqual(segments(ui).slice(3, 4), ["Merge · blocked"]);
   assert.deepEqual(looks(ui).slice(3, 4), ["solid danger"]);
-  assert.equal(ui.get("Merge · blocked").props.tabIndex, 0, "round and step evidence is keyboard reachable");
-  assert.match(ui.get(/^Step Merge:/).props.accessibilityLabel, /^Step Merge: current · blocked · 4[78]m \d+s$/);
-  assert.deepEqual(actions(ui), ["Hold", "Move, Move", "Cancel", "Recheck", "Amend", "Open answer"]);
-  assert.ok(ui.query("Open pull request"));
-  ui.press("Recheck");
-  await waitFor(() => posts.some(({ path }) => path === "/tasks/blocked/commands"), 5000, "recheck posted");
-  assert.deepEqual(posts.find(({ path }) => path === "/tasks/blocked/commands")?.command, { recheck: 7 });
+  assert.match(ui.get(/^Step Merge:/).props.accessibilityLabel, /^Step Merge: current · blocked · 1[23]m \d+s$/);
+  assert.deepEqual(actions(ui), ["Hold", "Move, Move", "Cancel", "Amend", "Open answer"]);
+  ui.press("Open answer");
+  ui.type("Guidance", "Rerun the e2e job, then merge.");
+  ui.press("Answer");
+  await waitFor(() => posts.some(({ path }) => path === "/tasks/repair/commands"), 5000, "answer posted");
+  assert.deepEqual(posts.find(({ path }) => path === "/tasks/repair/commands")?.command, {
+    answer: { work: "Rerun the e2e job, then merge." },
+  });
 });
 
 test("queued on a prerequisite: the prerequisites, Promoted, and Cancel asks first", async () => {
@@ -539,4 +577,82 @@ test("a full history page with no milestones still offers the next page", async 
   await waitFor(() => Boolean(ui.query("More activity")), 5000, "More is offered on a sparse page");
   ui.press("More activity");
   await waitFor(() => ui.text().includes("Merged"), 5000, "the next page loads");
+});
+
+test("a prerequisite edit saves against the version it opened at and keeps the draft on conflict", async () => {
+  const dependency = (n: number) => ({ taskId: `t-${n}`, reference: `fixture#${n}`, title: `Fixture ${n}`, phase: "working", status: "pending" });
+  const fixture = (dependencies: Fixture["dependencies"]): Fixture => ({
+    phase: "queued", stateLabel: "Queued · prerequisite", attention: "waiting", wait: "prerequisite",
+    steps: steps({ key: "queued", state: "current", visits: [{ enteredAtMs: now - HOUR, leftAtMs: null }] },
+      { key: "working", state: "todo" }, { key: "review", state: "todo" }, { key: "merge", state: "todo" }, { key: "close", state: "todo" }),
+    dependencies,
+    commands: [{ name: "cancel", preflight: "ready" }, { name: "set_dependencies", preflight: "ready" }],
+  });
+  const { ui, client } = await open("prereq", fixture([dependency(1)]));
+  ui.press("Edit prerequisites");
+  ui.type("Prerequisites", "fixture#1\nfixture#3");
+  // Another session adds fixture#2, moving the task to version 8.
+  const { detail, next } = engineTask("prereq", fixture([dependency(1), dependency(2)]));
+  responses.set("/tasks/prereq", { ...detail, version: 8 });
+  responses.set("/tasks/prereq/next", { ...next, version: 8 });
+  await client.invalidateQueries();
+  await waitFor(() => ui.text().includes("Changed since you opened this"), 5000, "the editor notices the change");
+  postReplies.set("/tasks/prereq/commands", { status: 409, body: { error: "The task changed. Reopen to edit." } });
+  ui.press("Save prerequisites");
+  await waitFor(() => ui.text().includes("The task changed"), 5000, "the conflict is shown");
+  assert.deepEqual(posts.find(({ path }) => path === "/tasks/prereq/commands")?.command, {
+    set_dependencies: { version: 7, depends_on: ["fixture#1", "fixture#3"] },
+  });
+  assert.equal(ui.get("Prerequisites").props.value, "fixture#1\nfixture#3", "the draft survives the refusal");
+});
+
+test("a retried round with an unrecorded attempt keeps its total unknown and names the live attempt", async () => {
+  const { ui, client } = await open("retry", {
+    phase: "working", stateLabel: "Working", attention: "active", reviewRound: 1,
+    steps: steps(
+      done("queued", now - 3 * HOUR, now - 3 * HOUR + MINUTE),
+      { key: "working", state: "current", activeSinceMs: now - 4 * MINUTE },
+      { key: "review", state: "todo" }, { key: "merge", state: "todo" }, { key: "close", state: "todo" },
+    ),
+    cards: [
+      card("worker", 1, { elapsedMs: 50 * MINUTE, outcome: work(false) }),
+      card("reviewer", 1, { elapsedMs: 10 * MINUTE, outcome: review("changes", "Fix it.") }),
+      card("worker", 2, { model: "first-attempt-model", startedAtMs: now - 30 * MINUTE, endedAtMs: now - 20 * MINUTE, elapsedMs: null,
+        outcome: { kind: "provider_limit", group: null, reset_at_ms: null, cause: null } }),
+      card("worker", 2, { model: "second-attempt-model", startedAtMs: now - 4 * MINUTE, ended: false }),
+    ],
+    commands: baseCommands,
+  });
+  assert.match(ui.get(/^Step Working:/).props.accessibilityLabel, /^Step Working: current · Round 2 · attempt [34]m \d+s$/);
+  const live = ui.get("Working round 2 · in progress");
+  assert.match(live.props.accessibilityLabel, /in progress/);
+  assert.equal(live.props.testID, "segment solid accent");
+  // The tooltip names the live attempt's model and time, and no earlier attempt's end.
+  const { rustTimeline } = await import("../client/task/rust-timeline");
+  // The lifecycle as the board's transport parsed it.
+  const parsed = client.getQueryData<RustTaskDetail>(["rust-board", "task", "retry", "detail"]);
+  assert.ok(parsed, "the board read the detail");
+  const lifecycle = parsed.lifecycle;
+  const working = rustTimeline(lifecycle, {
+    phase: "working", attention: "active", wait: null, question: null, held: false, stateSinceMs: null, now: Date.now(),
+  })[1]!;
+  const tip = working.segments.find((segment) => segment.label === "Working round 2 · in progress")!.hint;
+  assert.match(tip, /second-attempt-model · round time not recorded, this attempt [34]m \d+s/);
+  assert.doesNotMatch(tip, /first-attempt-model|→/);
+});
+
+test("a cancelled, unreported attempt with no time stays unknown rather than 0m", async () => {
+  const { ui } = await open("cancel-unknown", {
+    phase: "cancelled", stateLabel: "Cancelled", attention: "finished", finishedAtMs: now - HOUR,
+    steps: steps(
+      done("queued", now - 3 * HOUR, now - 3 * HOUR + MINUTE),
+      { key: "working", state: "current", tone: "muted" },
+      { key: "review", state: "todo" }, { key: "merge", state: "todo" }, { key: "close", state: "todo" },
+    ),
+    cards: [card("worker", 1, { startedAtMs: now - 2 * HOUR, ended: false, elapsedMs: null })],
+    commands: [],
+  });
+  assert.deepEqual(segments(ui).slice(1, 2), ["Working round 1 · stopped"]);
+  assert.equal(ui.get(/^Step Working:/).props.accessibilityLabel, "Step Working: current · stopped");
+  assert.doesNotMatch(ui.text(), /\b0m\b/);
 });
