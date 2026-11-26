@@ -156,7 +156,10 @@ const summary = current.extend({
     repository: z.string(),
     base: z.string(),
   }),
-  hold: z.object({ reason: z.string() }).nullable(),
+  hold: z.object({
+    reason: z.string(),
+    by: z.enum(["operator", "planner"]).optional().catch(undefined),
+  }).nullable(),
 });
 const verdict = z.union([
   z.object({
@@ -180,8 +183,20 @@ const allowance = z.object({
   limitMs: revision,
   exhausted: z.boolean(),
 });
+const dependencyFact = z.object({
+  taskId: z.string(),
+  reference: z.string(),
+  title: z.string().nullish(),
+  phase: phase.nullish(),
+  status: z.enum(["satisfied", "pending", "cancelled", "missing"]),
+});
+const dependencyStatus = z.object({
+  dependencies: z.array(dependencyFact),
+  blocking: z.boolean(),
+});
 const detail = summary.extend({
   allowance: allowance.optional(),
+  dependencyStatus: dependencyStatus.optional().catch(undefined),
   createdAtMs: timestamp.nullable(),
   brief: z.object({ text: z.string(), version: revision }),
   pullRequest: z.object({ url: z.httpUrl(), head }).nullable(),
@@ -346,6 +361,7 @@ export type RustNext = z.infer<typeof next>;
 export type RustVerdict = z.infer<typeof verdict>;
 export type RustHistoryPage = z.infer<typeof history>;
 export type RustRunOutcome = z.infer<typeof runOutcome>;
+export type RustDependency = z.infer<typeof dependencyFact>;
 export type RustStepVisit = z.infer<typeof stepVisit>;
 export type RustTranscript = z.infer<typeof transcript>;
 export type RustTranscriptCard = z.infer<typeof transcriptCard>;
@@ -363,6 +379,7 @@ export type RustCommand =
     }
   | { amend: string; briefVersion: number }
   | { recheck: number }
+  | { set_dependencies: { version: number; depends_on: string[] } }
   | { promote: number }
   | { demote: number }
   | { hold: string }

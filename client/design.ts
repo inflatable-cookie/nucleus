@@ -252,3 +252,14 @@ export function toneSurface(
   if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`;
   return fallback;
 }
+
+/**
+ * The Rust task timeline (Spec 071): the fixed bar row, the gap between round
+ * segments, and the stripe width and count of a waiting segment's drift.
+ */
+export const rustTimeline = {
+  barRow: 16,
+  segmentGap: 3,
+  stripe: 5,
+  stripes: 40,
+} as const;

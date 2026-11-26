@@ -167,6 +167,15 @@ Changed:
 
 Both bugs are briefed as their own fix ahead of the rebuild.
 
+### Built (nucleus#1603)
+
+The Rust board's task view follows this layout. Elements still marked
+**engine** below render only once the engine serves them: the task thread
+button, the checks list, the forge's blocking reason and the explicit
+answerer. Until then the eyebrow reads the answerer from the state label, and a
+step time the journal never recorded shows as "—". Prerequisite Edit takes
+references separated by spaces, commas or new lines.
+
 ### Data mapping
 
 "Board-only" means the engine already serves the field and the board's zod
@@ -206,7 +215,7 @@ schema needs to read it. "Engine" means it needs engine data.
 | Activity | history `presentation[]` | exists (after the `run_routing` fix) |
 | Brief, Amend | `brief.text`, `brief.version`, `amend` | exists |
 | Move, Hold, Cancel | `next.commands` (`move` carries `phase`) | exists |
-| Promoted toggle | ruling 50 command | **engine** (not in the command list yet) |
+| Promoted toggle | `next.commands` `promote` / `demote` (ruling 50) | exists |
 | Report (report-only) | `report.delivery`, `complete`, `move_work` | exists |
 | Cancelled: when, from where | history `finished.phase`, `previous_phase` | board-only (`previous_phase` dropped) |
 
