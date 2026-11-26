@@ -787,6 +787,26 @@ impl T3 {
 }
 
 impl T3Pass<'_> {
+    fn terminal_limit(
+        &self,
+        thread: &Projection,
+        message: &str,
+        routing: Option<&RunRouting>,
+    ) -> Option<ProviderLimit> {
+        let mut limit = thread.provider_limit(message)?;
+        if let Some(routing) = routing
+            && limit
+                .reset_at_ms
+                .is_none_or(|reset| reset <= limit.ended_at_ms)
+        {
+            limit.reset_at_ms = self
+                .host
+                .cached_profile_catalog()
+                .and_then(|catalog| catalog.exhausted_reset(routing, limit.ended_at_ms));
+        }
+        Some(limit)
+    }
+
     /// Scope custody to the task's recorded roles and current run scratch.
     #[must_use]
     pub fn for_task(&self, task: &Task, run_scratch: Option<PathBuf>) -> Self {
@@ -1016,10 +1036,13 @@ impl TaskHost for T3Pass<'_> {
         {
             return Ok(assignment_rejected(run));
         }
+        let routing = thread
+            .as_ref()
+            .and_then(|thread| thread.run_routing(&message));
         let provider_limit = thread
             .as_ref()
             .filter(|_| state == RunState::Ended)
-            .and_then(|thread| thread.provider_limit(&message));
+            .and_then(|thread| self.terminal_limit(thread, &message, routing.as_ref()));
         let state = if background_pending {
             RunState::Running
         } else if provider_limit.is_some() {
@@ -1035,9 +1058,6 @@ impl TaskHost for T3Pass<'_> {
         } else {
             state
         };
-        let routing = thread
-            .as_ref()
-            .and_then(|thread| thread.run_routing(&message));
         let active_child = ActiveChild {
             binding: wire.binding,
             thread: run.launch().thread.clone(),

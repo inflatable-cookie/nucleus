@@ -1991,6 +1991,18 @@ async fn usage_limit_requires_the_latest_failed_root_error_on_the_exact_run() {
     let mut text_only = limited.clone();
     text_only["projection"]["turnItems"][0]["failure"] =
         json!({"class":"provider_error","message":"usage limit reached","code":"api_error_429"});
+    let with_error = |message: &str| {
+        let mut view = no_reset.clone();
+        view["projection"]["turnItems"][0]["failure"] = json!({
+            "class":"provider_error", "code":null, "message":message
+        });
+        view
+    };
+    let balance = with_error(
+        r#"402: {"type":"invalid_request_error","message":"Insufficient balance. Top up at the provider."}"#,
+    );
+    let quota = with_error(r#"429: {"error":{"code":"insufficient_quota"}}"#);
+    let throttle = with_error(r#"429: {"error":{"type":"rate_limit_error"}}"#);
     let mut superseded = limited.clone();
     superseded["projection"]["turnItems"]
         .as_array_mut()
@@ -2006,7 +2018,8 @@ async fn usage_limit_requires_the_latest_failed_root_error_on_the_exact_run() {
         json!([{"id":format!("{instance}-message"),"runId":NATIVE_RUN}]);
 
     let steps = [
-        limited, no_reset, running, completed, older_run, child_node, text_only, superseded, steer,
+        limited, no_reset, balance, quota, throttle, running, completed, older_run, child_node,
+        text_only, superseded, steer,
     ]
     .into_iter()
     .map(|reply| ("orchestration.subscribeThread", Response::Snapshot(reply)))
@@ -2017,6 +2030,9 @@ async fn usage_limit_requires_the_latest_failed_root_error_on_the_exact_run() {
     for (status, evidence) in [
         (RunState::UsageLimited, Some(Some(1_795_449_900_000))),
         (RunState::UsageLimited, Some(None)),
+        (RunState::UsageLimited, Some(None)),
+        (RunState::UsageLimited, Some(None)),
+        (RunState::Ended, None),
         (RunState::Running, None),
         (RunState::Ended, None),
         (RunState::Ended, None),
@@ -2043,6 +2059,66 @@ async fn usage_limit_requires_the_latest_failed_root_error_on_the_exact_run() {
         );
     }
     server.await.expect("scripted host");
+}
+
+#[tokio::test]
+async fn windowed_terminal_limit_uses_the_failed_runs_root_or_its_shell_summary() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let (task, _, instance) = reserve(binding.clone());
+    let mut view = snapshot(&binding, &instance, "failed", false);
+    view["hasMoreHistory"] = json!(true);
+    view["historyCursor"] = json!("earlier-items");
+    let ended = "2026-11-25T16:00:00Z";
+    let reset = "2026-11-28T09:00:00Z";
+    let p = &mut view["projection"];
+    p["runs"][0]["rootNodeId"] = json!("root");
+    p["runs"][0]["completedAt"] = json!(ended);
+    p["runs"][0]["providerInstanceId"] = json!("fixture-provider");
+    p["turnItems"] = json!([{"id":"last","type":"error","status":"failed","runId":NATIVE_RUN,
+        "nodeId":"root","updatedAt":ended,"ordinal":176,
+        "failure":{"class":"usage_limit","code":"api_error_429","resetAt":reset}}]);
+    let mut shell = p["thread"].clone();
+    shell["pendingBackgroundTasks"] = json!([]);
+    shell["latestRunId"] = json!(NATIVE_RUN);
+    shell["status"] = json!("failed");
+    shell["visibleItemCount"] = json!(177);
+    shell["lastErrorClass"] = json!("usage_limit");
+    shell["usageLimitResetAt"] = json!(reset);
+    let msg = format!("{instance}-message");
+    let parsed = crate::Projection::parse(view.clone(), &binding, THREAD).unwrap();
+    let limit = parsed
+        .provider_limit(&msg)
+        .expect("terminal error in bounded window");
+    view["turnItemsOmitLocalVisible"] = json!(true);
+    view["projection"]["turnItems"] = json!([]);
+    let mut unmatched = crate::Projection::parse(view.clone(), &binding, THREAD).unwrap();
+    let mut wrong = shell.clone();
+    wrong["latestRunId"] = json!("unrelated-run");
+    unmatched.use_shell_background(&wrong, true);
+    assert_eq!(unmatched.provider_limit(&msg), None);
+    let (host, native) = server(vec![(
+        "orchestration.subscribeThread",
+        Response::Snapshot(view),
+    )])
+    .await;
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":16,"projects":[],"threads":[shell]
+        }}));
+    let seen = quiet_pass(&host)
+        .observe_run(task.run().unwrap(), 2)
+        .await
+        .unwrap();
+    assert_eq!(seen.provider_limit, Some(limit));
+    assert_eq!(
+        seen.host,
+        Host::Current {
+            instance,
+            state: RunState::UsageLimited
+        }
+    );
+    assert_eq!(native.await.unwrap().len(), 1);
 }
 
 #[tokio::test]

@@ -227,6 +227,44 @@ impl ProfileCatalog {
             .then_some(path)
     }
 
+    pub(crate) fn exhausted_reset(&self, routing: &crate::RunRouting, ended: u64) -> Option<u64> {
+        let provider = self
+            .0
+            .iter()
+            .find(|p| p["instanceId"] == routing.provider)?;
+        let usage = provider.get("usageLimits")?;
+        if usage
+            .get("unavailable")
+            .is_some_and(|error| !error.is_null())
+        {
+            return None;
+        }
+        let model = routing.model.as_str();
+        let family = model.split('/').next()?;
+        usage["windows"]
+            .as_array()?
+            .iter()
+            .filter(|window| {
+                let matches = |key: &str, expected: &str| {
+                    window.get(key).map(|ids| {
+                        ids.as_array()
+                            .is_some_and(|ids| ids.iter().any(|id| id == expected))
+                    })
+                };
+                let model_match = matches("modelIds", model);
+                let family_match = matches("providerIds", family);
+                (model_match.is_some() || family_match.is_some())
+                    && model_match.unwrap_or(true)
+                    && family_match.unwrap_or(true)
+                    && window["usedPercent"]
+                        .as_f64()
+                        .is_some_and(|used| used >= 100.0)
+            })
+            .filter_map(|w| crate::task_row::timestamp_ms(w["resetsAt"].as_str()?).ok())
+            .filter(|reset| *reset > ended)
+            .max()
+    }
+
     pub(crate) fn provider_family(&self, instance: &str) -> Option<Provider> {
         let driver = self
             .0
@@ -536,5 +574,38 @@ mod tests {
                 },
             )]
         );
+    }
+}
+
+#[cfg(test)]
+mod exhausted_window_tests {
+    use super::*;
+
+    #[test]
+    fn reset_belongs_to_the_exhausted_subscription_and_observed_model() {
+        let first = "2026-12-01T09:00:00Z";
+        let last = "2026-12-05T17:24:37Z";
+        let later = "2099-01-01T00:00:00Z";
+        let catalog = ProfileCatalog(vec![
+            json!({"instanceId":"own","usageLimits":{"windows":[
+                {"usedPercent":100,"providerIds":["family"],"resetsAt":first},
+                {"usedPercent":100,"modelIds":["family/model"],"resetsAt":last},
+                {"usedPercent":100,"resetsAt":later},
+                {"usedPercent":100,"modelIds":["sibling"],"providerIds":["family"],"resetsAt":later},
+                {"usedPercent":99,"providerIds":["family"],"resetsAt":later}
+            ]}}),
+            json!({"instanceId":"other","usageLimits":{"windows":[
+                {"usedPercent":100,"modelIds":["family/model"],"resetsAt":later}
+            ]}}),
+        ]);
+        let mut selected = crate::RunRouting {
+            provider: "own".into(),
+            model: "family/model".into(),
+        };
+        let reset = crate::task_row::timestamp_ms(last).unwrap();
+        assert_eq!(catalog.exhausted_reset(&selected, 0), Some(reset));
+        assert_eq!(catalog.exhausted_reset(&selected, reset), None);
+        selected.model = "another/model".into();
+        assert_eq!(catalog.exhausted_reset(&selected, 0), None);
     }
 }
