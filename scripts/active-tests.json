@@ -11,6 +11,7 @@
   "test/board-surfaces.test.ts",
   "test/board-text.test.ts",
   "test/build-output-disclosure.test.ts",
+  "test/card-list-paging.test.ts",
   "test/client-bundle.test.ts",
   "test/client-design-tokens.test.ts",
   "test/contracts-boundaries.test.ts",

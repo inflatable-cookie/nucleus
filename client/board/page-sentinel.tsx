@@ -31,6 +31,15 @@ export function PageSentinel({
   const latest = useRef(onMore);
   latest.current = onMore;
   const observable = typeof IntersectionObserver !== "undefined";
+  // Where a keyboard reader's focus stood when it loaded the page, to resume from there.
+  const pending = useRef<KeyboardPosition | null>(null);
+  // A page that lands while the sentinel has focus moves focus to its first new card. The
+  // sentinel stays at the end of the list, so focus left on it would skip the new cards.
+  useEffect(() => {
+    const start = pending.current;
+    pending.current = null;
+    if (start) focusAddedCard(start.root, start.at);
+  }, [page]);
   useEffect(() => {
     const node = target.current;
     if (!more || !observable || !node) return;
@@ -62,10 +71,46 @@ export function PageSentinel({
       }}
       accessibilityRole="button"
       accessibilityLabel={label}
-      onFocus={() => latest.current()}
+      onFocus={() => {
+        pending.current = keyboardPosition(target.current);
+        latest.current();
+      }}
+      onBlur={() => {
+        pending.current = null;
+      }}
       style={{ height: 1 }}
     />
   );
+}
+
+/** The elements a keyboard reader reaches, in tab order, inside `root`. */
+export function keyboardOrder(root: ParentNode): HTMLElement[] {
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      '[tabindex]:not([tabindex="-1"]), button, a[href], input, select, textarea',
+    ),
+  );
+}
+
+/** The sentinel's place among the keyboard-reachable elements of the list it ends. */
+export type KeyboardPosition = { root: ParentNode; at: number };
+
+function keyboardPosition(node: HTMLElement | null | undefined): KeyboardPosition | null {
+  if (!node) return null;
+  const root: ParentNode | null = scrollingAncestor(node) ?? node.ownerDocument?.body ?? null;
+  if (!root) return null;
+  return { root, at: keyboardOrder(root).indexOf(node) };
+}
+
+/**
+ * Moves focus to the element now at `at`: where the sentinel was, so the first card the
+ * page added. Returns false when nothing sits there.
+ */
+export function focusAddedCard(root: ParentNode, at: number): boolean {
+  const next = keyboardOrder(root)[at];
+  if (!next) return false;
+  next.focus();
+  return true;
 }
 
 /** The nearest ancestor that scrolls itself, or null for the viewport. */

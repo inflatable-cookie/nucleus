@@ -92,3 +92,30 @@ test("without an observer the list keeps one control for the next page", async (
   assert.equal(cards(tree), 30);
   assert.equal(sentinel(tree), undefined);
 });
+
+test("focus on the sentinel that loads a page moves to the page's first new card, so forward Tab reaches the new cards", async () => {
+  const { JSDOM } = await import("jsdom");
+  const { focusAddedCard, keyboardOrder } = await import("../client/board/page-sentinel");
+  const dom = new JSDOM(
+    '<div id="list"><button id="card-1">1</button><button id="card-2">2</button><div id="sentinel" tabindex="0"></div></div>',
+  );
+  const doc = dom.window.document;
+  const root = doc.getElementById("list")!;
+  const sentinel = doc.getElementById("sentinel")!;
+  // Focus stands on the sentinel when its page loads.
+  sentinel.focus();
+  const at = keyboardOrder(root).indexOf(sentinel);
+  assert.equal(at, 2);
+  // The page inserts its cards ahead of the sentinel, which stays at the end.
+  for (const id of ["card-3", "card-4"]) {
+    const card = doc.createElement("button");
+    card.id = id;
+    root.insertBefore(card, sentinel);
+  }
+  assert.equal(focusAddedCard(root, at), true);
+  assert.equal(doc.activeElement?.id, "card-3", "focus moves to the first new card");
+  // Forward Tab order from there visits the new cards before the sentinel.
+  const order = keyboardOrder(root).map((element) => element.id);
+  assert.deepEqual(order, ["card-1", "card-2", "card-3", "card-4", "sentinel"]);
+  assert.equal(order[order.indexOf("card-3") + 1], "card-4");
+});
