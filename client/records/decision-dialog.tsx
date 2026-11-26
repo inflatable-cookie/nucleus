@@ -1,4 +1,3 @@
-import { useEngineFeatures } from "../engine-features";
 import { useContext, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
@@ -9,8 +8,6 @@ import {
   ConfirmReplaceAnswer,
   DetailSection,
   SurfacePress,
-  controlFrame,
-  controlText,
   muted,
   type Colors,
 } from "../controls";
@@ -71,15 +68,12 @@ export function DecisionDialog({
   onClose: () => void;
   c: Colors;
 }) {
-  const { decisionWithdraw } = useEngineFeatures();
   const live = useContext(BoardLiveContext);
   const scope = project ? { project } : {};
   const fetchDecision = useRpc(api.decisionGet),
-    answerDecision = useRpc(api.decisionAnswer),
-    withdrawDecision = useRpc(api.decisionWithdraw);
+    answerDecision = useRpc(api.decisionAnswer);
   const [decisionDetailsOpen, setDecisionDetailsOpen] = useState(false);
-  const [decisionAnswerText, setDecisionAnswerText] = useState(""),
-    [decisionWithdrawReason, setDecisionWithdrawReason] = useState("");
+  const [decisionAnswerText, setDecisionAnswerText] = useState("");
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [pendingDecisionOption, setPendingDecisionOption] = useState<
     string | null
@@ -172,7 +166,6 @@ export function DecisionDialog({
               }}
             >
               Stale: every linked task, lead and papercut has finished.
-              {decisionWithdraw && " The decision stays open until answered or withdrawn."}
             </Text>
           )}
           <DetailSection title="Question" c={c}>
@@ -300,26 +293,6 @@ export function DecisionDialog({
                   </Text>
                 </Pressable>
               ))}
-              {decisionWithdraw && (
-                <Button
-                  small
-                  c={c}
-                  text="Withdraw as overtaken"
-                  disabled={busy}
-                  onPress={() => {
-                    const ref = decisionDetail.overtakenBy!.at(-1)!;
-                    void act(async () => {
-                      await withdrawDecision({
-                        id: decisionDetail.id,
-                        version: decisionDetail.version,
-                        reason: `Withdrawn after ${ref.label}`,
-                        withdrawnBy: "operator (board)",
-                      });
-                      setRecordNotice({ kind: "ok", text: "Withdrawn" });
-                    }, "record");
-                  }}
-                />
-              )}
             </View>
           )}
           <DetailSection title="Links" c={c}>
@@ -489,7 +462,6 @@ export function DecisionDialog({
                     setRecordNotice({ kind: "ok", text: "Answered" });
                     setDecisionAnswerText("");
                     setSelectedOptionId(null);
-                    setDecisionWithdrawReason("");
                   }, "record");
                 }}
               />
@@ -499,43 +471,6 @@ export function DecisionDialog({
                 Answering carries operator authority and notifies the asking
                 agent's thread once per answer.
               </Text>
-              {decisionWithdraw && (
-                <>
-                  <Text
-                    style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-                  >
-                    Withdraw reason
-                  </Text>
-                  <TextInput
-                    accessibilityLabel="Withdraw reason"
-                    value={decisionWithdrawReason}
-                    onChangeText={setDecisionWithdrawReason}
-                    placeholder="Why this decision is overtaken"
-                    placeholderTextColor={c.foregroundMuted}
-                    style={{ ...controlFrame(c), ...controlText(c) }}
-                  />
-                  <Button
-                    small
-                    c={c}
-                    text="Withdraw"
-                    danger
-                    disabled={busy || !decisionWithdrawReason.trim()}
-                    onPress={() =>
-                      void act(async () => {
-                        await withdrawDecision({
-                          id: decisionDetail.id,
-                          version: decisionDetail.version,
-                          reason: decisionWithdrawReason.trim(),
-                          withdrawnBy: "operator (board)",
-                        });
-                        setRecordNotice({ kind: "ok", text: "Withdrawn" });
-                        setDecisionAnswerText("");
-                        setDecisionWithdrawReason("");
-                      }, "record")
-                    }
-                  />
-                </>
-              )}
             </DetailSection>
           )}
         </>

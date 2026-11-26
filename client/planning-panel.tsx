@@ -1258,8 +1258,8 @@ export function PlanningTab({
   // roadmap in place and the lane page opens in the modal (below 1100 points).
   const twoPane = !inbox.laneModal;
   const groupOf = (section: PlanSection) =>
-    projectGroup(section.latest, activityByKey.get(section.project.key), nowMs);
-  const ordered = (["active", "idle", "dormant"] as const).flatMap((group) =>
+    projectGroup(activityByKey.get(section.project.key), nowMs);
+  const ordered = (["active", "dormant"] as const).flatMap((group) =>
     sections.filter((section) => groupOf(section) === group),
   );
   const laneOpen = Boolean(selectedLane) && step === "lane";
@@ -1311,7 +1311,6 @@ export function PlanningTab({
       return { ...base, state: { kind: "loading" } };
     const parts = projectStatusParts(
       group,
-      section.latest,
       { ...projectStatus({
         project: section.project,
         plan: section.latest,
@@ -1448,7 +1447,7 @@ export function PlanningTab({
       {!sections.length && (
         <Text style={{ ...muted(c), padding: space.md }}>No projects yet.</Text>
       )}
-      {(["active", "idle", "dormant"] as const).map((group) => {
+      {(["active", "dormant"] as const).map((group) => {
         const members = ordered.filter((section) => groupOf(section) === group);
         if (!members.length) return null;
         return (

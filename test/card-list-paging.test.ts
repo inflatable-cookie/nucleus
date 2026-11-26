@@ -15,7 +15,7 @@ let RustListRows: ListModule["RustListRows"];
 const load = async () => {
   RustListRows ??= (await import("../client/board/inbox-list")).RustListRows;
 };
-const c = {} as never;
+const c = new Proxy({ surface0: "#000000" }, { get: (target, key) => (key in target ? target[key as keyof typeof target] : "#000000") }) as never;
 
 const tasks = (count: number, phase: RustTask["phase"] = "queued"): RustTask[] =>
   Array.from({ length: count }, (_, index) =>

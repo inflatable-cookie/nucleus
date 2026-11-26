@@ -533,10 +533,9 @@ function Banner({
         </Text>
       </View>
     );
-  const idle = banner.kind === "idle";
   return (
     <View
-      accessibilityLabel={idle ? "Idle on purpose" : "Dormant"}
+      accessibilityLabel="Dormant"
       style={{
         gap: space.xxs,
         padding: space.md,
@@ -549,12 +548,10 @@ function Banner({
       }}
     >
       <Text style={{ ...body(c), color: r.warning, fontWeight: "600" }}>
-        {idle ? "Idle on purpose" : "Dormant"}
+        Dormant
       </Text>
       <Text style={body(c)}>
-        {idle
-          ? banner.reason
-          : "No recent activity and no lane in Now. New work makes it active again."}
+        No recent activity and no lane in Now. New work makes it active again.
       </Text>
     </View>
   );
@@ -650,13 +647,6 @@ function PlanHistory({
             {savedLine(shown)}
             {isLatest ? " · the latest" : " · not the latest"}
           </Text>
-          {shown.idle && (
-            <Text style={meta(c)}>
-              Idle on purpose since {formatLocalDateTime(shown.idle.at)}:{" "}
-              {shown.idle.reason.replace(/[.!?]+$/, "")}. Saving a changed plan
-              or finishing new work ends it.
-            </Text>
-          )}
           {PLAN_HORIZONS.map((horizon) => {
             const entries = shown.entries.filter(
               (entry) => entry.horizon === horizon,

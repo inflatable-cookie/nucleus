@@ -256,24 +256,6 @@ test("041-3 moves between Next and Now change the horizon", () => {
   );
 });
 
-test("Planning uses the batched current plan and current lane projections", () => {
-  const ui = boardSource();
-  assert.doesNotMatch(
-    ui,
-    /fetchPlan\(\{project:project\.key,version:/,
-    "Planning does not fan out plan.get per project",
-  );
-  assert.match(
-    ui,
-    /saved: latest\s*\? \{ \.\.\.latest, entries: latest\.savedEntries \}\s*: undefined/,
-    "saved membership remains available for draft rebasing",
-  );
-  assert.match(
-    ui,
-    /queryKey: \["nucleus", "plans", plansRevision\],\s*queryFn: \(\) => fetchPlans\(\{\}\),\s*enabled:\s*rust \|\| \(\(tab === "planning" \|\| tab === "queue"\) && Boolean\(state\?\.projects\.length\)\),\s*staleTime,\s*placeholderData: keepPreviousData,?\s*\}/,
-    "the Rust board loads plans on entry and TypeScript follows plan revisions",
-  );
-});
 
 test("865 a draft is stale once the plan moves past its version; reapply keeps its horizons and drops lanes the plan no longer has", async () => {
   const { activeSteps, planDraftStale, rebaseDraft, sameOrder } = await import(

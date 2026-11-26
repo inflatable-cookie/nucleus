@@ -80,7 +80,6 @@ import {
   type as typeScale,
 } from "../design";
 import { useFocusVisible } from "../focus-modality";
-import { useEngineFeatures } from "../engine-features";
 
 /**
  * Spec 026 row 12a: the single card component for the inbox board. Every card is
@@ -190,8 +189,8 @@ export function CardProject({
   c: Colors;
 }) {
   const color = cardLabelColor(c);
-  const { engine } = useEngineFeatures();
-  const mark = badge ?? (engine === "rust" && projectKey ? generatedProjectBadge(name.trim() || projectKey) : null);
+  // A decision with no project label has no name to read initials from; its key stands in.
+  const mark = badge ?? (projectKey ? generatedProjectBadge((name ?? "").trim() || projectKey) : null);
   return (
     <>
       {mark ? (

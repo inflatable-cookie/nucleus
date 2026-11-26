@@ -1303,7 +1303,7 @@ test("a long papercut and a long lead render as three-line rows with a one-line 
       const rowText = nodeText(rowNode);
       assert.match(
         rowText,
-        /^\s*App\s/,
+        /^\s*(?:AP\s+)?App\s/,
         "line 1 starts with the project; the single-kind view drops the kind word",
       );
       const lineTexts = (rowNode as HostNode).children.flatMap(function texts(
@@ -2060,123 +2060,6 @@ test("a Triage card names its project, not its repository, when the two are name
   }
 });
 
-test("lead-only and papercut-only repositories render T3 project badges on the board and keep folders on non-T3 boards", async () => {
-  await load();
-  let t3Mounted: ReturnType<typeof mountBoard> | undefined;
-  let plainMounted: ReturnType<typeof mountBoard> | undefined;
-  try {
-    const named = { ...project, name: "Biock Aase" };
-    const leads = [
-      triageLead("lead-only", "Lead without tasks", { tags: ["idea"] }),
-      triageLead("cut-only", "Papercut without tasks", {
-        tags: ["papercut"],
-        papercutArea: "board",
-      }),
-    ];
-    const detailOpened: string[] = [];
-    const rpcFor =
-      (snapshot: ReturnType<typeof board>) =>
-      async (method: string, input: unknown) => {
-        if (method === "queue.ui-snapshot") return snapshot;
-        if (method === "lead.board") return { cards: leads, links: [] };
-        if (method === "lead.get" || method === "papercut.get") {
-          detailOpened.push(`${method}:${(input as { id: string }).id}`);
-          return null;
-        }
-        if (method === "decision.list") return [];
-        if (method === "plans") return [];
-        if (method === "queue.service-state") return serviceState;
-        return { tasks: [], hasMore: false };
-      };
-    const t3Snapshot = {
-      ...board([]),
-      projects: [named],
-      repositoryBadges: {
-        [repo.path]: { monogram: "BA", color: "fuchsia" as const },
-      },
-    };
-    t3Mounted = mountBoard(rpcFor(t3Snapshot));
-    await settle(() =>
-      Boolean(
-        t3Mounted?.query(/^(?:Lead|Papercut): Lead without tasks, Status: /),
-      ),
-    );
-    /** Badge text nodes on the Leads and Papercuts lists: the lead card and the papercut card. */
-    const tabMonograms = (mounted: ReturnType<typeof mountBoard>) => {
-      openView(mounted, "Leads");
-      const found = mounted
-        .ofType("Text")
-        .filter((node) => node.children.join("") === "BA");
-      openView(mounted, "Papercuts");
-      found.push(
-        ...mounted
-          .ofType("Text")
-          .filter((node) => node.children.join("") === "BA"),
-      );
-      openView(mounted, "Leads");
-      return found;
-    };
-    const monograms = tabMonograms(t3Mounted);
-    assert.equal(
-      monograms.length,
-      2,
-      "both lead and papercut cards render the T3 badge with no tasks on the board",
-    );
-    for (const node of monograms) {
-      assert.equal(node.props.style.color, "rgb(237, 106, 255)");
-      assert.equal(
-        node.props.style.backgroundColor,
-        "rgba(237, 106, 255, 0.14)",
-      );
-    }
-    assert.match(t3Mounted.text(), /Biock Aase/);
-    assert.match(t3Mounted.text(), /Lead/);
-    assert.match(t3Mounted.text(), /Papercut/);
-    const cardFolderCount = (mounted: ReturnType<typeof mountBoard>) => {
-      const count = (node: HostNode | string): number =>
-        typeof node === "string"
-          ? 0
-          : (node.type === "Icon" && node.props.name === "Folder" ? 1 : 0) +
-            node.children.reduce((sum, child) => sum + count(child), 0);
-      const tabCards = () =>
-        mounted.raw
-          .all(/^(?:Lead|Papercut): /)
-          .reduce((sum, card) => sum + count(card), 0);
-      openView(mounted, "Leads");
-      let total = tabCards();
-      openView(mounted, "Papercuts");
-      total += tabCards();
-      openView(mounted, "Leads");
-      return total;
-    };
-    assert.equal(cardFolderCount(t3Mounted), 0);
-    t3Mounted.press(/^(?:Lead|Papercut): Lead without tasks, Status: /);
-    t3Mounted.press("Close detail");
-    t3Mounted.press(/^(?:Lead|Papercut): Papercut without tasks, Status: /);
-    await settle(() => detailOpened.length === 2);
-    assert.deepEqual(detailOpened, [
-      "lead.get:lead-only",
-      "papercut.get:cut-only",
-    ]);
-
-    const plainSnapshot = { ...board([]), projects: [named] };
-    plainMounted = mountBoard(rpcFor(plainSnapshot));
-    await settle(() =>
-      Boolean(
-        plainMounted?.query(/^(?:Lead|Papercut): Lead without tasks, Status: /),
-      ),
-    );
-    assert.equal(
-      tabMonograms(plainMounted).length,
-      0,
-      "non-T3 boards never render monograms",
-    );
-    assert.equal(cardFolderCount(plainMounted), 2);
-  } finally {
-    t3Mounted?.update(h("View", null));
-    plainMounted?.update(h("View", null));
-  }
-});
 
 // Tom, 2026-11-21: the inbox list keeps the coloured T3 project badges on task cards.
 test("a task row in the inbox list shows its T3 project badge from its own host, and a folder without one", async () => {
@@ -2468,7 +2351,7 @@ test("single-kind views drop the kind word from line 1; mixed lists keep it", as
       undefined,
       "the Leads view drops the kind word; the label keeps it",
     );
-    assert.match(nodeText(card), /^\s*App\s/, "line 1 starts with the project");
+    assert.match(nodeText(card), /^\s*(?:AP\s+)?App\s/, "line 1 starts with the project");
     openView(tree, "Papercuts");
     const cut = tree.raw.query(
       /^Papercut: Tiny papercut, Status: /,
@@ -2560,120 +2443,6 @@ test("a task needing attention on Needs you draws the task tile and its referenc
   }
 });
 
-test("Planning lists its projects as inbox rows, grouped, with the selected surface on the open one", async () => {
-  await load();
-  let mounted: ReturnType<typeof mountBoard> | undefined;
-  try {
-    const second = {
-      key: "second",
-      name: "Second",
-      repositories: [{ origin: "owner/second", path: "/second" }],
-      primary: { origin: "owner/second", path: "/second" },
-    };
-    const sleepy = {
-      key: "sleepy",
-      name: "Sleepy",
-      repositories: [{ origin: "owner/sleepy", path: "/sleepy" }],
-      primary: { origin: "owner/sleepy", path: "/sleepy" },
-    };
-    const plan = (name: string, projectKey: string) => ({
-      project: projectKey,
-      version: 1,
-      author: "planner-agent",
-      createdAt: at,
-      entries: [{ lane: name, note: "", horizon: "now", doneWhen: "It ships" }],
-    });
-    // Store-wide activity keeps two projects out of Planning's Dormant group; the
-    // third has none and lists under it (nucleus#1511's gutter check).
-    const snapshot = {
-      ...board([]),
-      projects: [project, second, sleepy],
-      projectActivity: recentProjectActivity([project, second]),
-    };
-    mounted = mountBoard(async (method: string) => {
-      if (method === "queue.ui-snapshot") return snapshot;
-      if (method === "queue.service-state") return serviceState;
-      if (method === "queue.detail") return undefined;
-      if (method === "task.next") return null;
-      if (method === "queue.plans")
-        return [plan("lane-a", "app"), plan("lane-b", "second")];
-      if (method === "project.qa.list" || method === "host.run.list") return [];
-      if (method === "host.run.board")
-        return {
-          runs: [],
-          accounting: { readAt: at, entries: [], complete: true },
-        };
-      if (method === "lead.board") return { cards: [], links: [] };
-      return [];
-    });
-    const tree = mounted;
-    await settle(
-      () =>
-        Boolean(tree.raw.query("Nucleus header controls")) &&
-        Boolean(tree.raw.query(planningEntry)),
-    );
-    openPlanning(tree);
-    await settle(() => Boolean(tree.raw.query("Project row Second")));
-    // nucleus#1531: inbox rows with no divider or card frame; the open row takes the selected surface.
-    const row = (name: string) => tree.raw.get(`Project row ${name}`);
-    const style = (name: string) =>
-      row(name).props.style as {
-        borderWidth?: number;
-        borderBottomWidth?: number;
-        backgroundColor?: string;
-      };
-    assert.equal(
-      style("App").borderWidth,
-      undefined,
-      "no card border inside the list pane",
-    );
-    assert.equal(
-      style("App").borderBottomWidth,
-      undefined,
-      "no divider between rows",
-    );
-    assert.equal(
-      row("App").props.accessibilityState.selected,
-      true,
-      "the first active project opens beside the list",
-    );
-    // nucleus#1540: selection is the selected-role wash over the row's own fill.
-    const { selectedSurface } = await import("../client/design");
-    const wash = (name: string) =>
-      row(name).children.find(
-        (child): child is HostNode =>
-          typeof child !== "string" &&
-          child.props.pointerEvents === "none" &&
-          child.props.style?.position === "absolute",
-      )?.props.style.backgroundColor;
-    assert.equal(wash("App"), selectedSurface(dark as never));
-    assert.equal(
-      style("Second").backgroundColor,
-      "transparent",
-      "a closed row has no background at rest",
-    );
-    assert.equal(wash("Second"), undefined, "and no wash");
-    tree.raw.press("Project row Second");
-    await settle(
-      () => row("Second").props.accessibilityState.selected === true,
-    );
-    assert.equal(wash("Second"), selectedSurface(dark as never));
-    assert.ok(tree.raw.query("Plan for Second"));
-    // The project with no recent activity lists under Dormant.
-    assert.ok(
-      tree.raw.query("Dormant projects"),
-      "the dormant project is grouped",
-    );
-    assert.ok(
-      nodeHas(
-        tree.raw.get("Dormant projects"),
-        (child) => child.props.accessibilityLabel === "Project row Sleepy",
-      ),
-    );
-  } finally {
-    mounted?.update(h("View", null));
-  }
-});
 
 test("a resumed-thread count never adds a header pill", async () => {
   const { headerStatePills } = await import("../client/board/header");

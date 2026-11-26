@@ -1160,8 +1160,8 @@ Profiles reads usage on entry and when recorded assignments or timed pauses chan
 backup health with storage, and the board derives project activity from the task
 list it already displays. Reconnects resync active views. Ages and running
 durations advance locally. Screens leave out
-controls for machinery these rulings retire; `client/engine-features.ts` names
-the ruling behind each one. Settings writes send the whole domain value back
+controls for machinery these rulings retire, and the board runs only on the
+Rust engine. Settings writes send the whole domain value back
 and keep fields the client does not know.
 
 The board's Pause, Dispatch hold and Stop controls write the Dispatch domain's

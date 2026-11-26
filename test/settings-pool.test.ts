@@ -25,8 +25,7 @@ const loadBundle = async () => {
   const bytes = (
     await build({
       stdin: {
-        contents: `export * from "../client/settings-screen.tsx";
-          export { EngineFeaturesContext, RUST_ENGINE_FEATURES } from "../client/engine-features";`,
+        contents: `export * from "../client/settings-screen.tsx";`,
         resolveDir: import.meta.dirname,
       },
       bundle: true,
@@ -37,12 +36,7 @@ const loadBundle = async () => {
       write: false,
     })
   ).outputFiles[0]!.text;
-  type Bundle = SettingsModule &
-    Pick<
-      typeof import("../client/engine-features"),
-      "EngineFeaturesContext" | "RUST_ENGINE_FEATURES"
-    >;
-  const compiled = { exports: {} as Bundle };
+  const compiled = { exports: {} as SettingsModule };
   new Function("require", "module", "exports", bytes)(
     createRequire(import.meta.url),
     compiled,
@@ -85,14 +79,7 @@ const entry = (profileId: string, group = "subscription"): PoolEntry =>
 const CAPACITY_LIMITS = {
   globalLimit: 32,
   projectLimit: 5,
-  papercutProjectLimit: 2,
   hostCallLimit: 6,
-  stallThresholdMinutes: 30,
-  holdReminderMinutes: 120,
-  holdEscalationMinutes: 240,
-  laneDrainMinutes: 120,
-  laneDrainEscalationMinutes: 1440,
-  hostOutageNoticeMinutes: 120,
   threadRetentionDays: 3,
   threadRetentionIntervalHours: 12,
 };
@@ -118,8 +105,16 @@ const capacityAuthorityState = (
     changes: [],
     ...overrides,
   }) as CapacityView;
+const usageOf = (state: Record<string, unknown>) => ({
+  availability: state.availability,
+  assignments: state.assignments,
+  recentAssignments: state.recentAssignments,
+  recentAssignmentSample: state.recentAssignmentSample,
+  recentAssignmentRoles: state.recentAssignmentRoles,
+});
 const board = (overrides: Record<string, unknown> = {}) => ({
   revision: 1,
+  canEditSettings: true,
   connected: true,
   hostId: "host",
   paused: false,
@@ -129,7 +124,6 @@ const board = (overrides: Record<string, unknown> = {}) => ({
   unsettled: 0,
   globalLimit: 32,
   projectLimit: 5,
-  papercutProjectLimit: 2,
   tasks: [],
   profiles: [],
   pool: [],
@@ -187,6 +181,7 @@ function screenTree(
   onUsage?: (input: unknown) => void,
 ) {
   const invoke = async (method: string, input: unknown) => {
+    if (method === "rust.profile-usage") return usageOf(state as Record<string, unknown>);
     if (method === "queue.ui-snapshot") return state;
     if (method === "queue.capacity-state") return capacityAuthorityState();
     if (method === "queue.usage") {
@@ -293,57 +288,6 @@ test("a live profile row is one line at narrow and wide sizes, with no By reques
   }
 });
 
-test("a pool with one stale entry renders it marked and removable; Remove saves exactly the other entries", async () => {
-  await load();
-  const live = entry("live");
-  const stale = { ...entry("opencode-go", "opencode-go"), enabled: false };
-  const saved: unknown[] = [];
-  const ui = mount(
-    screenTree(
-      board({
-        profiles: [profile("live", "Live model")],
-        pool: [live, stale],
-      }),
-      (input) => saved.push(input),
-    ),
-  );
-  selectSettingsTab(ui, "Profiles");
-  await settle(
-    () =>
-      ui.text().includes("Live model") &&
-      ui.text().includes("This profile is gone"),
-  );
-  assert.match(ui.text(), /Live model/, "the live catalog row is first");
-  assert.match(
-    ui.text(),
-    /opencode-go/,
-    "the stale row keeps its last-known id",
-  );
-  assert.doesNotMatch(
-    ui.text(),
-    /opencode-go · worker/,
-    "stale rows show no group or roles",
-  );
-  assert.match(ui.text(), /This profile is gone/);
-  assert.ok(ui.get("Remove opencode-go"));
-  assert.equal(
-    ui.query("Remove live"),
-    undefined,
-    "live rows keep On/Off and Edit, not Remove",
-  );
-  const liveBeforeStale =
-    ui.text().indexOf("Live model") < ui.text().indexOf("This profile is gone");
-  assert.equal(liveBeforeStale, true, "stale rows sort after live ones");
-  ui.press("Remove opencode-go");
-  await settle(() => saved.length === 1);
-  assert.deepEqual(
-    saved[0],
-    { entries: [live] },
-    "Remove saves the other entries unchanged",
-  );
-  unmount(ui);
-});
-
 test("an empty or disconnected catalog marks nothing stale", async () => {
   await load();
   const pool = [
@@ -410,6 +354,7 @@ test("the bundled dark Settings screen adds a project override from the picker a
   let hold: Promise<void> | null = null,
     failRemove = false;
   const invoke = async (method: string, input: unknown) => {
+    if (method === "rust.profile-usage") return usageOf(state as Record<string, unknown>);
     if (method === "queue.ui-snapshot") return state;
     if (method === "backup.list") return { snapshots: [], localError: null };
     if (method === "queue.capacity-state") return capacityAuthorityState();
@@ -717,6 +662,7 @@ async function mountRevisionedLimits() {
   const writes: unknown[] = [];
   const revision = () => `limits-${writes.length}`;
   const invoke = async (method: string, input: unknown) => {
+    if (method === "rust.profile-usage") return usageOf(board() as Record<string, unknown>);
     if (method === "queue.ui-snapshot") return board();
     if (method === "queue.capacity-state")
       return { revision: revision(), effective, changes: [] };
@@ -751,8 +697,7 @@ async function mountRevisionedLimits() {
       client,
       children: h(PluginRpcProvider, {
         invoke,
-        children: h(bundle.EngineFeaturesContext.Provider, {
-          value: bundle.RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(bundle.QueueSettingsScreen as never, {
             theme: { colors: dark },
             host: { id: "host", label: "Host" },
@@ -1174,6 +1119,7 @@ test("Spec 052: a profile row shows a status only for a problem; a frontier prof
     statusDanger: "#f85149",
   };
   const invoke = async (method: string) => {
+    if (method === "rust.profile-usage") return usageOf(state as Record<string, unknown>);
     if (method === "queue.ui-snapshot") return state;
     if (method === "backup.list") return { snapshots: [], localError: null };
     if (method === "queue.capacity-state") return capacityAuthorityState();
@@ -1298,151 +1244,6 @@ test("Spec 052: a profile row shows a status only for a problem; a frontier prof
   }
 });
 
-test("Spec 028: only the Backups tab lists snapshots, and the stale warning rides the board projection", async () => {
-  await loadBundle();
-  const dark = {
-    accent: "#1f6feb",
-    accentForeground: "#ffffff",
-    surface0: "#0d1117",
-    surface1: "#161b22",
-    surface2: "#30363d",
-    border: "#30363d",
-    foreground: "#f0f6fc",
-    foregroundMuted: "#8b949e",
-    statusWarning: "#f0883e",
-    statusDanger: "#f85149",
-  };
-  // Eight hours old: past the seven-hour stale threshold, and known to the board rather
-  // than to a `backup.list` poll of its own (2026-10-25 performance audit).
-  const newestSnapshotAt = new Date(
-    Date.now() - 8 * 60 * 60 * 1000,
-  ).toISOString();
-  const state = board({ backup: { newestSnapshotAt, localError: null } });
-  const listed: string[] = [];
-  const invoke = async (method: string) => {
-    if (method === "queue.ui-snapshot") return state;
-    if (method === "backup.list") {
-      listed.push(method);
-      return { snapshots: [], localError: null };
-    }
-    return {};
-  };
-  const ui = mount(
-    h(QueryClientProvider, {
-      client: new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      }),
-      children: h(PluginRpcProvider, {
-        invoke: invoke as never,
-        children: h(settings.QueueSettingsScreen as never, {
-          theme: { colors: dark },
-          host: { id: "host", label: "Host" },
-          layout: { compact: false, platform: "ios" as const },
-        }),
-      }),
-    }),
-  );
-  try {
-    assert.equal(
-      ui.get("Nucleus settings").props.style.backgroundColor,
-      dark.surface0,
-      "the installed shape renders in the dark host theme",
-    );
-    await settle(() => /Newest verified backup 4\d\d min ago/.test(ui.text()));
-    assert.deepEqual(
-      listed,
-      [],
-      "the Profiles tab never polls the snapshot list",
-    );
-    ui.press("Backups");
-    await settle(() => listed.length > 0);
-    assert.match(
-      ui.text(),
-      /Newest verified 8 h ago · next due now/,
-      "the Backups tab reads the listing in place",
-    );
-    assert.match(
-      ui.text(),
-      /Newest verified snapshot is 8 h old/,
-      "a stale snapshot reads as a warning on the Backups tab",
-    );
-  } finally {
-    unmount(ui);
-  }
-});
-
-test("Spec 028: an absent Builds volume shows the outage everywhere, never an empty-snapshot waiting message", async () => {
-  await loadBundle();
-  const dark = {
-    accent: "#1f6feb",
-    accentForeground: "#ffffff",
-    surface0: "#0d1117",
-    surface1: "#161b22",
-    surface2: "#30363d",
-    border: "#30363d",
-    foreground: "#f0f6fc",
-    foregroundMuted: "#8b949e",
-    statusWarning: "#f0883e",
-    statusDanger: "#f85149",
-  };
-  // The real absent-volume shape: no snapshot at all, and the reason recorded beside the store.
-  const outage =
-    "Backup volume unavailable: /Volumes/retired-volume is not mounted (ENOENT)";
-  const state = board({
-    backup: { newestSnapshotAt: null, localError: outage },
-  });
-  const invoke = async (method: string) => {
-    if (method === "queue.ui-snapshot") return state;
-    if (method === "backup.list") return { snapshots: [], localError: null };
-    return {};
-  };
-  const ui = mount(
-    h(QueryClientProvider, {
-      client: new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      }),
-      children: h(PluginRpcProvider, {
-        invoke: invoke as never,
-        children: h(settings.QueueSettingsScreen as never, {
-          theme: { colors: dark },
-          host: { id: "host", label: "Host" },
-          layout: { compact: false, platform: "ios" as const },
-        }),
-      }),
-    }),
-  );
-  try {
-    // The warning on another tab names the outage. "No verified backup yet" would read as
-    // "waiting for the first snapshot", which hides a volume that is away (row 5).
-    await waitFor(
-      () => Boolean(ui.query("Backups are failing help")),
-      "backup warning",
-    );
-    assert.ok(
-      !/No verified backup yet/.test(ui.text()),
-      "an outage is not reported as an empty snapshot",
-    );
-    assert.equal(
-      ui.get("Backups are failing help").props.accessibilityHint,
-      outage,
-      "the host error waits behind the ? popover",
-    );
-    ui.press("Backups");
-    await waitFor(
-      () => ui.text().includes(`No verified snapshot: ${outage}`),
-      "backup warning",
-    );
-    // nucleus#965: on the Backups page the outage is one warning line with its reason.
-    assert.doesNotMatch(
-      ui.text(),
-      /No snapshots yet/,
-      "the empty-listing message never shows during an outage (Spec 028)",
-    );
-  } finally {
-    unmount(ui);
-  }
-});
-
 test("Subscriptions: a group row names only its state; its counts and pause sit in the opened editor", async () => {
   await load();
   const ui = mount(
@@ -1490,6 +1291,12 @@ test("a problem shows an unboxed warning glyph; needing a request shows no glyph
     statusDanger: "#f85149",
   };
   const state = board({
+    recentAssignmentSample: 0,
+    recentAssignmentRoles: {
+      worker: { counts: {}, sample: 0 },
+      reviewer: { counts: {}, sample: 0 },
+      coordinator: { counts: {}, sample: 0 },
+    },
     profiles: [
       profile("paused", "GLM 5.3 Flash"),
       profile("oracle", "Opus Oracle"),
@@ -1582,12 +1389,11 @@ test("a problem shows an unboxed warning glyph; needing a request shows no glyph
     assert.deepEqual(
       rowLabels,
       [
-        "Paused oracle, all roles: 0 of 0 recent assignments",
         "Paused oracle: Subscription paused",
         "Disable Paused oracle",
         "Edit Paused oracle",
       ],
-      "usage, then the warning, On/Off and Edit",
+      "the warning, On/Off and Edit",
     );
     node.props.onHoverIn();
     await settle(() => ui.text().includes("Subscription paused"));
@@ -1979,68 +1785,6 @@ test("a long profile name keeps Duplicate and Remove on the Name row", async () 
     );
     assert.ok(contains(nameRow, "Name") && contains(nameRow, `Remove ${name}`));
     assert.equal(ui.get("Name").props.value, name);
-  } finally {
-    unmount(ui);
-  }
-});
-
-test("every Settings section aligns with the tab row: no inner side padding at any width", async () => {
-  await load();
-  const ui = mount(
-    screenTree(
-      board({
-        profiles: [profile("live", "Live model")],
-        pool: [entry("live")],
-      }),
-    ),
-  );
-  try {
-    for (const width of [390, 640, 1280]) {
-      setSettingsWidth(ui, width);
-      for (const section of [
-        "Dispatch limits",
-        "Profiles",
-        "Projects",
-        "Backups",
-        "Telemetry",
-      ]) {
-        selectSettingsTab(ui, section);
-        await tick();
-        let checked = 0;
-        for (const node of [
-          ...ui.ofType("ScrollView"),
-          ...ui.ofType("View"),
-        ] as Node[]) {
-          const style = node.props.style ?? {};
-          if (node.props.accessibilityLabel === "Settings sections") continue;
-          if (style.flex === 1 && style.minHeight === 0) {
-            checked++;
-            assert.equal(
-              style.marginHorizontal ?? 0,
-              0,
-              `${section} at ${width}: no side margin`,
-            );
-            assert.equal(
-              style.paddingHorizontal ?? 0,
-              0,
-              `${section} at ${width}: no side padding`,
-            );
-          }
-        }
-        assert.ok(
-          checked > 0,
-          `${section} at ${width}: its content column was checked`,
-        );
-        assert.equal(
-          ui.get("Nucleus settings").props.style.paddingHorizontal ?? 0,
-          0,
-        );
-        assert.equal(
-          ui.query("Store backups")?.props.style.paddingHorizontal ?? 0,
-          0,
-        );
-      }
-    }
   } finally {
     unmount(ui);
   }

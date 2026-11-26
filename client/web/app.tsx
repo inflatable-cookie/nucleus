@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MainSurface, registerSettingsOpener } from "../queue";
 import { StandaloneSettingsScreen } from "../settings-screen";
 import { hintSettingsSection } from "../settings-hint";
-import { EngineFeaturesContext, RUST_ENGINE_FEATURES } from "../engine-features";
 import { WebContext } from "./shell";
 import { useWebTheme } from "./theme";
 import {
@@ -171,9 +170,7 @@ export function WebApp() {
   }, [appearance, theme]);
   return (
     <QueryClientProvider key={sessionEpoch} client={query}>
-      <EngineFeaturesContext.Provider
-        value={RUST_ENGINE_FEATURES}
-      >
+      <>
         <WebContext.Provider value={context}>
           <BoardLiveContext.Provider value={live}>
             <div
@@ -224,7 +221,7 @@ export function WebApp() {
             </div>
           </BoardLiveContext.Provider>
         </WebContext.Provider>
-      </EngineFeaturesContext.Provider>
+      </>
     </QueryClientProvider>
   );
 }

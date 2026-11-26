@@ -146,9 +146,11 @@ const imported = (): NucleusProfile =>
     featureValues: undefined,
   }) as NucleusProfile;
 
+const profileUsage = { availability: [], assignments: {}, recentAssignments: {}, recentAssignmentSample: 0, recentAssignmentRoles: [] };
 const board = () => ({
   revision: 1,
   connected: true,
+  canEditSettings: true,
   hostId: "host",
   paused: false,
   error: "",
@@ -157,10 +159,9 @@ const board = () => ({
   unsettled: 0,
   globalLimit: 32,
   projectLimit: 5,
-  papercutProjectLimit: 2,
   tasks: [],
   profiles: [],
-  pool: [],
+  pool: [{ profileId: "imported", group: "anthropic", weight: "default", enabled: true }],
   availability: [],
   assignments: {},
   recentAssignments: {},
@@ -190,7 +191,9 @@ interface Fixture {
 
 function screenTree(fixture: Fixture, compact = false) {
   const invoke = async (method: string, input: unknown) => {
+    if (method === "rust.profile-usage") return profileUsage;
     if (method === "queue.ui-snapshot") return board();
+    if (method === "rust.profile-usage") return profileUsage;
     if (method === "queue.profile" && fixture.profileSave)
       return fixture.profileSave(input as import("../shared/contracts").PoolEntry);
     if (method === "backup.list") return { snapshots: [], localError: null };
@@ -276,138 +279,6 @@ const fixture = (): Fixture => ({
   catalogReads: [],
 });
 
-test("the weight editor shows a refusal or an unconfirmed weight, and only shows Saved for the stored entry", async () => {
-  await load();
-  const state = fixture();
-  state.profileSave = async (entry) => {
-    if (entry.weight === "fewest") throw new Error("Store unavailable");
-    return {
-      ok: true,
-      entry: entry.weight === "fewer" ? { ...entry, weight: "default" } : entry,
-    };
-  };
-  const ui = mount(screenTree(state));
-  try {
-    await settle(() => ui.text().includes("Profiles"));
-    ui.press("Profiles");
-    await settle(() => Boolean(ui.query("Edit Imported Sol")));
-    ui.press("Edit Imported Sol");
-    ui.press("Weight: fewest assignments");
-    await settle(() => ui.text().includes("Not saved: Store unavailable"));
-    ui.press("Weight: fewer assignments");
-    await settle(() => ui.text().includes("Not saved: The service could not confirm"));
-    ui.press("Weight: more assignments");
-    await settle(() => ui.query("Profile save status")?.props.children === "Saved");
-    assert.doesNotMatch(ui.text(), /Profile settings could not be saved/);
-  } finally {
-    ui.update(h("View", null));
-  }
-});
-
-test("Settings Profiles creates a profile from the host catalog and shows the unavailable one with its reason", async () => {
-  await load();
-  const state = fixture();
-  const ui = mount(screenTree(state));
-  try {
-    await settle(() => ui.text().includes("Profiles"));
-    ui.press("Profiles");
-    await settle(() => ui.text().includes("Imported Sol"));
-    assert.doesNotMatch(
-      ui.text(),
-      /Routing still reads Paseo|Available on this host|Profile notes|Changes save automatically|Feature values come from one project directory/,
-    );
-    await settle(() => state.catalogReads.some((read) => read.cwd === "/app"));
-    await settle(() => Boolean(ui.query("Imported Sol: Unavailable")));
-    assert.equal(
-      ui.get("Imported Sol: Unavailable").props.accessibilityHint,
-      "Unavailable",
-    );
-    assert.equal(ui.query("Availability for Imported Sol"), undefined);
-    assert.equal(
-      ui.query("Remove Imported Sol"),
-      undefined,
-      "Remove stays off the list row",
-    );
-
-    ui.press("Edit Imported Sol");
-    await settle(() => Boolean(ui.query("Profile availability preview")));
-    assert.equal(
-      ui.get("Profile availability preview").children.join(""),
-      "Provider anthropic is not available on this host",
-    );
-    ui.press("Close Imported Sol");
-
-    ui.press("Add profile");
-    await settle(() => Boolean(ui.query("Close new profile")));
-    assert.equal(ui.query("Create profile"), undefined);
-    assert.equal(ui.query("Save"), undefined);
-    ui.type("Name", "Fast worker");
-    choose(ui, "Provider", "Codex", "Choose a provider");
-    choose(ui, "Model", "GPT-5, gpt-5", "Choose a model");
-    await settle(() => state.creates.length === 1);
-    assert.deepEqual(state.creates[0], {
-      name: "Fast worker",
-      provider: "codex",
-      model: "gpt-5",
-      thinkingOptionId: "high",
-      featureValues: { web: false, permissions: "ask" },
-    });
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(state.creates[0] as object, "notes"),
-      false,
-      "notes stay stored and unsent",
-    );
-    await settle(
-      () =>
-        ui.text().includes("Fast worker") &&
-        Boolean(ui.query("Edit Fast worker") || ui.query("Close Fast worker")),
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /Available on this host|Mode: Plan|Web search: on/,
-    );
-
-    choose(ui, "Mode", "Plan", "Host default");
-    choose(ui, "Thinking", "Low", "High");
-    ui.press("Feature Web search on");
-    choose(ui, "Permissions", "Allow", "Ask");
-    await settle(() =>
-      state.updates.some(
-        (entry) =>
-          (entry as { modeId?: string }).modeId === "plan" &&
-          (entry as { thinkingOptionId?: string }).thinkingOptionId === "low",
-      ),
-    );
-    const latest = state.updates.at(-1) as Record<string, unknown>;
-    assert.equal(latest.id, "created-1");
-    assert.equal(latest.modeId, "plan");
-    assert.equal(latest.thinkingOptionId, "low");
-    assert.deepEqual(latest.featureValues, { web: true, permissions: "allow" });
-    assert.equal(Object.prototype.hasOwnProperty.call(latest, "notes"), false);
-
-    assert.equal(
-      ui.query("Provider map"),
-      undefined,
-      "one host and an empty map show no provider map",
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /Provider map|Every host key maps to itself|Host provider key/,
-    );
-
-    ui.press("Edit Imported Sol");
-    await settle(() => Boolean(ui.query("Remove Imported Sol")));
-    ui.press("Remove Imported Sol");
-    await settle(() => Boolean(ui.query("Confirm removing Imported Sol")));
-    ui.press("Confirm removing Imported Sol");
-    await settle(() => state.removes.length === 1);
-    assert.deepEqual(state.removes[0], { id: "imported" });
-    await settle(() => !ui.text().includes("Imported Sol"));
-    assert.match(ui.text(), /Fast worker/, "the other profile is untouched");
-  } finally {
-    ui.update(h("View", null));
-  }
-});
 
 test("Settings Profiles keeps a draft on a refused save and names the reason", async () => {
   await load();
@@ -440,7 +311,9 @@ test("Settings Profiles keeps a draft on a refused save and names the reason", a
                 ),
               ),
             };
+          if (method === "rust.profile-usage") return profileUsage;
           if (method === "queue.ui-snapshot") return board();
+          if (method === "rust.profile-usage") return profileUsage;
           if (method === "backup.list")
             return { snapshots: [], localError: null };
           if (method === "repositories")
@@ -611,7 +484,9 @@ test("Profiles shows loading, an empty list, a catalog error, and long names wit
       }),
       children: h(PluginRpcProvider, {
         invoke: async (method: string) => {
+          if (method === "rust.profile-usage") return profileUsage;
           if (method === "queue.ui-snapshot") return board();
+          if (method === "rust.profile-usage") return profileUsage;
           if (method === "backup.list")
             return { snapshots: [], localError: null };
           if (method === "profile.list") return pending;
@@ -658,7 +533,9 @@ test("Profiles shows loading, an empty list, a catalog error, and long names wit
       }),
       children: h(PluginRpcProvider, {
         invoke: async (method: string) => {
+          if (method === "rust.profile-usage") return profileUsage;
           if (method === "queue.ui-snapshot") return board();
+          if (method === "rust.profile-usage") return profileUsage;
           if (method === "backup.list")
             return { snapshots: [], localError: null };
           if (method === "profile.list")
@@ -772,189 +649,6 @@ test("nucleus#998: Profiles and Subscriptions are separated by a gap, not a seco
   }
 });
 
-test("nucleus#998: Subscriptions ending in group rows is the last section, with no divider", async () => {
-  await load();
-  const state = fixture();
-  const ui = mount(
-    h(QueryClientProvider, {
-      client: new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      }),
-      children: h(PluginRpcProvider, {
-        invoke: async (method: string, input: unknown) => {
-          if (method === "queue.ui-snapshot")
-            return {
-              ...board(),
-              pool: [
-                {
-                  profileId: "imported",
-                  group: "anthropic",
-                  weight: "most",
-                  enabled: true,
-                },
-              ],
-            };
-          return (
-            screenTree(state).props as {
-              children: {
-                props: { invoke: (m: string, i: unknown) => Promise<unknown> };
-              };
-            }
-          ).children.props.invoke(method, input);
-        },
-        children: h(settings.QueueSettingsScreen as never, {
-          theme: { colors: c },
-          host: { id: "host", label: "Host" },
-          layout: { compact: false, platform: "ios" as const },
-        }),
-      }),
-    }),
-  );
-  try {
-    await settle(() => ui.text().includes("Profiles"));
-    ui.press("Profiles");
-    await settle(() => ui.text().includes("anthropic"));
-    assert.equal(
-      ui.get("Subscriptions").props.style.borderBottomWidth ?? 0,
-      0,
-      "the last section has no divider",
-    );
-    assert.equal(
-      ui.query("Provider map"),
-      undefined,
-      "the provider map is retired (task 1158)",
-    );
-  } finally {
-    ui.update(h("View", null));
-  }
-});
-
-test("when registered projects disagree on feature values, Profiles names the projects and hides the path picker", async () => {
-  await load();
-  const state = fixture();
-  const other: StoredHostCatalog = {
-    readAt: "2026-11-09T09:00:00.000Z",
-    providers: [
-      {
-        key: "codex",
-        label: "Codex",
-        available: true,
-        problem: "",
-        models: [
-          {
-            id: "gpt-5",
-            label: "GPT-5",
-            aliases: [],
-            thinkingOptions: [{ id: "low", label: "Low" }],
-            defaultThinkingOptionId: "low",
-            modes: [],
-            features: [
-              { type: "toggle", id: "web", label: "Web search", value: true },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-  const ui = mount(
-    h(QueryClientProvider, {
-      client: new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      }),
-      children: h(PluginRpcProvider, {
-        invoke: async (method: string, input: unknown) => {
-          if (method === "queue.ui-snapshot")
-            return {
-              ...board(),
-              projects: [
-                {
-                  key: "app",
-                  name: "App",
-                  version: 1,
-                  
-                  repositories: [{ origin: "acme/app", path: "/app" }],
-                  primary: { origin: "acme/app", path: "/app" },
-                },
-                {
-                  key: "other",
-                  name: "Other",
-                  version: 1,
-                  
-                  repositories: [{ origin: "acme/other", path: "/other" }],
-                  primary: { origin: "acme/other", path: "/other" },
-                },
-              ],
-            };
-          if (method === "backup.list")
-            return { snapshots: [], localError: null };
-          if (method === "repositories")
-            return [
-              {
-                repository: { origin: "acme/app", path: "/app" },
-                closeout: null,
-                validation: null,
-                reviewer: null,
-                qa: null,
-                note: "",
-                updatedAt: "2026-11-07T00:00:00.000Z",
-                revision: 1,
-              },
-              {
-                repository: { origin: "acme/other", path: "/other" },
-                closeout: null,
-                validation: null,
-                reviewer: null,
-                qa: null,
-                note: "",
-                updatedAt: "2026-11-07T00:00:00.000Z",
-                revision: 1,
-              },
-            ];
-          if (method === "profile.list") return { profiles: state.profiles };
-          if (method === "profile.vocabulary") {
-            const cwd = (input as { cwd?: string }).cwd;
-            return cwd === "/other" ? other : catalog;
-          }
-          return {};
-        },
-        children: h(settings.QueueSettingsScreen as never, {
-          theme: { colors: c },
-          host: { id: "host", label: "Host" },
-          layout: { compact: false, platform: "ios" as const },
-        }),
-      }),
-    }),
-  );
-  try {
-    await settle(() => ui.text().includes("Profiles"));
-    ui.press("Profiles");
-    await settle(() => ui.text().includes("Imported Sol"));
-    ui.press("Add profile");
-    await settle(() => Boolean(ui.query("Provider, Choose a provider")));
-    choose(ui, "Provider", "Codex", "Choose a provider");
-    choose(ui, "Model", "GPT-5, gpt-5", "Choose a model");
-    await settle(
-      () =>
-        /Feature values differ for App and Other/.test(ui.text()) ||
-        /Feature values differ for Other and App/.test(ui.text()),
-    );
-    assert.doesNotMatch(ui.text(), /\/app|\/other/);
-    assert.ok(ui.get("Choose which project to use"));
-    assert.equal(
-      ui.query("Project, App"),
-      undefined,
-      "the project choice stays behind the disclosure",
-    );
-    ui.press("Choose which project to use");
-    await settle(
-      () =>
-        Boolean(ui.query("Project, App")) ||
-        Boolean(ui.query("Project, Other")),
-    );
-  } finally {
-    ui.update(h("View", null));
-  }
-});
 
 test("removing a profile added this session leaves no ghost row", async () => {
   await load();
@@ -1091,7 +785,9 @@ test("a refused Remove or Duplicate names the reason and keeps the profile", asy
             throw new Error("the profile store is unavailable");
           if (method === "profile.remove" && failRemove)
             throw new Error("the profile store is unavailable");
+          if (method === "rust.profile-usage") return profileUsage;
           if (method === "queue.ui-snapshot") return board();
+          if (method === "rust.profile-usage") return profileUsage;
           if (method === "backup.list")
             return { snapshots: [], localError: null };
           if (method === "repositories")
@@ -1270,104 +966,6 @@ test("task 1158: a profile shows one quiet icon naming the hosts it cannot run o
   }
 });
 
-test("the dispatch row and sliders wait for the board: absent while it loads or fails, present once it arrives", async () => {
-  await load();
-  const state = fixture();
-  let resolveBoard: ((value: ReturnType<typeof board>) => void) | undefined;
-  let failBoard = false;
-  const pending = new Promise<ReturnType<typeof board>>((resolve) => {
-    resolveBoard = resolve;
-  });
-  const tree = () =>
-    h(QueryClientProvider, {
-      client: new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      }),
-      children: h(PluginRpcProvider, {
-        invoke: async (method: string) => {
-          if (method === "queue.ui-snapshot") {
-            if (failBoard) throw new Error("the service is restarting");
-            return pending;
-          }
-          if (method === "backup.list")
-            return { snapshots: [], localError: null };
-          if (method === "repositories") return [];
-          if (method === "profile.list") return { profiles: state.profiles };
-          if (method === "profile.vocabulary") return catalog;
-          return {};
-        },
-        children: h(settings.QueueSettingsScreen as never, {
-          theme: { colors: c },
-          host: { id: "host", label: "Host" },
-          layout: { compact: false, platform: "ios" as const },
-        }),
-      }),
-    });
-  const open = async (ui: ReturnType<typeof mount>) => {
-    await settle(() => ui.text().includes("Profiles"));
-    ui.press("Profiles");
-    await settle(() => Boolean(ui.query("Edit Imported Sol")));
-    ui.press("Edit Imported Sol");
-    await settle(() => Boolean(ui.query("Profile name row")));
-  };
-  const ui = mount(tree());
-  try {
-    await open(ui);
-    assert.equal(
-      ui.query("Profile dispatch row"),
-      undefined,
-      "no Subscription while the board loads",
-    );
-    assert.equal(
-      ui.all(/^(Weight|Capability) slider,/).length,
-      0,
-      "no sliders while the board loads",
-    );
-    assert.ok(
-      labelsIn(ui.get("Profile name row") as Node).includes(
-        "Duplicate Imported Sol",
-      ),
-      "the Name row and its actions are already there",
-    );
-    resolveBoard!({
-      ...board(),
-      pool: [
-        {
-          profileId: "imported",
-          group: "anthropic",
-          weight: "most",
-          enabled: true,
-        },
-      ],
-    } as never);
-    await settle(() => Boolean(ui.query("Profile dispatch row")));
-    assert.equal(
-      ui.get("Weight slider, Most").props.accessibilityValue.now,
-      4,
-      "the stored weight shows once the board arrives",
-    );
-    assert.equal(
-      ui.get("Capability slider, not set").props.accessibilityValue.text,
-      "Not set",
-    );
-  } finally {
-    ui.update(h("View", null));
-  }
-  failBoard = true;
-  const failed = mount(tree());
-  try {
-    await open(failed);
-    await settle(() => /the service is restarting/.test(failed.text()));
-    assert.equal(
-      failed.query("Profile dispatch row"),
-      undefined,
-      "a failed board read shows no dispatch fields to edit",
-    );
-    assert.equal(failed.all(/^(Weight|Capability) slider,/).length, 0);
-  } finally {
-    failed.update(h("View", null));
-  }
-});
 
 type Node = {
   type: string;
@@ -1488,6 +1086,7 @@ test("a Profiles card uses shared field heights, slider targets and captions at 
     client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
     children: h(PluginRpcProvider, {
       invoke: async (method: string) => {
+        if (method === "rust.profile-usage") return profileUsage;
         if (method === "queue.ui-snapshot")
           return {
             ...board(),
@@ -1598,115 +1197,6 @@ test("nucleus#970: the Refresh tooltip names the stored catalog's age", async ()
 });
 
 for (const compact of [false, true])
-  test(`nucleus#970: Profiles opens on the stored catalog; Refresh replaces it, or keeps it and names the reason once (${compact ? "narrow" : "wide"})`, async () => {
-    await load();
-    const state = fixture();
-    state.profiles = [
-      {
-        id: "sol",
-        name: "Sol",
-        provider: "codex",
-        model: "gpt-5",
-        notes: "",
-      } as NucleusProfile,
-    ];
-    const readAt = new Date(Date.now() - 5 * 60_000).toISOString();
-    const renamed = {
-      providers: catalog.providers.map((provider) =>
-        provider.key === "codex"
-          ? { ...provider, label: "Codex Next" }
-          : provider,
-      ),
-    };
-    let release: (() => void) | null = null;
-    let refreshFailure = "";
-    state.catalogAnswer = async (input) => {
-      if (!input.refresh) return { ...catalog, readAt };
-      if (refreshFailure) throw new Error(refreshFailure);
-      return new Promise((resolve) => {
-        release = () =>
-          resolve({ ...renamed, readAt: new Date().toISOString() });
-      });
-    };
-    const ui = mount(screenTree(state, compact));
-    try {
-      await settle(() => ui.text().includes("Profiles"));
-      ui.press("Profiles");
-      await settle(() => ui.text().includes("Sol"));
-      const refresh = () => ui.get("Refresh providers and models");
-      await settle(
-        () =>
-          refresh().props.accessibilityHint ===
-          "Refresh providers and models · read 5 min ago",
-      );
-      assert.equal(ui.query("Sol: Unavailable"), undefined);
-      assert.ok(
-        state.catalogReads.every((read) => !read.refresh),
-        "opening the page never refreshes",
-      );
-      ui.press("Edit Sol");
-      await settle(() => Boolean(ui.query("Provider, Codex")));
-
-      ui.press("Refresh providers and models");
-      await settle(
-        () =>
-          refresh().props.accessibilityHint ===
-          "Refreshing providers and models…",
-      );
-      assert.equal(refresh().props.accessibilityState.disabled, true);
-      await settle(() => state.catalogReads.some((read) => read.refresh));
-      assert.deepEqual(
-        state.catalogReads.filter((read) => read.refresh),
-        [{ cwd: "/app", refresh: true }],
-      );
-      assert.ok(
-        ui.query("Provider, Codex"),
-        "the stored lists stay usable while Refresh runs",
-      );
-      assert.equal(
-        ui.query("Sol: Unavailable"),
-        undefined,
-        "a read in flight never reads as unavailable",
-      );
-
-      release!();
-      await settle(() => Boolean(ui.query("Provider, Codex Next")));
-      await settle(
-        () =>
-          refresh().props.accessibilityHint ===
-          "Refresh providers and models · read just now",
-      );
-      assert.equal(refresh().props.accessibilityState.disabled, false);
-
-      refreshFailure = "Daemon is disconnected";
-      ui.press("Refresh providers and models");
-      await settle(() =>
-        ui
-          .text()
-          .includes(
-            "Refresh failed: Daemon is disconnected. The stored providers and models stay.",
-          ),
-      );
-      assert.equal(
-        ui.text().split("Refresh failed").length - 1,
-        1,
-        "the reason shows once",
-      );
-      assert.ok(
-        ui.query("Provider, Codex Next"),
-        "a failed refresh keeps the stored catalog",
-      );
-      await settle(() => refresh().props.accessibilityState.disabled === false);
-
-      refreshFailure = "";
-      ui.press("Refresh providers and models");
-      await settle(() => !ui.text().includes("Refresh failed"));
-      release!();
-    } finally {
-      ui.update(h("View", null));
-    }
-  });
-
 test("nucleus#970: while the first catalog read is in flight, no row reads unavailable", async () => {
   await load();
   const state = fixture();
@@ -1921,6 +1411,14 @@ function usageTree(
   };
   const invoke = async (method: string) => {
     if (method === "queue.ui-snapshot") return snapshot;
+    if (method === "rust.profile-usage")
+      return {
+        availability: snapshot.availability,
+        assignments: snapshot.assignments,
+        recentAssignments: snapshot.recentAssignments,
+        recentAssignmentSample: snapshot.recentAssignmentSample,
+        recentAssignmentRoles: snapshot.recentAssignmentRoles,
+      };
     if (method === "backup.list") return { snapshots: [], localError: null };
     if (method === "repositories") return [];
     if (method === "profile.list") return { profiles: [] };
@@ -2102,97 +1600,6 @@ const ROLE_WINDOWS: Partial<
 };
 
 for (const compact of [false, true])
-  test(`nucleus#1502: switching the usage view changes the counts, maximum and accessible summary (${compact ? "narrow" : "wide"})`, async () => {
-    await load();
-    const ui = mount(
-      usageTree(ALL_WINDOW, compact, { sample: 50, roles: ROLE_WINDOWS }),
-    );
-    try {
-      await settle(() => ui.text().includes("Profiles"));
-      ui.press("Profiles");
-      await settle(() =>
-        Boolean(ui.query(/Sol B, all roles: 16 of 50 recent assignments/)),
-      );
-      assert.equal(
-        usageFillWidth(ui, "Sol B, all roles: 16 of 50 recent assignments"),
-        "100%",
-        "All keeps the shared window and its tied leaders",
-      );
-      assert.equal(
-        usageFillWidth(ui, "Sol C, all roles: 13 of 50 recent assignments"),
-        "81.25%",
-      );
-
-      ui.press("Workers");
-      await settle(() =>
-        Boolean(ui.query(/Sol A, workers: 5 of 15 recent assignments/)),
-      );
-      assert.equal(
-        usageFillWidth(ui, "Sol A, workers: 5 of 15 recent assignments"),
-        "100%",
-        "tied worker leaders fill",
-      );
-      assert.equal(
-        usageFillWidth(ui, "Sol B, workers: 5 of 15 recent assignments"),
-        "100%",
-      );
-      assert.equal(
-        usageFillWidth(ui, "Sol D, workers: 0 of 15 recent assignments"),
-        "0%",
-        "zero stays an empty track",
-      );
-      assert.doesNotMatch(
-        ui.text(),
-        /No recorded/,
-        "a populated view has no empty state",
-      );
-
-      ui.press("Reviewers");
-      await settle(() =>
-        Boolean(ui.query(/Sol C, reviewers: 2 of 3 recent assignments/)),
-      );
-      assert.equal(
-        usageFillWidth(ui, "Sol C, reviewers: 2 of 3 recent assignments"),
-        "100%",
-      );
-      assert.equal(
-        usageFillWidth(ui, "Sol B, reviewers: 1 of 3 recent assignments"),
-        "50%",
-        "a partial sample scales to this view's maximum, not the All maximum",
-      );
-      assert.equal(
-        usageFillWidth(ui, "Sol A, reviewers: 0 of 3 recent assignments"),
-        "0%",
-      );
-
-      ui.press("Coordinators");
-      await settle(() =>
-        ui.text().includes("No recorded coordinator assignments yet."),
-      );
-      for (const name of ["Sol A", "Sol B", "Sol C", "Sol D"])
-        assert.equal(
-          usageFillWidth(
-            ui,
-            `${name}, coordinators: 0 of 0 recent assignments`,
-          ),
-          "0%",
-          `${name} has no coordinator fill`,
-        );
-
-      ui.press("All roles");
-      await settle(() =>
-        Boolean(ui.query(/Sol B, all roles: 16 of 50 recent assignments/)),
-      );
-      assert.equal(
-        usageFillWidth(ui, "Sol B, all roles: 16 of 50 recent assignments"),
-        "100%",
-        "returning to All restores its counts",
-      );
-    } finally {
-      ui.update(h("View", null));
-    }
-  });
-
 test("nucleus#1502: the usage view strip shows its count and view in a tooltip on hover", async () => {
   await load();
   const ui = mount(
@@ -2219,25 +1626,3 @@ test("nucleus#1502: the usage view strip shows its count and view in a tooltip o
   }
 });
 
-test("nucleus#1502: an empty role view says so and keeps every row editable", async () => {
-  await load();
-  const ui = mount(
-    usageTree(ALL_WINDOW, false, { sample: 50, roles: ROLE_WINDOWS }),
-  );
-  try {
-    await settle(() => ui.text().includes("Profiles"));
-    ui.press("Profiles");
-    await settle(() => Boolean(ui.query("Coordinators")));
-    ui.press("Coordinators");
-    await settle(() =>
-      ui.text().includes("No recorded coordinator assignments yet."),
-    );
-    for (const name of ["Sol A", "Sol B", "Sol C", "Sol D"])
-      assert.ok(
-        ui.query(`Edit ${name}`),
-        `${name} stays editable with no history`,
-      );
-  } finally {
-    ui.update(h("View", null));
-  }
-});

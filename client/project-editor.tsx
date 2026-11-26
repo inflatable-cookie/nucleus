@@ -1,22 +1,17 @@
 import { projectNameProblem } from "../shared/project-scope";
 import { errorText } from "./error-text";
-import { useEngineFeatures } from "./engine-features";
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Icon } from "./shell";
 import {
-  ActionButton,
   Button,
-  DropdownSelect,
   Field,
   FieldCaption,
-  NumberStepper,
   muted,
   row,
   type Colors,
 } from "./controls";
 import { roles, space, type } from "./design";
-import { ProjectManagementView } from "./project-management-view";
 import {
   identityOf,
   withoutHostPaths,
@@ -30,70 +25,27 @@ import {
 } from "../shared/contracts";
 import {
   AddRepository,
-  AgentsSection,
-  MoveIntoPanel,
   MoveRepositoryConfirm,
   Pair,
   RepositoryBlock,
   SaveWord,
   useProjectSaves,
-  type OwnerCandidate,
   type ProjectEditActions,
 } from "./project-editor/index";
-export type {
-  OwnerCandidate,
-  ProjectEditActions,
-} from "./project-editor/index";
+export type { ProjectEditActions } from "./project-editor/index";
 
 /*
  * Settings → Projects → an opened project (lane `nucleus-ui`, "Projects in
  * Settings", build task 3, as amended by Tom's rulings of 2026-11-08): name,
- * planner, Slots only (in flight is always twice the slots), Remove
- * (build task 4: the scoped removal sheet behind the trash icon) and the
- * repositories with their settings. Every field autosaves through one ordered
- * queue per project; writes stay on `project.upsert`, `project.set-planner`,
- * `queue.project-dispatch-limit`, `repository.set`,
+ * the claimed planner, and the repositories with their settings. Every field
+ * autosaves through one ordered queue per project; writes stay on
+ * `project.upsert`, `project.set-planner`, `repository.set`,
  * `project.remove-repository` (nucleus#967) and `project.merge` (nucleus#969:
- * Move into, and Add repository taking a repository out of another project).
+ * Add repository taking a repository out of another project).
  */
 
-const SLOTS_HELP =
-  "Empty uses the Per project limit. A project may have twice its slots in flight.";
 const NONE = "__none__",
   OTHER = "__other__";
-export function plannerOptions(
-  entry: ProjectSettingsRow,
-  candidates: readonly OwnerCandidate[] | undefined,
-  chosen: string | null,
-) {
-  const planners = (candidates ?? []).filter(
-    (candidate) => candidate.kind === "planner",
-  );
-  const options = [
-    { value: NONE, label: "None" },
-    ...planners.map((candidate) => ({
-      value: candidate.id,
-      label: candidate.title.trim() || candidate.id,
-    })),
-  ];
-  for (const id of new Set(
-    [entry.project.planner?.agentId, chosen].filter((id): id is string =>
-      Boolean(id),
-    ),
-  )) {
-    if (planners.some((candidate) => candidate.id === id)) continue;
-    const live = candidates?.find((candidate) => candidate.id === id);
-    const gone = candidates
-      ? !live
-      : id === entry.project.planner?.agentId && entry.plannerLive === false;
-    options.push({
-      value: id,
-      label: live ? live.title.trim() || id : gone ? "Gone" : id,
-    });
-  }
-  return options;
-}
-
 export function ProjectEditor({
   c,
   compact = false,
@@ -133,7 +85,6 @@ export function ProjectEditor({
           ...saved,
           plannerLive: focused.plannerLive,
           agents: focused.agents,
-          responsibleThread: focused.responsibleThread,
         }
       : saved;
   const back = (
@@ -244,7 +195,6 @@ function OpenedProject({
   onOpenProject?: (key: string) => void;
   r: ReturnType<typeof roles>;
 }) {
-  const features = useEngineFeatures();
   const project = entry.project;
   const saves = useProjectSaves(actions.refresh);
   // Fields stay, never blank, but take no edits while the project could not be re-read.
@@ -256,9 +206,6 @@ function OpenedProject({
   const [planner, setPlanner] = useState<string | null>(
     project.planner?.agentId ?? null,
   );
-  const [slots, setSlots] = useState<number | null>(entry.slots.override);
-  const [removing, setRemoving] = useState(false);
-  const [moving, setMoving] = useState(false);
   const [adding, setAdding] = useState<{
     repo: ProjectRepository;
     source: Project;
@@ -281,13 +228,11 @@ function OpenedProject({
     setName(project.name);
     setMembers(project.repositories);
     setPlanner(project.planner?.agentId ?? null);
-    setSlots(entry.slots.override);
   }, [
     saves.landed,
     project.name,
     serverMembers,
     project.planner?.agentId,
-    entry.slots.override,
   ]);
 
   // A repository change while the name is held back (empty) keeps the stored name.
@@ -325,48 +270,6 @@ function OpenedProject({
     draft.current = { ...draft.current, members: list };
     saveProject();
   };
-  // Remove from Nucleus runs in the same ordered queue, so an earlier upsert lands first and its
-  // version is the one checked; the row goes once the server step has landed (nucleus#967).
-  const removeFromNucleus = (repo: ProjectRepository) => {
-    const id = identityOf(repo);
-    setOpenRepo(null);
-    saves.queue(`remove:${id}`, {
-      run: () =>
-        actions
-          .removeRepository({
-            key: project.key,
-            version: version.current,
-            repository: id,
-            reason: `Removed from ${storedName.current} in Settings`,
-          })
-          .then((result) => {
-            took(result.project);
-            const rest = draft.current.members.filter(
-              (other) => identityOf(other) !== id,
-            );
-            draft.current = { ...draft.current, members: rest };
-            setMembers(rest);
-          }),
-    });
-  };
-  // Move into: queued behind any pending edit, then the target opens; this project is gone (nucleus#969).
-  const moveInto = (target: Project) => {
-    setMoving(false);
-    saves.queue("merge", {
-      run: () =>
-        actions
-          .merge({
-            source: project.key,
-            target: target.key,
-            versions: { source: version.current, target: target.version },
-            reason: `Moved into ${target.name} in Settings`,
-          })
-          .then((result) => {
-            if (onOpenProject) onOpenProject(result.project.key);
-            else onBack();
-          }),
-    });
-  };
   // Add repository from another project: the repository (or its whole project) moves here in one server step.
   const moveHere = (source: Project, repository?: string) => {
     setAdding(null);
@@ -401,26 +304,7 @@ function OpenedProject({
       run: () => actions.setPlanner({ key: project.key, agentId }).then(took),
     });
   };
-  const changeSlots = (next: number | null) => {
-    setSlots(next);
-    saves.queue(
-      "slots",
-      { run: () => actions.setSlots({ projectKey: project.key, limit: next }) },
-      next === null ? 0 : 600,
-    );
-  };
-  const candidates = actions.candidates;
   const single = members.length === 1;
-  const others = data.projects
-    .map((item) => item.project)
-    .filter((other) => other.key !== project.key);
-  // Another project that also holds this repository goes too when it is removed from Nucleus (nucleus#969).
-  const alsoIn = (repo: ProjectRepository) =>
-    others.find((other) =>
-      other.repositories.some(
-        (member) => identityOf(member) === identityOf(repo),
-      ),
-    )?.name;
   const settingsFor = (repo: ProjectRepository) =>
     entry.repositories.find(
       (item) => identityOf(item.repository) === identityOf(repo),
@@ -434,39 +318,7 @@ function OpenedProject({
       <View style={{ ...row, flexWrap: "nowrap" }}>
         {back}
         <View style={{ flex: 1 }} />
-        {/* Rust engine (ruling 8): repositories move one at a time through Add repository. */}
-        {features.projectAgents && <ActionButton
-          c={c}
-          action="moveInto"
-          label={`Move ${project.name} into another project`}
-          disabled={disabled || moving}
-          onPress={() => setMoving(true)}
-        />}
-        {actions.removal && features.projectAgents && (
-          <ActionButton
-            c={c}
-            action="remove"
-            label={`Remove ${project.name}`}
-            disabled={disabled}
-            onPress={() => setRemoving(true)}
-          />
-        )}
       </View>
-      {removing && actions.removal && (
-        <ProjectManagementView
-          c={c}
-          project={project}
-          rpc={actions.removal}
-          onClose={() => setRemoving(false)}
-          onRemoved={() => {
-            setRemoving(false);
-            void actions.refresh().catch(() => {
-              void refetch();
-            });
-            onBack();
-          }}
-        />
-      )}
       <View style={{ ...row, flexWrap: "nowrap" }}>
         <Text
           accessibilityRole="header"
@@ -484,16 +336,6 @@ function OpenedProject({
         </Text>
         <SaveWord c={c} status={saves.status} name={project.name} />
       </View>
-      {moving && (
-        <MoveIntoPanel
-          c={c}
-          project={project}
-          others={others}
-          check={() => actions.mergeCheck({ source: project.key })}
-          onMove={moveInto}
-          onCancel={() => setMoving(false)}
-        />
-      )}
       {disabled && (
         <LoadFailure
           c={c}
@@ -513,20 +355,11 @@ function OpenedProject({
           onBlur={saves.flush}
         />
         <View style={{ gap: space.xs }}>
-          {features.projectAgents ? <DropdownSelect
-            c={c}
-            label="Preferred thread"
-            value={planner ?? NONE}
-            disabled={disabled}
-            options={plannerOptions(entry, candidates.data, planner)}
-            onChange={choosePlanner}
-          /> : (
             <View style={{ gap: space.xs }}>
               <FieldCaption c={c} text="Planner" help="New messages go to the thread that ran nucleus planner.claim. Clearing it restores fallback delivery." />
               <Text selectable style={muted(c)}>{planner ?? "Unclaimed"}</Text>
               {planner && <Button small c={c} text="Clear" label="Clear claimed planner" disabled={disabled} onPress={() => choosePlanner(NONE)} />}
             </View>
-          )}
         </View>
       </Pair>
       {Boolean(actions.focus?.error) && (
@@ -542,44 +375,6 @@ function OpenedProject({
           still apply.
         </Text>
       )}
-      {entry.responsibleThread && (
-        <View style={{ gap: space.xxs }}>
-          <FieldCaption c={c} text="Responsible thread" />
-          <Text style={muted(c)}>
-            {entry.responsibleThread.thread
-              ? `${entry.responsibleThread.thread.agentId} · ${entry.responsibleThread.thread.hostId} · ranked by ${entry.responsibleThread.thread.reasons.join(", ") || "none"} · last interaction ${entry.responsibleThread.thread.lastInteraction ?? "unknown"}`
-              : "No live responsible thread"}
-          </Text>
-          <Text style={muted(c)}>
-            Cache age: {Math.floor(entry.responsibleThread.cacheAgeMs / 1000)}s
-          </Text>
-        </View>
-      )}
-      {features.engine === "typescript" && <View style={{ gap: space.xxs }}>
-        <FieldCaption c={c} text="Slots" help={SLOTS_HELP} />
-        <View style={{ flexDirection: "row" }}>
-          <NumberStepper
-            c={c}
-            a11yLabel={`Slots for ${project.name}`}
-            value={slots}
-            placeholder={data.defaultSlots}
-            min={0}
-            max={64}
-            disabled={disabled}
-            onChange={changeSlots}
-            onClear={() => changeSlots(null)}
-            onCommit={saves.flush}
-          />
-        </View>
-      </View>}
-      {features.projectAgents && <AgentsSection
-        c={c}
-        project={project}
-        agents={entry.agents ?? []}
-        disabled={disabled}
-        actions={actions}
-        r={r}
-      />}
       <View
         style={{
           gap: space.xs,
@@ -616,11 +411,9 @@ function OpenedProject({
             repo={adding.repo}
             source={adding.source}
             target={project.name}
-            check={() => actions.mergeCheck({ source: adding.source.key })}
             onMoveRepository={() =>
               moveHere(adding.source, identityOf(adding.repo))
             }
-            onMoveProject={() => moveHere(adding.source)}
             onCancel={() => setAdding(null)}
           />
         )}
@@ -640,23 +433,6 @@ function OpenedProject({
               saves={saves}
               setRepository={actions.setRepository}
               onToggle={() => setOpenRepo(open ? null : id)}
-              onPrimary={() =>
-                changeMembers([
-                  repo,
-                  ...members.filter((other) => identityOf(other) !== id),
-                ])
-              }
-              checkBlockers={() =>
-                actions.repositoryBlockers({ key: project.key, repository: id })
-              }
-              onSeparate={() => {
-                setOpenRepo(null);
-                changeMembers(
-                  members.filter((other) => identityOf(other) !== id),
-                );
-              }}
-              alsoDeletes={alsoIn(repo)}
-              onRemoveFromNucleus={() => removeFromNucleus(repo)}
             />
           );
         })}

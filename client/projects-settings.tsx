@@ -1,14 +1,10 @@
-import { useEngineFeatures } from "./engine-features";
 import { useArchiveProject } from "./project-selector-actions";
 import { errorText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Icon, useRpc } from "./shell";
 import {
-  ActionButton,
   Button,
-  Dialog,
-  DropdownSelect,
   Field,
   HelpPanel,
   muted,
@@ -19,21 +15,14 @@ import { roles, space, touchSlop, touchTarget, type } from "./design";
 import { Popover } from "./popover";
 import { ProjectEditor, type ProjectEditActions } from "./project-editor";
 import {
-  OWNER_NAME,
   folderName,
-  identityOf,
-  implicitRepositories,
-  projectKeyFor,
-  repositoryLabel,
   withoutHostPaths,
-  type ProjectRepository,
-} from "./project-helpers";
+  } from "./project-helpers";
 import {
   type Project,
   type ProjectSettings,
   type ProjectSettingsRow,
-  type ProjectUpsertInput,
-} from "../shared/contracts";
+  } from "../shared/contracts";
 
 /*
  * Settings → Projects (lane `nucleus-ui`, "Projects in Settings, replacing
@@ -268,7 +257,6 @@ export function ProjectsSection({
   inset,
   query,
   onFocus,
-  createProject,
   edit,
 }: {
   c: Colors;
@@ -277,14 +265,11 @@ export function ProjectsSection({
   query: ProjectsQuery;
   /** Reports the project open in the editor, or null at the list; its live state is read only then. */
   onFocus?: (key: string | null) => void;
-  createProject: (input: ProjectUpsertInput) => Promise<unknown>;
   /** The opened project's writes; without them rows do not open. */
   edit?: ProjectEditActions;
 }) {
-  const features = useEngineFeatures();
   const [view, setView] = useState<"list" | "project">("list");
   const [opened, setOpened] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("");
   const scroll = useRef<{
     scrollTo?: (to: { y: number; animated: boolean }) => void;
@@ -366,14 +351,6 @@ export function ProjectsSection({
               color={r.warning}
             />
           )}
-          {/* Rust engine (Spec 070 ruling 23): projects register on a planner's first dispatch. */}
-          {features.projectAgents && <ActionButton
-            c={c}
-            action="add"
-            label="Add project"
-            disabled={!data}
-            onPress={() => setAdding(true)}
-          />}
         </View>
         {!data && query.isPending && (
           <Text style={muted(c)}>Loading projects…</Text>
@@ -438,223 +415,12 @@ export function ProjectsSection({
                 c={c}
                 entry={entry}
                 onOpen={edit ? () => openProject(entry.project.key) : undefined}
-                archive={features.engine === "rust" ? () => query.refetch() : undefined}
+                archive={() => query.refetch()}
               />
             ))}
           </View>
         )}
       </ScrollView>
-      {adding && data && (
-        <AddProjectSheet
-          c={c}
-          rows={data.projects}
-          onClose={() => setAdding(false)}
-          onCreate={async (input) => {
-            await createProject(input);
-            setAdding(false);
-          }}
-        />
-      )}
     </View>
-  );
-}
-
-/**
- * Add project: a dialog that writes only on Create,
- * since a project with no repositories cannot exist. The key is derived from the
- * name and never shown. A refusal reads under the title in the server's words.
- */
-export function AddProjectSheet({
-  c,
-  rows,
-  onClose,
-  onCreate,
-}: {
-  c: Colors;
-  rows: readonly ProjectSettingsRow[];
-  onClose: () => void;
-  onCreate: (input: ProjectUpsertInput) => Promise<void>;
-}) {
-  const r = roles(c);
-  const [name, setName] = useState("");
-  const [chosen, setChosen] = useState<ProjectRepository[]>([]);
-  const [other, setOther] = useState<string | null>(null);
-  const [refusal, setRefusal] = useState("");
-  const [busy, setBusy] = useState(false);
-  const offered = implicitRepositories(rows).filter(
-    (repo) => !chosen.some((pick) => identityOf(pick) === identityOf(repo)),
-  );
-  const options = [
-    ...offered.map((repo) => ({
-      value: identityOf(repo),
-      label: repositoryLabel(repo),
-    })),
-    { value: OTHER, label: "Other…" },
-  ];
-  const add = (repo: ProjectRepository) =>
-    setChosen((list) =>
-      list.some((pick) => identityOf(pick) === identityOf(repo))
-        ? list
-        : [...list, repo],
-    );
-  const choose = (value: string) => {
-    if (value === OTHER) {
-      setOther("");
-      return;
-    }
-    const repo = offered.find((candidate) => identityOf(candidate) === value);
-    if (repo) add(repo);
-  };
-  const otherValid = other !== null && OWNER_NAME.test(other.trim());
-  const addOther = () => {
-    if (!otherValid) return;
-    const origin = other!.trim();
-    // A typed origin that is already a known repository takes its record, path hint included.
-    const known = implicitRepositories(rows).find(
-      (repo) => repo.origin?.toLowerCase() === origin.toLowerCase(),
-    );
-    add(known ?? { origin, path: "" });
-    setOther(null);
-  };
-  const ready = name.trim().length > 0 && chosen.length > 0 && !busy;
-  const create = async () => {
-    if (!ready) return;
-    setBusy(true);
-    setRefusal("");
-    try {
-      const key = projectKeyFor(
-        name.trim(),
-        rows.map((entry) => entry.project.key),
-      );
-      await onCreate({
-        key,
-        name: name.trim(),
-        repositories: chosen,
-        ...(chosen.length > 1 ? { primary: chosen[0] } : {}),
-        create: true,
-      });
-    } catch (error) {
-      setRefusal(withoutHostPaths(errorText(error)));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      c={c}
-      title="Add project"
-      label="Add project dialog"
-      closeLabel="Close Add project"
-      onClose={onClose}
-      bodyLabel="Add project fields"
-      footer={
-        <View style={{ ...row, justifyContent: "flex-end" }}>
-          <Button
-            c={c}
-            selected
-            text={busy ? "Creating…" : "Create"}
-            label="Create project"
-            disabled={!ready}
-            onPress={() => void create()}
-          />
-        </View>
-      }
-    >
-      {refusal ? (
-        <Text
-          accessibilityRole="alert"
-          style={{
-            color: r.danger,
-            fontSize: type.body.fontSize,
-            lineHeight: type.body.lineHeight,
-          }}
-        >
-          {refusal}
-        </Text>
-      ) : null}
-      <Field c={c} label="Name" value={name} onChange={setName} />
-      <View style={{ gap: space.xs }}>
-        <DropdownSelect
-          c={c}
-          label="Repositories"
-          value=""
-          placeholder="Choose"
-          options={options}
-          onChange={choose}
-        />
-        {other !== null && (
-          <View style={{ ...row, flexWrap: "nowrap", alignItems: "flex-end" }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Field
-                c={c}
-                label="Repository"
-                a11yLabel="Other repository (owner/name)"
-                placeholder="owner/name"
-                value={other}
-                onChange={setOther}
-              />
-            </View>
-            <ActionButton
-              c={c}
-              action="add"
-              label="Add repository"
-              disabled={!otherValid}
-              onPress={addOther}
-            />
-          </View>
-        )}
-        {chosen.map((repo, index) => {
-          const label = repositoryLabel(repo);
-          return (
-            <View
-              key={identityOf(repo)}
-              accessibilityLabel={`${label}${index === 0 ? ", primary" : ""}`}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: space.xs,
-                minHeight: touchTarget,
-              }}
-            >
-              <Text
-                numberOfLines={1}
-                style={{
-                  color: r.foreground,
-                  fontSize: type.body.fontSize,
-                  flexShrink: 1,
-                  minWidth: 0,
-                }}
-              >
-                {label}
-              </Text>
-              {index === 0 ? (
-                <Icon name="Star" size={14} color={r.accent} />
-              ) : (
-                <ActionButton
-                  c={c}
-                  action="primary"
-                  label={`Make ${label} primary`}
-                  onPress={() =>
-                    setChosen((list) => [
-                      repo,
-                      ...list.filter((pick) => pick !== repo),
-                    ])
-                  }
-                />
-              )}
-              <View style={{ flex: 1 }} />
-              <ActionButton
-                c={c}
-                action="remove"
-                label={`Remove ${label}`}
-                onPress={() =>
-                  setChosen((list) => list.filter((pick) => pick !== repo))
-                }
-              />
-            </View>
-          );
-        })}
-      </View>
-    </Dialog>
   );
 }

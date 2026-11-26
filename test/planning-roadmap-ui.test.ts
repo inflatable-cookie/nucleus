@@ -576,35 +576,6 @@ test("041 Drained flag stays hidden until part 2 computes it", async () => {
   assert.doesNotMatch(ui.text(), /Drained/);
 });
 
-test("an idle plan shows its reason on the roadmap, and an ordinary plan shows none", async () => {
-  const idlePlan: ProjectPlan = {
-    ...latest,
-    entries: [entry("l1", "later")],
-    idle: {
-      reason: "Waiting for real Cream gaps",
-      at: "2026-10-15T10:00:00.000Z",
-    },
-  };
-  const { ui } = await mountTab({
-    sections: [{ project: projects[0], latest: idlePlan, saved: idlePlan }],
-  });
-  assert.match(
-    JSON.stringify(ui.get("Idle on purpose")),
-    /Waiting for real Cream gaps/,
-  );
-  assert.equal(
-    ui.query("Focus"),
-    undefined,
-    "the idle reason stands in for the focus",
-  );
-  const plain = await mountTab();
-  assert.equal(plain.ui.query("Idle on purpose"), undefined);
-  assert.match(
-    JSON.stringify(plain.ui.get("Focus")),
-    /Aim n1/,
-    "an ordinary plan focuses on its first Now lane",
-  );
-});
 
 test("Planning renders the current plan while saved membership lags, but waits for the plan itself", async () => {
   const waiting = await mountTab({ sections: [{ project: projects[0] }] });
@@ -1022,19 +993,3 @@ test("an idle plan: a changed save ends its mark, End idle saves without one, an
   );
 });
 
-test("a read plan that is idle says so and says what ends it", async () => {
-  const idlePlan: ProjectPlan = {
-    ...latest,
-    entries: [entry("l1", "later")],
-    idle: { reason: "Waiting", at: "2026-10-15T10:00:00.000Z" },
-  };
-  const { ui } = await mountTab({
-    sections: [{ project: projects[0], latest: idlePlan, saved: idlePlan }],
-  });
-  assert.match(JSON.stringify(ui.get("Idle on purpose")), /Waiting/);
-  ui.press("Show alpha plan history");
-  assert.match(
-    JSON.stringify(ui.get("Plan history for alpha")),
-    /Idle on purpose since .*Saving a changed plan or finishing new work ends it\./,
-  );
-});

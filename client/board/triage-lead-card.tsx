@@ -15,7 +15,6 @@ import { Icon } from "../shell";
 import { BoardCard, ProjectBadgeMark, statusLabel } from "./cards";
 import { type Colors } from "../controls";
 import { cardLabelColor, type as typeScale } from "../design";
-import { useEngineFeatures } from "../engine-features";
 
 type Project = UiQueueState["projects"][number];
 
@@ -44,7 +43,6 @@ export function leadProjectEntries(
     origin?: string | null,
   ) => (Pick<Project, "name"> & Partial<Pick<Project, "key">>) | undefined,
   repositoryBadges?: Readonly<Record<string, ProjectBadge>>,
-  generateFallback = false,
 ): LeadProjectEntry[] {
   const groups = new Map<string, { name: string; key?: string; repos: BoardLead["repositories"] }>();
   for (const repo of repositories) {
@@ -64,7 +62,7 @@ export function leadProjectEntries(
     const badge =
       first && badges.every((candidate) => sameProjectBadge(candidate, first))
         ? first
-        : generateFallback && key ? generatedProjectBadge(name.trim() || key) : null;
+        : key ? generatedProjectBadge(name.trim() || key) : null;
     out.push({ id, name, badge });
   }
   return out;
@@ -88,12 +86,10 @@ export function LeadProjectEyebrow({
   repositoryBadges?: Readonly<Record<string, ProjectBadge>>;
   c: Colors;
 }) {
-  const { engine } = useEngineFeatures();
   const entries = leadProjectEntries(
     repositories,
     projectForRepository,
     repositoryBadges,
-    engine === "rust",
   );
   const labelStyle = {
     color: cardLabelColor(c),

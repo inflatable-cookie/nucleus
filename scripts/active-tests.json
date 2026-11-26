@@ -44,7 +44,6 @@
   "test/project-scope-ui.test.ts",
   "test/project-scope.test.ts",
   "test/project-selector-actions.test.ts",
-  "test/project-slots-popover.test.ts",
   "test/publication.test.ts",
   "test/pull-request-badge.test.ts",
   "test/qa-decision-surfaces.test.ts",
