@@ -51,6 +51,21 @@ struct NativeRow {
     commands: Vec<Value>,
     fail_next: bool,
     child: Option<Value>,
+    instant_holds: bool,
+    parent_runs: Vec<Value>,
+}
+
+impl NativeRow {
+    fn parent_activity(&self) -> Value {
+        let Some(run) = self.parent_runs.last() else {
+            return json!({"status":"idle","activeRunId":null,
+                "pendingRuntimeRequest":null,"pendingBackgroundTasks":[]});
+        };
+        json!({"status":"waiting","activeRunId":null,"pendingRuntimeRequest":null,
+            "latestRunId":run["id"],"latestRunStartedAt":run["startedAt"],
+            "latestRunCompletedAt":run["completedAt"],"updatedAt":run["completedAt"],
+            "pendingBackgroundTasks":[{"kind":"subagent","taskId":self.child.as_ref().unwrap()["id"]}]})
+    }
 }
 
 struct Fixture {
@@ -83,14 +98,16 @@ impl Fixture {
             match request["tag"].as_str().unwrap() {
                 "orchestration.subscribeThread" => {
                     assert_eq!(request["payload"]["threadId"], expected);
+                    let activity = row.parent_activity();
                     json!({"_tag":"Chunk","requestId":request["id"],"values":[
                         {"kind":"snapshot","snapshotSequence":1 + row.commands.len(),"projection":{
                             "thread":{"id":expected,"projectId":destination.project_id,
                                 "worktreePath":destination.worktree_path,"branch":destination.branch,
                                 "providerInstanceId":PROVIDER,
                                 "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},
-                                "snoozedUntil":row.until,"settledAt":row.settled_at},
-                            "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[],"subagents":[]
+                                "snoozedUntil":row.until,"settledAt":row.settled_at,
+                                "updatedAt":activity["updatedAt"]},
+                            "runs":row.parent_runs,"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[],"subagents":[]
                         }},
                         {"kind":"synchronized"}
                     ]})
@@ -114,6 +131,15 @@ impl Fixture {
                             row.settled_at = Value::Null;
                             row.until = Value::Null;
                             row.message_at = json!("2030-01-01T00:00:01Z");
+                            if row.instant_holds {
+                                let n = row.parent_runs.len();
+                                row.parent_runs.push(json!({
+                                    "id":format!("parent-run-{n}"),"status":"completed",
+                                    "userMessageId":payload["messageId"],"rootNodeId":format!("root-{n}"),
+                                    "startedAt":format!("2026-01-01T11:00:{n:02}.000Z"),
+                                    "completedAt":format!("2026-01-01T11:00:{n:02}.100Z"),
+                                }));
+                            }
                         }
                         other => panic!("unexpected native command {other}"),
                     }
@@ -175,6 +201,13 @@ impl Fixture {
                 "status":"idle","activeRunId":null,"pendingRuntimeRequest":null,"pendingBackgroundTasks":[]}]
         });
         let mut shell = shell;
+        if row.instant_holds {
+            shell["snapshotSequence"] = json!(1 + row.commands.len());
+            shell["threads"][0]
+                .as_object_mut()
+                .unwrap()
+                .extend(row.parent_activity().as_object().unwrap().clone());
+        }
         if let Some(child) = &row.child {
             shell["threads"].as_array_mut().unwrap().push(child.clone());
         }
@@ -248,6 +281,17 @@ impl Fixture {
             "status":if busy {"running"} else {"completed"}, "activeRunId":if busy {json!("run-1")} else {Value::Null}, "pendingRuntimeRequest":null,
             "pendingBackgroundTasks": [],
         }));
+    }
+
+    fn waiting_reviewer(&self, background: &str) -> Value {
+        let mut native = self.native.lock().unwrap();
+        let child = native.child.as_mut().unwrap();
+        child["status"] = json!("waiting");
+        child["pendingBackgroundTasks"] = json!([
+            {"kind":"monitor","taskId":background,"awaited":true},
+            {"kind":"monitor","taskId":"other-awaited-monitor","awaited":true}
+        ]);
+        child.clone()
     }
 
     async fn observed_snooze(&self) -> RowSnooze {
@@ -1272,6 +1316,179 @@ async fn the_held_parent_follows_the_child_across_an_authenticated_report() {
     assert_eq!(change.version, next.version);
     assert_eq!(service.acp_turn_view(&state, &next).unwrap(), (None, true));
     assert!(fixture.commands().is_empty());
+}
+
+async fn instant_parent_fixture() -> (Fixture, TaskRow) {
+    let head: nucleus_core::Head = "1".repeat(40).parse().unwrap();
+    let (mut task, credential, mut observation) = crate::tests::reserved_reviewer(ID, &head);
+    let launch = task.run().unwrap().launch().clone();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.lookup(&state, ID).unwrap()
+    };
+    task.record_send(&launch.instance, 2).unwrap();
+    service
+        .save(&row, task.clone(), &event("host_send"))
+        .await
+        .unwrap();
+    service
+        .report(
+            ID,
+            &launch.instance,
+            credential.as_bytes(),
+            Report::Review {
+                head,
+                decision: Review::Approve,
+                summary: "Fixture reviewer approved.".into(),
+                finding_titles: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let row = service.task(ID).await.unwrap();
+    task = row.task.clone();
+    observation.host = Observed::Known(Host::Current {
+        instance: launch.instance,
+        state: RunState::Ended,
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Merging)
+    );
+    assert!(task.run().is_none());
+    service
+        .save(&row, task, &event("phase_reconciled"))
+        .await
+        .unwrap();
+    let row = service.task(ID).await.unwrap();
+
+    fixture.child(&launch.thread, false);
+    {
+        let mut native = fixture.native.lock().unwrap();
+        native.instant_holds = true;
+        let child = native.child.as_mut().unwrap();
+        child["worktreePath"] = json!(fixture.binding.worktree_path);
+        child["branch"] = json!(fixture.binding.branch);
+        child["latestRunId"] = json!("reviewer-run-5");
+    }
+    fixture.waiting_reviewer("awaited-monitor-1");
+    fixture.publish_shell();
+    (fixture, row)
+}
+
+#[tokio::test]
+async fn a_waiting_reviewer_keeps_its_hold_and_one_command_covers_unchanged_activity() {
+    let (mut fixture, row) = instant_parent_fixture().await;
+    fixture.service.reenter_retained_parent(&row).await.unwrap();
+    let first = {
+        let native = fixture.native.lock().unwrap();
+        assert_eq!(native.commands.len(), 1);
+        native.commands[0].clone()
+    };
+    fixture.publish_shell();
+    {
+        let state = fixture.service.state.lock().await;
+        assert_eq!(
+            fixture.service.acp_turn_view(&state, &row).unwrap(),
+            (Some(first["text"].as_str().unwrap().to_owned()), false)
+        );
+    }
+    fixture.restart();
+    fixture.publish_shell();
+    let ((), calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(async {
+        for _ in 0..4 {
+            fixture.service.reenter_retained_parent(&row).await.unwrap();
+        }
+    }))
+    .await;
+    assert_eq!(calls.get("orchestration.subscribeThread"), Some(&1));
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+
+    // Reordering the same background set and editing the display row are not progress.
+    let mut child = fixture.waiting_reviewer("awaited-monitor-1");
+    child["pendingBackgroundTasks"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    child["title"] = json!("Edited display title");
+    fixture
+        .service
+        .host
+        .fixture_shell_delta(&json!({"kind":"thread.updated","sequence":3,"thread":child}));
+    fixture.service.reenter_retained_parent(&row).await.unwrap();
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+
+    let child = fixture.waiting_reviewer("awaited-monitor-2");
+    fixture
+        .service
+        .host
+        .fixture_shell_delta(&json!({"kind":"thread.updated","sequence":4,"thread":child}));
+    fixture.service.reenter_retained_parent(&row).await.unwrap();
+    fixture.publish_shell();
+    fixture.service.reenter_retained_parent(&row).await.unwrap();
+    assert_eq!(fixture.commands(), ["message.dispatch"; 2]);
+    let native = fixture.native.lock().unwrap();
+    assert_ne!(native.commands[1]["commandId"], first["commandId"]);
+}
+
+#[tokio::test]
+async fn three_instant_parent_holds_surface_an_owner_action_until_the_role_changes() {
+    let (fixture, row) = instant_parent_fixture().await;
+    let service = &fixture.service;
+    for background in [
+        "awaited-monitor-1",
+        "awaited-monitor-2",
+        "awaited-monitor-3",
+    ] {
+        fixture.waiting_reviewer(background);
+        fixture.publish_shell();
+        service.reenter_retained_parent(&row).await.unwrap();
+    }
+
+    // New evidence already present when the third instant turn is observed
+    // cannot authorise a fourth dispatch.
+    let child = fixture.waiting_reviewer("awaited-monitor-4");
+    fixture.publish_shell();
+    let hint =
+        |sequence, child| json!({"kind":"thread.updated","sequence":sequence,"thread":child});
+    service
+        .wake_from_host(nucleus_hosts::ThreadHint::fixture(&hint(4, child)).unwrap())
+        .await;
+    for _ in 0..4 {
+        let result = service
+            .reenter_retained_parent(&row)
+            .await
+            .map(|()| Action::Nothing);
+        assert!(matches!(result, Err(ServiceError::ParentHoldLoop)));
+        service
+            .schedule_result(&row, &result, Priority::Decision)
+            .await
+            .unwrap();
+    }
+    assert_eq!(fixture.commands(), ["message.dispatch"; 3]);
+    assert_eq!(fixture.attention().await, TaskAttention::Attention);
+    {
+        let state = service.state.lock().await;
+        assert!(state.recheckable(&row.task));
+        assert!(matches!(
+            state.wait_detail(ID),
+            Some(crate::WaitDetail::Blocked(message)) if message.contains("ended immediately three times")
+        ));
+        assert!(state.schedule.due(ID).is_none());
+    }
+
+    let child = fixture.waiting_reviewer("awaited-monitor-5");
+    let delta = hint(5, child);
+    service.host.fixture_shell_delta(&delta);
+    service
+        .wake_from_host(nucleus_hosts::ThreadHint::fixture(&delta).unwrap())
+        .await;
+    assert!(service.state.lock().await.schedule.due(ID).is_some());
+    service.reenter_retained_parent(&row).await.unwrap();
+    assert_eq!(fixture.commands(), ["message.dispatch"; 4]);
 }
 
 async fn create_visibility_row(fixture: &Fixture, task: &Task) -> TaskRow {

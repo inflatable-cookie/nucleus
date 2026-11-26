@@ -402,6 +402,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
         .save(&row, updated, &event("phase_reconciled"))
         .await
         .expect("apply report");
+    assert_working_transition(&service).await;
     service
         .state
         .lock()
@@ -438,7 +439,28 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     assert!(lifecycle["reviewer"].is_null());
 }
 
+async fn assert_working_transition(service: &Service) {
+    {
+        let state = service.state.lock().await;
+        let events = state.store.lifecycle_events("worker").unwrap();
+        let transition = events
+            .iter()
+            .find(|event| event.content.kind == "phase_transition")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&transition.content.detail).unwrap(),
+            json!({"from":"working", "to":"reviewing"})
+        );
+        assert_eq!(
+            state.store.get("worker").unwrap().unwrap().phase(),
+            Phase::Reviewing
+        );
+    }
+}
+
 fn assert_worker_history(history: &Value, instance: &str, thread: &str, sent_at_ms: u64) {
+    assert_eq!(history[0]["content"]["kind"], "phase_transition");
+    let history = without_transitions(history);
     assert_eq!(
         history[0]["presentation"],
         json!([
@@ -459,6 +481,15 @@ fn assert_worker_history(history: &Value, instance: &str, thread: &str, sent_at_
                 "startedAtMs":sent_at_ms - 2_000}
         ])
     );
+}
+
+fn without_transitions(history: &Value) -> Vec<&Value> {
+    history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["content"]["kind"] != "phase_transition")
+        .collect()
 }
 
 #[tokio::test]
@@ -556,6 +587,7 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
     assert_eq!(detail["lifecycle"]["steps"][2]["roundLabel"], "Round 2");
     assert_eq!(detail["lifecycle"]["steps"][2]["activeSinceMs"], 4);
     let history = json_body(get_as(&api, "/v1/tasks/reviewer/history", &BOARD_KEY).await).await;
+    let history = without_transitions(&history);
     assert_eq!(history[0]["presentation"][0]["purpose"], "Checking round 2");
     assert_eq!(
         history[5]["presentation"],
@@ -3487,6 +3519,135 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
     let api = setup(reopen());
     let revoked = browser_request(&api, Method::GET, session_path, Some(&cookie), None).await;
     assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn board_pairing_at_capacity_reclaims_the_least_recently_used_device() {
+    let forge = || GitHub::new("unused-fixture-forge").expect("fixture forge");
+    let (home, service) = fixture(forge());
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let controllers = [Controller {
+        credential: BOARD_KEY,
+        authority: Authority::Operator {
+            actor: "operator".into(),
+        },
+    }];
+    let api = router_with_board(Arc::new(service), controllers, &assets).unwrap();
+    let session_path = "/api/engine/session";
+    let mut cookies = Vec::new();
+    for _ in 0..64 {
+        cookies.push(pair_board(&api, &BOARD_KEY).await);
+    }
+    // Device 1 opens an event stream first, then every other device is used
+    // again. Device 1 is therefore the least recently used device at capacity.
+    let mut idle_events = browser_request(
+        &api,
+        Method::GET,
+        "/api/engine/events",
+        Some(cookies[1].as_str()),
+        None,
+    )
+    .await
+    .into_body()
+    .into_data_stream();
+    assert_event(&mut idle_events, &["event: refresh"]).await;
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    for (index, cookie) in cookies.iter().enumerate().filter(|(index, _)| *index != 1) {
+        let used = browser_request(&api, Method::GET, session_path, Some(cookie), None).await;
+        assert_eq!(used.status(), StatusCode::OK, "device {index}");
+    }
+
+    let fresh = pair_board(&api, &BOARD_KEY).await;
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), idle_events.next())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let fresh_session = browser_request(&api, Method::GET, session_path, Some(&fresh), None).await;
+    assert_eq!(fresh_session.status(), StatusCode::OK);
+    let recent = browser_request(
+        &api,
+        Method::GET,
+        session_path,
+        Some(cookies[0].as_str()),
+        None,
+    )
+    .await;
+    assert_eq!(recent.status(), StatusCode::OK);
+    let evicted = browser_request(
+        &api,
+        Method::GET,
+        session_path,
+        Some(cookies[1].as_str()),
+        None,
+    )
+    .await;
+    assert_eq!(evicted.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn board_pairing_after_a_restart_at_capacity_keeps_the_recently_used_device() {
+    let forge = || GitHub::new("unused-fixture-forge").expect("fixture forge");
+    let (home, service) = fixture(forge());
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let settings = service.settings.clone();
+    let project = service.fixture().clone();
+    let controllers = || {
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }]
+    };
+    let setup = |service| router_with_board(Arc::new(service), controllers(), &assets).unwrap();
+    let reopen = || reopen_fixture(&settings, project.clone(), forge());
+    let api = setup(service);
+    let session_path = "/api/engine/session";
+    let mut cookies = Vec::new();
+    for _ in 0..64 {
+        cookies.push(pair_board(&api, &BOARD_KEY).await);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    // Every device except device 1 is used after pairing, so device 1 is the
+    // least recently used when the engine restarts at capacity.
+    for (index, cookie) in cookies.iter().enumerate().filter(|(index, _)| *index != 1) {
+        let used = browser_request(&api, Method::GET, session_path, Some(cookie), None).await;
+        assert_eq!(used.status(), StatusCode::OK, "device {index}");
+    }
+    drop(api);
+
+    let api = setup(reopen());
+    let fresh = pair_board(&api, &BOARD_KEY).await;
+
+    let fresh_session = browser_request(&api, Method::GET, session_path, Some(&fresh), None).await;
+    assert_eq!(fresh_session.status(), StatusCode::OK);
+    let recent = browser_request(
+        &api,
+        Method::GET,
+        session_path,
+        Some(cookies[0].as_str()),
+        None,
+    )
+    .await;
+    assert_eq!(recent.status(), StatusCode::OK);
+    let evicted = browser_request(
+        &api,
+        Method::GET,
+        session_path,
+        Some(cookies[1].as_str()),
+        None,
+    )
+    .await;
+    assert_eq!(evicted.status(), StatusCode::UNAUTHORIZED);
 }
 
 async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyDataStream) {

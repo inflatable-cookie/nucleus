@@ -73,11 +73,19 @@ impl Inventory {
             .flat_map(|tree| tree.iter().map(|&pid| (pid, tree[0])))
             .collect();
         let mut current = process_identities(&ids, scratch).await?;
+        // A reused PID must not inherit the previous process's own-code evidence.
+        if current.iter().any(|(pid, identity)| {
+            lines
+                .get(pid)
+                .is_some_and(|line| line.started != identity.started)
+        }) {
+            return Err(HostError::Uncertain);
+        }
         let mut scan = OrphanScan::default();
         for tree in &trees {
             let owned = tree.iter().any(|pid| {
-                lines.get(pid).is_some_and(|(executable, arguments)| {
-                    runs_checkout_code(executable, arguments, checkout)
+                lines.get(pid).is_some_and(|line| {
+                    runs_checkout_code(&line.executable, &line.arguments, checkout)
                 })
             });
             if owned {
@@ -94,11 +102,19 @@ impl Inventory {
     }
 }
 
+/// Own-code evidence for one member of a candidate tree, bound to its start time.
+struct Evidence {
+    started: String,
+    executable: String,
+    arguments: String,
+}
+
 /// Executable path and argument string for each member of the candidate trees.
+/// Both reads must name the same start time, or the PID changed hands between them.
 async fn command_lines(
     pids: &BTreeSet<u32>,
     scratch: &Path,
-) -> Result<BTreeMap<u32, (String, String)>, HostError> {
+) -> Result<BTreeMap<u32, Evidence>, HostError> {
     if pids.is_empty() {
         return Ok(BTreeMap::new());
     }
@@ -107,22 +123,39 @@ async fn command_lines(
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let executables = ps_rows(&selected, "pid=,comm=", scratch).await?;
-    let arguments = ps_rows(&selected, "pid=,args=", scratch).await?;
-    Ok(executables
-        .into_iter()
-        .filter_map(|(pid, executable)| {
-            let arguments = arguments.get(&pid)?.clone();
-            Some((pid, (executable, arguments)))
-        })
-        .collect())
+    let executables = ps_rows(&selected, "pid=,lstart=,comm=", scratch).await?;
+    let arguments = ps_rows(&selected, "pid=,lstart=,args=", scratch).await?;
+    let mut evidence = BTreeMap::new();
+    for (pid, executable) in executables {
+        // Absent from the second read: the process exited, so it is not a target.
+        let Some(arguments) = arguments.get(&pid) else {
+            continue;
+        };
+        if arguments.started != executable.started {
+            return Err(HostError::Uncertain);
+        }
+        evidence.insert(
+            pid,
+            Evidence {
+                started: executable.started,
+                executable: executable.text,
+                arguments: arguments.text.clone(),
+            },
+        );
+    }
+    Ok(evidence)
+}
+
+struct PsRow {
+    started: String,
+    text: String,
 }
 
 async fn ps_rows(
     selected: &str,
     format: &str,
     scratch: &Path,
-) -> Result<BTreeMap<u32, String>, HostError> {
+) -> Result<BTreeMap<u32, PsRow>, HostError> {
     let listing = read_listing(
         "/bin/ps",
         &["-p", selected, "-o", format],
@@ -139,14 +172,36 @@ async fn ps_rows(
         .map_err(|_| HostError::Protocol)?
         .lines()
     {
-        let (pid, rest) = line
-            .trim_start()
-            .split_once(' ')
-            .unwrap_or((line.trim(), ""));
+        let (pid, mut rest) = split_word(line);
         let pid = pid.parse().map_err(|_| HostError::Protocol)?;
-        rows.insert(pid, rest.trim().to_owned());
+        // lstart is five words; the text after them is the command.
+        let mut started = Vec::with_capacity(5);
+        for _ in 0..5 {
+            let (word, next) = split_word(rest);
+            if word.is_empty() {
+                return Err(HostError::Protocol);
+            }
+            started.push(word);
+            rest = next;
+        }
+        rows.insert(
+            pid,
+            PsRow {
+                started: started.join(" "),
+                text: rest.trim_end().to_owned(),
+            },
+        );
     }
     Ok(rows)
+}
+
+/// The first whitespace-delimited word and the text after it, with leading space trimmed.
+fn split_word(text: &str) -> (&str, &str) {
+    let text = text.trim_start();
+    match text.find(char::is_whitespace) {
+        Some(end) => (&text[..end], text[end..].trim_start()),
+        None => (text, ""),
+    }
 }
 
 /// The task's own code runs when its executable or an absolute argument names

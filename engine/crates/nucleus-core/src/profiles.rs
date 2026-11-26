@@ -169,9 +169,12 @@ pub struct Candidate<'a> {
 
 impl Candidate<'_> {
     fn usable(self, effort: Option<Effort>) -> bool {
+        self.group_available && self.usable_if_unpaused(effort)
+    }
+
+    fn usable_if_unpaused(self, effort: Option<Effort>) -> bool {
         self.enabled
             && self.available
-            && self.group_available
             && effort
                 .or(self.profile.effort)
                 .is_none_or(|value| self.supported_efforts.contains(&value))

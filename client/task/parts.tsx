@@ -160,8 +160,9 @@ type IdentityField = { label: string; value: string; raw: boolean };
  */
 function profileThinking(task: Task): string {
   const profile = task.profile!;
+  const vocabulary = HOST_VOCABULARIES[hostKindOf(task.hostId)];
   return (
-    launchThinkingLevel(HOST_VOCABULARIES[hostKindOf(task.hostId)], profile) ??
+    (vocabulary ? launchThinkingLevel(vocabulary, profile) : null) ??
     profile.thinkingOptionId ??
     "provider default"
   );

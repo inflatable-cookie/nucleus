@@ -316,7 +316,7 @@ impl Service {
             .run()
             .filter(|run| !run.revoked() && run.report().is_none())
         {
-            let (state, error) = self.read_current_run(row, run, host, &route).await?;
+            let (state, error, limit) = self.read_current_run(row, run, host, &route).await?;
             if !forge_requested
                 && run.last_send_at_ms().is_some()
                 && task.question().is_none()
@@ -325,7 +325,7 @@ impl Service {
                 self.observe_commands(row, &Observed::Unknown).await?;
                 return wait.map_err(ServiceError::Host);
             }
-            Some((state, error))
+            Some((state, error, limit))
         } else {
             None
         };
@@ -399,7 +399,8 @@ impl Service {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
         }
-        let (host_state, mut host_error) = run_host.unwrap_or((Observed::Unknown, None));
+        let (host_state, mut host_error, limit) =
+            run_host.unwrap_or((Observed::Unknown, None, None));
         observation.host = host_state;
         let mut action = decide(task, &observation);
         if task.run().is_none()
@@ -520,7 +521,10 @@ impl Service {
             }
             Action::Wait(WaitReason::ForgeUnknown) if let Some(error) = forge_error => Err(error),
             Action::Wait(_) if forge_requested && let Some(error) = forge_error => Err(error),
-            action => self.apply(row, &observation, action).await,
+            action => {
+                self.apply_with_limit(row, &observation, action, limit.as_ref())
+                    .await
+            }
         }
     }
 
@@ -530,8 +534,9 @@ impl Service {
         run: &Run,
         host: &impl TaskHost,
         route: &ProjectRoute,
-    ) -> Result<(Observed<Host>, Option<HostError>), ServiceError> {
+    ) -> Result<(Observed<Host>, Option<HostError>, Option<serde_json::Value>), ServiceError> {
         let mut limited = None;
+        let mut limit_fact = None;
         // Only a continuing worker reuses a parent turn that may already have ended.
         let reuses_parent =
             self.acp_provider().is_some() && nucleus_hosts::retained_worker_continuation(run);
@@ -544,12 +549,16 @@ impl Service {
                     self.observe_run_routing(row, run, routing).await?;
                 }
                 if let Some(limit) = &seen.provider_limit {
-                    let cause = self.record_provider_limit(row, run, limit).await?;
+                    let (cause, group, reset_at_ms) =
+                        self.record_provider_limit(row, run, limit).await?;
                     if let Host::Current {
                         instance,
                         state: RunState::UsageLimited,
                     } = &seen.host
                     {
+                        limit_fact = Some(serde_json::json!({
+                            "instance": instance, "group": group, "resetAtMs": reset_at_ms,
+                        }));
                         limited = Some(Observed::Known(Host::ProviderLimited {
                             instance: instance.clone(),
                             cause,
@@ -591,7 +600,7 @@ impl Service {
             // soon instead of waiting for the live check that may come after it ends.
             self.recheck_reentry(row).await;
         }
-        Ok((limited.unwrap_or(state), error))
+        Ok((limited.unwrap_or(state), error, limit_fact))
     }
 
     pub(super) fn check_forge_ready(&self) -> Result<(), ForgeError> {
@@ -784,6 +793,16 @@ impl Service {
         observation: &Observation,
         action: Action,
     ) -> Result<Action, ServiceError> {
+        self.apply_with_limit(row, observation, action, None).await
+    }
+
+    async fn apply_with_limit(
+        &self,
+        row: &TaskRow,
+        observation: &Observation,
+        action: Action,
+        limit: Option<&serde_json::Value>,
+    ) -> Result<Action, ServiceError> {
         let kind = match &action {
             Action::Advance(_)
                 if matches!(
@@ -834,7 +853,7 @@ impl Service {
         let mut audit = event(kind);
         if kind == "provider_limit" {
             audit.detail =
-                serde_json::json!({"cause": updated.threads().last_provider_limit}).to_string();
+                serde_json::json!({"cause": updated.threads().last_provider_limit, "providerLimit": limit}).to_string();
         }
         if kind == "merge_returned_to_work" {
             audit.detail = serde_json::json!({
@@ -1439,6 +1458,18 @@ impl Service {
             detail.insert("laneDocumentPins".into(), serde_json::json!(pins));
         }
         if let Some(selected) = selection
+            && let Some(ceiling) = selected.intent.step_up_from()
+        {
+            detail.insert(
+                "profileStepUp".into(),
+                serde_json::json!({
+                    "ordinaryCeiling": ceiling,
+                    "selectedCapability": selected.intent.profile().capability,
+                    "reason": "Every eligible profile within the ordinary ceiling is paused."
+                }),
+            );
+        }
+        if let Some(selected) = selection
             && let Some(worker) = selected.intent.critical_fallback_worker()
         {
             let receipt = CriticalReviewFallback {
@@ -2004,11 +2035,19 @@ impl Service {
         self.apply(row, &observation, next).await
     }
 
-    fn earlier_scratch_roots<'a>(&'a self, task: &'a Task) -> impl Iterator<Item = PathBuf> + 'a {
-        task.earlier_run_scratch()
+    fn retirement_roots<'a>(
+        &'a self,
+        task: &'a Task,
+        checkout: &Checkout<'_>,
+    ) -> impl Iterator<Item = PathBuf> + 'a {
+        let earlier = task
+            .earlier_run_scratch()
             .filter_map(|(instance, recorded)| {
                 self.retained_scratch_path(&task.identity().id, &instance, recorded)
-            })
+            });
+        std::iter::once(checkout.path().to_owned())
+            .chain(self.existing_run_scratch(task))
+            .chain(earlier)
     }
 
     // Both callers hold the task and project fences and have inspected this owned checkout.
@@ -2019,10 +2058,7 @@ impl Service {
         checkout: &Checkout<'_>,
     ) -> Result<(), ServiceError> {
         let scratch = self.storage.scratch().path();
-        let run_scratch = self.existing_run_scratch(task);
-        let roots = std::iter::once(checkout.path().to_owned())
-            .chain(run_scratch)
-            .chain(self.earlier_scratch_roots(task));
+        let roots = self.retirement_roots(task, checkout);
         let mut retained = Vec::new();
         let mut found = None;
         for root in roots {
@@ -2134,9 +2170,7 @@ impl Service {
         ];
         let threads: Vec<_> = threads.into_iter().flatten().collect();
         // Each lookup uses the pass's shared process census.
-        for root in
-            std::iter::once(checkout.path().to_owned()).chain(self.earlier_scratch_roots(task))
-        {
+        for root in self.retirement_roots(task, checkout) {
             if let Some(pid) = host.retirement_writer(&root).await? {
                 return Err(ServiceError::ArchiveEvidence(format!(
                     "PID {pid} has its working directory in the task checkout or run scratch."
@@ -2517,7 +2551,11 @@ mod tests {
         );
     }
 
-    async fn settled_cleanup_task(service: &Service, home: &Path) -> (TaskRow, PathBuf) {
+    async fn settled_cleanup_task(
+        service: &Service,
+        home: &Path,
+        legacy: bool,
+    ) -> (TaskRow, PathBuf) {
         use std::os::unix::fs::DirBuilderExt as _;
 
         let scratch = home.canonicalize().unwrap().join("assigned-scratch");
@@ -2592,6 +2630,11 @@ mod tests {
             &observation,
         )
         .unwrap();
+        let scratch = if legacy {
+            legacy_scratch(service, &mut task, &scratch)
+        } else {
+            scratch
+        };
         service
             .state
             .lock()
@@ -2604,82 +2647,165 @@ mod tests {
         (row, scratch)
     }
 
+    fn legacy_scratch(service: &Service, task: &mut Task, scratch: &Path) -> PathBuf {
+        let instance = task.earlier_run_scratch().next().unwrap().0;
+        let derived = service
+            .storage
+            .scratch()
+            .path()
+            .join(scratch::relative_path(&instance));
+        std::fs::create_dir_all(derived.parent().unwrap()).unwrap();
+        std::fs::rename(scratch, &derived).unwrap();
+        let mut saved = serde_json::to_value(&*task).unwrap();
+        saved["threads"]
+            .as_object_mut()
+            .unwrap()
+            .remove("earlier_scratch");
+        saved["threads"]
+            .as_object_mut()
+            .unwrap()
+            .remove("settled_scratch");
+        *task = serde_json::from_value(saved).unwrap();
+        derived
+    }
+
     #[tokio::test]
-    async fn a_process_in_settled_run_scratch_holds_checkout_retirement() {
-        let (home, service) = fixture(GitHub::new("fixture").unwrap());
-        let (row, scratch) = settled_cleanup_task(&service, home.path()).await;
-        let id = &row.task.identity().id;
-        let head = service.fixture().start.clone();
-        let bound = service.existing_run_scratch(&row.task);
-        assert_ne!(bound.as_deref(), Some(scratch.as_path()));
-        assert!(
-            service
-                .earlier_scratch_roots(&row.task)
-                .any(|path| path == scratch)
-        );
-        let work = service.worktrees().unwrap();
-        let route = service.project_for(row.task.identity()).await.unwrap();
-        let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();
-        checkout.allocate(&head).unwrap();
-        let binding = service
-            .checkout_binding(row.task.identity(), &route, &checkout)
+    async fn writers_in_all_retirement_roots_hold_checkout() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        for legacy in [false, true] {
+            let (home, service) = fixture(GitHub::new("fixture").unwrap());
+            let (row, earlier) = settled_cleanup_task(&service, home.path(), legacy).await;
+            let id = &row.task.identity().id;
+            let head = service.fixture().start.clone();
+            let current = service.existing_run_scratch(&row.task);
+            let work = service.worktrees().unwrap();
+            let route = service.project_for(row.task.identity()).await.unwrap();
+            let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();
+            checkout.allocate(&head).unwrap();
+            let binding = service
+                .checkout_binding(row.task.identity(), &route, &checkout)
+                .unwrap();
+            // Legacy rows derive the current path as well as earlier paths.
+            let current = current.unwrap_or_else(|| {
+                let (instance, _) = row.task.settled_scratch().unwrap();
+                let path = service
+                    .storage
+                    .scratch()
+                    .path()
+                    .join(scratch::relative_path(&instance));
+                std::fs::create_dir_all(&path).unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+                path
+            });
+            for root in [checkout.path(), current.as_path(), earlier.as_path()] {
+                let mut child = tokio::process::Command::new("/bin/sleep")
+                    .arg("60")
+                    .current_dir(root)
+                    .kill_on_drop(true)
+                    .spawn()
+                    .unwrap();
+                let pid = child.id().unwrap();
+                let host = service
+                    .host
+                    .pass(service.storage.scratch().path())
+                    .with_fixture_process_cwd(pid, root)
+                    .for_task(&row.task, service.existing_run_scratch(&row.task));
+                let result = service
+                    .retire_if_idle(&host, &row.task, &binding, &checkout, Some(&head))
+                    .await;
+                child.kill().await.unwrap();
+                assert!(
+                    matches!(&result, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
+                    "{result:?}"
+                );
+                assert!(checkout.path().exists());
+            }
+        }
+    }
+
+    struct ProtectedTree(Vec<u32>);
+
+    impl Drop for ProtectedTree {
+        fn drop(&mut self) {
+            for pid in self.0.iter().rev() {
+                let _ = std::process::Command::new("/bin/kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .output();
+            }
+        }
+    }
+
+    async fn protected_host_tree(dir: &Path) -> ProtectedTree {
+        // The orphan root contains the described host and its child.
+        let script = r#"/bin/sh -c '/bin/sh -c '\''/bin/sleep 60 >/dev/null 2>&1 & echo "$PPID $$ $!"; exec >/dev/null 2>&1; wait'\'' & exec >/dev/null 2>&1; wait' </dev/null &"#;
+        let output = tokio::process::Command::new("/bin/sh")
+            .args(["-c", script])
+            .current_dir(dir)
+            .output()
+            .await
             .unwrap();
-        let mut child = tokio::process::Command::new("/bin/sleep")
-            .arg("60")
-            .current_dir(&scratch)
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let host = service
-            .host
-            .pass(service.storage.scratch().path())
-            .for_task(&row.task, bound);
-        let result = service
-            .retire_if_idle(&host, &row.task, &binding, &checkout, Some(&head))
-            .await;
-        let pid = child.id().unwrap();
-        child.kill().await.unwrap();
-        assert!(
-            matches!(&result, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
-            "{result:?}"
-        );
-        assert!(checkout.path().exists());
+        assert!(output.status.success());
+        let pids: Vec<u32> = std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .split_whitespace()
+            .map(|pid| pid.parse().unwrap())
+            .collect();
+        assert_eq!(pids.len(), 3);
+        let tree = ProtectedTree(pids);
+        for (pid, parent) in [
+            (tree.0[0], 1),
+            (tree.0[1], tree.0[0]),
+            (tree.0[2], tree.0[1]),
+        ] {
+            let output = std::process::Command::new("/bin/ps")
+                .args(["-p", &pid.to_string(), "-o", "ppid="])
+                .output()
+                .unwrap();
+            assert_eq!(
+                std::str::from_utf8(&output.stdout).unwrap().trim(),
+                parent.to_string()
+            );
+        }
+        tree
     }
 
     #[tokio::test]
     async fn terminal_cleanup_stops_only_the_checkout_orphan_tree() {
-        exercise_terminal_orphan_cleanup(false).await;
+        exercise_terminal_orphan_cleanup(false, false, true).await;
     }
 
     #[tokio::test]
     async fn terminal_cleanup_stops_only_the_settled_scratch_orphan_tree() {
-        exercise_terminal_orphan_cleanup(true).await;
+        exercise_terminal_orphan_cleanup(true, false, false).await;
     }
 
-    async fn exercise_terminal_orphan_cleanup(in_scratch: bool) {
+    #[tokio::test]
+    async fn terminal_cleanup_handles_pre_upgrade_scratch() {
+        exercise_terminal_orphan_cleanup(true, true, false).await;
+    }
+
+    async fn exercise_terminal_orphan_cleanup(in_scratch: bool, legacy: bool, host_tree: bool) {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.host = crate::tests::verified_native_fixture(
-            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
-            home.path(),
-        );
-        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
         service.fixture_mut().acp_provider = Some("fixture".into());
         service.state.lock().await.settings.dispatch =
             Some(nucleus_store::DispatchSettings::default());
         let (terminal, scratch) = if in_scratch {
-            let (row, scratch) = settled_cleanup_task(&service, home.path()).await;
+            let (row, scratch) = settled_cleanup_task(&service, home.path(), legacy).await;
             (row, Some(scratch))
         } else {
             (cancelled_cleanup_task(&service).await, None)
         };
         let id = &terminal.task.identity().id;
         assert_eq!(terminal.task.phase(), Phase::Cancelled);
-        let work = service.worktrees().unwrap();
-        let checkout = work
-            .checkout(&service.fixture().checkout, REPOSITORY, id)
-            .unwrap();
-        checkout.allocate(&service.fixture().start).unwrap();
-        let base = checkout.path();
+        let base = {
+            let work = service.worktrees().unwrap();
+            let checkout = work
+                .checkout(&service.fixture().checkout, REPOSITORY, id)
+                .unwrap();
+            checkout.allocate(&service.fixture().start).unwrap();
+            checkout.path().to_owned()
+        };
         std::fs::write(base.join("unpublished"), "retain").unwrap();
         let spawn = |dir: &Path| {
             tokio::process::Command::new("/bin/sleep")
@@ -2689,7 +2815,18 @@ mod tests {
                 .spawn()
                 .unwrap()
         };
-        let orphan_dir = scratch.as_deref().unwrap_or(base);
+        let orphan_dir = scratch.as_deref().unwrap_or(&base);
+        let protected = if host_tree {
+            Some(protected_host_tree(orphan_dir).await)
+        } else {
+            None
+        };
+        let native = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+        service.host = match &protected {
+            Some(tree) => crate::tests::described_native_fixture(native, home.path(), tree.0[1]),
+            None => crate::tests::verified_native_fixture(native, home.path()),
+        };
+        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
         let mut host_child = spawn(orphan_dir);
         let mut outside = spawn(home.path());
         // The orphan runs a script from its root directory, so its argv names the task's own code.
@@ -2719,6 +2856,20 @@ mod tests {
             matches!(&outcome, Err(ServiceError::ArchiveEvidence(s)) if s.contains("exited")),
             "{outcome:?}"
         );
+        assert_cleanup_history(&service, id, &pids, protected.as_ref()).await;
+        assert!(base.join("unpublished").exists());
+        assert!(host_child.try_wait().unwrap().is_none());
+        assert!(outside.try_wait().unwrap().is_none());
+        host_child.kill().await.unwrap();
+        outside.kill().await.unwrap();
+    }
+
+    async fn assert_cleanup_history(
+        service: &Service,
+        id: &str,
+        pids: &[u32],
+        protected: Option<&ProtectedTree>,
+    ) {
         let history = service.history(id, None, 25).await.unwrap();
         let sent = |pid: u32, signal: &str| {
             history
@@ -2737,7 +2888,7 @@ mod tests {
                         })
                 })
         };
-        for (index, pid) in pids.into_iter().enumerate() {
+        for (index, &pid) in pids.iter().enumerate() {
             assert!(sent(pid, "SIGTERM"));
             assert_eq!(sent(pid, "SIGKILL"), index < 2);
             let probe = tokio::process::Command::new("/bin/ps")
@@ -2752,16 +2903,68 @@ mod tests {
                         .starts_with('Z')
             );
         }
-        assert!(base.join("unpublished").exists());
-        assert!(host_child.try_wait().unwrap().is_none());
-        assert!(outside.try_wait().unwrap().is_none());
-        host_child.kill().await.unwrap();
-        outside.kill().await.unwrap();
+        if let Some(tree) = protected {
+            for &pid in &tree.0 {
+                assert!(!sent(pid, "SIGTERM"));
+                assert!(!sent(pid, "SIGKILL"));
+                assert!(
+                    std::process::Command::new("/bin/kill")
+                        .args(["-0", &pid.to_string()])
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+            }
+        }
     }
 
     #[tokio::test]
     async fn an_external_orphan_in_the_checkout_is_retained_and_holds_retirement() {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let head = service.fixture().start.clone();
+        // The forge reports the checkout's branch as published at its head, so archive reaches retirement.
+        let (main, branch) = (head.clone(), head.clone());
+        let (forge, _server) =
+            crate::tests::serve_forge(
+                axum::Router::new()
+                    .route(
+                        &format!("/repos/{REPOSITORY}/branches/main"),
+                        axum::routing::get(move || {
+                            let main = main.clone();
+                            async move { axum::Json(json!({"name":"main","commit":{"sha":main}})) }
+                        }),
+                    )
+                    .route(
+                        &format!("/repos/{REPOSITORY}/branches"),
+                        axum::routing::get(move || {
+                            let branch = branch.clone();
+                            async move {
+                                axum::Json(vec![
+                                    json!({"name":"ns-orphan-test","commit":{"sha":branch}}),
+                                ])
+                            }
+                        }),
+                    )
+                    .route(
+                        &format!("/repos/{REPOSITORY}/branches/ns-orphan-test"),
+                        axum::routing::get(move || {
+                            let head = head.clone();
+                            async move {
+                                axum::Json(json!({"name":"ns-orphan-test","commit":{"sha":head}}))
+                            }
+                        }),
+                    )
+                    .route(
+                        "/graphql",
+                        axum::routing::post(|| async {
+                            axum::Json(
+                                json!({"data":{"repository":{"pullRequests":{"totalCount":0}}}}),
+                            )
+                        }),
+                    ),
+            )
+            .await;
+        service.forge = forge;
         service.host = crate::tests::verified_native_fixture(
             T3::new("http://127.0.0.1:9", "fixture").unwrap(),
             home.path(),
@@ -2777,9 +2980,8 @@ mod tests {
             .checkout(&service.fixture().checkout, REPOSITORY, id)
             .unwrap();
         checkout.allocate(&service.fixture().start).unwrap();
-        // The checkout stays clean at its recorded head, so archive reaches the writer hold.
         let base = checkout.path();
-        // The launching shell exits, so sleep is orphaned. Its argv names no checkout path.
+        // The launching shell exits, so sleep is orphaned with its cwd in the checkout. Its argv names no path.
         let output = tokio::process::Command::new("/bin/sh")
             .args(["-c", "/bin/sleep 60 >/dev/null 2>&1 & echo $!"])
             .current_dir(base)
@@ -2791,22 +2993,7 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
-        // The closeout sequence: stop the checkout's orphans, then retire only if idle.
-        let route = service.project_for(terminal.task.identity()).await.unwrap();
-        let binding = service
-            .checkout_binding(terminal.task.identity(), &route, &checkout)
-            .unwrap();
-        let head = service.fixture().start.clone();
-        let host = service
-            .host
-            .pass(service.storage.scratch().path())
-            .for_task(&terminal.task, service.existing_run_scratch(&terminal.task));
-        let stopped = service
-            .stop_checkout_orphans(&host, &terminal.task, &checkout)
-            .await;
-        let outcome = service
-            .retire_if_idle(&host, &terminal.task, &binding, &checkout, Some(&head))
-            .await;
+        let outcome = service.archive_done(&terminal).await;
         let alive = tokio::process::Command::new("/bin/ps")
             .args(["-p", &pid.to_string(), "-o", "stat="])
             .output()
@@ -2818,7 +3005,6 @@ mod tests {
             .status()
             .await
             .unwrap();
-        assert!(stopped.is_ok(), "{stopped:?}");
         assert!(
             matches!(&outcome, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
             "{outcome:?}"
@@ -2886,36 +3072,39 @@ mod tests {
             }));
         };
         shell(json!([]));
-        let retire = || async {
-            service
-                .retire_if_idle(
-                    &service.host.pass(service.storage.scratch().path()),
-                    &task,
-                    &binding,
-                    &checkout,
-                    Some(head),
-                )
-                .await
-        };
         let mut writer = tokio::process::Command::new("/bin/sleep")
             .arg("60")
             .current_dir(checkout.path())
             .kill_on_drop(true)
             .spawn()
             .unwrap();
+        let writer_host = service
+            .host
+            .pass(service.storage.scratch().path())
+            .with_fixture_process_cwd(writer.id().unwrap(), checkout.path())
+            .for_task(&task, None);
         assert!(
-            matches!(retire().await, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {}", writer.id().unwrap())))
+            matches!(service.retire_if_idle(&writer_host, &task, &binding, &checkout, Some(head)).await, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {}", writer.id().unwrap())))
         );
         assert!(checkout.path().exists());
         writer.kill().await.unwrap();
+        let quiet_host = service.host.fixture_pass().for_task(&task, None);
         shell(json!([{"id":"active-child","parentThreadId":parent,"status":"running"}]));
         assert!(matches!(
-            retire().await,
+            service
+                .retire_if_idle(&quiet_host, &task, &binding, &checkout, Some(head))
+                .await,
             Err(ServiceError::Host(HostError::RowChildBusy))
         ));
         assert!(checkout.path().exists());
         shell(json!([]));
-        assert_eq!(retire().await.unwrap(), Some(Retirement::Removed));
+        assert_eq!(
+            service
+                .retire_if_idle(&quiet_host, &task, &binding, &checkout, Some(head))
+                .await
+                .unwrap(),
+            Some(Retirement::Removed)
+        );
         assert!(!checkout.path().exists());
         assert!(service.host.host_calls().is_empty());
     }

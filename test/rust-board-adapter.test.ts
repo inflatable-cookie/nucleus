@@ -26,6 +26,7 @@ import { listenForPlanningIssues } from "../client/web/rust-planning";
 import { rustProfileUsage, rustProjectArchive } from "../client/rust-contracts";
 import { profileUsage } from "../client/settings-profile-helpers";
 import { nightlyProviders } from "./support/pool-shapes";
+import type { HostList } from "../client/hosts-settings";
 import type {
   RustCachedCatalog,
   RustLane,
@@ -52,6 +53,10 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 2,
     projectSlotOverrides: { Orbit_Main: 3, lantern: 1 },
     providerLimitCooldownSeconds: 300, mode: "running",
+  };
+  let t3Settings: { endpoint: string; credentialRef: string } | null = {
+    endpoint: "http://127.0.0.1:3773/",
+    credentialRef: "T3",
   };
   let profiles: Record<string, unknown> = {
     profiles: [{
@@ -95,7 +100,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
       return { ...snap(profiles, "profiles"), effectiveGroups: Object.fromEntries(groups) };
     },
     projects: () => ({ settings: snap(projects, "projects"), resolvedPlanners: { Orbit_Main: "thread-1" }, verifiedPlanners: { Orbit_Main: ["thread-1", "claimed-thread"] } }),
-    hosts: () => ({ settings: snap({ t3: { endpoint: "http://127.0.0.1:3773/", credentialRef: "T3" } }, "hosts"), active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" } }),
+    hosts: () => ({ settings: snap({ t3: t3Settings }, "hosts"), active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" } }),
     storage: () => ({
       settings: snap({ enabled: true, workRoot: null, scratchRoot: null, logRoot: null, retention: { keepNewest: 5, maxAgeDays: null } }, "storage"),
       active: { databaseRoot: "/e/db", workRoot: "/e/work", backupRoot: "/e/backups", scratchRoot: "/e/scratch", logRoot: "/e/logs" },
@@ -225,6 +230,7 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
     setCatalog: (next: RustCachedCatalog) => { catalog = next; },
     setOfferedGroups: (next: Record<string, string>) => { offeredGroups = next; },
     setUsage: (next: RustProfileUsage) => { usage = next; },
+    setT3: (next: typeof t3Settings) => { t3Settings = next; },
   };
 }
 
@@ -246,6 +252,83 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
   assert.deepEqual(storage.backups, { newestAt: "2026-11-24T08:00:00Z", verified: 1, issues: 0 });
   assert.deepEqual(storage.configBackups, { newestAt: "2026-11-25T09:00:00Z", verified: 1, issues: 1 });
   assert.ok(board.repositoryBadges?.["/work/orbit"]);
+});
+
+test("the Rust Hosts panel uses only the host returned by its settings adapter", async () => {
+  useNativeStubs();
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const { HostsPanel } = await import("../client/hosts-settings");
+  const h = React.createElement;
+  const mountPanel = (
+    list: HostList,
+    defaultHostKind: api.CapacityAuthorityValues["operatorDefaultHostKind"],
+    saveDefaultHost: () => Promise<void> = async () => {},
+  ) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = mount(h(QueryClientProvider, {
+      client,
+      children: h(PluginRpcProvider, {
+        invoke: (async () => ({})) as never,
+        children: h(EngineFeaturesContext.Provider, {
+          value: RUST_ENGINE_FEATURES,
+          children: h(HostsPanel, {
+            c: new Proxy({}, { get: () => "#123" }) as never,
+            list,
+            loading: false,
+            loadError: null,
+            retry: () => {},
+            defaultValues: { operatorDefaultHostKind: defaultHostKind } as api.CapacityAuthorityValues,
+            saveDefaultHost,
+            remove: async () => {},
+          }),
+        }),
+      }),
+    }));
+    return {
+      ui,
+      close: () => {
+        ui.update(h(React.Fragment));
+        client.clear();
+      },
+    };
+  };
+
+  const list = await adapter.rpc(api.hostList, {});
+  assert.deepEqual(list.hosts.map(({ kind }) => kind), ["t3code"]);
+  const registered = mountPanel(list, "t3code");
+  try {
+    assert.ok(registered.ui.query("T3 Code host t3, Online, default"));
+    assert.ok(registered.ui.get("Default host, T3 Code"));
+    assert.doesNotMatch(registered.ui.text(), /Paseo|BB/);
+    registered.ui.press("Default host, T3 Code");
+    assert.deepEqual(
+      registered.ui
+        .all(/^Default host: /)
+        .map(({ props }) => props.accessibilityLabel)
+        .sort(),
+      ["Default host: Planner's host", "Default host: T3 Code"],
+    );
+    assert.match(registered.ui.text(), /Planner's host/);
+    assert.doesNotMatch(registered.ui.text(), /Paseo|BB/);
+  } finally {
+    registered.close();
+  }
+
+  fake.setT3(null);
+  const noRegistration = await adapter.rpc(api.hostList, {});
+  assert.deepEqual(noRegistration.hosts, []);
+  let saves = 0;
+  const unavailable = mountPanel(noRegistration, "bb", async () => {
+    saves++;
+  });
+  try {
+    assert.ok(unavailable.ui.get("Default host, Unavailable"));
+    assert.doesNotMatch(unavailable.ui.text(), /Paseo|BB/);
+    assert.equal(saves, 0);
+  } finally {
+    unavailable.close();
+  }
 });
 
 test("Projects reads and writes the full positive Rust hung-tool range", async () => {
@@ -1215,6 +1298,61 @@ test("a board click and action address the selected project's colliding decision
   const saved = await adapter.rpc(api.papercutGet, { id: "cut", project: "lantern" });
   assert.equal(saved?.closedReason, "completed");
   assert.equal(saved?.note, null);
+});
+
+test("the mounted Rust board counts parked leads and papercuts like their All lists", async (t) => {
+  const fake = engine();
+  const openLead = {
+    id: "open-lead", kind: "lead", author: "Planner", title: "Open lead",
+    body: "An open idea", lanes: [], state: "open", createdAtMs: 10,
+  };
+  const items = [
+    openLead,
+    { ...openLead, id: "parked-lead", title: "Parked lead", state: "parked", reason: "Later" },
+    { ...openLead, id: "parked-papercut", kind: "papercut", title: "Parked papercut", state: "parked", reason: "Later" },
+  ];
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = String(url);
+    if (path === "/api/engine/planning/Orbit_Main/items") return Response.json(items);
+    if (path === "/api/engine/planning/lantern/items") return Response.json([]);
+    return fake.fetcher(url, init);
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  useNativeStubs();
+  const { MainSurface } = await import("../client/queue");
+  const { bindBoardShell } = await import("../client/shell");
+  const web = await import("../client/web/shell");
+  bindBoardShell({ ...web, Icon: () => null });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const h = React.createElement;
+  const ui = mount(h(QueryClientProvider, {
+    client,
+    children: h(web.WebContext.Provider, {
+      value: { transport: adapter, settings: false },
+      children: h(EngineFeaturesContext.Provider, {
+        value: RUST_ENGINE_FEATURES,
+        children: h(MainSurface, {
+          theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
+          layout: { compact: false },
+        }),
+      }),
+    }),
+  }));
+  t.after(() => {
+    ui.update(h(React.Fragment));
+    client.clear();
+    useNativeStubs();
+  });
+  const press = async (label: string | RegExp) => {
+    await waitFor(() => Boolean(ui.query(label)), 4000, String(label));
+    ui.press(label);
+  };
+
+  await press(/^Leads, 2$/);
+  await waitFor(() => ui.text().includes("2 items") && Boolean(ui.query(/^Lead: Parked lead,/)), 4000, "All leads and matching menu count");
+  assert.ok(ui.query(/^Lead: Open lead,/));
+  await press(/^Papercuts, 1$/);
+  await waitFor(() => ui.text().includes("1 item") && Boolean(ui.query(/^Papercut: Parked papercut,/)), 4000, "All papercuts and matching menu count");
 });
 
 test("the board reads, edits, and closes the selected project's lane when keys collide", async (t) => {

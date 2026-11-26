@@ -189,6 +189,24 @@ const next = current.extend({
   allowance: allowance.optional(),
   commands: nextCommands,
 });
+// Outcome fields keep the engine's snake_case names; `Milestone` camel-cases only its own fields.
+const runOutcome = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("work"),
+    url: z.string(),
+    summary: z.string().nullish(),
+    revision: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("review"),
+    decision: z.enum(["approve", "changes"]),
+    summary: z.string(),
+    finding_titles: z.array(z.string()),
+    change_url: z.string().nullish(),
+  }),
+  z.object({ kind: z.literal("report"), summary: z.string() }),
+  z.object({ kind: z.literal("blocked"), reason: z.string() }),
+]);
 const historyRecord = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("run_started"),
@@ -202,7 +220,20 @@ const historyRecord = z.discriminatedUnion("kind", [
     startedAtMs: timestamp.optional(),
     round: revision.optional(),
   }),
-  z.object({ kind: z.literal("run_reported"), instance: z.string(), sentAtMs: timestamp }),
+  z.object({
+    kind: z.literal("run_routing"),
+    instance: z.string(),
+    providerInstance: z.string(),
+    provider: z.string().nullish(),
+    model: z.string(),
+  }),
+  z.object({
+    kind: z.literal("run_reported"),
+    instance: z.string(),
+    sentAtMs: timestamp,
+    // An outcome from a newer engine must not hide the report itself.
+    outcome: runOutcome.nullish().catch(undefined),
+  }),
   z.object({ kind: z.literal("run_ended"), instance: z.string() }),
   z.object({ kind: z.literal("pull_request"), url: z.httpUrl() }),
   z.object({ kind: z.literal("verdict"), verdict }),
@@ -210,11 +241,28 @@ const historyRecord = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("merged"), commit: head }),
   z.object({ kind: z.literal("finished"), phase }),
 ]);
+const warnedUnknownHistoryRecords = new Set<string>();
+// One record the board cannot read is dropped alone, so the page keeps its other entries.
+const historyPresentation = z.array(z.unknown()).transform((records) =>
+  records.flatMap((record) => {
+    const parsed = historyRecord.safeParse(record);
+    if (parsed.success) return [parsed.data];
+    const kind =
+      typeof record === "object" && record !== null && "kind" in record
+        ? String(record.kind)
+        : "unknown";
+    if (!warnedUnknownHistoryRecords.has(kind)) {
+      warnedUnknownHistoryRecords.add(kind);
+      console.warn("Ignoring Rust board history record", kind);
+    }
+    return [];
+  }),
+);
 const history = z.array(
   z.object({
     sequence: revision,
     content: z.object({ at: timestamp }),
-    presentation: z.array(historyRecord),
+    presentation: historyPresentation,
   }),
 );
 const summaries = z.array(summary);
@@ -239,6 +287,7 @@ export type RustTaskDetail = z.infer<typeof detail>;
 export type RustNext = z.infer<typeof next>;
 export type RustVerdict = z.infer<typeof verdict>;
 export type RustHistoryPage = z.infer<typeof history>;
+export type RustRunOutcome = z.infer<typeof runOutcome>;
 export type RustCommand =
   | { move: RustPhase }
   | { move_work: { instruction: string } }

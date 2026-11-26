@@ -6,9 +6,9 @@ import { projectRepositorySchema } from "./projects";
  *
  * Full QA no longer runs per task. The operator or a planner asks Queue to run
  * a repository's full QA on current `main` at a milestone. The run happens in a
- * Queue-owned linked worktree of the repository's registered checkout, the same
- * shape a Paseo task worktree has, under project-qa/. Queue runs paseo.json
- * worktree.setup and worktree.teardown there, scopes Effigy resources to that
+ * Queue-owned linked worktree of the repository's registered checkout under
+ * project-qa/. Queue runs the repository's configured worktree setup and
+ * teardown there, scopes Effigy resources to that
  * checkout, and never uses a task worktree or writes to the registered working
  * tree. The run goes through Queue's host scheduler as a heavy run with one run
  * per repository at a time, and records its state, duration, per-step output and

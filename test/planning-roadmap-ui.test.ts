@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import React, { useState } from "react";
-import { mount, useNativeStubs } from "./support/render";
+import { mount, useNativeStubs, type HostNode } from "./support/render";
 import { recentProjectActivity } from "./support/project-activity";
 import {
   type LaneView,
@@ -365,6 +365,75 @@ test("041-2 / 1531 rendered: Now, Next and Later columns, finished lanes collaps
     JSON.stringify(ui.get("Now in version 4")),
     /Title joined/,
     "the saved membership never lists a lane that joined after it",
+  );
+});
+
+test("1599 rendered: side by side, each column scrolls its own lanes under its heading, with the header and Focus outside; a narrow pane keeps one scrolling pane", async () => {
+  const { ui } = await mountTab();
+  const within = (root: HostNode, target: HostNode): boolean =>
+    root.children.some(
+      (child) =>
+        typeof child !== "string" &&
+        (child === target || within(child, target)),
+    );
+  const descendants = (root: HostNode): HostNode[] =>
+    root.children.flatMap((child) =>
+      typeof child === "string" ? [] : [child, ...descendants(child)],
+    );
+  const textOf = (node: HostNode | string): string =>
+    typeof node === "string"
+      ? node
+      : node.children.map((child) => textOf(child)).join("");
+  const resize = (width: number) =>
+    ui.get("Planning project").props.onLayout({
+      nativeEvent: { layout: { width } },
+    });
+
+  resize(1200);
+  assert.equal(
+    ui.get("Planning project").type,
+    "View",
+    "side by side, the detail pane does not scroll as a whole",
+  );
+  const focus = ui.get("Focus");
+  const history = ui.get("Show alpha plan history");
+  for (const horizon of ["Now", "Next", "Later"]) {
+    const scroll = ui.get(`${horizon} lanes`);
+    const columnNode = ui.get(`${horizon} column`);
+    assert.equal(scroll.type, "ScrollView", `${horizon} lanes scroll on their own`);
+    assert.ok(within(columnNode, scroll), `${horizon} scroll sits in its column`);
+    const heading = descendants(columnNode).find(
+      (node) => node.type === "Text" && textOf(node) === horizon,
+    );
+    assert.ok(heading, `${horizon} heading sits in its column`);
+    assert.ok(!within(scroll, heading), `${horizon} heading stays above its scroll`);
+  }
+  assert.match(textOf(ui.get("Now lanes")), /Title n1/);
+  assert.match(textOf(ui.get("Next lanes")), /Title x1/);
+  for (const scroll of ui.ofType("ScrollView")) {
+    assert.ok(!within(scroll, focus), "the Focus block is outside every scroll");
+    assert.ok(!within(scroll, history), "the plan header is outside every scroll");
+  }
+  ui.press("Finished lanes, 2");
+  assert.ok(
+    ui.get("Open lane Title d-old, finished"),
+    "finished lanes stay reachable side by side",
+  );
+
+  resize(600);
+  assert.equal(
+    ui.get("Planning project").type,
+    "ScrollView",
+    "a narrow pane keeps one scrolling pane",
+  );
+  assert.equal(
+    ui.query("Now lanes"),
+    undefined,
+    "stacked columns have no scroll of their own",
+  );
+  assert.ok(
+    within(ui.get("Planning project"), ui.get("Focus")),
+    "stacked, the Focus scrolls with the pane",
   );
 });
 

@@ -33,6 +33,7 @@ import {
   type RustInvalidation,
   type RustNext,
   type RustQuestion,
+  type RustRunOutcome,
   type RustTask,
   type RustTaskDetail,
   type RustVerdict,
@@ -643,6 +644,44 @@ function PullRequestLink({ c, url }: { c: Colors; url: string }) {
   );
 }
 
+function OutcomeText({ c, outcome }: { c: Colors; outcome: RustRunOutcome }) {
+  const { title, details } = (() => {
+    switch (outcome.kind) {
+      case "work":
+        return {
+          title: outcome.revision ? "Revision submitted" : "Work submitted",
+          details: [outcome.summary],
+        };
+      case "review":
+        return {
+          title:
+            outcome.decision === "approve"
+              ? "Review: approved"
+              : "Review: changes requested",
+          details: [outcome.summary, ...outcome.finding_titles],
+        };
+      case "report":
+        return { title: "Report", details: [outcome.summary] };
+      case "blocked":
+        return { title: "Blocked", details: [outcome.reason] };
+    }
+  })();
+  return (
+    <>
+      <Text selectable style={{ color: c.foreground }}>
+        {title}
+      </Text>
+      {details.flatMap((line, index) =>
+        line ? [
+          <Text key={index} selectable style={muted(c)}>
+            {line}
+          </Text>,
+        ] : [],
+      )}
+    </>
+  );
+}
+
 function VerdictText({ c, verdict }: { c: Colors; verdict: RustVerdict }) {
   const state =
     "accepted" in verdict
@@ -692,8 +731,23 @@ function ActivityHistory({
         let body;
         switch (record.kind) {
           case "run_ended":
-          case "run_reported":
             return null;
+          case "run_reported":
+            if (!record.outcome) return null;
+            body = <OutcomeText c={c} outcome={record.outcome} />;
+            break;
+          case "run_routing": {
+            const via = record.provider || record.providerInstance;
+            body = (
+              <>
+                <Text style={{ color: c.foreground }}>
+                  {`Routed to ${record.model}`}
+                </Text>
+                {via ? <Text style={muted(c)}>{via}</Text> : null}
+              </>
+            );
+            break;
+          }
           case "run_started":
             body = (
               <>

@@ -326,7 +326,7 @@ pub trait TaskHost: Send + Sync {
     /// Returns an error when the pass cannot establish workspace custody.
     fn retirement_writer(
         &self,
-        checkout: &Path,
+        root: &Path,
     ) -> impl Future<Output = Result<Option<u32>, HostError>> + Send;
 
     /// Identify checkout-owned orphan trees for a terminal task, and the shared
@@ -424,6 +424,20 @@ struct PassEvidence {
     profiles: OnceCell<Result<Arc<ProfileCatalog>, HostError>>,
     processes: OnceCell<Result<Inventory, HostError>>,
     sent: AtomicBool,
+}
+
+#[cfg(any(test, feature = "loopback-fixture"))]
+impl T3Pass<'_> {
+    /// Use one known process cwd in this loopback fixture pass.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_fixture_process_cwd(mut self, pid: u32, cwd: &Path) -> Self {
+        self.evidence = Arc::new(PassEvidence {
+            processes: OnceCell::new_with(Some(Ok(Inventory::process_fixture(pid, cwd)))),
+            ..PassEvidence::default()
+        });
+        self
+    }
 }
 
 impl T3 {
@@ -928,12 +942,10 @@ impl T3Pass<'_> {
 }
 
 impl TaskHost for T3Pass<'_> {
-    async fn retirement_writer(&self, checkout: &Path) -> Result<Option<u32>, HostError> {
-        self.process_inventory().await?.writer(
-            checkout,
-            self.run_scratch.as_deref(),
-            &std::collections::HashSet::new(),
-        )
+    async fn retirement_writer(&self, root: &Path) -> Result<Option<u32>, HostError> {
+        self.process_inventory()
+            .await?
+            .writer(root, None, &std::collections::HashSet::new())
     }
 
     async fn terminal_orphans(

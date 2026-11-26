@@ -2812,7 +2812,8 @@ async fn assert_retirement_history(registry: &Registry, task_path: &str) {
         .as_array()
         .unwrap()
         .iter()
-        .map(|event| &event["content"]["kind"]);
+        .map(|event| &event["content"]["kind"])
+        .filter(|kind| *kind != "phase_transition");
     assert_eq!(kinds.next(), Some(&json!("project_removed")));
     assert_eq!(kinds.next(), Some(&json!("fixture_finished")));
     assert!(kinds.all(|kind| kind != "project_removed"));
