@@ -1,0 +1,1 @@
+Remove the retired Paseo and BB profile vocabularies and repository setup file. Profile migration, task display and profile tests now use the T3 vocabulary while keeping the host translation interface available for future hosts.

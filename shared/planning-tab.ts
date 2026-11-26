@@ -159,7 +159,7 @@ export function projectPlanningCounts(
         !["done", "cancelled"].includes(task.phase) &&
         owns(task.repository, task.repoPath),
     ).length,
-    // A parked lead is off the to-do list and out of every count (Nucleus#1543).
+    // A parked lead is off the to-do list and excluded from planning counts (Nucleus#1543).
     leads: leads.filter(
       (lead) =>
         lead.state === "open" &&

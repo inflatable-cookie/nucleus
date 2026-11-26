@@ -1,5 +1,4 @@
 import type { PoolEntry } from '../../shared/contracts';
-import type { HostCatalog } from '../../shared/host';
 
 /**
  * The installed nightly's provider snapshot as `server.getConfig` reports it
@@ -51,8 +50,6 @@ export const nightlyProviders = () => [
  * Synthetic copies of the live profile pool's shapes (read once, read-only),
  * in Nucleus's canonical vocabulary (task 1158): provider, model, thinking level,
  * runtime mode, roles, capability, cost and whether the pool enables it. The
- * live pool's Paseo spellings moved once: Claude's `bypassPermissions` is
- * `full-access`, and Grok's `auto_accept` option is the `full-access` mode. The
  * ids and names are synthetic so the fixture carries no live identity.
  */
 export type ShapeProfile = { label: string; provider: string; model: string; modeId?: string; thinkingOptionId?: string; featureValues?: Record<string, unknown> };
@@ -77,33 +74,9 @@ export const poolShapes: Array<{ entry: Omit<PoolEntry, 'profileId'>; profile: S
     profile: { label: 'Pi deepseek (no mode)', provider: 'pi', model: 'opencode-go/deepseek-v4.1-flash', thinkingOptionId: 'high', featureValues: {} } },
   { entry: { enabled: false, group: 'glm', roles: ['worker', 'reviewer', 'coordinator'], capability: 'worker', weight: "more", scopes: ['general', 'mechanical', 'complex'] },
     profile: { label: 'Pi glm (no mode, disabled)', provider: 'pi', model: 'opencode-go/deepseek-v4.1-flash', thinkingOptionId: 'high' } },
-  // The mode fence itself: a canonical mode neither host's Codex can express,
-  // and one both can.
+  // The mode fence itself: one canonical mode Codex cannot express and one it can.
   { entry: { enabled: true, group: 'codex', roles: ['worker'], capability: 'worker', weight: "default", scopes: ['general'] },
     profile: { label: 'Mode-only (plan)', provider: 'codex', model: 'gpt-6-luna', modeId: 'plan' } },
   { entry: { enabled: true, group: 'codex', roles: ['reviewer'], capability: 'worker', weight: "default", scopes: ['general'] },
     profile: { label: 'Mode-only (auto)', provider: 'codex', model: 'gpt-6-luna', modeId: 'auto' } },
 ];
-
-
-/**
- * A synthetic Paseo catalog in the shape the daemon reports (read once from the
- * live catalog, 2026-11-12): Claude's five modes and its thinking ids with
- * `ultracode`, Codex's three modes, Pi's opencode-go models with thinking levels
- * and no modes, and Grok with its `auto_accept` toggle (a read with a project
- * directory). Identifiers are synthetic.
- */
-const levels = (...ids: string[]) => ids.map(id => ({ id, label: id }));
-export const paseoCatalog = (): HostCatalog => ({ providers: [
-  { key: 'claude', label: 'Claude', available: true, problem: '', models: ['claude-haiku-5-5', 'claude-opus-5-5'].map(id => ({ id, label: id, aliases: [],
-    thinkingOptions: levels('low', 'medium', 'high', 'xhigh', 'max', 'ultracode'), defaultThinkingOptionId: null,
-    modes: ['plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions'].map(mode => ({ id: mode, label: mode })), features: [] })) },
-  { key: 'codex', label: 'Codex', available: true, problem: '', models: ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra'].map(id => ({ id, label: id, aliases: [],
-    thinkingOptions: levels('low', 'medium', 'high', 'xhigh', 'max', 'ultra'), defaultThinkingOptionId: null,
-    modes: ['auto', 'auto-review', 'full-access'].map(mode => ({ id: mode, label: mode })), features: [] })) },
-  { key: 'pi', label: 'Pi', available: true, problem: '', models: [
-    { id: 'opencode-go/muse-spark-1.3-contributor', label: 'Muse', aliases: [], thinkingOptions: levels('minimal', 'low', 'medium', 'high', 'xhigh'), defaultThinkingOptionId: null, modes: [], features: [] },
-    { id: 'opencode-go/deepseek-v4.1-flash', label: 'Deepseek', aliases: [], thinkingOptions: levels('low', 'high', 'max'), defaultThinkingOptionId: null, modes: [], features: [] }] },
-  { key: 'grok', label: 'Grok', available: true, problem: '', models: [{ id: 'grok-4.6', label: 'Grok 4.6', aliases: [], thinkingOptions: levels('xhigh', 'high', 'medium', 'low'), defaultThinkingOptionId: null, modes: [],
-    features: [{ type: 'toggle' as const, id: 'auto_accept', label: 'Auto accept', value: false }] }] },
-] });
