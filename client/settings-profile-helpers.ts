@@ -44,7 +44,7 @@ export const WEIGHT_STOP_SPEECH: Record<api.ProfileWeight, string> = {
 };
 export const levelLabel = (level: string) =>
   level.charAt(0).toUpperCase() + level.slice(1).replaceAll("_", " ");
-/** Below this editor width (a phone) paired fields stack; Paseo's settings column keeps them side by side. */
+/** Below this editor width (a phone) paired fields stack. */
 export const PAIRED_MIN_WIDTH = 460;
 export const HOST_DEFAULT = { value: "", label: "Host default" };
 export const PLAIN_KEYS: Record<string, string> = {

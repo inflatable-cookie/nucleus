@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { t3HostCatalog } from "../hosts/t3code/catalog";
 import { configProvider } from "../hosts/t3code/config";
 import { t3codeVocabulary } from "../hosts/t3code/vocabulary";
-import { paseoVocabulary } from "../hosts/paseo/vocabulary";
 import {
   nucleusProfileSchema,
   profileAvailability,
@@ -17,13 +16,18 @@ import {
   translateProfile,
 } from "../shared/profile-vocabulary";
 import { withCanonicalOption } from "../client/settings-profile-helpers";
-import { paseoOptionCatalog } from "./support/paseo-option-catalog";
 import { liveConfigModels } from "./support/t3-nightly-config";
 
 // Board profiles use canonical option keys. Catalog fixtures contain the original host spellings.
 const astra = nucleusProfileSchema.parse({
-  id: "astra", name: "Astra", provider: "codex", model: "gpt-6.2-astra",
-  modeId: "full-access", thinkingOptionId: "high", featureValues: {}, notes: "",
+  id: "astra",
+  name: "Astra",
+  provider: "codex",
+  model: "gpt-6.2-astra",
+  modeId: "full-access",
+  thinkingOptionId: "high",
+  featureValues: {},
+  notes: "",
 });
 const onT3Terra = (profile: NucleusProfile): NucleusProfile => ({
   ...profile,
@@ -35,16 +39,10 @@ const withSpeed = (profile: NucleusProfile, speed: string): NucleusProfile => ({
 });
 
 test("a speed T3 can't express excludes the profile from T3 selection with a per-host note, never a send refusal", () => {
-  const catalog = t3HostCatalog(liveConfigModels.map(p => configProvider.parse(p)));
-  const profile = withSpeed(astra, "ultrafast");
-  const [paseo] = routingProfiles(
-    [profile],
-    paseoOptionCatalog(),
-    paseoVocabulary,
+  const catalog = t3HostCatalog(
+    liveConfigModels.map((p) => configProvider.parse(p)),
   );
-  assert.equal(paseo!.available, true, "Paseo's Astra offers ultrafast");
-  assert.deepEqual(paseo!.featureValues, { service_tier: "ultrafast" });
-
+  const profile = withSpeed(astra, "ultrafast");
   const answer = profileCompatibility(
     onT3Terra(profile),
     catalog,
@@ -58,26 +56,17 @@ test("a speed T3 can't express excludes the profile from T3 selection with a per
 
   // A model the table can carry but that does not offer the value is the same
   // canonical fact on that host, named in the operator's words.
-  const terra = { ...profile, model: "gpt-6.1-terra" };
-  const onPaseo = profileCompatibility(
-    terra,
-    paseoOptionCatalog(),
-    paseoVocabulary,
-  );
-  assert.equal(onPaseo.status, "unavailable");
-  assert.equal(onPaseo.reason, "Paseo's gpt-6.1-terra has no speed Ultrafast");
-  assert.equal(onPaseo.problem, onPaseo.reason);
 });
 
-test("the editor shows one Speed control from both hosts and choosing it clears host spellings", () => {
-  const catalog = t3HostCatalog(liveConfigModels.map(p => configProvider.parse(p)));
+test("the editor shows one Speed control from the T3 catalog and choosing it clears host spellings", () => {
+  const catalog = t3HostCatalog(
+    liveConfigModels.map((p) => configProvider.parse(p)),
+  );
   const merged = mergeCanonicalCatalogs([
-    canonicalCatalog(paseoVocabulary, paseoOptionCatalog()),
     canonicalCatalog(t3codeVocabulary, catalog),
   ]);
   const codex = merged.providers.find((provider) => provider.key === "codex")!;
-  // Terra is reported by both hosts: Paseo's `service_tier` and T3's
-  // `serviceTier` merge into the one Speed control.
+  // The canonical speed option is exposed once despite T3's native spelling.
   const terraModel = codex.models.find(
     (model) => model.id === "gpt-6.1-terra",
   )!;
@@ -106,7 +95,6 @@ test("the editor shows one Speed control from both hosts and choosing it clears 
     [
       ["default", "Normal"],
       ["priority", "Fast"],
-      ["ultrafast", "Ultrafast"],
     ],
   );
   const opus = merged.providers
@@ -121,8 +109,7 @@ test("the editor shows one Speed control from both hosts and choosing it clears 
 
   // The editor judges the canonical profile against the canonical catalog.
   assert.equal(
-    profileAvailability(withSpeed(astra, "priority"), merged)
-      .available,
+    profileAvailability(withSpeed(astra, "priority"), merged).available,
     true,
   );
   assert.deepEqual(
