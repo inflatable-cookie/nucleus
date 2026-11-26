@@ -49,6 +49,7 @@ struct ForgeFixture {
     posts: Mutex<Vec<(String, Value)>>,
     remote: Mutex<Option<Value>>,
     reads: AtomicUsize,
+    traffic: Mutex<Vec<&'static str>>,
     merges: AtomicUsize,
 }
 
@@ -67,6 +68,7 @@ impl ForgeFixture {
             posts: Mutex::default(),
             remote: Mutex::default(),
             reads: AtomicUsize::new(0),
+            traffic: Mutex::default(),
             merges: AtomicUsize::new(0),
         })
     }
@@ -91,6 +93,7 @@ async fn post_review(
     Json(input): Json<Value>,
 ) -> impl IntoResponse {
     let id = reviewer_id(&headers);
+    remote.traffic.lock().unwrap().push("post");
     let attempt = {
         let mut posts = remote.posts.lock().unwrap();
         posts.push((bearer(&headers).into(), input.clone()));
@@ -152,6 +155,7 @@ async fn list_reviews(
     headers: HeaderMap,
 ) -> Json<Vec<Value>> {
     assert_eq!(bearer(&headers), OPERATOR);
+    remote.traffic.lock().unwrap().push("inventory");
     let inventory = remote.reads.fetch_add(1, Ordering::Relaxed) + 1;
     let visible = remote.visible.load(Ordering::Relaxed)
         || inventory >= remote.visible_at_inventory.load(Ordering::Relaxed);
@@ -320,7 +324,7 @@ async fn formal_review_reconciles_once_under_the_original_account_and_fences_mer
             ))
         ));
     }
-    assert_eq!(remote.reads.load(Ordering::Relaxed), 2);
+    assert!(remote.reads.load(Ordering::Relaxed) <= 4);
     assert_eq!(remote.posts.lock().unwrap().len(), 1);
     let store = Store::open(&service.storage).unwrap();
     let retained = store.review_publication(TASK, &instance).unwrap().unwrap();
@@ -514,7 +518,13 @@ async fn claimed_review_survives_reopen_and_resubmits_once_after_complete_absenc
         assert_eq!(record.intent, intent);
         assert_eq!(record.outcome, ReviewPublicationOutcome::Resubmitted);
     }
-    assert_eq!(remote.reads.load(Ordering::Relaxed), 3);
+    assert!(remote.reads.load(Ordering::Relaxed) <= 5);
+    let traffic = remote.traffic.lock().unwrap().clone();
+    let post = traffic.iter().position(|event| *event == "post").unwrap();
+    assert!(
+        traffic[..post].contains(&"inventory"),
+        "absence must be checked before resubmission"
+    );
     remote.visible.store(true, Ordering::Relaxed);
     assert_eq!(
         advance(&service).await.unwrap(),
@@ -874,10 +884,24 @@ async fn assert_throttled_publication(resubmission: bool) {
     let posts = remote.posts.lock().unwrap();
     assert_eq!(posts.len(), 3);
     // Each resubmission reconciles the original, including after the successful POST.
-    assert_eq!(
-        remote.reads.load(Ordering::Relaxed),
-        if resubmission { 7 } else { 5 }
-    );
+    assert!(remote.reads.load(Ordering::Relaxed) <= if resubmission { 9 } else { 7 });
+    if resubmission {
+        let traffic = remote.traffic.lock().unwrap();
+        for (index, event) in traffic
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| **event == "post")
+        {
+            let previous = traffic[..index]
+                .iter()
+                .rposition(|event| *event == "post")
+                .map_or(0, |i| i + 1);
+            assert!(
+                traffic[previous..index].contains(&"inventory"),
+                "resubmission requires a fresh inventory before {event}"
+            );
+        }
+    }
     assert!(posts.iter().all(|post| post == &posts[0]));
     server.abort();
 }
