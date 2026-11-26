@@ -332,6 +332,13 @@ test("Rust default host choices are registered hosts plus Planner's host", async
   );
   try {
     multiple.ui.press("Default host, T3Code");
+    assert.deepEqual(
+      multiple.ui
+        .all(/^Default host: /)
+        .map(({ props }) => props.accessibilityLabel)
+        .sort(),
+      ["Default host: BB", "Default host: Planner's host", "Default host: T3Code"],
+    );
     assert.match(multiple.ui.text(), /T3Code/);
     assert.match(multiple.ui.text(), /BB/);
     assert.match(multiple.ui.text(), /Planner's host/);
@@ -363,6 +370,25 @@ test("an unregistered Rust default stays unavailable until the operator changes 
     assert.equal(saves, 0);
   } finally {
     unavailable.done();
+  }
+});
+
+test("a pending or failed Rust host read does not claim the saved default is unavailable", async () => {
+  for (const loadError of [null, new Error("service unavailable")]) {
+    const unknown = await mountHosts(
+      {
+        list: undefined,
+        loadError,
+        defaultValues: { ...CAPACITY, operatorDefaultHostKind: "bb" },
+      },
+      true,
+    );
+    try {
+      assert.ok(unknown.ui.get("Default host, BB"));
+      assert.doesNotMatch(unknown.ui.text(), /Unavailable/);
+    } finally {
+      unknown.done();
+    }
   }
 });
 
