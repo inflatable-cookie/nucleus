@@ -105,8 +105,8 @@ const ATTENTION_PHASES: readonly string[] = [
   "needs_attention",
 ];
 /** Live tasks in a lane that need someone, from the server's complete per-phase count. */
-export const laneAttention = (lane: Pick<LaneView, "liveByPhase">) =>
-  ATTENTION_PHASES.reduce(
+export const laneAttention = (lane: Pick<LaneView, "liveByPhase" | "attentionCount">) =>
+  lane.attentionCount ?? ATTENTION_PHASES.reduce(
     (sum, phase) => sum + (lane.liveByPhase[phase] ?? 0),
     0,
   );

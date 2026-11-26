@@ -1268,7 +1268,7 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rows = [
     { ...rustTaskCard("orbit-live", "queued", "orbit#1", "example/orbit-docs"), title: "Orbit work", lanes: ["Delivery_Q4"] },
-    { ...rustTaskCard("lantern-live", "working", "lantern#2", "example/lantern"), title: "Lantern work", lanes: ["Delivery_Q4"] },
+    { ...rustTaskCard("lantern-live", "working", "lantern#2", "example/lantern"), title: "Lantern work", attention: "attention", wait: "permission", lanes: ["Delivery_Q4"] },
     { ...rustTaskCard("other-lane", "queued", "lantern#3", "example/lantern"), title: "Different lane", lanes: ["elsewhere"] },
     { ...rustTaskCard("finished", "done", "lantern#4", "example/lantern"), title: "Finished work" },
   ];
@@ -1329,6 +1329,7 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   await visible("Open lead lantern idea");
   assert.equal(ui.query("Open lead meadow idea"), undefined);
   await visible("Live tasks: 1");
+  await visible("Need you: 1");
   assert.equal(ui.query("orbit#1, Orbit work"), undefined);
   assert.doesNotMatch(ui.text(), /Different lane|Finished work|Couldn’t load work/);
   ui.press("lantern#2, Lantern work");
