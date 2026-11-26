@@ -53,7 +53,7 @@ import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
 import { RustTaskProgress } from "../task/rust-progress";
-import { rustQuestionText, rustTaskLabel, rustWaitDetail, type RustTask } from "../web/rust-board";
+import { rustCardAgeAt, rustQuestionText, rustTaskLabel, rustWaitDetail, type RustTask } from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
 
@@ -885,9 +885,6 @@ export function InboxList({
 }
 
 const rustPageSize = 25;
-
-const rustCardAgeAt = (task: RustTask) =>
-  task.stateSinceMs ?? task.latestEventAtMs ?? task.lifecycle.admittedAtMs;
 
 export function RustListRows({ c, rust, view }: {
   c: Colors;

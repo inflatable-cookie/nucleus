@@ -534,6 +534,9 @@ export const rustColumns = {
 export type RustBoardView = (typeof rustColumns)[RustPhase] | "needs";
 export type RustExtraView = Extract<RustBoardView, "merging" | "history">;
 
+export const rustCardAgeAt = (task: RustTask) =>
+  task.stateSinceMs ?? task.latestEventAtMs ?? task.lifecycle.admittedAtMs;
+
 export function groupRustTasks(
   tasks: readonly RustTask[],
 ): Record<RustBoardView, RustTask[]> {
@@ -552,6 +555,12 @@ export function groupRustTasks(
     if (column !== "needs") columns[column].push(task);
     else if (task.attention !== "attention") columns.working.push(task);
   }
+  columns.history.sort((a, b) => {
+    const aTime = rustCardAgeAt(a) ?? -Infinity;
+    const bTime = rustCardAgeAt(b) ?? -Infinity;
+    if (aTime !== bTime) return bTime - aTime;
+    return a.identity.id < b.identity.id ? 1 : a.identity.id > b.identity.id ? -1 : 0;
+  });
   return columns;
 }
 
