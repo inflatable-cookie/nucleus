@@ -408,6 +408,12 @@ test("1599 rendered: side by side, each column scrolls its own lanes under its h
     assert.ok(heading, `${horizon} heading sits in its column`);
     assert.ok(!within(scroll, heading), `${horizon} heading stays above its scroll`);
   }
+  assert.equal(ui.get("Now column").props.style.borderLeftWidth, undefined);
+  for (const horizon of ["Next", "Later"]) {
+    const style = ui.get(`${horizon} column`).props.style;
+    assert.equal(style.borderLeftWidth, 1, `${horizon} has a wide-layout divider`);
+    assert.equal(typeof style.borderColor, "string");
+  }
   assert.match(textOf(ui.get("Now lanes")), /Title n1/);
   assert.match(textOf(ui.get("Next lanes")), /Title x1/);
   for (const scroll of ui.ofType("ScrollView")) {
@@ -421,6 +427,12 @@ test("1599 rendered: side by side, each column scrolls its own lanes under its h
   );
 
   resize(600);
+  for (const horizon of ["Now", "Next", "Later"])
+    assert.equal(
+      ui.get(`${horizon} column`).props.style.borderLeftWidth,
+      undefined,
+      `${horizon} has no divider when stacked`,
+    );
   assert.equal(
     ui.get("Planning project").type,
     "ScrollView",

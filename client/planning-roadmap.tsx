@@ -886,6 +886,13 @@ export function ProjectRoadmapView({
           minWidth: 0,
           minHeight: 0,
           gap: space.xs,
+          ...(sideBySide && horizon !== "now"
+            ? {
+                borderLeftWidth: 1,
+                borderColor: roles(c).hairline,
+                paddingLeft: space.md / 2,
+              }
+            : {}),
         }}
       >
         <View style={{ gap: space.xxs / 2 }}>

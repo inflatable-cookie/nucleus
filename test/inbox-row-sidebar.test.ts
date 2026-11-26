@@ -173,6 +173,76 @@ for (const [name, c] of [
   });
 }
 
+test("menu text follows card-title color at rest, hover and selection without an indicator bar", async () => {
+  await load();
+  const counts = {
+    needs: 2,
+    planning: 1,
+    leads: 0,
+    papercuts: 0,
+    queue: 1,
+    working: 1,
+    review: 0,
+    closing: 0,
+  };
+  const renderMenu = (view: "needs" | "queue") =>
+    mount(
+      h(menu.InboxMenu, {
+        c: dark,
+        view,
+        counts,
+        loaded: true,
+        onSelect: () => {},
+      }),
+    );
+  const ui = renderMenu("queue");
+  try {
+    const entry = ui.get("Needs you, 2");
+    const label = ui.ofType("Text").find((node) => node.children.join("") === "Needs you");
+    const count = ui.ofType("Text").find((node) => node.children.join("") === "2");
+    assert.ok(label);
+    assert.ok(count);
+    assert.equal(
+      label.props.style.color,
+      design.cardTitleColor(dark as never, false),
+      "the resting menu label uses the card title tint",
+    );
+    assert.equal(
+      count.props.style.color,
+      design.cardTitleColor(dark as never, false),
+      "the regular count uses the card title tint",
+    );
+    const icon = ui.ofType("Icon").find((node) => node.props.name === "TriangleAlert");
+    assert.equal(icon?.props.color, design.cardTitleColor(dark as never, false));
+
+    entry.props.onHoverIn();
+    const hovered = ui.get("Needs you, 2");
+    const hoveredLabel = ui.ofType("Text").find((node) => node.children.join("") === "Needs you");
+    assert.equal(hoveredLabel?.props.style.color, (dark as { foreground: string }).foreground);
+    assert.equal(hovered.props.style.backgroundColor, design.hoverSurface(dark as never));
+  } finally {
+    ui.update(h("View", null));
+  }
+
+  const selected = renderMenu("needs");
+  try {
+    const entry = selected.get("Needs you, 2");
+    assert.equal(entry.props.accessibilityState.selected, true);
+    assert.equal(
+      selected.ofType("Text").find((node) => node.children.join("") === "Needs you")?.props.style.color,
+      (dark as { foreground: string }).foreground,
+      "the selected label is full foreground",
+    );
+    assert.equal(
+      selected.ofType("View").some((node) => node.props.style?.position === "absolute"),
+      false,
+      "selection has no indicator bar",
+    );
+  } finally {
+    selected.update(h("View", null));
+  }
+});
+
 for (const [name, c, titleColor] of [
   ["dark", dark, "rgba(240, 246, 252, 0.75)"],
   ["light", light, "rgba(31, 35, 40, 0.75)"],
