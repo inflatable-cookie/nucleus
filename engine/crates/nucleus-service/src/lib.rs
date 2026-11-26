@@ -1262,6 +1262,13 @@ impl Service {
             }
             let due = match result {
                 Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
+                Err(ServiceError::Forge(ForgeError::Deferred { until })) => {
+                    now + until
+                        .duration_since(SystemTime::now())
+                        .unwrap_or_default()
+                        .max(self.forge_backoff())
+                        .max(delay)
+                }
                 Err(ServiceError::ParentNotSent { retry_at, .. }) => {
                     (now + delay).max(retry_at.unwrap_or(now))
                 }
@@ -2076,16 +2083,7 @@ fn task_wait(
         }
         Err(ServiceError::Workspace(_)) => (Some(Wait::WorkspaceUnknown), None),
         Err(ServiceError::ReviewPublication(error)) => {
-            let (wait, cause) = error.wait();
-            let detail = match error {
-                PublicationError::UnknownDelivery => {
-                    WaitDetail::ConfirmingDelivery("Checking GitHub for the original review.")
-                }
-                PublicationError::StaleHead => {
-                    WaitDetail::Observation("Checking the current pull request head.")
-                }
-                _ => WaitDetail::Blocked(cause.to_owned()),
-            };
+            let (wait, detail) = error.wait();
             (Some(wait), Some(detail))
         }
         Err(ServiceError::Forge(

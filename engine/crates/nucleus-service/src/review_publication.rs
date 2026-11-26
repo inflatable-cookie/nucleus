@@ -10,7 +10,7 @@ use nucleus_store::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::{Service, ServiceError, event, github_accounts::ReviewerCredential};
+use crate::{Service, ServiceError, WaitDetail, event, github_accounts::ReviewerCredential};
 
 // Give GitHub time to expose a review whose POST reply was lost.
 const REVIEW_GRACE_MS: i64 = 30_000;
@@ -36,47 +36,66 @@ pub enum PublicationError {
     UnknownDelivery,
     #[error("GitHub has not confirmed the review after three attempts. Use Move to review.")]
     AttemptsExhausted,
-    #[error("{0}")]
-    Blocked(String),
+    #[error("{error} Last review POST to {pull_url}: {response}")]
+    Blocked {
+        error: Box<PublicationError>,
+        pull_url: String,
+        response: String,
+    },
     #[error("The reviewed commit is no longer the open pull request head.")]
     StaleHead,
 }
 
 impl PublicationError {
-    pub(super) fn wait(&self) -> (WaitReason, &str) {
-        match self {
-            Self::SameAuthor => (
+    pub(super) fn wait(&self) -> (WaitReason, WaitDetail) {
+        let blocked = |cause: &str| {
+            (
                 WaitReason::ReviewPublicationBlocked,
+                WaitDetail::Blocked(cause.to_owned()),
+            )
+        };
+        match self {
+            Self::SameAuthor => blocked(
                 "Select a reviewer account different from the pull request author, then hold and release the task.",
             ),
-            Self::AccountUnavailable => (
-                WaitReason::ReviewPublicationBlocked,
-                "Check the reviewer account in Settings, then hold and release the task.",
-            ),
-            Self::AccessRefused => (
-                WaitReason::ReviewPublicationBlocked,
+            Self::AccountUnavailable => {
+                blocked("Check the reviewer account in Settings, then hold and release the task.")
+            }
+            Self::AccessRefused => blocked(
                 "GitHub refused access to publish the review. Check repository access for the reviewer account, then use Move to review.",
             ),
-            Self::Blocked(cause) => (WaitReason::ReviewPublicationBlocked, cause),
-            Self::Refused => (
-                WaitReason::ReviewPublicationBlocked,
+            Self::Blocked {
+                error,
+                pull_url,
+                response,
+            } => {
+                let (reason, detail) = error.wait();
+                let WaitDetail::Blocked(cause) = detail else {
+                    unreachable!("refused publication requires owner action")
+                };
+                (
+                    reason,
+                    WaitDetail::Blocked(format!(
+                        "{cause} Last review POST to {pull_url}: {response}"
+                    )),
+                )
+            }
+            Self::Refused => blocked(
                 "GitHub refused the review. Inspect the pull request, then use Move to review.",
             ),
-            Self::Unverified => (
-                WaitReason::ReviewPublicationBlocked,
+            Self::Unverified => blocked(
                 "The recorded review could not be verified. Inspect the pull request, then use Move to review if needed.",
             ),
-            Self::AttemptsExhausted => (
-                WaitReason::ReviewPublicationBlocked,
+            Self::AttemptsExhausted => blocked(
                 "GitHub has not confirmed the review after three attempts. Inspect the pull request, then use Move to review.",
             ),
             Self::UnknownDelivery => (
                 WaitReason::ForgeUnknown,
-                "Review delivery is unconfirmed. Checking GitHub for the original review.",
+                WaitDetail::ConfirmingDelivery("Checking GitHub for the original review."),
             ),
             Self::StaleHead => (
                 WaitReason::ForgeUnknown,
-                "Checking the current pull request head.",
+                WaitDetail::Observation("Checking the current pull request head."),
             ),
         }
     }
@@ -693,11 +712,11 @@ fn blocked_response(record: &ReviewPublication, fallback: PublicationError) -> P
     let Some(response) = &record.response else {
         return fallback;
     };
-    PublicationError::Blocked(format!(
-        "{} Last review POST to {}: {response}",
-        fallback.wait().1,
-        record.intent.pull_url
-    ))
+    PublicationError::Blocked {
+        error: Box::new(fallback),
+        pull_url: record.intent.pull_url.clone(),
+        response: response.clone(),
+    }
 }
 
 fn binding(intent: &ReviewIntent) -> ReviewBinding<'_> {

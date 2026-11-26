@@ -431,7 +431,9 @@ async fn formal_approval_refuses_the_same_author_and_inaccessible_role() {
                 status.as_u16()
             );
             assert_eq!(record.response.as_deref(), Some(receipt.as_str()));
-            let cause = error.wait().1;
+            let (_, WaitDetail::Blocked(cause)) = error.wait() else {
+                panic!("expected owner action detail")
+            };
             assert!(
                 cause.contains(&receipt)
                     && cause.contains(&record.intent.pull_url)
@@ -597,7 +599,9 @@ async fn aged_marker_free_resubmission_gets_one_final_bound_attempt() {
             let ServiceError::ReviewPublication(blocked) = error else {
                 panic!("expected owner action")
             };
-            let (wait, cause) = blocked.wait();
+            let (wait, WaitDetail::Blocked(cause)) = blocked.wait() else {
+                panic!("expected owner action detail")
+            };
             assert!(cause.contains("GitHub HTTP 502") && cause.contains(&intent.pull_url));
             assert_eq!(wait, WaitReason::ReviewPublicationBlocked);
             assert!(cause.contains("Move to review"));
@@ -686,6 +690,33 @@ async fn throttled_resubmission_waits_for_the_server_deadline_after_restart() {
         panic!("expected a definite throttle");
     };
     assert!(until >= before + std::time::Duration::from_hours(1));
+    let row = service.task(TASK).await.unwrap();
+    service
+        .schedule_result(
+            &row,
+            &Err(ForgeError::Deferred { until }.into()),
+            crate::schedule::Priority::Effect,
+        )
+        .await
+        .unwrap();
+    let deadline = {
+        let mut state = service.state.lock().await;
+        let deadline = state.schedule.due(TASK).unwrap();
+        assert!(deadline >= tokio::time::Instant::now() + std::time::Duration::from_mins(59));
+        state
+            .observe_wait_detail(
+                &row.task,
+                Some(WaitReason::ForgeUnknown),
+                Some(WaitDetail::Observation("Updated wording.")),
+            )
+            .unwrap();
+        assert_eq!(state.schedule.due(TASK), Some(deadline));
+        deadline
+    };
+    assert_eq!(
+        service.state.lock().await.schedule.due(TASK),
+        Some(deadline)
+    );
     let service = restart_service(service, &remote);
     assert!(matches!(advance(&service).await,
         Err(ServiceError::Forge(ForgeError::Deferred { until: retained })) if retained == until));
