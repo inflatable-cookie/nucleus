@@ -430,6 +430,8 @@ export function MainSurface({
   const detail = rustTaskId && rustBoard ? (
     <RustTaskDialog key={`rust:${rustTaskId}`} id={rustTaskId}
       summary={rustTasks.data?.find(({ identity }) => identity.id === rustTaskId)}
+      project={rustListProps.project}
+      onOpenTask={selectRustTask}
       inline={inlineDetail} compact={compact} c={c}
       onClose={() => setRustTaskId(null)} invalidate={rustBoard} />
   ) : task ? (
