@@ -8,12 +8,17 @@
 // such as the engine or the store reached ~92% of the suite, so every core task
 // ran a full suite in all but name (Tom, 2026-11-18: "we need to avoid slamming
 // the machine with concurrent large test runs"). The transitive sweep is milestone
-// QA's job. At most MAX_AFFECTED files run, nearest first; the rest are listed as
-// deferred to milestone QA. A change the graph cannot place is listed as unmapped. Pure selection (selectAffected) takes plain maps so the
+// QA's job. A production module a test loads by a literal path (a bundled entry, a
+// dynamic import) is the exception: when such a module reaches the change through
+// production importers, the test is selected as "bundles". Static imports never
+// count, so the hub rule holds. At most MAX_AFFECTED files run, nearest first; the
+// rest are listed as deferred to milestone QA. A change the graph cannot place is
+// listed as unmapped. Pure selection (selectAffected) takes plain maps so the
 // fixture tests need no git; the CLI reads the ref through git.
 import { spawnSync } from 'node:child_process';
 import { posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { importEdges } from './check-folder-imports.mjs';
 import activeTests from './active-tests.json' with { type: 'json' };
 
@@ -31,8 +36,8 @@ const DOCS = /\.md$|^(?:docs|skills|changelog\.d)\//;
 export const SERIAL_LANE_SOURCE = './support/timing';
 /** The most test files one affected run starts; the rest are deferred to milestone QA. */
 export const MAX_AFFECTED = 60;
-/** Nearest first: a changed test, an importer, a test naming the path, a directory walk. */
-const TIERS = ['changed test', 'imports', 'names', 'reads directory'];
+/** Nearest first: a changed test, an importer, a test naming the path, a bundled entry, a directory walk. */
+const TIERS = ['changed test', 'imports', 'names', 'bundles', 'reads directory'];
 
 export function isGraphNode(path) {
   return CODE.test(path) && GRAPH_ROOTS.some(root => path.startsWith(`${root}/`));
@@ -66,6 +71,50 @@ export function resolveLocal(known, from, specifier) {
   return candidates.find(path => known.has(path)) ?? null;
 }
 
+/** The names a test may spell a path with: suffixes of two or more segments, with or without the extension. */
+function pathNames(path) {
+  const segments = path.split('/');
+  return segments.slice(0, -1).map((_, index) => segments.slice(index).join('/'))
+    .flatMap(name => [name, name.replace(/\.[^/.]+$/, '')]);
+}
+
+/** Every suffix of two or more segments that a text spells out, so `'../client/x.tsx'` spells `client/x.tsx`. */
+function spelledPaths(text) {
+  const spelled = new Set();
+  for (const [token] of text.matchAll(/[\w@./-]+/g)) {
+    const segments = token.split('/');
+    for (let index = 0; index < segments.length - 1; index++) spelled.add(segments.slice(index).join('/'));
+  }
+  return spelled;
+}
+
+/**
+ * A module's text with its static module references blanked: imports, re-exports,
+ * `require` and `import type` references the import walk already follows. What
+ * remains is what the module loads at run time: a literal string, a dynamic
+ * `import()`, or a bundled entry written into a template.
+ */
+export function runtimeText(path, text) {
+  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+  const cuts = [];
+  const visit = node => {
+    const isStatic = (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier
+      || ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)
+      || ts.isImportTypeNode(node)
+      || ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'require';
+    if (isStatic) cuts.push([node.getStart(file), node.end]);
+    else ts.forEachChild(node, visit);
+  };
+  visit(file);
+  let out = '';
+  let position = 0;
+  for (const [start, end] of cuts) {
+    out += text.slice(position, start) + ' '.repeat(end - start);
+    position = end;
+  }
+  return out + text.slice(position);
+}
+
 /**
  * @param {object} input
  * @param {string[]} input.changed repository-relative paths changed against the base
@@ -93,7 +142,7 @@ export function selectAffected({ changed, files, sources, testFiles = files, max
 
   const tests = new Set([...testFiles].filter(path => isTestFile(path) && files.has(path)).sort());
   // A test's own text plus the test-tree helpers it reaches, where paths can be named.
-  const scope = new Map([...tests].map(test => {
+  const reached = new Map([...tests].map(test => {
     const seen = new Set([test]);
     const queue = [test];
     while (queue.length) {
@@ -105,8 +154,16 @@ export function selectAffected({ changed, files, sources, testFiles = files, max
         }
       }
     }
-    return [test, [...seen].map(path => sources.get(path) ?? '').join('\n')];
+    return [test, [...seen]];
   }));
+  const runtimes = new Map();
+  const runtimeOf = path => {
+    if (!runtimes.has(path)) runtimes.set(path, runtimeText(path, sources.get(path) ?? ''));
+    return runtimes.get(path);
+  };
+  const scope = new Map([...reached].map(([test, paths]) => [test, paths.map(path => sources.get(path) ?? '').join('\n')]));
+  // The paths each test's scope loads at run time, not the static imports it declares.
+  const loaded = new Map([...reached].map(([test, paths]) => [test, spelledPaths(paths.map(path => runtimeOf(path)).join('\n'))]));
 
   const reasons = new Map();
   const tier = new Map();
@@ -168,6 +225,33 @@ export function selectAffected({ changed, files, sources, testFiles = files, max
         if (hit) {
           named = true;
           add(test, `reads directory ${hit[0]}`, 'reads directory');
+        }
+      }
+    }
+    // A production module a test loads by its literal path (a bundled entry, a dynamic
+    // import) reaches the change through its production importers. The nearest such
+    // module is the reason, so a hub's dependents are selected only where a test spells them.
+    const bundledBy = new Set();
+    for (const start of implementationsOf(path)) {
+      const via = new Map([[start, null]]);
+      const queue = [start];
+      while (queue.length) {
+        const node = queue.shift();
+        for (const importer of importers.get(node) ?? []) {
+          if (via.has(importer)) continue;
+          via.set(importer, node);
+          queue.push(importer);
+          if (importer.startsWith('test/')) continue;
+          const names = pathNames(importer);
+          for (const test of tests) {
+            if (bundledBy.has(test) || !names.some(name => loaded.get(test).has(name))) continue;
+            bundledBy.add(test);
+            const chain = [importer];
+            for (let next = via.get(importer); next; next = via.get(next)) chain.push(next);
+            add(test, `bundles ${chain.join(' → ')}`, 'bundles', chain.length);
+            named = true;
+            graphReached = true;
+          }
         }
       }
     }
