@@ -214,8 +214,8 @@ pub enum ServiceError {
     Forge(#[from] ForgeError),
     #[error(transparent)]
     ReviewPublication(#[from] PublicationError),
-    #[error("review publication deferred")]
-    ReviewPublicationDeferred { until: SystemTime },
+    #[error("review transition deferred")]
+    ReviewTransitionDeferred { until: SystemTime },
 }
 
 pub struct Service {
@@ -1264,7 +1264,7 @@ impl Service {
             }
             let due = match result {
                 Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
-                Err(ServiceError::ReviewPublicationDeferred { until }) => {
+                Err(ServiceError::ReviewTransitionDeferred { until }) => {
                     now + until
                         .duration_since(SystemTime::now())
                         .unwrap_or_default()
@@ -2109,7 +2109,7 @@ fn task_wait(
                 "{error}. Use Recheck after the repair."
             ))),
         ),
-        Err(ServiceError::Forge(_) | ServiceError::ReviewPublicationDeferred { .. }) => {
+        Err(ServiceError::Forge(_) | ServiceError::ReviewTransitionDeferred { .. }) => {
             (Some(Wait::ForgeUnknown), None)
         }
         Err(ServiceError::InboxUnavailable { .. }) => (Some(Wait::Question), None),

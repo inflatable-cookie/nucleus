@@ -438,6 +438,7 @@ async fn formal_approval_refuses_the_same_author_and_inaccessible_role() {
             let (_, WaitDetail::Blocked(cause)) = error.wait() else {
                 panic!("expected owner action detail")
             };
+            assert_eq!(error.to_string(), cause);
             assert!(
                 cause.contains(&receipt)
                     && cause.contains(&record.intent.pull_url)
@@ -598,7 +599,7 @@ async fn aged_marker_free_resubmission_gets_one_final_bound_attempt() {
         // to observe exactly what the persisted final claim permits.
         assert!(matches!(
             result,
-            Err(ServiceError::ReviewPublicationDeferred { .. })
+            Err(ServiceError::ReviewTransitionDeferred { .. })
         ));
         service = restart_service(service, &remote);
         let result = advance(&service).await;
@@ -697,7 +698,7 @@ async fn throttled_resubmission_waits_for_the_server_deadline_after_restart() {
     aged_claim(&service, &instance).await;
     let before = SystemTime::now();
     let result = advance(&service).await;
-    let Err(ServiceError::ReviewPublicationDeferred { until }) = &result else {
+    let Err(ServiceError::ReviewTransitionDeferred { until }) = &result else {
         panic!("expected a definite throttle");
     };
     let until = *until;
@@ -743,7 +744,7 @@ async fn throttled_resubmission_waits_for_the_server_deadline_after_restart() {
     );
     let service = restart_service(service, &remote);
     assert!(matches!(advance(&service).await,
-        Err(ServiceError::ReviewPublicationDeferred { until: retained }) if retained == until));
+        Err(ServiceError::ReviewTransitionDeferred { until: retained }) if retained == until));
     assert_eq!(remote.posts.lock().unwrap().len(), 1);
     server.abort();
 }
@@ -856,7 +857,7 @@ async fn assert_throttled_publication(resubmission: bool) {
         aged_claim(&service, &instance).await;
     }
     for attempt in 1..=2 {
-        let Err(ServiceError::ReviewPublicationDeferred { until }) = advance(&service).await else {
+        let Err(ServiceError::ReviewTransitionDeferred { until }) = advance(&service).await else {
             panic!("expected GitHub to defer attempt {attempt}");
         };
         service = restart_service(service, &remote);

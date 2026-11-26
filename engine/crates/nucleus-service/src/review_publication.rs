@@ -18,13 +18,11 @@ const FINAL_RETRY_DELAY_MS: i64 = 10 * 60_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationBlock {
-    #[error(
-        "GitHub refused access to publish this review. Check the reviewer account and repository access, then use Move to review."
-    )]
+    #[error("{}", PublicationBlock::AccessRefused.wait_cause())]
     AccessRefused,
-    #[error("GitHub refused the review. Inspect the pull request, then use Move to review.")]
+    #[error("{}", PublicationBlock::Refused.wait_cause())]
     Refused,
-    #[error("GitHub has not confirmed the review after three attempts. Use Move to review.")]
+    #[error("{}", PublicationBlock::AttemptsExhausted.wait_cause())]
     AttemptsExhausted,
 }
 
@@ -50,11 +48,9 @@ pub enum PublicationError {
     SameAuthor,
     #[error("Check the reviewer account in Settings, then hold and release the task to retry.")]
     AccountUnavailable,
-    #[error(
-        "GitHub refused access to publish this review. Check the reviewer account and repository access, then use Move to review."
-    )]
+    #[error("{}", PublicationBlock::AccessRefused.wait_cause())]
     AccessRefused,
-    #[error("GitHub refused the review. Inspect the pull request, then use Move to review.")]
+    #[error("{}", PublicationBlock::Refused.wait_cause())]
     Refused,
     #[error(
         "The recorded GitHub review could not be verified. Inspect the pull request, then use Move to review if another review is needed."
@@ -62,7 +58,7 @@ pub enum PublicationError {
     Unverified,
     #[error("Review delivery is unconfirmed. Checking GitHub for the original review.")]
     UnknownDelivery,
-    #[error("GitHub has not confirmed the review after three attempts. Use Move to review.")]
+    #[error("{}", PublicationBlock::AttemptsExhausted.wait_cause())]
     AttemptsExhausted,
     #[error("{error} Last review POST to {pull_url}: {response}")]
     Blocked {
@@ -173,7 +169,7 @@ impl Service {
             .await
             .map_err(|error| match error {
                 ServiceError::Forge(ForgeError::Deferred { until }) => {
-                    ServiceError::ReviewPublicationDeferred { until }
+                    ServiceError::ReviewTransitionDeferred { until }
                 }
                 other => other,
             })
