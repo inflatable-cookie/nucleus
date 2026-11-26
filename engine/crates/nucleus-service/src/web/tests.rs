@@ -852,56 +852,35 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
     expect_command(&view, "move", Some("done"), "pending");
     let path = "/v1/tasks/reviewer/commands";
     let answer = json!({"answer":{"accept":{"head":head, "reason":"accepted exact merge"}}});
-    let pending = post_as(&api, path, &BOARD_KEY, &answer).await;
-    assert_eq!(pending.status(), StatusCode::ACCEPTED);
-    assert_eq!(
-        json_body(pending).await,
-        json!({"status":"pending","version":1})
-    );
-    assert_eq!(reads.load(Ordering::Relaxed), 0);
-    let _ = service
-        .pass()
-        .await
-        .expect("read while forge is unavailable");
-    let merge = post_json(&api, path, &BOARD_KEY, &json!({"move":"merging"})).await;
-    assert_eq!(merge, StatusCode::ACCEPTED);
-    let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
-    expect_command(&view, "answer", None, "pending");
-    assert_eq!(
-        post_json(&api, path, &BOARD_KEY, &json!({"move":"done"})).await,
-        StatusCode::ACCEPTED
+    let refused = post_as(&api, path, &BOARD_KEY, &answer).await;
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        json_body(refused).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("503")
     );
     assert_eq!(reads.load(Ordering::Relaxed), 1);
+    for phase in ["merging", "done"] {
+        let refused = post_as(&api, path, &BOARD_KEY, &json!({"move":phase})).await;
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            json_body(refused).await["error"]
+                .as_str()
+                .unwrap()
+                .contains("deferred")
+        );
+    }
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    assert_eq!(service.task("reviewer").await.unwrap().version, 1);
     readable.store(true, Ordering::Relaxed);
-    assert!(service.forge_until.load(Ordering::Relaxed) > now_ms());
-    assert!(
-        service
-            .state
-            .lock()
-            .await
-            .schedule
-            .take_ready(
-                tokio::time::Instant::now(),
-                &std::collections::BTreeSet::new(),
-                None
-            )
-            .is_none()
-    );
-    // Move past the synthetic outage without making the test wait on the clock.
     service.forge_until.store(0, Ordering::Relaxed);
-    assert_eq!(
-        post_json(&api, path, &BOARD_KEY, &answer).await,
-        StatusCode::ACCEPTED
-    );
-    let _ = service.pass().await.expect("refresh on pending wake");
     let planner = json_body(get_as(&api, next_path, &PLANNER_KEY).await).await;
     expect_command(&planner, "answer", None, "unavailable");
-    let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
-    assert_eq!(view["version"], 1);
-    expect_command(&view, "answer", None, "ready");
-    expect_command(&view, "move", Some("done"), "unavailable");
-    let planner_answer = post_json(&api, path, &PLANNER_KEY, &answer).await;
-    assert_eq!(planner_answer, StatusCode::CONFLICT);
+    assert_eq!(
+        post_json(&api, path, &PLANNER_KEY, &answer).await,
+        StatusCode::CONFLICT
+    );
     assert_eq!(
         post_json(&api, path, &BOARD_KEY, &answer).await,
         StatusCode::OK
@@ -911,16 +890,11 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
     expect_command(&view, "move", Some("done"), "pending");
     assert_eq!(
         post_json(&api, path, &BOARD_KEY, &json!({"move":"done"})).await,
-        StatusCode::ACCEPTED
-    );
-    assert_eq!(reads.load(Ordering::Relaxed), 2);
-    let _ = service.pass().await.expect("refresh on the new revision");
-    let view = json_body(get_as(&api, next_path, &BOARD_KEY).await).await;
-    expect_command(&view, "move", Some("merging"), "ready");
-    expect_command(&view, "move", Some("done"), "ready");
-    assert_eq!(
-        post_json(&api, path, &BOARD_KEY, &json!({"move":"done"})).await,
         StatusCode::OK
+    );
+    assert_eq!(
+        service.task("reviewer").await.unwrap().task.phase(),
+        Phase::Done
     );
     server.abort();
 }
@@ -1143,9 +1117,10 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
     assert!(matches!(
         service
             .command("reviewer", &operator, Command::Move(Phase::Done))
-            .await
-            .unwrap(),
-        crate::CommandOutcome::Pending { .. }
+            .await,
+        Err(ServiceError::Core(
+            nucleus_core::CommandError::MergeAuthorityRequired
+        ))
     ));
     service.pass().await.unwrap();
     let waiting = service.task("reviewer").await.unwrap();
@@ -1158,21 +1133,12 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
         head,
         reason: "Reviewed the exact external merge".into(),
     });
-    assert!(matches!(
-        service
-            .command("reviewer", &operator, answer.clone())
-            .await
-            .unwrap(),
-        crate::CommandOutcome::Pending { .. }
-    ));
     published.store(false, Ordering::Relaxed);
-    service.pass().await.unwrap();
     assert!(matches!(
-        service
-            .command("reviewer", &operator, answer.clone())
-            .await
-            .unwrap(),
-        crate::CommandOutcome::Pending { .. }
+        service.command("reviewer", &operator, answer.clone()).await,
+        Err(ServiceError::Forge(
+            nucleus_forge::ForgeError::UnpublishedMerge
+        ))
     ));
     assert!(
         service
@@ -1184,27 +1150,19 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
             .is_none()
     );
     published.store(true, Ordering::Relaxed);
-    service.pass().await.unwrap();
-    assert!(matches!(
-        service
-            .command("reviewer", &operator, answer)
-            .await
-            .unwrap(),
-        crate::CommandOutcome::Applied(_)
-    ));
-    service.state.lock().await.schedule.park("reviewer");
-    assert!(matches!(
-        service
-            .command("reviewer", &operator, Command::Move(Phase::Done))
-            .await
-            .unwrap(),
-        crate::CommandOutcome::Pending { .. }
-    ));
-    service.pass().await.unwrap();
-    let row = service.task("reviewer").await.unwrap();
-    assert_eq!(row.task.phase(), Phase::Closing);
-    assert!(row.task.run().is_none());
-    assert_eq!(reads.load(Ordering::Relaxed), 4);
+    service
+        .command("reviewer", &operator, answer)
+        .await
+        .unwrap();
+    service
+        .command("reviewer", &operator, Command::Move(Phase::Done))
+        .await
+        .unwrap();
+    assert_eq!(
+        service.task("reviewer").await.unwrap().task.phase(),
+        Phase::Done
+    );
+    assert!(reads.load(Ordering::Relaxed) <= 5);
     assert_eq!(
         service.state.lock().await.store.occupied_slots("").unwrap(),
         1
@@ -1214,15 +1172,12 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
 
 #[tokio::test]
 async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
-    let (forge, server) = serve_forge(Router::new().route(
-        &format!("/repos/{REPOSITORY}/pulls/1"),
-        get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
-    ))
-    .await;
-    let (_home, mut service) = fixture(forge);
+    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let head = service.fixture().start.clone();
+    let (forge, readable, server) = switchable_open_forge(&head).await;
+    service.forge = forge;
     let (host, _, _, native) = planner_roster_fixture("planner", "spare-planner").await;
     service.host = host;
-    let head = service.fixture().start.clone();
     let exact = seed_review_work_question(&service, &head).await;
     service
         .refresh_planner_authority("reviewer")
@@ -1261,11 +1216,8 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     for (name, command) in [("answer", &answer), ("amend", &amend)] {
         expect_command(&view, name, None, "pending");
         let response = post_as(&api, path, &PLANNER_KEY, command).await;
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-        assert_eq!(
-            json_body(response).await,
-            json!({"status":"pending","version":1})
-        );
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(json_body(response).await["error"].is_string());
     }
     let pending = service.task("reviewer").await.expect("pending question");
     assert_eq!(pending, prior);
@@ -1288,12 +1240,8 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
         None,
         "pending",
     );
-    service
-        .observe_commands(&revised, &exact)
-        .await
-        .expect("same head on new version");
-    let view = json_body(get_as(&api, next, &PLANNER_KEY).await).await;
-    expect_command(&view, "answer", None, "ready");
+    readable.store(true, Ordering::Relaxed);
+    service.forge_until.store(0, Ordering::Relaxed);
     assert_eq!(
         post_json(&api, path, &PLANNER_KEY, &answer).await,
         StatusCode::OK
@@ -1310,6 +1258,77 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     );
     assert!(answered.task.question().is_none());
     native.abort();
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_replaced_head_refuses_the_answer_after_one_forge_read() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let head = service.fixture().start.clone();
+    let mut pull = forge_pull(&head);
+    pull["state"] = json!("closed");
+    pull["head"]["sha"] = json!("b".repeat(40));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let calls = reads.clone();
+    let (forge, server) = serve_forge(
+        Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async move { Json(pull) }),
+            )
+            .layer(axum::middleware::from_fn(
+                move |request: Request<Body>, next: axum::middleware::Next| {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    async move { next.run(request).await }
+                },
+            )),
+    )
+    .await;
+    service.forge = forge;
+    seed_review_work_question(&service, &head).await;
+    let prior = service.task("reviewer").await.unwrap();
+    let result = service
+        .command(
+            "reviewer",
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            Command::Answer(Answer::Work("Continue on the recorded revision".into())),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(ServiceError::Core(
+            nucleus_core::CommandError::AnswerDoesNotMatch
+        ))
+    ));
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    assert_eq!(service.task("reviewer").await.unwrap(), prior);
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_unanswered_forge_read_refuses_the_command_at_its_deadline() {
+    let (forge, server) = serve_forge(Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls/1"),
+        get(std::future::pending::<StatusCode>),
+    ))
+    .await;
+    let (_home, service) = fixture(forge);
+    let head = service.fixture().start.clone();
+    seed_review_work_question(&service, &head).await;
+    let prior = service.task("reviewer").await.unwrap();
+    let result = service
+        .command(
+            "reviewer",
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            Command::Amend("Revised assignment".into()),
+        )
+        .await;
+    assert!(matches!(result, Err(ServiceError::CommandForgeTimeout)));
+    assert_eq!(service.task("reviewer").await.unwrap(), prior);
     server.abort();
 }
 
@@ -1358,6 +1377,34 @@ async fn seed_review_work_question(
     assert!(task.bind_question_delivery(notice));
     seed_task(service, &task).await;
     observation.forge
+}
+
+async fn switchable_open_forge(
+    head: &nucleus_core::Head,
+) -> (GitHub, Arc<AtomicBool>, tokio::task::JoinHandle<()>) {
+    let pull = forge_pull(head);
+    let checks = crate::tests::forge_checks(head);
+    let readable = Arc::new(AtomicBool::new(false));
+    let ready = readable.clone();
+    let (forge, server) = serve_forge(
+        Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async move {
+                    if ready.load(Ordering::Relaxed) {
+                        Json(pull).into_response()
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE.into_response()
+                    }
+                }),
+            )
+            .route(
+                "/graphql",
+                axum::routing::post(move || async move { Json(checks) }),
+            ),
+    )
+    .await;
+    (forge, readable, server)
 }
 
 async fn serve_merged_forge(
@@ -1534,7 +1581,8 @@ async fn an_equal_move_commits_a_revision_and_wakes_the_task() {
         )
         .await
         .expect("equal move");
-    assert!(matches!(result, CommandOutcome::Applied(row) if row.version == 2 && row.task == task));
+    assert_eq!(result.version, 2);
+    assert_eq!(result.task, task);
     let change = changes.try_recv().expect("move invalidation");
     assert_eq!(change.version, 2);
     assert_eq!(change.task_id, "worker");
@@ -2062,13 +2110,10 @@ async fn fixture_at_done(service: &Service) -> (nucleus_store::TaskRow, Observed
             .observe_commands(&row, &forge)
             .await
             .expect("merge observation");
-        assert!(matches!(
-            service
-                .command("reviewer", &actor, command)
-                .await
-                .expect("applied command"),
-            CommandOutcome::Applied(_)
-        ));
+        service
+            .command("reviewer", &actor, command)
+            .await
+            .expect("applied command");
     }
     (service.task("reviewer").await.expect("done task"), forge)
 }

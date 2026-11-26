@@ -616,7 +616,7 @@ async fn planning_uses_the_verified_callers_project_for_reads_and_writes() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(
         json_body(response).await["error"],
-        "Nucleus is verifying this T3 planner and repository. Retry shortly."
+        "T3 planner and repository verification exceeded the request deadline. Retry the request."
     );
     assert_eq!(registry.reads.load(Ordering::Relaxed), 0);
     assert_eq!(
@@ -1863,6 +1863,21 @@ async fn a_work_question_remains_unbound_until_its_planner_notice_can_be_sent() 
     });
     assert!(matches!(task.reconcile(&observation), Action::Ask(_)));
     seed_task(&registry.service, &task).await;
+    let response = caller_request(
+        &registry.api,
+        Method::POST,
+        "/v1/tasks/question/commands",
+        "alpha-planner",
+        json!({"answer":{"work":"Use the fixture greeting"}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(
+        json_body(response).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("not been delivered")
+    );
     registry.archived.store(true, Ordering::Relaxed);
     let pending = registry
         .service

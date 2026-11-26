@@ -164,6 +164,14 @@ pub enum ServiceError {
     TellArchivedProject(String),
     #[error("answering an operator decision requires the operator binding")]
     DecisionOperator,
+    #[error("The question has not been delivered to a planner. Read Next after delivery.")]
+    QuestionUnassigned,
+    #[error("GitHub did not verify the PR head before the command deadline. Retry the command.")]
+    CommandForgeTimeout,
+    #[error(
+        "GitHub did not confirm the PR head required by this command. Read Next before retrying."
+    )]
+    CommandHeadUnconfirmed,
     #[error("the question is assigned to a different planner")]
     QuestionPlanner,
     #[error("planner authority is not yet known. Retry shortly.")]
@@ -309,14 +317,9 @@ struct SeenThread {
     at: Instant,
 }
 
-pub enum CommandOutcome {
-    Applied(Box<TaskRow>),
-    Pending { version: i64 },
-}
-
 enum Preflight {
     Ready,
-    Pending,
+    NeedsHead,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -1382,7 +1385,7 @@ impl Service {
     }
 
     /// Apply an authenticated command using the pass's observation for this
-    /// row revision. A pending command wakes a pass to refresh the evidence.
+    /// row revision, reading missing head evidence before returning.
     ///
     /// # Errors
     /// Returns an error if the task, authorization gate or store refuses it.
@@ -1391,7 +1394,7 @@ impl Service {
         id: &str,
         authority: &Authority,
         command: Command,
-    ) -> Result<CommandOutcome, ServiceError> {
+    ) -> Result<TaskRow, ServiceError> {
         self.command_with_session(
             id,
             authority,
@@ -1442,7 +1445,7 @@ impl Service {
         authority: &Authority,
         session: Option<&acp::WriteAccess>,
         scope: &ControllerScope,
-    ) -> Result<CommandOutcome, ServiceError> {
+    ) -> Result<TaskRow, ServiceError> {
         let _fence = self.command_fence(id, session.is_some()).await?;
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
@@ -1457,7 +1460,50 @@ impl Service {
         }
         state.schedule.recheck(id, Instant::now());
         self.wake.notify_one();
-        Ok(CommandOutcome::Applied(Box::new(row)))
+        Ok(row)
+    }
+
+    /// A missing head is the only preflight result that needs an inline forge read.
+    fn prepare_command(
+        &self,
+        state: &mut State,
+        prior: &Task,
+        authority: &Authority,
+        observation: &Observation,
+        command: Command,
+    ) -> Result<Option<Task>, ServiceError> {
+        let id = &prior.identity().id;
+        if matches!(
+            command,
+            Command::Move(Phase::Merging | Phase::Closing | Phase::Done) | Command::Complete { .. }
+        ) && !prior.phase().is_terminal()
+            && state.store.dependency_blocked(id)?
+        {
+            return Err(ServiceError::DependencyEdit(
+                "this task has unfinished prerequisites",
+            ));
+        }
+        let mut task = prior.clone();
+        match state.preflight(&mut task, authority, observation, command) {
+            Ok(Preflight::Ready) => Ok(Some(task)),
+            Ok(Preflight::NeedsHead) => Ok(None),
+            Err(error) => {
+                if matches!(error, ServiceError::PlannerAuthorityUnknown) {
+                    self.request_planner_check(state, prior);
+                } else if matches!(
+                    error,
+                    ServiceError::Core(CommandError::MergeAuthorityRequired)
+                ) && matches!(observation.forge, Observed::Known(Forge::Merged { .. }))
+                {
+                    state.command_authority(prior, authority)?;
+                    // Let reconciliation offer external source acceptance even at capacity.
+                    state.forge_requested.insert(id.clone());
+                    state.schedule.wake(id, Instant::now(), Priority::Wake);
+                    self.wake.notify_one();
+                }
+                Err(error)
+            }
+        }
     }
 
     async fn command_with_session(
@@ -1468,7 +1514,7 @@ impl Service {
         brief_version: Option<u64>,
         session: Option<&acp::WriteAccess>,
         scope: &ControllerScope,
-    ) -> Result<CommandOutcome, ServiceError> {
+    ) -> Result<TaskRow, ServiceError> {
         let local_planner_answer = matches!(
             (&command, authority),
             (Command::Answer(_), Authority::Planner { .. })
@@ -1486,18 +1532,6 @@ impl Service {
             return Err(ServiceError::AnswerInInbox);
         }
         check_amendment(&prior.task, &command, brief_version)?;
-        if matches!(
-            command,
-            Command::Move(Phase::Merging | Phase::Closing | Phase::Done) | Command::Complete { .. }
-        ) && !prior.task.phase().is_terminal()
-            && state.store.dependency_blocked(id)?
-        {
-            return Err(ServiceError::DependencyEdit(
-                "this task has unfinished prerequisites",
-            ));
-        }
-        let observation = state.command_observation(&prior);
-        let mut task = prior.task.clone();
         let amendment = matches!(command, Command::Amend(_));
         let explicit_move = matches!(command, Command::Move(_) | Command::MoveWork { .. });
         let returned = matches!(command, Command::MoveWork { .. })
@@ -1508,61 +1542,68 @@ impl Service {
                     .and_then(|report| report.delivery.as_ref())
             })
             .flatten();
-        let preflight = state.preflight(&mut task, authority, &observation, command);
-        if matches!(preflight, Err(ServiceError::PlannerAuthorityUnknown)) {
-            self.request_planner_check(&mut state, &prior.task);
-        }
-        match preflight? {
-            Preflight::Ready => {
-                let mut audit = event("command");
-                if let Some(acceptance) = task
-                    .report_task()
-                    .and_then(|report| report.acceptance.as_ref())
-                    && prior.task.phase() != Phase::Done
-                    && task.phase() == Phase::Done
-                {
-                    state = self
-                        .fence_report_completion(
-                            state, &prior, acceptance, authority, session, scope,
-                        )
-                        .await?;
-                    audit = event("report_only_completed");
-                    audit.detail = serde_json::json!({ "acceptance": acceptance }).to_string();
-                } else if let Some(delivery) = returned {
-                    audit = event("report_returned_to_work");
-                    audit.detail = serde_json::json!({
-                        "artifact": delivery.artifact, "summary": delivery.summary,
-                        "instruction": task.report_task().and_then(|report| report.instruction.as_deref()),
-                    }).to_string();
-                } else if prior.task.phase() != task.phase()
-                    && matches!(task.phase(), Phase::Closing | Phase::Done)
-                {
-                    presentation::note_merge(&mut audit, &observation.forge);
-                }
-                let version = if amendment {
-                    self.commit_amendment(&mut state, &prior, &task, audit, scope)?
-                } else if explicit_move || prior.task != task {
-                    self.commit(&mut state, &prior, &task, &audit, None)?
-                } else {
-                    prior.version
-                };
-                Ok(CommandOutcome::Applied(Box::new(TaskRow {
-                    task,
-                    version,
-                    number: prior.number,
-                })))
+        let mut observation = state.command_observation(&prior);
+        let task = if let Some(task) = self.prepare_command(
+            &mut state,
+            &prior.task,
+            authority,
+            &observation,
+            command.clone(),
+        )? {
+            task
+        } else {
+            drop(state);
+            observation.forge = Observed::Known(
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    Box::pin(self.command_forge(&prior.task)),
+                )
+                .await
+                .map_err(|_| ServiceError::CommandForgeTimeout)??,
+            );
+            state = self.state.lock().await;
+            if self.command_row(&state, id, scope, session)?.version != prior.version {
+                return Err(StoreError::StaleTask.into());
             }
-            Preflight::Pending => Ok(self.defer_command(&mut state, id, prior.version)),
+            self.prepare_command(&mut state, &prior.task, authority, &observation, command)?
+                .ok_or(ServiceError::CommandHeadUnconfirmed)?
+        };
+        let mut audit = event("command");
+        if let Some(acceptance) = task
+            .report_task()
+            .and_then(|report| report.acceptance.as_ref())
+            && prior.task.phase() != Phase::Done
+            && task.phase() == Phase::Done
+        {
+            state = self
+                .fence_report_completion(state, &prior, acceptance, authority, session, scope)
+                .await?;
+            audit = event("report_only_completed");
+            audit.detail = serde_json::json!({ "acceptance": acceptance }).to_string();
+        } else if let Some(delivery) = returned {
+            audit = event("report_returned_to_work");
+            audit.detail = serde_json::json!({
+                "artifact": delivery.artifact, "summary": delivery.summary,
+                "instruction": task.report_task().and_then(|report| report.instruction.as_deref()),
+            })
+            .to_string();
+        } else if prior.task.phase() != task.phase()
+            && matches!(task.phase(), Phase::Closing | Phase::Done)
+        {
+            presentation::note_merge(&mut audit, &observation.forge);
         }
-    }
-
-    fn defer_command(&self, state: &mut State, id: &str, version: i64) -> CommandOutcome {
-        state.forge_requested.insert(id.into());
-        state
-            .schedule
-            .wake(id, Instant::now() + self.forge_backoff(), Priority::Wake);
-        self.wake.notify_one();
-        CommandOutcome::Pending { version }
+        let version = if amendment {
+            self.commit_amendment(&mut state, &prior, &task, audit, scope)?
+        } else if explicit_move || prior.task != task {
+            self.commit(&mut state, &prior, &task, &audit, None)?
+        } else {
+            prior.version
+        };
+        Ok(TaskRow {
+            task,
+            version,
+            number: prior.number,
+        })
     }
 
     /// Accept an idempotent report only for the current unrevoked run.
@@ -2344,11 +2385,14 @@ impl State {
         let authority = self.command_authority(task, actor);
         let was_terminal = task.phase().is_terminal();
         let ready = match task.command(command, actor, observation) {
-            Ok(()) if !awaiting_planner => Preflight::Ready,
-            Ok(()) | Err(CommandError::HeadUnverified) => Preflight::Pending,
+            Ok(()) => Preflight::Ready,
+            Err(CommandError::HeadUnverified) => Preflight::NeedsHead,
             Err(error) => return Err(error.into()),
         };
         authority?;
+        if awaiting_planner {
+            return Err(ServiceError::QuestionUnassigned);
+        }
         if was_terminal
             && !task.phase().is_terminal()
             && (self.store.task_project_removed(&task.identity().id)?

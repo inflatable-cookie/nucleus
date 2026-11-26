@@ -387,9 +387,9 @@ disposition. They never replay the rejected launch.
 `next` and commands run the same preflight using the pass's forge observation
 for the committed task version. Answers bound to a PR head, amendments to
 tasks with a bound PR, and moves through the merge gates check that head.
-On missing evidence, the command returns
-HTTP 202 with `status: pending` and the version, and wakes a check. The client
-can retry the command when `next` shows it ready. Merge and worktree removal
+If evidence is missing, the command makes one forge observation within a ten-second deadline.
+It applies at the original task version or returns a refusal with the cause.
+A refusal leaves the command unapplied. Merge and worktree removal
 still check fresh evidence at the effect.
 
 An open question owns its message intent. Resolve the project's most active

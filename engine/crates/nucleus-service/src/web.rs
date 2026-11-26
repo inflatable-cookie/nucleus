@@ -38,8 +38,8 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::{
-    CommandOutcome, DependencyCommand, DependencyEdits, DependencyStatus, MAX_BRIEF_BYTES,
-    Preflight, Service, ServiceError, State as EngineState,
+    DependencyCommand, DependencyEdits, DependencyStatus, MAX_BRIEF_BYTES, Preflight, Service,
+    ServiceError, State as EngineState,
     acp::{MintedSession, SessionAccess, WriteAccess},
     now_ms,
     presentation::{HistoryEvent, RunView},
@@ -110,7 +110,9 @@ impl ControllerScope {
                     .await
                     .is_err()
             {
-                return Err(ServiceError::PlannerEnrollmentPending(finished));
+                return Err(ServiceError::PlannerEnrollmentUnavailable(
+                    "T3 planner and repository verification exceeded the request deadline. Retry the request.",
+                ));
             }
         }
     }
@@ -944,7 +946,7 @@ fn command_options(
     let check = |command| match state.preflight(&mut task.clone(), authority, observation, command)
     {
         Ok(Preflight::Ready) => CommandReadiness::Ready,
-        Ok(Preflight::Pending) => CommandReadiness::Pending,
+        Ok(Preflight::NeedsHead) => CommandReadiness::Pending,
         Err(_) => CommandReadiness::Unavailable,
     };
     if matches!(
@@ -1052,7 +1054,7 @@ async fn command(
     {
         return Err(ApiError::Invalid);
     }
-    let outcome = match input {
+    let row = match input {
         TaskCommand::Recheck(input) => {
             api.service
                 .recheck(&id, input.recheck, &authority, session.as_deref(), &scope)
@@ -1075,22 +1077,13 @@ async fn command(
                 )
                 .await?
         }
-        TaskCommand::Dependency(command) => CommandOutcome::Applied(Box::new(
+        TaskCommand::Dependency(command) => {
             api.service
                 .command_dependencies_in_scope(&id, &authority, command, session.as_deref(), &scope)
-                .await?,
-        )),
-    };
-    match outcome {
-        CommandOutcome::Applied(row) => {
-            Ok(Json(summary_after(&api.service, &row, &scope, &authority).await?).into_response())
+                .await?
         }
-        CommandOutcome::Pending { version } => Ok((
-            StatusCode::ACCEPTED,
-            Json(json!({"status": "pending", "version": version})),
-        )
-            .into_response()),
-    }
+    };
+    Ok(Json(summary_after(&api.service, &row, &scope, &authority).await?).into_response())
 }
 
 #[derive(Deserialize)]
@@ -1647,6 +1640,7 @@ impl IntoResponse for ApiError {
                     }
                     ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
                     | ServiceError::Core(_)
+                    | ServiceError::QuestionUnassigned
                     | ServiceError::RecheckUnavailable
                     | ServiceError::EffectInProgress
                     | ServiceError::BriefConflict
