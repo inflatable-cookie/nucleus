@@ -23,6 +23,7 @@ import {
   inboxCounts,
   inboxSections,
   triageCards,
+  rustTriageStates,
   triageStates,
   type TriageFilter,
   type InboxView,
@@ -30,6 +31,7 @@ import {
 import { openScopeLanes } from "../../shared/project-scope";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { useRpc } from "../shell";
+import { useEngineFeatures } from "../engine-features";
 import {
   Button,
   DropdownSelect,
@@ -393,6 +395,17 @@ export function InboxList({
     leads: "All", papercuts: "All",
   });
   const triageView = view === "leads" || view === "papercuts" ? view : null;
+  const rustEngine = useEngineFeatures().engine === "rust";
+  const stateOptions = rustEngine ? rustTriageStates : triageStates;
+  // Closed (Rust only): promoted and dropped items, read apart from the board's cards.
+  const closedFilter = rustEngine && triageView !== null && triageFilters[triageView] === "Closed";
+  const readClosed = useRpc(api.itemClosed);
+  const closedKind = view === "papercuts" ? "papercut" : "lead";
+  const closedQuery = useQuery({
+    queryKey: ["nucleus", "leads", "closed", closedKind],
+    queryFn: () => readClosed({ kind: closedKind }),
+    enabled: closedFilter,
+  });
   const sections = legacyView
     ? inboxSections(board, legacyView, triageView ? triageFilters[triageView] : undefined)
     : [];
@@ -687,8 +700,14 @@ export function InboxList({
     : rust && view === "needs" && state && !decisions
       ? (decisionsError ? "failed" : "loading")
       : legacyView ? boardRead : "loaded";
-  const countText =
-    readState === "loaded"
+  const closedCount = closedQuery.data?.length ?? 0;
+  const countText = closedFilter
+    ? closedQuery.data
+      ? `${closedCount} item${closedCount === 1 ? "" : "s"}`
+      : closedQuery.error
+        ? "Not loaded"
+        : "Loading…"
+    : readState === "loaded"
       ? `${viewCount} item${viewCount === 1 ? "" : "s"}`
       : readState === "failed"
         ? "Not loaded"
@@ -742,9 +761,9 @@ export function InboxList({
                 c={c}
                 label={triageView === "leads" ? "Filter leads by state" : "Filter papercuts by state"}
                 value={triageFilters[triageView]}
-                options={triageStates.map((state) => ({ value: state, label: state }))}
+                options={stateOptions.map((state) => ({ value: state, label: state }))}
                 onChange={(value) => {
-                  const filter = triageStates.find((state) => state === value);
+                  const filter = stateOptions.find((state) => state === value);
                   if (!filter) return;
                   setTriageFilters((current) => ({ ...current, [triageView]: filter }));
                   setShown(triagePageSize);
@@ -777,7 +796,44 @@ export function InboxList({
       >
         <BoardCardVariantContext.Provider value="row">
           {rust && <RustListRows key={view} view={view} rust={rust} c={c} />}
-          {view === "queue" ? (
+          {closedFilter ? (
+            <View style={{ gap: space.xxs }}>
+              {(closedQuery.data ?? []).map((item) => {
+                const word = item.kind === "papercut" ? "Papercut" : "Lead";
+                const status =
+                  item.state === "promoted"
+                    ? { tone: "success" as const, state: "Promoted" }
+                    : item.disposition === "completed"
+                      ? { tone: "success" as const, state: "Dropped · completed" }
+                      : { tone: "muted" as const, state: "Dropped · deprecated" };
+                const selectedHere =
+                  recordProject === item.projectKey &&
+                  (item.kind === "papercut" ? openPapercutId : selectedLeadId) === item.id;
+                return (
+                  <BoardCard
+                    key={`${item.projectKey}/${item.id}`}
+                    c={c}
+                    kind={item.kind}
+                    label={`${word}: ${item.title}, Status: ${status.state}`}
+                    title={item.title}
+                    project={<CardProject c={c} name={item.projectName} projectKey={item.projectKey} />}
+                    status={status}
+                    age={item.atMs === null ? null : relativeAge(item.atMs)}
+                    selected={selectedHere}
+                    onPress={() =>
+                      item.kind === "papercut"
+                        ? onSelectPapercut(item.id, item.projectKey)
+                        : onSelectLead(item.id, null, item.projectKey)
+                    }
+                  />
+                );
+              })}
+              {closedQuery.error ? (
+                <BoardCard c={c} selected={false} title="Could not load closed items" label="Retry loading closed items"
+                  onPress={() => void closedQuery.refetch()} status={{ state: "Retry", tone: "warning" }} />
+              ) : null}
+            </View>
+          ) : view === "queue" ? (
             <View style={{ gap: space.xxs }}>{queuedList()}</View>
           ) : (
             sections.map((section) => {
@@ -839,7 +895,13 @@ export function InboxList({
           )}
         </BoardCardVariantContext.Provider>
         {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
-        {((!rust && boardRead !== "loaded") || (readState === "loaded" && total === 0 && !rust?.tasks?.length)) && (
+        {closedFilter ? (
+          closedQuery.data && closedCount === 0 ? (
+            <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>Nothing here.</Text>
+          ) : !closedQuery.data && !closedQuery.error ? (
+            <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>Loading…</Text>
+          ) : null
+        ) : ((!rust && boardRead !== "loaded") || (readState === "loaded" && total === 0 && !rust?.tasks?.length)) && (
           <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>
             {boardRead === "failed"
               ? "The board could not be read; see the error above."

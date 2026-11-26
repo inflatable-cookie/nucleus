@@ -27,7 +27,16 @@ import { ActivityList, Card, Collapsible } from "../task/rust-task-cards";
 import { clockTime, type TimelineTone } from "../task/rust-timeline";
 
 type Footer = "park" | "drop" | null;
-type Draft = { title: string; body: string; version: number };
+/**
+ * The editor's text and the version it was written against. After a refused save,
+ * `saved` holds the newer stored content so the operator sees it before choosing.
+ */
+type Draft = {
+  title: string;
+  body: string;
+  version: number;
+  saved: { title: string; body: string; version: number } | null;
+};
 
 const COMPLEXITY: Array<{ value: CapabilityLevel; label: string }> = [
   { value: "very_low", label: "Very low" },
@@ -38,6 +47,21 @@ const COMPLEXITY: Array<{ value: CapabilityLevel; label: string }> = [
 ];
 
 const DAY_MS = 86_400_000;
+
+const labelOf = (level: CapabilityLevel) => COMPLEXITY.find((entry) => entry.value === level)?.label ?? level;
+
+/**
+ * The complexity a lead's brief declares in its front matter (`queue.complexity`).
+ * The engine admits a promoted lead with its own brief and refuses a complexity
+ * sent beside it, so the view reads the brief instead of offering a choice.
+ */
+export function briefComplexity(body: string): CapabilityLevel | null {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(body)?.[1];
+  if (!front) return null;
+  const queue = /^queue:[ \t]*\r?\n((?:[ \t]+.*(?:\r?\n|$))*)/m.exec(front)?.[1] ?? "";
+  const value = /^[ \t]+complexity:[ \t]*["']?([a-z_]+)["']?[ \t]*$/m.exec(queue)?.[1];
+  return COMPLEXITY.find((level) => level.value === value)?.value ?? null;
+}
 
 /** Whether a parked item's revisit day has come. Reaching it never reopens the item. */
 export function revisitDue(revisitAt: string | null, now = Date.now()): boolean {
@@ -358,7 +382,14 @@ export function RustItemDialog({
           onPromote={(origin) => {
             let reference = "";
             void act(async () => {
-              reference = (await promoteItem({ ...address, complexity, ...(origin ? { repository: origin } : {}) })).reference;
+              // Leads carry their complexity in the brief; only papercuts send one.
+              reference = (
+                await promoteItem({
+                  ...address,
+                  repository: origin,
+                  ...(item.kind === "papercut" ? { complexity } : {}),
+                })
+              ).reference;
               void queryClient.invalidateQueries({ queryKey: rustTaskListKey });
             }).then((ok) => ok && setNotice({ text: `Promoted as ${reference}`, tone: "success" }));
           }}
@@ -414,7 +445,7 @@ export function RustItemDialog({
             </Text>
             {!draft && (
               <QuietButton c={c} text="Edit" label={`Edit ${word.toLowerCase()}`} disabled={busy}
-                onPress={() => setDraft({ title: item.title, body: item.body, version: item.version })} />
+                onPress={() => setDraft({ title: item.title, body: item.body, version: item.version, saved: null })} />
             )}
           </View>
           {draft ? (
@@ -425,11 +456,13 @@ export function RustItemDialog({
               busy={busy}
               onSave={() => {
                 const opened = draft;
+                // A replace after a refusal writes over the stored version the operator was shown.
+                const version = opened.saved?.version ?? opened.version;
                 void (async () => {
                   setBusy(true);
                   setNotice(null);
                   try {
-                    const saved = await editItem({ ...address, version: opened.version, title: opened.title.trim(), body: opened.body });
+                    const saved = await editItem({ ...address, version, title: opened.title.trim(), body: opened.body });
                     queryClient.setQueryData(key, saved);
                     void queryClient.invalidateQueries({ queryKey: ["nucleus", "leads"] });
                     setDraft(null);
@@ -438,13 +471,16 @@ export function RustItemDialog({
                       setNotice({ text: errorText(error), tone: "warning" });
                       return;
                     }
-                    // Keep the draft, now against the reloaded item; saving again replaces that change.
+                    // Keep the draft and show what is stored now; nothing is replaced until the operator chooses.
                     const fresh = (await query.refetch()).data;
                     setNotice({
-                      text: `This ${word.toLowerCase()} changed since you opened the editor. It has been reloaded; save again to replace that change.`,
+                      text: `This ${word.toLowerCase()} changed since you opened the editor. Compare the saved version below, then keep it or replace it with your edit.`,
                       tone: "warning",
                     });
-                    if (fresh) setDraft((current) => current && { ...current, version: fresh.version });
+                    if (fresh)
+                      setDraft((current) =>
+                        current && { ...current, saved: { title: fresh.title, body: fresh.body, version: fresh.version } },
+                      );
                   } finally {
                     setBusy(false);
                   }
@@ -552,7 +588,7 @@ function PromotePanel({
   setRepository: (origin: string) => void;
   complexity: CapabilityLevel;
   setComplexity: (level: CapabilityLevel) => void;
-  onPromote: (origin: string | null) => void;
+  onPromote: (origin: string) => void;
 }) {
   const [help, setHelp] = useState(false);
   const several = item.repositories.length > 1;
@@ -561,14 +597,21 @@ function PromotePanel({
     item.repositories.find((repo) => repo.origin === repository) ??
     item.repositories.find((repo) => repo.bound) ??
     item.repositories[0];
+  const lead = item.kind === "lead";
+  const declared = lead ? briefComplexity(item.body) : null;
   const refusal = !chosen
     ? "This project has no repository."
-    : chosen.bound
-      ? null
-      : `Bind ${chosen.origin} to a T3 project before promoting.`;
+    : !chosen.bound
+      ? `Bind ${chosen.origin} to a T3 project before promoting.`
+      : lead && !declared
+        ? "Add queue.complexity to the brief's front matter before promoting."
+        : null;
+  const complexityHelp = lead
+    ? "A lead is promoted with its own brief, so its complexity comes from the brief's front matter."
+    : "Complexity sets how capable a model each run needs.";
   const helpText = several
-    ? "Only repositories bound to a T3 project can take the task. Complexity sets how capable a model each run needs."
-    : `The task goes to ${chosen?.origin ?? "the project's repository"}. Complexity sets how capable a model each run needs.`;
+    ? `Only repositories bound to a T3 project can take the task. ${complexityHelp}`
+    : `The task goes to ${chosen?.origin ?? "the project's repository"}. ${complexityHelp}`;
   return (
     <Panel
       c={c}
@@ -595,17 +638,23 @@ function PromotePanel({
             onChange={setRepository}
           />
         )}
-        <DropdownSelect
-          c={c}
-          compact
-          hideLabel
-          minWidth={130}
-          label="Complexity"
-          value={complexity}
-          options={COMPLEXITY}
-          disabled={busy}
-          onChange={(value) => setComplexity(COMPLEXITY.find((level) => level.value === value)?.value ?? "medium")}
-        />
+        {lead ? (
+          <Text accessibilityLabel={`Complexity: ${declared ? labelOf(declared) : "not set"}`} style={metaText(c)}>
+            {declared ? `Complexity ${labelOf(declared)}` : "No complexity in the brief"}
+          </Text>
+        ) : (
+          <DropdownSelect
+            c={c}
+            compact
+            hideLabel
+            minWidth={130}
+            label="Complexity"
+            value={complexity}
+            options={COMPLEXITY}
+            disabled={busy}
+            onChange={(value) => setComplexity(COMPLEXITY.find((level) => level.value === value)?.value ?? "medium")}
+          />
+        )}
         <View style={{ flex: 1 }} />
         <Button
           c={c}
@@ -615,7 +664,8 @@ function PromotePanel({
           label={`Promote ${item.kind}`}
           hint={refusal ?? undefined}
           disabled={busy || refusal !== null}
-          onPress={() => onPromote(several ? (chosen?.origin ?? null) : null)}
+          // The engine defaults a destination only for a project with one bound repository; always name it.
+          onPress={() => chosen && onPromote(chosen.origin)}
         />
       </View>
       {refusal && <Text style={metaText(c)}>{refusal}</Text>}
@@ -722,15 +772,36 @@ function EditForm({
   busy: boolean;
   onSave: () => void;
 }) {
+  const r = roles(c);
+  const saved = draft.saved;
+  const empty = !draft.title.trim() || !draft.body.trim();
   return (
     <View style={{ gap: space.xs }}>
       <Field c={c} label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} disabled={busy} />
       <Field c={c} label="Body" multiline value={draft.body} onChange={(body) => setDraft({ ...draft, body })} disabled={busy} />
+      {saved && (
+        <View
+          accessibilityLabel="Saved version"
+          style={{ gap: space.xs, padding: space.sm, borderRadius: radius.panel, borderWidth: 1, borderColor: r.hairline }}
+        >
+          <Text style={{ ...metaText(c), fontWeight: "600" }}>Saved version</Text>
+          <Text selectable style={{ ...typeScale.body, fontWeight: "600", color: r.foreground }}>{saved.title}</Text>
+          <Readable text={saved.body} c={c} />
+        </View>
+      )}
       <View style={{ ...row, gap: space.xs }}>
         <View style={{ flex: 1 }} />
         <Button c={c} small text="Cancel" label="Cancel edit" onPress={() => setDraft(null)} />
-        <Button c={c} small selected text="Save" label="Save changes" disabled={busy || !draft.title.trim() || !draft.body.trim()}
-          onPress={onSave} />
+        {saved ? (
+          <>
+            <Button c={c} small text="Use saved" label="Use the saved version" disabled={busy}
+              onPress={() => setDraft({ title: saved.title, body: saved.body, version: saved.version, saved: null })} />
+            <Button c={c} small selected text="Replace saved" label="Replace the saved version" disabled={busy || empty}
+              onPress={onSave} />
+          </>
+        ) : (
+          <Button c={c} small selected text="Save" label="Save changes" disabled={busy || empty} onPress={onSave} />
+        )}
       </View>
     </View>
   );

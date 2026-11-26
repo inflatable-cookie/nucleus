@@ -419,15 +419,33 @@ fn versioned_edits_apply_to_leads_at_their_current_version() {
         lanes: vec![],
     };
     store
-        .add_item("project", "lead".into(), ItemKind::Lead, content("Lead"), STAMP)
+        .add_item(
+            "project",
+            "lead".into(),
+            ItemKind::Lead,
+            content("Lead"),
+            STAMP,
+        )
         .unwrap();
     let current = store.items_with_times("project").unwrap().pop().unwrap();
     let saved = store
-        .edit_item("project", "lead", content("Edited"), Some(current.version), STAMP)
+        .edit_item(
+            "project",
+            "lead",
+            content("Edited"),
+            Some(current.version),
+            STAMP,
+        )
         .unwrap();
     assert_eq!(saved.item.content.title, "Edited");
     assert!(matches!(
-        store.edit_item("project", "lead", content("Stale"), Some(current.version), STAMP),
+        store.edit_item(
+            "project",
+            "lead",
+            content("Stale"),
+            Some(current.version),
+            STAMP
+        ),
         Err(StoreError::PlanningConflict)
     ));
 }

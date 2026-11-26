@@ -54,7 +54,8 @@ const lead = (over: Partial<StoredItem> & Pick<StoredItem, "id" | "title">): Sto
   ({
     kind: "lead",
     author: "planner",
-    body: "Markers lose work when the network drops.\n\n- Queue in the browser\n- Replay in order",
+    // A lead's body is its task brief: the service admits it with the complexity it declares.
+    body: "---\nqueue:\n  complexity: high\n---\n\nMarkers lose work when the network drops.\n\n- Queue in the browser\n- Replay in order",
     lanes: ["marking-hub"],
     state: "open",
     ...over,
@@ -131,7 +132,7 @@ const panels = (ui: ReturnType<typeof mount>) =>
 const footer = (ui: ReturnType<typeof mount>) =>
   ui.all(/^(Park|Open drop for) (lead|papercut)$/).map((node) => node.props.accessibilityLabel as string);
 
-test("lead · open: promote panel with repository and complexity; promotes to the chosen repository", async () => {
+test("lead · open: promote panel with repository and the brief's complexity; promotes to the chosen repository", async () => {
   const engine = planningEngine();
   engine.seed("acowtancy", lead({ id: "i-offline", title: "Offline marking queue", repositories: ["example/acowtancy-v2", "example/dairy"] }), {
     actor: "planner",
@@ -144,7 +145,9 @@ test("lead · open: promote panel with repository and complexity; promotes to th
   assert.match(ui.text(), /Acowtancy/);
   assert.match(ui.text(), /Marking Hub for December/);
   assert.match(ui.text(), /example\/acowtancy-v2, example\/dairy/);
-  assert.match(ui.get(/^Complexity, /).props.accessibilityLabel, /^Complexity, Medium$/);
+  // A lead takes its complexity from its brief; there is no picker to override it.
+  assert.equal(ui.query(/^Complexity, /), undefined);
+  assert.ok(ui.query("Complexity: High"));
   // An unbound repository can be chosen but not promoted to.
   ui.press(/^Repository, /);
   ui.press("Repository: example/dairy, Not bound to T3");
@@ -152,18 +155,36 @@ test("lead · open: promote panel with repository and complexity; promotes to th
   assert.match(ui.text(), /Bind example\/dairy to a T3 project before promoting/);
   ui.press(/^Repository, /);
   ui.press("Repository: example/acowtancy-v2");
-  ui.press(/^Complexity, /);
-  ui.press("Complexity: High");
   await waitFor(() => ui.get("Promote lead").props.disabled === false, 2000, "bound enables");
   ui.press("Promote lead");
   await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted");
   assert.deepEqual(engine.writes.at(-1), {
     method: "POST",
     path: "/planning/acowtancy/items/i-offline/promote",
-    body: { repository: "example/acowtancy-v2", complexity: "high" },
+    body: { repository: "example/acowtancy-v2" },
   });
   assert.match(ui.text(), /Promoted as acowtancy-v2#1201/);
   assert.deepEqual(footer(ui), [], "a promoted item has no footer");
+});
+
+test("lead · open without a complexity in its brief: Promote waits for the brief", async () => {
+  const engine = planningEngine();
+  engine.seed("acowtancy", lead({ id: "i-bare", title: "Bare lead", body: "No front matter yet." }), { actor: "planner", atMs: now - DAY });
+  const { ui } = await open(engine, "i-bare", "acowtancy", "lead");
+  assert.ok(ui.query("Complexity: not set"));
+  assert.equal(ui.get("Promote lead").props.disabled, true);
+  assert.match(ui.text(), /Add queue.complexity to the brief's front matter before promoting/);
+  assert.equal(engine.writes.length, 0);
+});
+
+test("papercut naming one repository of a project with several bound ones promotes to it", async () => {
+  const engine = planningEngine();
+  engine.seed("orchard", papercut({ id: "i-web", title: "Web only", repositories: ["example/orchard-web"] }), { actor: "planner", atMs: now - HOUR });
+  const { ui } = await open(engine, "i-web", "orchard", "papercut");
+  assert.equal(ui.query(/^Repository, /), undefined, "one listed repository needs no choice");
+  ui.press("Promote papercut");
+  await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted");
+  assert.deepEqual(engine.writes.at(-1)?.body, { repository: "example/orchard-web", complexity: "medium" });
 });
 
 test("lead · parked: reason, who parked it and the revisit date ahead; Reopen returns it to Open", async () => {
@@ -234,7 +255,7 @@ test("papercut · open: promotes to the project's only repository with the defau
   const { ui } = await open(engine, "i-one", "nucleus", "papercut");
   ui.press("Promote papercut");
   await waitFor(() => state(ui) === "State: Promoted", 4000, "promoted");
-  assert.deepEqual(engine.writes.at(-1)?.body, { complexity: "medium" });
+  assert.deepEqual(engine.writes.at(-1)?.body, { repository: "example/nucleus", complexity: "medium" });
 });
 
 test("papercut · parked and due: warning state; changing the revisit day parks again; drop takes a disposition", async () => {
@@ -303,7 +324,7 @@ test("lead drop records deprecated with the note; leads offer no disposition", a
   assert.deepEqual(engine.writes.at(-1)?.body, { reason: "Not worth it.", disposition: "deprecated" });
 });
 
-test("edit saves at the opened version; a concurrent edit is refused, said so, and reloaded", async () => {
+test("edit saves at the opened version; after a refusal the saved version is shown before anything is replaced", async () => {
   const engine = planningEngine();
   engine.seed("acowtancy", lead({ id: "i-edit", title: "Before" }), { actor: "planner", atMs: now - DAY });
   const { ui } = await open(engine, "i-edit", "acowtancy", "lead");
@@ -311,13 +332,41 @@ test("edit saves at the opened version; a concurrent edit is refused, said so, a
   ui.press("Edit lead");
   await waitFor(() => Boolean(ui.query("Title")), 2000, "editor");
   ui.type("Title", "After");
-  engine.editElsewhere("acowtancy", "i-edit", "Elsewhere");
+  // Another writer changes the body while this editor changes only the title.
+  engine.editElsewhere("acowtancy", "i-edit", { body: "The planner's newer body." });
   ui.press("Save changes");
-  await waitFor(() => /changed since you opened the editor/.test(ui.text()), 4000, "conflict said");
-  assert.equal(engine.writes.at(-1)?.body && (engine.writes.at(-1)!.body as { version: number }).version, opened);
-  assert.equal(engine.item("acowtancy", "i-edit").title, "Elsewhere", "the refused save changed nothing");
+  await waitFor(() => Boolean(ui.query("Saved version")), 4000, "saved version shown");
+  assert.match(ui.text(), /changed since you opened the editor/);
+  assert.equal((engine.writes.at(-1)!.body as { version: number }).version, opened);
+  assert.match(ui.text(), /The planner's newer body\./, "the other writer's body is visible");
+  assert.equal(ui.query("Save changes"), undefined, "no ordinary save over unseen content");
+  assert.equal(engine.item("acowtancy", "i-edit").body, "The planner's newer body.", "the refused save changed nothing");
+  // Use saved: the editor takes the stored text; saving then keeps the other writer's body.
+  ui.press("Use the saved version");
+  await waitFor(() => Boolean(ui.query("Save changes")), 2000, "editor rebased");
+  assert.equal(ui.get("Body").props.value, "The planner's newer body.");
+  ui.type("Title", "After");
   ui.press("Save changes");
-  await waitFor(() => !ui.query("Title"), 4000, "saved after reload");
-  assert.equal(engine.item("acowtancy", "i-edit").title, "After");
-  assert.match(ui.text(), /After/);
+  await waitFor(() => !ui.query("Title"), 4000, "saved");
+  assert.deepEqual(
+    { title: engine.item("acowtancy", "i-edit").title, body: engine.item("acowtancy", "i-edit").body },
+    { title: "After", body: "The planner's newer body." },
+  );
+});
+
+test("after a refusal, Replace writes the operator's draft over the version shown", async () => {
+  const engine = planningEngine();
+  engine.seed("nucleus", papercut({ id: "i-replace", title: "Original" }), { actor: "planner", atMs: now - DAY });
+  const { ui } = await open(engine, "i-replace", "nucleus", "papercut");
+  ui.press("Edit papercut");
+  await waitFor(() => Boolean(ui.query("Body")), 2000, "editor");
+  ui.type("Body", "My rewrite.");
+  engine.editElsewhere("nucleus", "i-replace", { title: "Renamed elsewhere" });
+  ui.press("Save changes");
+  await waitFor(() => Boolean(ui.query("Saved version")), 4000, "saved version shown");
+  const shown = engine.item("nucleus", "i-replace").version;
+  ui.press("Replace the saved version");
+  await waitFor(() => !ui.query("Body"), 4000, "replaced");
+  assert.equal((engine.writes.at(-1)!.body as { version: number }).version, shown);
+  assert.equal(engine.item("nucleus", "i-replace").body, "My rewrite.");
 });

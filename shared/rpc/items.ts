@@ -103,8 +103,30 @@ export const itemPromote = defineRpc({
     .object({
       ...address,
       repository: z.string().min(1).optional(),
-      complexity: capabilityLevelSchema,
+      /** Papercuts only: a lead is admitted with the complexity its brief declares. */
+      complexity: capabilityLevelSchema.optional(),
     })
     .strict(),
   output: z.object({ taskId: z.string(), reference: z.string() }),
+});
+
+/** A promoted or dropped item, for the Leads and Papercuts lists' Closed filter. */
+export const closedItemSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["lead", "papercut"]),
+  projectKey: z.string().min(1),
+  projectName: z.string(),
+  title: z.string(),
+  state: z.enum(["promoted", "dropped"]),
+  disposition: itemDisposition.nullable(),
+  /** When the item last changed, which for a closed item is when it closed. */
+  atMs: z.number().int().nullable(),
+});
+
+export type ClosedItem = z.infer<typeof closedItemSchema>;
+
+export const itemClosed = defineRpc({
+  name: "item.closed",
+  input: z.object({ kind: z.enum(["lead", "papercut"]) }).strict(),
+  output: z.array(closedItemSchema),
 });

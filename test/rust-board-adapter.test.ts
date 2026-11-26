@@ -280,7 +280,6 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
         origin: string;
         path: string;
         base: string;
-        requiredChecks: string[];
         hungToolMinutes: number;
         hostProject?: string;
         hostProjectTitle?: string;
@@ -2270,6 +2269,111 @@ test("a board click and action address the selected project's colliding decision
   assert.equal(saved.reason, null);
 });
 
+test("a fresh Rust board opens promoted and dropped items from the Closed filter", async (t) => {
+  const fake = engine();
+  const reopened: string[] = [];
+  let dropped = true;
+  const droppedCut = {
+    id: "dropped-cut",
+    kind: "papercut",
+    author: "planner",
+    title: "Dropped cut",
+    body: "Gone",
+    lanes: [],
+    state: "dropped",
+    disposition: "completed",
+    reason: "Fixed elsewhere.",
+    version: 30,
+    createdAtMs: 10,
+    updatedAtMs: 300,
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = String(url);
+    if (path === "/api/engine/planning/lantern/items/dropped-cut/reopen") {
+      reopened.push(String(init?.body));
+      dropped = false;
+      return Response.json({ ...droppedCut, state: "open", version: 31 });
+    }
+    if (path === "/api/engine/planning/lantern/items") {
+      const response = await fake.fetcher(url, init);
+      const items = (await response.json()) as unknown[];
+      return Response.json([
+        ...items,
+        dropped
+          ? droppedCut
+          : { ...droppedCut, state: "open", disposition: undefined, reason: null, version: 31 },
+      ]);
+    }
+    return fake.fetcher(url, init);
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  useNativeStubs();
+  const { MainSurface } = await import("../client/queue");
+  const { bindBoardShell } = await import("../client/shell");
+  const web = await import("../client/web/shell");
+  bindBoardShell({ ...web, Icon: () => null });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const h = React.createElement;
+  const ui = mount(
+    h(QueryClientProvider, {
+      client,
+      children: h(web.WebContext.Provider, {
+        value: { transport: adapter, settings: false },
+        children: h(EngineFeaturesContext.Provider, {
+          value: RUST_ENGINE_FEATURES,
+          children: h(MainSurface, {
+            theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
+            layout: { compact: false },
+          }),
+        }),
+      }),
+    }),
+  );
+  t.after(() => {
+    ui.update(h(React.Fragment));
+    client.clear();
+    useNativeStubs();
+  });
+  const press = async (label: string | RegExp) => {
+    await waitFor(() => Boolean(ui.query(label)), 4000, String(label)).catch(
+      (error) => {
+        throw new Error(`${String(error)}; board text: ${ui.text()}`);
+      },
+    );
+    ui.press(label);
+  };
+  await press(/^Papercuts, /);
+  assert.equal(ui.query(/^Papercut: Fixed,/), undefined, "closed items stay out of the default list");
+  await press(/^Filter papercuts by state, /);
+  await press("Filter papercuts by state: Closed");
+  await waitFor(
+    () => ui.all(/^Papercut: Fixed, Status: Promoted$/).length === 2,
+    4000,
+    "each project's promoted papercut",
+  );
+  // The newest closed item leads the list.
+  assert.match(
+    String(ui.all(/^Papercut: /)[0]?.props.accessibilityLabel),
+    /^Papercut: Dropped cut, Status: Dropped · completed$/,
+  );
+  ui.all(/^Papercut: Fixed, Status: Promoted$/)[0]!.props.onPress();
+  await waitFor(() => Boolean(ui.query("State: Promoted")), 4000, "promoted detail");
+  assert.ok(ui.query("Open task finished"), "the linked task card");
+  await press("Papercut: Dropped cut, Status: Dropped · completed");
+  await waitFor(() => Boolean(ui.query("State: Dropped · completed")), 4000, "dropped detail");
+  assert.match(ui.text(), /Fixed elsewhere\./);
+  await press("Reopen papercut");
+  await waitFor(() => Boolean(ui.query("State: Open")), 4000, "reopened");
+  assert.deepEqual(reopened, [JSON.stringify({ version: 30 })]);
+  await waitFor(
+    () => !ui.query(/^Papercut: Dropped cut, Status: Dropped/),
+    4000,
+    "the reopened item leaves the Closed list",
+  );
+});
+
 test("the mounted Rust board counts parked leads and papercuts like their All lists", async (t) => {
   const fake = engine();
   const openLead = {
@@ -2660,11 +2764,11 @@ test("promotion sends the selected repository and displays the public task refer
         id: "i-Orbit_Main",
         project: projectKey("Orbit_Main"),
         repository,
-        complexity: "medium",
       }),
       { taskId: "t-internal", reference },
     );
-    assert.deepEqual(sent, [{ repository, complexity: "medium" }]);
+    // A lead is admitted with its brief's complexity; none is sent beside it.
+    assert.deepEqual(sent, [{ repository }]);
   }
 });
 

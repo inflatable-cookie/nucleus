@@ -5,7 +5,12 @@
  * lead and papercut view depends on: one history sequence that is every item's
  * version, park from open or parked, drop from anything but promoted, reopen only
  * from parked or dropped at the current version, versioned board edits, and
- * promotion only from open or parked into a bound repository.
+ * promotion only from open or parked into a bound repository. Promotion follows
+ * the service's admission rules (`nucleus-service/src/planning.rs`
+ * `promote_planning_item`, `enrollment.rs`): a lead is admitted with its own brief
+ * and a complexity sent beside it is refused; the brief must then declare a
+ * complexity; and without an explicit repository only a project with exactly one
+ * bound repository has a destination.
  */
 
 export type StoredItem = {
@@ -26,25 +31,39 @@ export type StoredItem = {
 
 type History = { sequence: number; actor: string; atMs: number; action: string; snapshot: unknown };
 
-type Repository = { origin: string; path: string; base: string; requiredChecks: string[]; hungToolMinutes: number; hostProject?: string };
+type Repository = { origin: string; path: string; base: string; hungToolMinutes: number; hostProject?: string };
 
 export const planningProjects: Record<string, { name: string; archived: boolean; repositories: Repository[] }> = {
   nucleus: {
     name: "Nucleus",
     archived: false,
     repositories: [
-      { origin: "example/nucleus", path: "/work/nucleus", base: "main", requiredChecks: [], hungToolMinutes: 30, hostProject: "t3-nucleus" },
+      { origin: "example/nucleus", path: "/work/nucleus", base: "main", hungToolMinutes: 30, hostProject: "t3-nucleus" },
     ],
   },
   acowtancy: {
     name: "Acowtancy",
     archived: false,
     repositories: [
-      { origin: "example/acowtancy-v2", path: "/work/acowtancy-v2", base: "main", requiredChecks: [], hungToolMinutes: 30, hostProject: "t3-acowtancy" },
-      { origin: "example/dairy", path: "/work/dairy", base: "main", requiredChecks: [], hungToolMinutes: 30 },
+      { origin: "example/acowtancy-v2", path: "/work/acowtancy-v2", base: "main", hungToolMinutes: 30, hostProject: "t3-acowtancy" },
+      { origin: "example/dairy", path: "/work/dairy", base: "main", hungToolMinutes: 30 },
+    ],
+  },
+  orchard: {
+    name: "Orchard",
+    archived: false,
+    repositories: [
+      { origin: "example/orchard-api", path: "/work/orchard-api", base: "main", hungToolMinutes: 30, hostProject: "t3-orchard-api" },
+      { origin: "example/orchard-web", path: "/work/orchard-web", base: "main", hungToolMinutes: 30, hostProject: "t3-orchard-web" },
     ],
   },
 };
+
+/** The brief's declared `queue.complexity`, as the service's brief policy reads it. */
+function declaredComplexity(body: string): string | null {
+  const front = /^---\n([\s\S]*?)\n---/.exec(body)?.[1] ?? "";
+  return /^queue:\n(?:[ \t]+.*\n)*?[ \t]+complexity:[ \t]*([a-z_]+)/m.exec(front + "\n")?.[1] ?? null;
+}
 
 const snapshot = (value: unknown) => ({ value, revision: "1", configured: true });
 
@@ -148,9 +167,19 @@ export function planningEngine(now: () => number = Date.now) {
       }
       case "promote": {
         if (current.state !== "open" && current.state !== "parked") return conflict();
+        if (body.complexity !== undefined && current.kind === "lead")
+          return json({ error: "a lead is promoted with the complexity in its brief" }, 400);
+        if (!body.complexity && !declaredComplexity(current.body))
+          return json({ error: "the brief needs a complexity" }, 400);
         const repos = planningProjects[project]!.repositories;
-        const target = body.repository ? repos.find((repo) => repo.origin === body.repository) : repos[0];
-        if (!target?.hostProject) return json({ error: "repository is not bound to T3" }, 400);
+        const bound = repos.filter((repo) => repo.hostProject);
+        const target = body.repository
+          ? repos.find((repo) => repo.origin === body.repository)
+          : bound.length === 1
+            ? bound[0]
+            : undefined;
+        if (!target) return json({ error: "choose a repository" }, 400);
+        if (!target.hostProject) return json({ error: "repository is not bound to T3" }, 400);
         const taskId = `t-promoted-${++tasks}`;
         save({ ...base(current), taskLinks: [taskId], state: "promoted", taskId }, "promote");
         return json({ identity: { id: taskId }, reference: `${target.origin.split("/")[1]}#${1200 + tasks}` }, 201);
@@ -166,9 +195,9 @@ export function planningEngine(now: () => number = Date.now) {
   }) as typeof fetch;
 
   /** A concurrent writer: another edit lands between the view's read and its save. */
-  function editElsewhere(project: string, id: string, title: string) {
+  function editElsewhere(project: string, id: string, change: { title?: string; body?: string }) {
     const entry = items.get(key(project, id))!;
-    entry.item = { ...entry.item, title };
+    entry.item = { ...entry.item, ...change };
     record(project, id, "planner", now(), "edit", entry.item);
   }
 

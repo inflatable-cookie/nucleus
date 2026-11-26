@@ -754,6 +754,29 @@ export function createRustPlanning(
       });
       return boardDecision(saved, row.board.key, row.project);
     },
+    "item.closed": async (input: { kind: "lead" | "papercut" }) => {
+      const closed = await collectProjects("Items", async (row, issues) => {
+        const raw = await planningRead(row, "items", rawList);
+        return collectRows(raw ?? [], `${row.id} item`, issues, (value) => item.parse(value)).flatMap(
+          (record): api.ClosedItem[] =>
+            record.kind === input.kind && (record.state === "promoted" || record.state === "dropped")
+              ? [
+                  {
+                    id: record.id,
+                    kind: record.kind,
+                    projectKey: row.board.key,
+                    projectName: row.project.name,
+                    title: record.title,
+                    state: record.state,
+                    disposition: record.state === "dropped" ? (record.disposition ?? "deprecated") : null,
+                    atMs: record.updatedAtMs ?? record.createdAtMs ?? null,
+                  },
+                ]
+              : [],
+        );
+      });
+      return closed.sort((a, b) => (b.atMs ?? 0) - (a.atMs ?? 0));
+    },
     "item.get": async (input: { project?: string; id: string }) => {
       const { row, record } = await recordOwner("items", item, input.id, input.project);
       return itemDetail(row, record);
