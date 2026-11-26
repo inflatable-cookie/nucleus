@@ -195,7 +195,6 @@ export function BoardHeader({ c, workspaceName, state, activeWorkers, refetchSta
                       { key: "pause", icon: control.icon, label: state?.paused ? "Resume" : "Pause", run: () => { if (state) void act(() => setQueue({ paused: !state.paused })); } },
                       { key: "hold", icon: "Pause", label: state?.dispatchHeld ? "Release dispatch hold" : "Dispatch hold", run: () => { if (state) void act(() => setQueue({ dispatchHeld: !state.dispatchHeld })); } },
                       { key: "stop", icon: "Square", label: "Stop", run: () => void act(async () => {
-                        await setQueue({ paused: true });
                         await stopThreadsRpc({ caller: "operator (board)" });
                         await refetchState();
                       }) },

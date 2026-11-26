@@ -516,6 +516,7 @@ for (const compact of [false, true])
   test(`706: bundled dark icon-and-chevron pause control acts on one press (${compact ? "compact" : "wide"})`, async () => {
     const MainSurface = await bundleMainSurface();
     const calls: Array<{ method: string; input: any }> = [];
+    let refuseStop = true;
     const rpc: typeof invoke = async (method, input) => {
       if (method === "queue.ui-snapshot") return structuredClone(board);
       if (method === "queue.control") {
@@ -526,7 +527,9 @@ for (const compact of [false, true])
       }
       if (method === "queue.stop-threads") {
         calls.push({ method, input });
-        assert.equal(board.paused, true, "stop runs after pause");
+        if (refuseStop) throw new Error("Dispatch revision changed");
+        board.paused = true;
+        board.revision++;
         return { ok: true, stopped: 0 };
       }
       return invoke(method, input);
@@ -591,12 +594,17 @@ for (const compact of [false, true])
         "release did not clear hold",
       );
       ui.press("Queue controls menu");
+      const beforeStop = calls.length;
       ui.press("Stop");
-      await settleUntil(
-        ui,
-        () => calls.some((call) => call.method === "queue.stop-threads"),
-        "stop not submitted",
-      );
+      await settleUntil(ui, () => ui.text().includes("Dispatch revision changed"), "Stop refusal was hidden");
+      assert.equal(board.paused, false);
+      assert.deepEqual(calls.slice(beforeStop).map((call) => call.method), ["queue.stop-threads"]);
+      ui.press("Dismiss error");
+      refuseStop = false;
+      ui.press("Queue controls menu");
+      const beforeRetry = calls.length;
+      ui.press("Stop");
+      await settleUntil(ui, () => board.paused, "Stop did not take effect");
       assert.equal(
         ui.query("Confirm stop"),
         undefined,
@@ -608,11 +616,8 @@ for (const compact of [false, true])
         "selecting a row closes the menu",
       );
       assert.deepEqual(
-        calls.slice(-2).map((call) => [call.method, call.input]),
-        [
-          ["queue.control", { paused: true }],
-          ["queue.stop-threads", { caller: "operator (board)" }],
-        ],
+        calls.slice(beforeRetry).map((call) => [call.method, call.input]),
+        [["queue.stop-threads", { caller: "operator (board)" }]],
       );
     } finally {
       unmount(ui);

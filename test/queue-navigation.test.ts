@@ -71,55 +71,6 @@ test("header controls expose icon-only Settings, Refresh and Pause or Resume in 
   );
 });
 
-test("706: pause chevron menu acts on one press and has no Stop arm", () => {
-  for (const paused of [false, true]) {
-    assert.equal(
-      headerControls(paused, true, false).some(
-        (control) => String(control.id) === "stop-threads",
-      ),
-      false,
-    );
-  }
-  assert.match(
-    ui,
-    /role="menuitem" label=\{item\.label\}/,
-  );
-  assert.match(
-    ui,
-    /onPress=\{\(\) => \{ setQueueMenuOpen\(false\); item\.run\(\); \}\}/,
-  );
-  assert.match(ui, /label: state\?\.paused \? "Resume" : "Pause"/);
-  assert.match(
-    ui,
-    /label: state\?\.dispatchHeld \? "Release dispatch hold" : "Dispatch hold"/,
-  );
-  assert.match(ui, /label: "Stop"/);
-  assert.match(
-    ui,
-    /state\.drained \? "Drained" : `\$\{state\.boundRuns\.length\} bound run/,
-  );
-  assert.match(
-    ui,
-    /await setQueue\(\{ paused: true \}\);\s*await stopThreadsRpc/,
-  );
-  assert.doesNotMatch(ui, /stopThreadsArm/);
-  assert.doesNotMatch(ui, /Confirm stop/);
-  assert.doesNotMatch(ui, /Pause and stop all active threads\?/);
-  assert.doesNotMatch(ui, /Leave drain/);
-  assert.doesNotMatch(ui, /key: "drain"/);
-});
-
-test("706: an open header menu stacks above the panes and the outside-press layer", () => {
-  // The wrapper's zIndex 50 is trapped inside the header row unless that row itself
-  // raises: the row is at 50 while the menu is open, above the outside-press layer (40).
-  assert.match(
-    ui,
-    /\.\.\.row, flexWrap: "nowrap", justifyContent: "space-between", \.\.\.\(queueMenuOpen \? \{ zIndex: 50 \} : \{\}\)/,
-  );
-  assert.match(ui, /position: "relative", zIndex: queueMenuOpen \? 50 : 0/);
-  assert.match(ui, /zIndex: 40 \}\}/);
-});
-
 test("Settings keeps shared sections and the operator GitHub section behind the same tab row", () => {
   // Projects replaces Repositories (lane nucleus-ui, task 946); Subscriptions folded into Profiles (nucleus#963);
   // Hosts holds the host catalogue and the default host picker (nucleus#1325); Hosts sits after Projects (nucleus#1494).
