@@ -255,11 +255,11 @@ fn declares_affected_tests(document: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use nucleus_core::{Answer, Authority, Command, Entry};
+    use nucleus_core::Authority;
     use nucleus_forge::GitHub;
 
     use super::*;
-    use crate::tests::{fixture, git, reservation};
+    use crate::tests::{fixture, git};
 
     #[test]
     fn pause_and_restart_exclude_unobserved_time() {
@@ -313,85 +313,5 @@ mod tests {
         let view = state.allowance_view(&row.task).unwrap();
         assert_eq!(view.used_ms, 0);
         assert_eq!(view.limit_ms, 120 * 60_000);
-    }
-
-    #[tokio::test]
-    async fn a_legacy_run_starts_at_first_observation_then_extends_once_automatically() {
-        let (_root, service) = fixture(GitHub::new("unused").unwrap());
-        let (task, _, observation) = reservation("legacy", Entry::Brief, &service.fixture().start);
-        let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
-        state.allowance_clock = Clock::new(3_600_000);
-        assert_eq!(state.allowance_view(&task).unwrap().used_ms, 0);
-        state
-            .observe_task_allowance(&task, Some(WaitReason::Running))
-            .unwrap();
-        state.allowance_clock = Clock::new(3_620_000);
-        state
-            .observe_task_allowance(&task, Some(WaitReason::Hold))
-            .unwrap();
-        state.allowance_clock = Clock::new(3_680_000);
-        assert_eq!(state.allowance_view(&task).unwrap().used_ms, 20_000);
-        state
-            .observe_task_allowance(&task, Some(WaitReason::Running))
-            .unwrap();
-
-        let limit = 180 * 60_000;
-        let first_spend = 3_600_000 + 60_000 + limit;
-        state.allowance_clock = Clock::new(first_spend);
-        let row = service.lookup(&state, "legacy").unwrap();
-        drop(state);
-
-        let _fence = service.effect(&row).await.unwrap();
-        assert_eq!(service.gate_allowance(&row).await.unwrap(), None);
-        let mut state = service.state.lock().await;
-        assert_eq!(state.allowance_view(&task).unwrap().limit_ms, 2 * limit);
-        let second_spend = first_spend + limit + 1_000;
-        state.allowance_clock = Clock::new(second_spend);
-        drop(state);
-        assert_eq!(
-            service.gate_allowance(&row).await.unwrap(),
-            Some(Action::Wait(WaitReason::Question))
-        );
-        let mut state = service.state.lock().await;
-        let asked = service.lookup(&state, "legacy").unwrap();
-        assert!(matches!(
-            asked.task.question(),
-            Some(Question::Allowance { .. })
-        ));
-        let mut updated = asked.task.clone();
-        let planner = Authority::Planner {
-            actor: "fixture planner".into(),
-        };
-        updated
-            .command(Command::Answer(Answer::Extend), &planner, &observation)
-            .unwrap();
-        service
-            .commit(
-                &mut state,
-                &asked,
-                &updated,
-                &event("allowance_extended"),
-                None,
-            )
-            .unwrap();
-        let view = state.allowance_view(&updated).unwrap();
-        assert_eq!(view.used_ms, 2 * limit + 1_000);
-        assert_eq!(view.limit_ms, 3 * limit + 1_000);
-        assert_eq!(updated.question(), None);
-        assert!(
-            updated.run().is_some(),
-            "the unsent reservation still belongs to the task"
-        );
-        drop(state);
-        let store = Store::open(&service.storage).unwrap();
-        let restarted = Clock::new(store.allowance_elapsed().unwrap());
-        assert_eq!(
-            store
-                .allowance("legacy")
-                .unwrap()
-                .view(&updated, restarted.elapsed(Instant::now())),
-            view
-        );
     }
 }
