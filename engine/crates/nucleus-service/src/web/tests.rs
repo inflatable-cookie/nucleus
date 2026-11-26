@@ -1262,6 +1262,52 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
 }
 
 #[tokio::test]
+async fn a_replaced_head_refuses_the_answer_after_one_forge_read() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let head = service.fixture().start.clone();
+    let mut pull = forge_pull(&head);
+    pull["state"] = json!("closed");
+    pull["head"]["sha"] = json!("b".repeat(40));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let calls = reads.clone();
+    let (forge, server) = serve_forge(
+        Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async move { Json(pull) }),
+            )
+            .layer(axum::middleware::from_fn(
+                move |request: Request<Body>, next: axum::middleware::Next| {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    async move { next.run(request).await }
+                },
+            )),
+    )
+    .await;
+    service.forge = forge;
+    seed_review_work_question(&service, &head).await;
+    let prior = service.task("reviewer").await.unwrap();
+    let result = service
+        .command(
+            "reviewer",
+            &Authority::Operator {
+                actor: "fixture".into(),
+            },
+            Command::Answer(Answer::Work("Continue on the recorded revision".into())),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(ServiceError::Core(
+            nucleus_core::CommandError::AnswerDoesNotMatch
+        ))
+    ));
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    assert_eq!(service.task("reviewer").await.unwrap(), prior);
+    server.abort();
+}
+
+#[tokio::test]
 async fn an_unanswered_forge_read_refuses_the_command_at_its_deadline() {
     let (forge, server) = serve_forge(Router::new().route(
         &format!("/repos/{REPOSITORY}/pulls/1"),

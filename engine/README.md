@@ -387,7 +387,7 @@ disposition. They never replay the rejected launch.
 `next` and commands run the same preflight using the pass's forge observation
 for the committed task version. Answers bound to a PR head, amendments to
 tasks with a bound PR, and moves through the merge gates check that head.
-If evidence is missing, the command reads GitHub within a ten-second deadline.
+If evidence is missing, the command makes one forge observation within a ten-second deadline.
 It applies at the original task version or returns a refusal with the cause.
 A refusal leaves the command unapplied. Merge and worktree removal
 still check fresh evidence at the effect.

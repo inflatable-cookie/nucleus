@@ -168,6 +168,10 @@ pub enum ServiceError {
     QuestionUnassigned,
     #[error("GitHub did not verify the PR head before the command deadline. Retry the command.")]
     CommandForgeTimeout,
+    #[error(
+        "GitHub did not confirm the PR head required by this command. Read Next before retrying."
+    )]
+    CommandHeadUnconfirmed,
     #[error("the question is assigned to a different planner")]
     QuestionPlanner,
     #[error("planner authority is not yet known. Retry shortly.")]
@@ -1539,16 +1543,15 @@ impl Service {
             })
             .flatten();
         let mut observation = state.command_observation(&prior);
-        let task = loop {
-            if let Some(task) = self.prepare_command(
-                &mut state,
-                &prior.task,
-                authority,
-                &observation,
-                command.clone(),
-            )? {
-                break task;
-            }
+        let task = if let Some(task) = self.prepare_command(
+            &mut state,
+            &prior.task,
+            authority,
+            &observation,
+            command.clone(),
+        )? {
+            task
+        } else {
             drop(state);
             observation.forge = Observed::Known(
                 tokio::time::timeout(
@@ -1562,6 +1565,8 @@ impl Service {
             if self.command_row(&state, id, scope, session)?.version != prior.version {
                 return Err(StoreError::StaleTask.into());
             }
+            self.prepare_command(&mut state, &prior.task, authority, &observation, command)?
+                .ok_or(ServiceError::CommandHeadUnconfirmed)?
         };
         let mut audit = event("command");
         if let Some(acceptance) = task
