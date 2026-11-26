@@ -1748,7 +1748,11 @@ test("nucleus#1322: the model picker shows each model's name and its model ID, o
     nightlyProviders().map((provider) => configProvider.parse(provider)),
   );
   const pi = host.providers.find((provider) => provider.key === "pi")!;
-  pi.models.push({ ...pi.models[1]!, id: "opencode/deepseek-v4.1-flash" });
+  pi.models[1]!.label = "Deepseek";
+  pi.models.push({
+    ...pi.models[1]!,
+    id: "opencode/deepseek-v4.1-flash",
+  });
   const state = fixture();
   state.catalogAnswer = async () => ({
     ...host,
