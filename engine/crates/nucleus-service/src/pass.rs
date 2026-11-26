@@ -140,20 +140,18 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
         let parenting = self.acp_provider().is_some();
-        if task.hold().is_some() || (!parenting && task.report_task().is_none()) {
+        if !task.phase().is_terminal()
+            || task.hold().is_some()
+            || (!parenting && task.report_task().is_none())
+        {
             return Ok(Action::Nothing);
         }
         let identity = task.identity();
         let _fence = self.effect(row).await?;
         let _projects = self.project_writes.read().await;
         let route = self.project_for(identity).await?;
-        let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
-        let binding = self.checkout_binding(identity, &route, &checkout)?;
-        let reviewer = task.threads().get(Role::Reviewer);
-        let worker = task.threads().get(Role::Worker);
         let step = if parenting {
-            self.host.prepare_archive(&binding, reviewer, worker)?
+            self.prepare_terminal_archive(task, &route)?
         } else {
             DoneArchive::Finished
         };
@@ -161,16 +159,27 @@ impl Service {
             DoneArchive::Finished => {}
             DoneArchive::Wait(cause) => return Err(ServiceError::ArchiveEvidence(cause)),
             DoneArchive::Write(write) => {
-                self.check_project_route(identity, &route).await?;
-                if !self.host.write_archive(write).await? {
+                let running = || {
+                    self.state.try_lock().is_ok_and(|state| {
+                        state
+                            .settings
+                            .dispatch
+                            .as_ref()
+                            .is_none_or(|dispatch| dispatch.mode == DispatchMode::Running)
+                    })
+                };
+                if !self.host.write_archive(write, running).await? {
                     return Err(ServiceError::ArchiveEvidence(
-                        "The T3 thread changed before archiving. Checking again.".into(),
+                        "Waiting for running Dispatch and an unchanged idle T3 thread before archiving.".into(),
                     ));
                 }
                 self.recheck_effect(row, WaitReason::Stopping).await;
                 return Ok(Action::Wait(WaitReason::Stopping));
             }
         }
+        let worktrees = self.worktrees()?;
+        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let binding = self.checkout_binding(identity, &route, &checkout)?;
         let workspace = self.observe_checkout_for_retirement(&checkout).await?;
         if workspace == Workspace::Absent {
             if checkout.has_prunable_registration()?
@@ -225,6 +234,29 @@ impl Service {
             )),
             Some(Retirement::Removed | Retirement::Absent) => Ok(Action::Nothing),
         }
+    }
+
+    fn prepare_terminal_archive(
+        &self,
+        task: &Task,
+        route: &ProjectRoute,
+    ) -> Result<DoneArchive, ServiceError> {
+        let identity = task.identity();
+        let path = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &identity.repository,
+            &identity.id,
+        );
+        let branch = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(ServiceError::Project)?;
+        let binding = route.thread_binding(&path, branch)?;
+        Ok(self.host.prepare_archive(
+            &binding,
+            task.threads().get(Role::Reviewer),
+            task.threads().get(Role::Worker),
+        )?)
     }
 
     async fn archive_retirement_head(

@@ -300,6 +300,12 @@ async fn done_archive_uses_only_the_held_shell_and_skips_a_late_active_row() {
             "snapshotSequence":16,"projects":[],"archivedThreads":[archived],
             "threads":[row(&parent,"idle"),row("reviewer","idle"),row("unrelated","idle")]
         }}));
+    let mut foreign = binding.clone();
+    foreign.project_id = "another-project".into();
+    assert!(matches!(
+        host.prepare_archive(&foreign, Some("reviewer"), Some("worker")),
+        Err(HostError::Binding)
+    ));
     let prepare = || {
         host.prepare_archive(&binding, Some("reviewer"), Some("worker"))
             .unwrap()
@@ -310,13 +316,17 @@ async fn done_archive_uses_only_the_held_shell_and_skips_a_late_active_row() {
     host.rpc.fixture_shell(
         &json!({"kind":"thread.updated","sequence":17,"thread":row("reviewer","running")}),
     );
-    assert!(!host.write_archive(stale).await.unwrap());
+    assert!(!host.write_archive(stale, || true).await.unwrap());
     assert!(host.host_calls().is_empty());
 
     let crate::DoneArchive::Write(parent_write) = prepare() else {
         panic!("the idle task thread can archive");
     };
-    assert!(host.write_archive(parent_write).await.unwrap());
+    assert!(!host.write_archive(parent_write, || false).await.unwrap());
+    let crate::DoneArchive::Write(parent_write) = prepare() else {
+        panic!("the parent remains eligible after release");
+    };
+    assert!(host.write_archive(parent_write, || true).await.unwrap());
     host.rpc
         .fixture_shell(&json!({"kind":"thread.removed","sequence":18,"threadId":parent}));
     let crate::DoneArchive::Wait(cause) = prepare() else {
@@ -329,7 +339,7 @@ async fn done_archive_uses_only_the_held_shell_and_skips_a_late_active_row() {
     let crate::DoneArchive::Write(reviewer_write) = prepare() else {
         panic!("the completed reviewer can archive");
     };
-    assert!(host.write_archive(reviewer_write).await.unwrap());
+    assert!(host.write_archive(reviewer_write, || true).await.unwrap());
     host.rpc
         .fixture_shell(&json!({"kind":"thread.removed","sequence":20,"threadId":"reviewer"}));
     assert!(matches!(prepare(), crate::DoneArchive::Finished));

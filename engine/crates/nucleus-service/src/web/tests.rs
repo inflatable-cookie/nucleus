@@ -2714,6 +2714,9 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
         std::fs::write(&draft, "keep this draft").unwrap();
         draft
     };
+    let registered = service.fixture().checkout.clone();
+    let moved = registered.with_file_name("moved-registered-checkout");
+    std::fs::rename(&registered, &moved).unwrap();
     for _ in 0..2 {
         publish(&service.host, None);
         assert!(matches!(
@@ -2721,6 +2724,8 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
             Action::Wait(WaitReason::Stopping)
         ));
     }
+    assert!(draft.is_file());
+    std::fs::rename(moved, registered).unwrap();
     publish(&service.host, None);
     assert!(
         matches!(service.archive_done(&second).await,Err(ServiceError::ArchiveEvidence(cause)) if cause.contains("retained"))

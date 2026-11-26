@@ -225,7 +225,7 @@ when to ask the planner.
 
 ### Terminal workspace cleanup
 
-Archive terminal tasks' known idle threads independently of checkout cleanup.
+Archive a terminal task’s exact idle thread from its synchronized T3 project, worktree and branch binding. Recheck Dispatch and the idle thread at the write. The registered directory may have moved.
 The board and Next retain the workspace outcome. Before removing a checkout,
 verify idle participants in the held shell, Dispatch, the Git registration and
 published head. Each pass shares one census of the local user’s working
