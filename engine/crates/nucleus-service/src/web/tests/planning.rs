@@ -240,7 +240,7 @@ async fn recover_rewritten_source(service: &Service, api: &Router, restored: &At
     assert_eq!(card["attention"], "attention");
     assert_eq!(
         card["waitDetail"],
-        "the merged pull request source could not be verified against the task’s recorded head. Hold and release the task to recheck."
+        "the merged pull request source could not be verified against the task’s recorded head. Use Recheck after the repair."
     );
     assert!(card["nextCheckAt"].is_null());
     restored.store(true, Ordering::Relaxed);
