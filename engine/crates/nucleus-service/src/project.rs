@@ -429,8 +429,60 @@ fn linked_checkout(project: &Path, path: &Path, policy: &LocalGit) -> Result<boo
 #[derive(Clone)]
 pub(crate) struct LocalGit(pub(crate) PathBuf);
 
+#[cfg(test)]
+pub(crate) mod git_gate {
+    use std::{
+        collections::BTreeMap,
+        path::PathBuf,
+        sync::{
+            Arc, Condvar, Mutex, OnceLock,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    #[derive(Default)]
+    pub struct Gate {
+        pub entered: AtomicUsize,
+        released: Mutex<bool>,
+        ready: Condvar,
+    }
+
+    impl Gate {
+        pub fn release(&self) {
+            *self.released.lock().unwrap() = true;
+            self.ready.notify_all();
+        }
+    }
+
+    fn gates() -> &'static Mutex<BTreeMap<PathBuf, Arc<Gate>>> {
+        static GATES: OnceLock<Mutex<BTreeMap<PathBuf, Arc<Gate>>>> = OnceLock::new();
+        GATES.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
+
+    pub fn install(path: PathBuf) -> Arc<Gate> {
+        let gate = Arc::new(Gate::default());
+        gates().lock().unwrap().insert(path, Arc::clone(&gate));
+        gate
+    }
+
+    pub fn enter(path: &PathBuf) {
+        let gate = gates().lock().unwrap().get(path).cloned();
+        if let Some(gate) = gate {
+            gate.entered.fetch_add(1, Ordering::SeqCst);
+            let released = gate.released.lock().unwrap();
+            drop(
+                gate.ready
+                    .wait_while(released, |released| !*released)
+                    .unwrap(),
+            );
+        }
+    }
+}
+
 impl GitPolicy for LocalGit {
     fn isolate(&self, command: &mut Command) {
+        #[cfg(test)]
+        git_gate::enter(&self.0);
         command
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
