@@ -476,6 +476,52 @@ test("the themed menu keeps a selected surface without a foreground bar", async 
   }
 });
 
+test("themed zero-count entries quiet only their resting text", async () => {
+  await load();
+  const c = {
+    accent: "#346bf1",
+    accentForeground: "#ffffff",
+    surface0: "#000000",
+    surface1: "#111111",
+    surface2: "#111111",
+    surfaceNavigation: "#0f0f0f",
+    border: "#191919",
+    foreground: "#f5f5f5",
+    foregroundMuted: "#818181",
+    statusSuccess: "#2aa56d",
+    statusWarning: "#fe9a00",
+    statusDanger: "#fb414a",
+  };
+  const ui = mountMenu(c);
+  try {
+    const entry = ui.get("Leads, 0");
+    const label = () =>
+      ui.ofType("Text").find((node) => node.children.join("") === "Leads");
+    const count = () =>
+      ui.ofType("Text").find((node) => node.children.join("") === "0");
+    const icon = () =>
+      ui.ofType("Icon").find((node) => node.props.name === "Lightbulb");
+    const restingTint = design.toneSurface(
+      c.foreground,
+      c.foreground,
+      design.navigationTextOpacity.dimmed,
+    );
+    assert.equal(entry.props.style.opacity, 1);
+    assert.equal(label()?.props.style.color, restingTint);
+    assert.equal(count()?.props.style.color, restingTint);
+    assert.equal(icon()?.props.color, restingTint);
+
+    entry.props.onHoverIn();
+    const hovered = ui.get("Leads, 0");
+    assert.equal(hovered.props.style.opacity, 1);
+    assert.equal(label()?.props.style.color, c.foreground);
+    assert.equal(count()?.props.style.color, c.foreground);
+    assert.equal(icon()?.props.color, c.foreground);
+  } finally {
+    ui.update(h("View", null));
+  }
+});
+
 test("1546 the Planning entry counts the open lanes, dimmed at zero like the rest", async () => {
   await load();
   const ui = mountMenu(dark);

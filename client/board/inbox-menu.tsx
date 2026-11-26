@@ -8,6 +8,7 @@ import type { RustExtraView } from "../web/rust-board";
 import {
   cardTitleColor,
   hoverSurface,
+  navigationTextOpacity,
   radius,
   selectedSurface,
   space,
@@ -56,7 +57,14 @@ function MenuEntry({
       : "transparent";
   // Keep zero-count labels quieter without fading the entire interaction fill.
   const emphasized = on || hovered || focus.visible;
-  const labelColor = cardTitleColor(c, emphasized);
+  const labelColor =
+    options.dimmed && themedNavigation && !emphasized
+      ? toneSurface(
+          c.foreground,
+          c.foreground,
+          navigationTextOpacity.dimmed,
+        )
+      : cardTitleColor(c, emphasized);
   return (
     <Pressable
       accessibilityRole="tab"
@@ -81,11 +89,15 @@ function MenuEntry({
         paddingHorizontal: space.sm,
         borderRadius: radius.control,
         backgroundColor,
-        opacity: options.dimmed && !on ? (themedNavigation ? 0.72 : 0.55) : 1,
+        opacity: options.dimmed && !on && !themedNavigation ? 0.55 : 1,
       }}
     >
       {options.icon && (
-        <Icon name={options.icon} size={16} color={labelColor} />
+        <Icon
+          name={options.icon}
+          size={16}
+          color={labelColor}
+        />
       )}
       <Text
         numberOfLines={1}
@@ -139,31 +151,19 @@ export function InboxMenu({
   standalone?: boolean;
   onSelect: (view: BoardView) => void;
 }) {
-  const allEntries: readonly { id: BoardView; label: string; icon: string }[] =
-    rust
-      ? [
-          ...inboxViews.slice(0, -1),
-          { id: "merging", label: "Merging", icon: "GitMerge" },
-          ...inboxViews.slice(-1),
-          { id: "history", label: "History", icon: "History" },
-        ]
-      : inboxViews;
+  const allEntries: readonly { id: BoardView; label: string; icon: string }[] = rust
+    ? [...inboxViews.slice(0, -1), { id: "merging", label: "Merging", icon: "GitMerge" },
+        ...inboxViews.slice(-1), { id: "history", label: "History", icon: "History" }]
+    : inboxViews;
   const entries = standalone
-    ? allEntries.filter(
-        ({ id }) => id !== "planning" && id !== "leads" && id !== "papercuts",
-      )
+    ? allEntries.filter(({ id }) => id !== "planning" && id !== "leads" && id !== "papercuts")
     : allEntries;
   const count = (id: BoardView) => {
     if (pendingCounts?.includes(id)) return null;
     const rustTotal = rust?.totals[id];
     if (standalone) return rustTotal ?? null;
     if (id === "merging" || id === "history") return rustTotal ?? null;
-    if (
-      rust &&
-      ["needs", "queue", "working", "review", "closing"].includes(id) &&
-      rustTotal === undefined
-    )
-      return null;
+    if (rust && ["needs", "queue", "working", "review", "closing"].includes(id) && rustTotal === undefined) return null;
     return counts[id] + (rustTotal ?? 0);
   };
   const item = (
