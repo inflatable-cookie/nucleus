@@ -7,7 +7,7 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError};
 use nucleus_hosts::{HostError, NoticeOutcome, T3};
 use nucleus_store::{
-    DispatchMode, StoreError, TaskRow,
+    DispatchMode, EventDraft, StoreError, TaskRow,
     planning::{Lane, WriteAt},
 };
 use nucleus_work::Checkout;
@@ -27,55 +27,208 @@ pub(super) enum PlannerNotice {
     Completion,
 }
 
+struct NoticeOccurrence {
+    kind: PlannerNotice,
+    effect: &'static str,
+    version: i64,
+    release_version: Option<i64>,
+    prefer_claim: bool,
+    intent_event: &'static str,
+    not_sent_event: &'static str,
+    rejected_event: &'static str,
+    propagate_uncertain: bool,
+}
+
+enum NoticeClaim {
+    ReportReady(Box<TaskRow>),
+    PrerequisiteRelease(i64),
+    ParentRecovery,
+    Completion(bool),
+}
+
+enum SendOutcome {
+    Delivered,
+    Reopen {
+        rejected: bool,
+        error: Option<HostError>,
+    },
+    RetryRejected,
+    Uncertain(HostError),
+}
+
 impl PlannerNotice {
-    fn retry(
-        self,
-        store: &nucleus_store::Store,
-        task: &str,
-        version: i64,
-    ) -> Result<Option<bool>, StoreError> {
+    fn occurrence(self, row_version: i64) -> NoticeOccurrence {
         match self {
-            Self::Completion => store.completion_notice(task),
-            Self::ParentRecovery => store.parent_recovery_notice_retry(task, version),
-            Self::ReportReady => Ok(Some(store.planner_notice_rejected(task, None)?)),
-            Self::PrerequisiteRelease(release) => {
-                Ok(Some(store.planner_notice_rejected(task, Some(release))?))
+            Self::ReportReady => NoticeOccurrence {
+                kind: self,
+                effect: "report-ready",
+                version: row_version,
+                release_version: None,
+                prefer_claim: false,
+                intent_event: "report_ready_planner_notice_intent",
+                not_sent_event: "report_ready_planner_notice_not_sent",
+                rejected_event: "planner_notice_rejected",
+                propagate_uncertain: true,
+            },
+            Self::PrerequisiteRelease(release) => NoticeOccurrence {
+                kind: self,
+                effect: "prerequisite-release",
+                version: release,
+                release_version: Some(release),
+                prefer_claim: false,
+                intent_event: "prerequisite_notice_intent",
+                not_sent_event: "prerequisite_notice_not_sent",
+                rejected_event: "planner_notice_rejected",
+                propagate_uncertain: true,
+            },
+            Self::ParentRecovery => NoticeOccurrence {
+                kind: self,
+                effect: "parent-recovery",
+                version: row_version,
+                release_version: None,
+                prefer_claim: false,
+                intent_event: "parent_recovery_notice_intent",
+                not_sent_event: "parent_recovery_notice_not_sent",
+                rejected_event: "parent_recovery_notice_rejected",
+                propagate_uncertain: false,
+            },
+            Self::Completion => NoticeOccurrence {
+                kind: self,
+                effect: "completion",
+                version: 0,
+                release_version: None,
+                prefer_claim: true,
+                intent_event: "completion_notice_intent",
+                not_sent_event: "completion_notice_not_sent",
+                rejected_event: "completion_notice_rejected",
+                propagate_uncertain: false,
+            },
+        }
+    }
+}
+
+impl NoticeOccurrence {
+    fn retry(
+        &self,
+        store: &nucleus_store::Store,
+        row: &TaskRow,
+    ) -> Result<Option<bool>, StoreError> {
+        let task_id = &row.task.identity().id;
+        match self.kind {
+            PlannerNotice::Completion => store.completion_notice(task_id),
+            PlannerNotice::ParentRecovery => {
+                store.parent_recovery_notice_retry(task_id, self.version)
+            }
+            PlannerNotice::ReportReady => row
+                .task
+                .report_task()
+                .filter(|report| report.delivery.is_some() && !report.notice_attempted)
+                .map(|_| store.planner_notice_rejected(task_id, None))
+                .transpose(),
+            PlannerNotice::PrerequisiteRelease(release) => {
+                Ok(Some(store.planner_notice_rejected(task_id, Some(release))?))
             }
         }
     }
-    fn effect(
+
+    async fn claim(
+        &self,
+        service: &Service,
+        row: &TaskRow,
+        retry: bool,
+        audit: &EventDraft,
+    ) -> Result<Option<NoticeClaim>, ServiceError> {
+        let id = &row.task.identity().id;
+        match self.kind {
+            PlannerNotice::ReportReady => {
+                let mut updated = row.task.clone();
+                updated.mark_report_notice_attempted();
+                Ok(Some(NoticeClaim::ReportReady(Box::new(
+                    service.save(row, updated, audit).await?,
+                ))))
+            }
+            PlannerNotice::PrerequisiteRelease(release) => {
+                if !service
+                    .state
+                    .lock()
+                    .await
+                    .store
+                    .claim_prerequisite_notice(id, release, audit)?
+                {
+                    return Ok(None);
+                }
+                service.publish(id, row.version);
+                Ok(Some(NoticeClaim::PrerequisiteRelease(release)))
+            }
+            PlannerNotice::ParentRecovery => {
+                let mut state = service.state.lock().await;
+                state.store.record_task_effect(id, audit)?;
+                state.planner_notice_waiters.remove(id);
+                Ok(Some(NoticeClaim::ParentRecovery))
+            }
+            PlannerNotice::Completion => {
+                let mut state = service.state.lock().await;
+                state
+                    .store
+                    .set_completion_notice(id, Some(retry), None, audit)?;
+                state.planner_notice_waiters.remove(id);
+                Ok(Some(NoticeClaim::Completion(retry)))
+            }
+        }
+    }
+}
+
+impl NoticeClaim {
+    async fn reopen(
         self,
-        row_version: i64,
-    ) -> (&'static str, i64, &'static str, &'static str, Option<i64>) {
+        service: &Service,
+        row: &TaskRow,
+        audit: &EventDraft,
+        outcome: &EventDraft,
+        rejected: bool,
+    ) -> Result<(), ServiceError> {
+        let id = &row.task.identity().id;
         match self {
-            Self::Completion => (
-                "completion",
-                0,
-                "completion_notice_intent",
-                "completion_notice_not_sent",
-                None,
-            ),
-            Self::ReportReady => (
-                "report-ready",
-                row_version,
-                "report_ready_planner_notice_intent",
-                "report_ready_planner_notice_not_sent",
-                None,
-            ),
-            Self::PrerequisiteRelease(version) => (
-                "prerequisite-release",
-                version,
-                "prerequisite_notice_intent",
-                "prerequisite_notice_not_sent",
-                Some(version),
-            ),
-            Self::ParentRecovery => (
-                "parent-recovery",
-                row_version,
-                "parent_recovery_notice_intent",
-                "parent_recovery_notice_not_sent",
-                None,
-            ),
+            Self::ReportReady(recorded) => {
+                service.save(&recorded, row.task.clone(), outcome).await?;
+            }
+            other => {
+                let mut state = service.state.lock().await;
+                match other {
+                    Self::PrerequisiteRelease(release) => {
+                        state
+                            .store
+                            .reopen_prerequisite_notice(id, release, audit, outcome)?;
+                    }
+                    Self::ParentRecovery => state.store.record_task_effect(id, outcome)?,
+                    Self::Completion(retry) => state.store.set_completion_notice(
+                        id,
+                        None,
+                        Some(retry || rejected),
+                        outcome,
+                    )?,
+                    Self::ReportReady(_) => unreachable!(),
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SendOutcome {
+    fn classify(send: Result<NoticeOutcome, HostError>, retry: bool) -> Self {
+        match send {
+            Ok(NoticeOutcome::Accepted) => Self::Delivered,
+            Ok(NoticeOutcome::Rejected) if !retry => Self::Reopen {
+                rejected: true,
+                error: None,
+            },
+            Ok(NoticeOutcome::Rejected) => Self::RetryRejected,
+            Err(error @ HostError::Deferred { .. }) => Self::Reopen {
+                rejected: false,
+                error: Some(error),
+            },
+            Err(error) => Self::Uncertain(error),
         }
     }
 }
@@ -383,101 +536,72 @@ impl Service {
         let _fence = self.effect(row).await?;
         let task = &row.task;
         let id = &task.identity().id;
-        let completion = matches!(notice, PlannerNotice::Completion);
-        let parent = matches!(notice, PlannerNotice::ParentRecovery);
-        let (effect, version, intent, not_sent, release_version) = notice.effect(row.version);
-        let Some(retry) = notice.retry(&self.state.lock().await.store, id, version)? else {
+        let occurrence = notice.occurrence(row.version);
+        let Some(retry) = occurrence.retry(&self.state.lock().await.store, row)? else {
             return Ok(Spent);
         };
-        let Some(thread) = self.planner_notice_target(task, completion).await? else {
+        let Some(thread) = self
+            .planner_notice_target(task, occurrence.prefer_claim)
+            .await?
+        else {
             return Ok(NoPlanner);
         };
         let suffix = if retry { "-retry" } else { "" };
-        let command = format!("task-{id}-{effect}-{version}{suffix}");
+        let command = format!(
+            "task-{id}-{}-{}{suffix}",
+            occurrence.effect, occurrence.version
+        );
         let mut attempt = T3::prepare_notice(thread, command, text)?;
         let Some((authorization, _permit)) = self.prepare_planner_notice(row, &attempt).await?
         else {
             return Ok(Pending);
         };
         let dispatch = authorization.record(&mut attempt)?;
-        let mut audit = event(intent);
-        audit.detail = serde_json::json!({"command": attempt.command, "recipient": attempt.thread,
-            "releaseVersion": release_version, "version": version, "retry": retry})
+        let mut audit = event(occurrence.intent_event);
+        audit.detail = serde_json::json!({
+            "command": attempt.command,
+            "recipient": attempt.thread,
+            "releaseVersion": occurrence.release_version,
+            "version": occurrence.version,
+            "retry": retry,
+        })
         .to_string();
-        let recorded = if parent || completion {
-            let mut state = self.state.lock().await;
-            if completion {
-                state
-                    .store
-                    .set_completion_notice(id, Some(retry), None, &audit)?;
-            } else {
-                state.store.record_task_effect(id, &audit)?;
-            }
-            state.planner_notice_waiters.remove(id);
-            None
-        } else if let Some(version) = release_version {
-            if !self
-                .state
-                .lock()
-                .await
-                .store
-                .claim_prerequisite_notice(id, version, &audit)?
-            {
-                return Ok(Spent);
-            }
-            self.publish(id, row.version);
-            None
-        } else {
-            let mut updated = task.clone();
-            updated.mark_report_notice_attempted();
-            Some(self.save(row, updated, &audit).await?)
+        let Some(claim) = occurrence.claim(self, row, retry, &audit).await? else {
+            return Ok(Spent);
         };
         // The intent is durable before the write. Unknown delivery leaves it closed.
-        let send = self.host.send_notice(dispatch).await;
-        let kind = match send {
-            Err(HostError::Deferred { .. }) => not_sent,
-            Ok(NoticeOutcome::Rejected) if !retry && completion => "completion_notice_rejected",
-            Ok(NoticeOutcome::Rejected) if !retry && parent => "parent_recovery_notice_rejected",
-            Ok(NoticeOutcome::Rejected) if !retry => "planner_notice_rejected",
-            Ok(NoticeOutcome::Rejected) => {
+        match SendOutcome::classify(self.host.send_notice(dispatch).await, retry) {
+            SendOutcome::Delivered => Ok(Spent),
+            SendOutcome::Uncertain(error) => {
+                if occurrence.propagate_uncertain {
+                    Err(error.into())
+                } else {
+                    Ok(Spent)
+                }
+            }
+            SendOutcome::RetryRejected => {
                 audit.kind = "planner_notice_retry_rejected".into();
                 self.state
                     .lock()
                     .await
                     .store
                     .record_task_effect(id, &audit)?;
-                return Ok(Spent);
+                Ok(Spent)
             }
-            Ok(NoticeOutcome::Accepted) => return Ok(Spent),
-            Err(_) if parent || completion => return Ok(Spent),
-            Err(error) => return Err(error.into()),
-        };
-        let mut outcome = event(kind);
-        outcome.detail.clone_from(&audit.detail);
-        if completion {
-            self.state.lock().await.store.set_completion_notice(
-                id,
-                None,
-                Some(retry || kind == "completion_notice_rejected"),
-                &outcome,
-            )?;
-        } else if parent {
-            self.state
-                .lock()
-                .await
-                .store
-                .record_task_effect(id, &outcome)?;
-        } else if let Some(recorded) = recorded {
-            self.save(&recorded, task.clone(), &outcome).await?;
-        } else if let Some(version) = release_version {
-            self.state
-                .lock()
-                .await
-                .store
-                .reopen_prerequisite_notice(id, version, &audit, &outcome)?;
+            SendOutcome::Reopen { rejected, error } => {
+                let mut outcome = event(if rejected {
+                    occurrence.rejected_event
+                } else {
+                    occurrence.not_sent_event
+                });
+                outcome.detail.clone_from(&audit.detail);
+                claim.reopen(self, row, &audit, &outcome, rejected).await?;
+                match error {
+                    Some(error) => Err(error.into()),
+                    None => Ok(Pending),
+                }
+            }
         }
-        send?;
-        Ok(Pending)
     }
 
     pub(super) async fn report_archive_head(
