@@ -4,6 +4,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use rustix::process::{Pid, Signal, kill_process};
@@ -67,19 +68,23 @@ impl Inventory {
         // Sorting by root keeps the recorded evidence identical across passes.
         trees.sort_by_key(|tree| tree[0]);
         let members: BTreeSet<u32> = trees.iter().flatten().copied().collect();
+        // Taken before any evidence read: a PID reused during this scan starts at or after it.
+        let observed = observed_seconds()?;
         let lines = command_lines(&members, scratch).await?;
         let ids: BTreeMap<u32, u32> = trees
             .iter()
             .flat_map(|tree| tree.iter().map(|&pid| (pid, tree[0])))
             .collect();
         let mut current = process_identities(&ids, scratch).await?;
-        // A reused PID must not inherit the previous process's own-code evidence.
-        if current.iter().any(|(pid, identity)| {
-            lines
+        // Every identity needs matching own-code evidence from the same start time, and that
+        // start must predate this scan by whole seconds. Otherwise the PID may have been reused.
+        for (pid, identity) in &current {
+            let same = lines
                 .get(pid)
-                .is_some_and(|line| line.started != identity.started)
-        }) {
-            return Err(HostError::Uncertain);
+                .is_some_and(|line| line.started == identity.started);
+            if !same || !settled(&identity.started, observed) {
+                return Err(HostError::Uncertain);
+            }
         }
         let mut scan = OrphanScan::default();
         for tree in &trees {
@@ -100,6 +105,55 @@ impl Inventory {
         scan.retained.sort_by_key(|process| process.pid);
         Ok(scan)
     }
+}
+
+/// A process counts as the same one across reads only if it started this many whole
+/// seconds before the scan. `ps` reports start times to the second, so a newer process
+/// could share an old one's start time; this margin rules that out.
+const SETTLE_SECONDS: i64 = 2;
+
+fn settled(started: &str, observed: i64) -> bool {
+    start_epoch(started).is_some_and(|start| start + SETTLE_SECONDS <= observed)
+}
+
+fn observed_seconds() -> Result<i64, HostError> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| HostError::Uncertain)?;
+    i64::try_from(now.as_secs()).map_err(|_| HostError::Uncertain)
+}
+
+/// Seconds since the Unix epoch for a `ps` lstart value, which is UTC under TZ=UTC.
+fn start_epoch(started: &str) -> Option<i64> {
+    let words: Vec<&str> = started.split_ascii_whitespace().collect();
+    let [_weekday, month, day, clock, year] = words.as_slice() else {
+        return None;
+    };
+    let month = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    .iter()
+    .position(|name| name == month)? as i64
+        + 1;
+    let day: i64 = day.parse().ok()?;
+    let year: i64 = year.parse().ok()?;
+    let mut clock = clock.split(':').map(|part| part.parse::<i64>().ok());
+    let (hour, minute, second) = (clock.next()??, clock.next()??, clock.next()??);
+    if clock.next().is_some() {
+        return None;
+    }
+    Some(days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
+}
+
+/// Days since 1970-01-01 in the proleptic Gregorian calendar.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_from_march = (month + 9) % 12;
+    let day_of_year = (153 * month_from_march + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
 }
 
 /// Own-code evidence for one member of a candidate tree, bound to its start time.
@@ -392,6 +446,24 @@ mod tests {
         assert!(!names_path("/work/ns-t-abcd/x", root));
         assert!(!names_path("/other/work/ns-t-abc/x", root));
         assert!(!names_path("/work/ns-t-abc.bak", root));
+    }
+
+    #[test]
+    fn lstart_converts_to_utc_epoch_seconds() {
+        assert_eq!(super::start_epoch("Thu Jan  1 00:00:00 1970"), Some(0));
+        assert_eq!(
+            super::start_epoch("Thu Nov 26 09:56:51 2026"),
+            Some(1_795_687_011)
+        );
+        assert_eq!(super::start_epoch("Thu Nov 26 09:56 2026"), None);
+    }
+
+    #[test]
+    fn a_start_must_predate_the_scan_by_whole_seconds() {
+        let start = super::start_epoch("Thu Nov 26 09:56:51 2026").unwrap();
+        assert!(!super::settled("Thu Nov 26 09:56:51 2026", start + 1));
+        assert!(super::settled("Thu Nov 26 09:56:51 2026", start + 2));
+        assert!(!super::settled("not a start", start + 60));
     }
 
     #[test]

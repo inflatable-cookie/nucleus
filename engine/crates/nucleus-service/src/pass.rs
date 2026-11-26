@@ -2851,6 +2851,8 @@ mod tests {
             .map(|pid| pid.parse().unwrap())
             .collect();
         assert_eq!(pids.len(), 3);
+        // Orphans must pass the scan's settle margin before closeout reads them.
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
         let outcome = service.archive_done(&terminal).await;
         assert!(
             matches!(&outcome, Err(ServiceError::ArchiveEvidence(s)) if s.contains("exited")),
@@ -2996,6 +2998,8 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
+        // Orphans must pass the scan's settle margin before closeout reads them.
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
         let outcome = service.archive_done(&terminal).await;
         let alive = tokio::process::Command::new("/bin/ps")
             .args(["-p", &pid.to_string(), "-o", "stat="])
