@@ -734,6 +734,8 @@ Later decisions carry their own attribution.
 
     Tom chose “Keep all three (Recommended)”. The pinned T3 Inbox, GitHub account sign-in UI and planner messages with replies remain supported. The compatible reductions (estimated at 275–560 lines) and the structural consolidation continue.
 
+50. **Promote queued work ahead of a backlog.** Tom, 2026-11-26, with about 60 tasks waiting for capacity: “We should probably look at adding a queue priority field so when there's a backlog like this we can tag tasks that need to get dispatched first?” Planner ruling, following the TypeScript queue priority: a task has two orders, Normal and Promoted. When a slot frees, promoted capacity waiters take it before normal ones, oldest first within each order. Promotion never bypasses the global or project slot limit. A held or parked task keeps its order and original age when it rejoins. The operator promotes or demotes from the board. The task's planner uses the command line or `queue.priority: promoted` in the brief at admission. Queued cards show “Promoted”.
+
 ## The model
 
 ### Stored state per task
