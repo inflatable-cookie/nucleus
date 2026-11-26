@@ -128,7 +128,6 @@ export const projectSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/),
   name: projectNameSchema,
   // Rust board snapshot only, for migrating a selection saved before identity-based keys.
-  legacyScopeKey: z.string().nullable().optional(),
   version: z.number().int().positive().default(1),
   repositories: z.array(projectRepositorySchema.refine(repo => Boolean(repo.origin || repo.path), "Repository needs an origin or path")),
   primary: projectRepositorySchema.nullable(),

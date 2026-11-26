@@ -296,7 +296,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       lanes: [],
       projects: rows
         .filter(({ project }) => !project.archived)
-        .map(({ board, id }) => ({ ...board, legacyScopeKey: all.projects.legacyScopeKeys?.[id] ?? null })),
+        .map(({ board }) => board),
       pendingSubmissions: [],
       projectBadges: undefined,
       // A saved T3 title refines the generated Nucleus project badge once bound.

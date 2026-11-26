@@ -4360,36 +4360,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn merge_gate_uses_only_github_required_checks_and_ignores_legacy_project_checks() {
-        use nucleus_store::SettingsValue;
-        let (home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+    async fn merge_gate_uses_only_github_required_checks() {
+        let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
         let project = service.fixture().clone();
         let head = project.start.clone();
-        let state_dir = home.path().join("state");
-        std::fs::create_dir_all(&state_dir).unwrap();
-        let legacy_projects = json!({
-            "domain": nucleus_store::Projects::ID,
-            "schemaVersion": 1,
-            "value": {"projects": {"fixture": {
-                "name": "Fixture",
-                "archived": false,
-                "repositories": [{
-                    "origin": REPOSITORY, "path": project.checkout, "base": project.base,
-                    "requiredChecks": ["optional-lint"], "hungToolMinutes": 30
-                }]
-            }}}
-        });
-        std::fs::write(
-            state_dir.join(nucleus_store::Projects::FILE),
-            legacy_projects.to_string(),
-        )
-        .unwrap();
-        let loaded = nucleus_store::SettingsFile::open(home.path())
-            .unwrap()
-            .read::<nucleus_store::Projects>()
-            .unwrap();
-        assert!(loaded.configured);
-        service.state.lock().await.settings.projects = Some(loaded.value);
 
         let (task, _) = code_task_at_merge("worker", &head);
         {

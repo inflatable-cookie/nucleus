@@ -133,7 +133,7 @@ pub struct Profile {
     pub weight: Weight,
     pub provider: Provider,
     pub model: String,
-    #[serde(default, alias = "thinkingOptionId")]
+    #[serde(default)]
     pub effort: Option<Effort>,
 }
 
