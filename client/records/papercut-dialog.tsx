@@ -359,8 +359,7 @@ export function PapercutDialog({
                   >
                     Parking
                   </Text>
-                  {
-                    <ParkPanel
+                  <ParkPanel
                       c={c}
                       busy={busy}
                       parked={papercutDetail.parked ?? null}
@@ -371,7 +370,7 @@ export function PapercutDialog({
                           ? null
                           : "Only open papercuts can be parked"
                       }
-                      unparkReason={null}
+                      reopenReason={null}
                       onPark={(reason, revisitAt) =>
                         void act(async () => {
                           await parkLead({
@@ -390,7 +389,7 @@ export function PapercutDialog({
                           });
                         }, "record")
                       }
-                      onUnpark={() =>
+                      onReopen={() =>
                         void act(async () => {
                           await reopenLead({
                             ...scope, id: papercutDetail.id,
@@ -403,7 +402,6 @@ export function PapercutDialog({
                         }, "record")
                       }
                     />
-                  }
                   {papercutDetail.state === "closed" && <ModalAction text="Reopen" busy={busy} c={c} onPress={() => void act(async () => { await reopenLead({ ...scope, id: papercutDetail.id, version: papercutDetail.version, author: "operator (board)" }); setRecordNotice({ kind: "ok", text: "Reopened." }); }, "record")} />}
                 </View>
                 {papercutDetail.state === "open" && (

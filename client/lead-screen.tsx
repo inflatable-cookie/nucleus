@@ -110,7 +110,6 @@ export type LeadActions = {
   onReopen: (reason: string) => Promise<string>;
   /** Nucleus#1543: `revisitAt` is null for a park with no recheck day. */
   onPark: (reason: string, revisitAt: string | null) => Promise<string>;
-  onUnpark: () => Promise<string>;
   onPromoteTo: (
     kind: "question" | "knowledge",
     reference: string,
@@ -133,9 +132,6 @@ const unloaded: LeadActions = {
     throw new Error("The lead has not loaded yet");
   },
   onPark: async () => {
-    throw new Error("The lead has not loaded yet");
-  },
-  onUnpark: async () => {
     throw new Error("The lead has not loaded yet");
   },
   onPromoteTo: async () => {

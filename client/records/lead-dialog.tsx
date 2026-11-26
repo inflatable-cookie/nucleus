@@ -49,8 +49,7 @@ export function LeadDialog({
     promoteLeadTo = useRpc(api.leadPromote),
     fetchLeadVersion = useRpc(api.leadVersion),
     promoteLead = useRpc(api.leadPromoteTask);
-  const parkLead = useRpc(api.leadPark),
-    unparkLead = useRpc(api.leadUnpark);
+  const parkLead = useRpc(api.leadPark);
   const leadDetailQuery = useQuery({
     queryKey: ["nucleus", "lead", selectedLeadId, project],
     queryFn: () => fetchLead({ ...scope, id: selectedLeadId! }),
@@ -130,14 +129,6 @@ export function LeadDialog({
             return revisitAt
               ? "Parked. It will show as due on its recheck date."
               : "Parked.";
-          }),
-        onUnpark: () =>
-          leadAct(async () => {
-            await unparkLead({
-              id: leadDetail.id,
-              version: leadDetail.version,
-            });
-            return "Back on the to-do list.";
           }),
         onPromoteTo: (kind, reference) =>
           leadAct(async () => {

@@ -118,10 +118,6 @@ async function mountScreen(
       log.calls.push(`park:${reason}:${revisitAt ?? "none"}`);
       return "Parked.";
     },
-    onUnpark: async () => {
-      log.calls.push("unpark");
-      return "Back on the to-do list.";
-    },
     onPromoteTo: async (kind, reference) => {
       log.calls.push(`${kind}:${reference}`);
       return kind === "question"
@@ -554,7 +550,7 @@ test("drop, reopen and the question or knowledge promotion sit in a secondary me
     dropped.ui.text(),
     /Only open leads can be dropped; this lead is dropped/,
   );
-  dropped.ui.type("Reopen reason", "Dropped by mistake");
+  dropped.ui.type("Reopen note (optional)", "Dropped by mistake");
   dropped.ui.press("Reopen the lead");
   await settle();
   assert.deepEqual(dropped.log.calls, ["reopen:Dropped by mistake"]);

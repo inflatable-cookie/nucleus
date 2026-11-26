@@ -1291,7 +1291,7 @@ test("a board click and action address the selected project's colliding decision
   ui.type("Park reason", "Later");
   await press("Park the lead");
   await visible("Parked lead");
-  assert.equal(ui.query("Return the lead to the to-do list"), undefined);
+  assert.ok(ui.query("Return the lead to the to-do list"));
   await press("Close as completed");
   await waitFor(() => dropped.size > 0, 4000, "papercut closed");
   assert.deepEqual([...dropped], [["lantern", { reason: null, disposition: "completed" }]]);
@@ -1565,17 +1565,21 @@ test("a project refusal settles lists until the paired session changes", async (
   assert.deepEqual((await decisions()).map(({ id }) => id), ["d-Orbit_Main", "d-lantern"]);
 });
 
-test("the selected item's project scopes detail, drop and promotion", async () => {
+test("the selected item's project scopes detail, drop, reopen and promotion", async () => {
   const fake = engine();
   const writes: string[] = [];
   const fetcher: typeof fetch = async (url, init) => {
     const path = String(url);
-    const match = /\/planning\/([^/]+)\/items(?:\/shared\/(drop|promote))?$/.exec(path);
+    const match = /\/planning\/([^/]+)\/items(?:\/shared\/(drop|reopen|promote))?$/.exec(path);
     if (!match) return fake.fetcher(url, init);
     const item = { id: "shared", title: match[1] + " item", kind: "papercut", author: "planner",
       state: "open", body: "Repair this", lanes: [], version: 1, createdAtMs: 10 };
     if (!match[2]) return Response.json([item]);
     writes.push(path);
+    if (match[2] === "reopen") {
+      assert.deepEqual(JSON.parse(String(init?.body)), { note: "Again", version: 1 });
+      return Response.json(item);
+    }
     return Response.json(match[2] === "drop" ? { ...item, state: "dropped" }
       : { identity: { id: "task" }, reference: "repo#23" });
   };
@@ -1586,8 +1590,9 @@ test("the selected item's project scopes detail, drop and promotion", async () =
   assert.equal(writes.length, 0);
   assert.equal((await adapter.rpc(api.papercutGet, { project, id }))?.title, "lantern item");
   await adapter.rpc(api.leadDrop, { project, id, reason: "Resolved" });
+  await adapter.rpc(api.leadReopen, { project, id, reason: "Again", version: 1, author: "operator" });
   await adapter.rpc(api.papercutPromoteTask, { project, id, board: true });
-  assert.deepEqual(writes, ["/api/engine/planning/lantern/items/shared/drop", "/api/engine/planning/lantern/items/shared/promote"]);
+  assert.deepEqual(writes, ["/api/engine/planning/lantern/items/shared/drop", "/api/engine/planning/lantern/items/shared/reopen", "/api/engine/planning/lantern/items/shared/promote"]);
 });
 
 test("papercut editing refuses ambiguous and out-of-scope records before a write", async () => {

@@ -114,7 +114,7 @@ export function ParkedNote({
 }
 
 /**
- * Park and unpark for one lead or papercut. The parent runs the action and reports its outcome;
+ * Park and reopen for one lead or papercut. The parent runs the action and reports its outcome;
  * a day that is not after today is refused here, before anything is sent.
  */
 export function ParkPanel({
@@ -124,9 +124,9 @@ export function ParkPanel({
   recheck,
   canPark,
   parkReason,
-  unparkReason,
+  reopenReason,
   onPark,
-  onUnpark,
+  onReopen,
 }: {
   c: Colors;
   busy: boolean;
@@ -134,9 +134,9 @@ export function ParkPanel({
   recheck: LeadRecheck | null;
   canPark: boolean;
   parkReason?: string | null;
-  unparkReason?: string | null;
+  reopenReason?: string | null;
   onPark: (reason: string, revisitAt: string | null) => void;
-  onUnpark: () => void;
+  onReopen: () => void;
 }) {
   const [reason, setReason] = useState("");
   const [date, setDate] = useState(() => defaultRecheckDate());
@@ -157,9 +157,9 @@ export function ParkPanel({
             c={c}
             text="Reopen"
             label="Return the lead to the to-do list"
-            disabled={busy || Boolean(unparkReason)}
-            hint={unparkReason ?? undefined}
-            onPress={onUnpark}
+            disabled={busy || Boolean(reopenReason)}
+            hint={reopenReason ?? undefined}
+            onPress={onReopen}
           />
         </View>
       )}

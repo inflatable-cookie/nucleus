@@ -630,6 +630,28 @@ mod tests {
     }
 
     #[test]
+    fn item_reopen_cli_sends_note_and_version() {
+        let parsed = Cli::try_parse_from([
+            "nucleus",
+            "item.reopen",
+            "product",
+            "item-id",
+            "--note",
+            "Again",
+            "--version",
+            "7",
+        ])
+        .unwrap();
+        let Action::Planning(action) = parsed.action else {
+            panic!("expected planning command")
+        };
+        let (method, path, body) = action.request().unwrap();
+        assert_eq!(method, Method::POST);
+        assert_eq!(path, "/v1/planning/product/items/item-id/reopen");
+        assert_eq!(body.unwrap(), json!({"note":"Again", "version":7}));
+    }
+
+    #[test]
     fn planning_item_add_distinguishes_project_from_kind_by_arity() {
         for (positionals, expected) in [
             (&["papercut", "Fix it"][..], None),

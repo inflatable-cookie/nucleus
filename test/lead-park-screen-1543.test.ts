@@ -66,14 +66,10 @@ async function mountLead(detail: LeadDetail) {
     onApprove: async () => "Approved.",
     onPromote: async () => "Promoted",
     onDrop: async () => "Dropped.",
-    onReopen: async () => "Reopened.",
+    onReopen: async () => { calls.push("reopen"); return "Reopened."; },
     onPark: async (reason, revisitAt) => {
       calls.push(`park:${reason}:${revisitAt === null ? "none" : "dated"}`);
       return "Parked.";
-    },
-    onUnpark: async () => {
-      calls.push("unpark");
-      return "Back on the to-do list.";
     },
     onPromoteTo: async () => "Recorded.",
   };
@@ -91,11 +87,11 @@ async function mountLead(detail: LeadDetail) {
   return { ui, calls };
 }
 
-test("1543-9 a parked lead shows its reason and recheck day, and Unpark returns it", async () => {
+test("1543-9 a parked lead shows its reason and recheck day, and Reopen returns it", async () => {
   const revisitAt = new Date(Date.now() + 86_400_000).toISOString();
   const { ui, calls } = await mountLead(
     lead({
-      actions: { unpark: null },
+      actions: { reopen: null },
       parked: {
         reason: "Waits on a T3 capability",
         revisitAt,
@@ -107,7 +103,7 @@ test("1543-9 a parked lead shows its reason and recheck day, and Unpark returns 
   assert.match(ui.text(), /Parked · Waits on a T3 capability · check again /);
   ui.press("Return the lead to the to-do list");
   await settle();
-  assert.deepEqual(calls, ["unpark"]);
+  assert.deepEqual(calls, ["reopen"]);
 });
 
 test("1543-10 a due recheck names its reason; Park is refused for a day that is not after today", async () => {
@@ -137,4 +133,12 @@ test("1543-10 a due recheck names its reason; Park is refused for a day that is 
   ui.press("Park the lead");
   await settle();
   assert.deepEqual(calls, ["park:Still waiting:none"]);
+});
+
+test("a past revisit date shows as due while the item remains parked", async () => {
+  const { ui } = await mountLead(lead({ actions: { reopen: null }, parked: {
+    reason: "Waiting", revisitAt: "2020-01-01T09:00:00Z", by: "planner", at: "2019-01-01T09:00:00Z",
+  } }));
+  assert.match(ui.text(), /Parked · Waiting · revisit due/);
+  assert.ok(ui.query("Return the lead to the to-do list"));
 });
