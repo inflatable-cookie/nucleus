@@ -2800,7 +2800,7 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
             )
             .await
             .expect("release hold"),
-        CommandOutcome::Applied(_)
+        nucleus_store::TaskRow { task, .. } if task.hold().is_none()
     ));
     let done = service.task(&done.task.identity().id).await.unwrap();
     service.host = service.host.with_quiet_fixture_processes();
