@@ -673,6 +673,8 @@ Later decisions carry their own attribution.
     and bearer. The GraphQL checks query runs on every open-PR observation
     that needs checks. Every page must identify the head and base commit from
     the PR read. Every selected field must be present on every page, including nullable fields. Incomplete or inconsistent evidence keeps the merge gate closed.
+    An open PR needs no merge commit. When a merged REST pull omits the commit,
+    GraphQL must confirm it at the same head and base before closeout.
 
 45. **A worker that stops early continues.** On 2026-11-25 the Bovine planner,
     asked by Tom to agree a fix, reported Terra workers ending their first
