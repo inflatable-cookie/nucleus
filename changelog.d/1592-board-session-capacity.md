@@ -1,0 +1,1 @@
+A new board pairing at the 64-session limit now expires stale sessions and replaces the least recently used paired session, instead of failing with HTTP 503. The replaced browser's open event stream ends.
