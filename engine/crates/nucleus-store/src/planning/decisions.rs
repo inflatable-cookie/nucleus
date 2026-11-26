@@ -1,12 +1,12 @@
 use std::collections::BTreeSet;
 
-use rusqlite::{Connection, OptionalExtension, Transaction};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
     Decision, DecisionAnswer, DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption,
     DecisionRecord, DecisionTarget, WriteAt, decode, insert, list, read, required, save, valid_key,
 };
-use crate::{Store, StoreError, load};
+use crate::{Store, StoreError, TellState, TellSubmission, load};
 
 pub(crate) const USAGE_PERMISSION_INDEX: &str =
     "CREATE UNIQUE INDEX IF NOT EXISTS planning_usage_permission
@@ -153,6 +153,23 @@ impl Store {
         input: DecisionAnswerInput,
         stamp: WriteAt<'_>,
     ) -> Result<Decision, StoreError> {
+        Ok(self
+            .answer_decision_with_notice(project, id, input, stamp, None)?
+            .0)
+    }
+
+    /// Record the answer and optionally queue one direct tell notice in the same transaction.
+    ///
+    /// # Errors
+    /// Returns an error for a missing, obsolete, or withdrawn decision, unknown option, or database failure.
+    pub fn answer_decision_with_notice(
+        &mut self,
+        project: &str,
+        id: &str,
+        input: DecisionAnswerInput,
+        stamp: WriteAt<'_>,
+        notice: Option<(&TellSubmission<'_>, &str)>,
+    ) -> Result<(Decision, bool), StoreError> {
         let tx = self.planning_write()?;
         let mut decision: Decision = required(&tx, DecisionRecord, project, id)?;
         if decision.withdrawn || (decision.task.is_some() && decision.answer.is_some()) {
@@ -169,14 +186,25 @@ impl Store {
         if let Some(target) = &decision.task {
             require_task_question(&tx, target)?;
         }
+        let same_answer = decision.answer.as_ref().is_some_and(|existing| {
+            existing.input.option_id == input.option_id
+                && trimmed_note(existing.input.note.as_deref())
+                    == trimmed_note(input.note.as_deref())
+        });
         decision.answer = Some(DecisionAnswer {
             input,
             author: stamp.actor.into(),
             answered_at_ms: stamp.at_ms,
         });
         save(&tx, DecisionRecord, project, id, "answer", &decision, stamp)?;
+        let queued = if !same_answer && let Some((tell, tell_id)) = notice {
+            insert_decision_tell(&tx, project, tell, tell_id)?;
+            true
+        } else {
+            false
+        };
         tx.commit()?;
-        Ok(decision)
+        Ok((decision, queued))
     }
 
     /// Reuse the Inbox decision for this task question, or create it once.
@@ -295,6 +323,51 @@ pub(crate) fn insert_usage_permission(
         &decision,
         stamp,
     )
+}
+
+fn trimmed_note(note: Option<&str>) -> Option<&str> {
+    note.map(str::trim).filter(|note| !note.is_empty())
+}
+
+fn insert_decision_tell(
+    tx: &Transaction<'_>,
+    project: &str,
+    tell: &TellSubmission<'_>,
+    tell_id: &str,
+) -> Result<(), StoreError> {
+    // Decision answer notices bypass the hourly recipient cap like claim notices so operator answers always commit.
+    let thread = tell.direct.ok_or(StoreError::PlanningInput)?;
+    let state = serde_json::to_string(&TellState::Pending)?;
+    tx.execute(
+        "INSERT INTO project_tell_deliveries
+            (id, sender, from_project, to_project, text, recorded_at, state, retry_at, request_key)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?6, ?8)",
+        params![
+            tell_id,
+            tell.sender,
+            tell.from_project,
+            project,
+            tell.text,
+            tell.recorded_at,
+            state,
+            tell.key,
+        ],
+    )?;
+    tx.execute(
+        "INSERT INTO tell_direct_targets (delivery, thread) VALUES (?1, ?2)",
+        params![tell_id, thread],
+    )?;
+    tx.execute(
+        "INSERT INTO project_tell_requests (key, recorded_at, deliveries, no_live_planners)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            tell.key,
+            tell.recorded_at,
+            serde_json::to_string(&[tell_id])?,
+            serde_json::to_string(tell.no_live_planners)?,
+        ],
+    )?;
+    Ok(())
 }
 
 fn new_decision(
