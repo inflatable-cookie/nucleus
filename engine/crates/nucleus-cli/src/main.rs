@@ -165,6 +165,18 @@ enum Action {
         #[arg(long)]
         version: i64,
     },
+    /// Promote a queued or capacity-waiting task ahead of normal queue order.
+    Promote {
+        id: String,
+        #[arg(long)]
+        version: i64,
+    },
+    /// Return a promoted task to normal queue order.
+    Demote {
+        id: String,
+        #[arg(long)]
+        version: i64,
+    },
     /// Release the task hold.
     Release { id: String },
     /// Replace the prerequisites of a task before dispatch.
@@ -660,6 +672,8 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         A::Amend { id } => command_path(&id, Command::Amend(stdin_brief()?))?,
         A::Hold { id, reason } => command_path(&id, Command::Hold(reason))?,
         A::Recheck { id, version } => command_path(&id, json!({ "recheck": version }))?,
+        A::Promote { id, version } => command_path(&id, json!({ "promote": version }))?,
+        A::Demote { id, version } => command_path(&id, json!({ "demote": version }))?,
         A::Release { id } => command_path(&id, Command::Release)?,
         A::SetDependencies(args) => args.request()?,
         A::SetPrerequisiteWait(args) => args.request()?,

@@ -318,6 +318,22 @@ test("the paired Board tracks Rust task changes and uses the next command contra
         row.phase = "reviewing";
         row.version++;
       }
+      if (
+        typeof command === "object" &&
+        command !== null &&
+        "promote" in command
+      ) {
+        row.queuePriority = "promoted";
+        row.version++;
+      }
+      if (
+        typeof command === "object" &&
+        command !== null &&
+        "demote" in command
+      ) {
+        row.queuePriority = "normal";
+        row.version++;
+      }
       json(row);
       return;
     }
@@ -613,6 +629,31 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   assert.equal(historyCards().at(-1), "history-oldest");
 
   assert.equal(posts.length, 8);
+  await click("Queue, 26");
+  await click("Promote queued-0");
+  const demoteReady = () => {
+    const button = dom.window.document.querySelector('[aria-label="Demote queued-0"]');
+    return Boolean(button && button.getAttribute("aria-disabled") !== "true" && !button.hasAttribute("disabled"));
+  };
+  await eventually(
+    () => text().includes("Promoted") && demoteReady(),
+    "promoted label and demote control appear on the queued card",
+  );
+  assert.deepEqual(posts[8], {
+    path: "/api/engine/tasks/queued-0/commands",
+    command: { promote: 7 },
+  });
+  await click("Demote queued-0");
+  await eventually(
+    () =>
+      !text().includes("Promoted") &&
+      Boolean(dom.window.document.querySelector('[aria-label="Promote queued-0"]')),
+    "demote returns the queued card to normal order",
+  );
+  assert.deepEqual(posts[9], {
+    path: "/api/engine/tasks/queued-0/commands",
+    command: { demote: 8 },
+  });
   authorityCold = true;
   await assert.rejects(
     createRustBoardTransport(fetcher).command("running", { hold: "Fixture" }),
@@ -644,6 +685,8 @@ test("typed Board commands match Rust serde shapes and pending is a single write
     "cancel",
     { amend: "Updated brief", briefVersion: 3 },
     { recheck: 7 },
+    { promote: 7 },
+    { demote: 7 },
     { hold: "Hold for proof" },
     "release",
   ];

@@ -1,0 +1,1 @@
+- Promote or demote queued and capacity-waiting tasks ahead of normal queue order via `queue.priority: promoted`, `nucleus promote`/`demote`, and the board card controls.

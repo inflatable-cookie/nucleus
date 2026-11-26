@@ -22,7 +22,7 @@ mod volume;
 
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use nucleus_core::{Identity, Phase, Role, Task, profiles::RotationCounts};
+use nucleus_core::{Identity, Phase, QueuePriority, Role, Task, profiles::RotationCounts};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, named_params,
     params,
@@ -54,10 +54,10 @@ pub use usage::{ProfileUsage, SubscriptionPause, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 12;
+const SCHEMA_VERSION: i32 = 13;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
-const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation";
+const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation, queue_priority";
 const LEGACY_PROJECT_IMPORT_JOURNAL: &str = "
 CREATE TABLE IF NOT EXISTS legacy_project_import (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -180,6 +180,8 @@ pub struct TaskSeed {
     pub admission_order: Option<i64>,
     /// Whether the task is closing or settling terminal work.
     pub closeout: bool,
+    /// Queue dispatch order for capacity waiters.
+    pub queue_priority: QueuePriority,
 }
 
 /// A task's execution snapshot plus its public number. Equality fences the
@@ -293,43 +295,7 @@ impl Store {
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
             (APPLICATION_ID, 1..SCHEMA_VERSION) => {
-                Self::backup_before_upgrade(path, backup, version)?;
-                if version == 1 {
-                    tx.execute("ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)", [])?;
-                    tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
-                }
-                if version < 3 {
-                    tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
-                }
-                if version < 4 {
-                    tx.execute(ACP_SESSIONS, [])?;
-                }
-                if version < 5 {
-                    tx.execute_batch(usage::SCHEMA)?;
-                }
-                if version < 6 {
-                    tx.execute(inbox::SCHEMA, [])?;
-                }
-                if version < 7 {
-                    tx.execute(titles::SCHEMA, [])?;
-                }
-                if version < 8 {
-                    tx.execute_batch(planning::SCHEMA)?;
-                }
-                if version < 9 {
-                    tx.execute_batch(numbers::SCHEMA)?;
-                }
-                if version < 10 {
-                    Self::migrate_report_tasks(tx)?;
-                } else if version == 10 {
-                    tx.execute(
-                        "ALTER TABLE tasks ADD COLUMN work_continuation TEXT CHECK (json_valid(work_continuation))",
-                        [],
-                    )?;
-                }
-                tx.execute_batch(include_str!("parent_delivery.sql"))?;
-                tx.execute_batch(include_str!("parent_delivery_legacy.sql"))?;
-                tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                Self::upgrade_schema(tx, path, backup, version)?;
             }
             _ => {
                 return Err(StoreError::Incompatible {
@@ -368,6 +334,63 @@ impl Store {
             tx.execute_batch(include_str!("planning/clocks.sql"))?;
         }
         tx.execute(board_state::SCHEMA, [])?;
+        Ok(())
+    }
+
+    fn upgrade_schema(
+        tx: &Transaction<'_>,
+        path: &Path,
+        backup: &StorageDirectory,
+        version: i32,
+    ) -> Result<(), StoreError> {
+        Self::backup_before_upgrade(path, backup, version)?;
+        if version == 1 {
+            tx.execute(
+                "ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)",
+                [],
+            )?;
+            tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
+        }
+        if version < 3 {
+            tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
+        }
+        if version < 4 {
+            tx.execute(ACP_SESSIONS, [])?;
+        }
+        if version < 5 {
+            tx.execute_batch(usage::SCHEMA)?;
+        }
+        if version < 6 {
+            tx.execute(inbox::SCHEMA, [])?;
+        }
+        if version < 7 {
+            tx.execute(titles::SCHEMA, [])?;
+        }
+        if version < 8 {
+            tx.execute_batch(planning::SCHEMA)?;
+        }
+        if version < 9 {
+            tx.execute_batch(numbers::SCHEMA)?;
+        }
+        if version < 10 {
+            Self::migrate_report_tasks(tx)?;
+        } else if version < 13 {
+            if version == 10 {
+                tx.execute(
+                    "ALTER TABLE tasks ADD COLUMN work_continuation TEXT CHECK (json_valid(work_continuation))",
+                    [],
+                )?;
+            }
+            tx.execute(
+                "ALTER TABLE tasks ADD COLUMN queue_priority TEXT NOT NULL DEFAULT 'normal' CHECK (queue_priority IN ('normal','promoted'))",
+                [],
+            )?;
+        }
+        if version < 12 {
+            tx.execute_batch(include_str!("parent_delivery.sql"))?;
+            tx.execute_batch(include_str!("parent_delivery_legacy.sql"))?;
+        }
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
 
@@ -514,14 +537,19 @@ impl Store {
              ORDER BY admitted LIMIT ?1)
              SELECT due.id, CASE WHEN t.phase IN ('queued', 'working') AND t.entry = 'brief' AND t.run IS NULL
                AND json_extract(t.threads, '$.worker') IS NULL AND json_extract(t.threads, '$.reviewer') IS NULL
-               THEN due.admitted END, t.phase IN ('closing', 'done', 'cancelled')
+               THEN due.admitted END, t.phase IN ('closing', 'done', 'cancelled'), t.queue_priority
              FROM due JOIN tasks t ON t.id = due.id ORDER BY due.admitted",
         )?;
         let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| {
+            let priority = match row.get::<_, String>(3)?.as_str() {
+                "promoted" => QueuePriority::Promoted,
+                _ => QueuePriority::Normal,
+            };
             Ok(TaskSeed {
                 id: row.get(0)?,
                 admission_order: row.get(1)?,
                 closeout: row.get(2)?,
+                queue_priority: priority,
             })
         })?;
         Ok(ids.collect::<Result<_, _>>()?)
@@ -1221,8 +1249,8 @@ fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> 
 fn decode_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     Ok(TaskRow {
         task: decode_display_task(row)?,
-        version: row.get(17)?,
-        number: row.get(18)?,
+        version: row.get(18)?,
+        number: row.get(19)?,
     })
 }
 
@@ -1232,7 +1260,7 @@ fn decode_listed_row(row: &Row<'_>) -> rusqlite::Result<Result<TaskRow, Box<Unre
         Err(rusqlite::Error::FromSqlConversionFailure(_, _, cause)) => {
             let identity: Identity = serde_json::from_value(identity_columns(row)?)
                 .map_err(|error| decode_error(0, error))?;
-            let number: Option<i64> = row.get(18)?;
+            let number: Option<i64> = row.get(19)?;
             let reference = number.map_or_else(
                 || identity.reference.clone(),
                 |n| numbers::reference(&identity.repository, n),
@@ -1241,7 +1269,7 @@ fn decode_listed_row(row: &Row<'_>) -> rusqlite::Result<Result<TaskRow, Box<Unre
                 identity,
                 number,
                 reference,
-                version: row.get(17)?,
+                version: row.get(18)?,
                 cause: cause.to_string(),
             })))
         }
@@ -1280,6 +1308,7 @@ fn decode_task(row: &Row<'_>) -> rusqlite::Result<Task> {
         "hold": json_column(row, 13)?,
         "report_task": json_column(row, 15)?,
         "work_continuation": json_column(row, 16)?,
+        "queue_priority": row.get::<_, String>(17)?,
     });
     serde_json::from_value(value).map_err(|error| decode_error(0, error))
 }
@@ -1322,10 +1351,10 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
     let identity = task.identity();
     let snapshot = serde_json::to_value(task)?;
     let mut sql = format!(
-        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold, :origin_thread, :report_task, :work_continuation)"
+        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold, :origin_thread, :report_task, :work_continuation, :queue_priority)"
     );
     if update {
-        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold,\n            report_task = excluded.report_task, work_continuation = excluded.work_continuation, version = tasks.version + 1");
+        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold,\n            report_task = excluded.report_task, work_continuation = excluded.work_continuation, queue_priority = excluded.queue_priority, version = tasks.version + 1");
     }
     let nullable_json = |key: &str| (!snapshot[key].is_null()).then(|| snapshot[key].to_string());
     tx.execute(
@@ -1348,6 +1377,7 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
             ":origin_thread": identity.origin_thread,
             ":report_task": nullable_json("report_task"),
             ":work_continuation": nullable_json("work_continuation"),
+            ":queue_priority": if task.queue_priority().is_promoted() { "promoted" } else { "normal" },
         },
     )?;
     Ok(())

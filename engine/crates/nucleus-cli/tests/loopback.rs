@@ -181,6 +181,72 @@ async fn controller_key_comes_from_the_selected_environment_variable() {
 }
 
 #[tokio::test]
+async fn promote_and_demote_cli_commands_send_versioned_task_commands() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("loopback");
+    let endpoint = listener.local_addr().expect("local address").to_string();
+    let key = hex::encode([5; 32]);
+    let (sent_tx, mut sent_rx) = tokio::sync::mpsc::unbounded_channel();
+    let app = Router::new().route(
+        "/v1/tasks/{task}/commands",
+        post(
+            move |Path(task): Path<String>, Json(body): Json<serde_json::Value>| {
+                let sent_tx = sent_tx.clone();
+                async move {
+                    sent_tx.send((task, body)).unwrap();
+                    Json(json!({"ok": true}))
+                }
+            },
+        ),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let run = tokio::task::spawn_blocking(move || {
+        for args in [
+            [
+                "--endpoint",
+                &endpoint,
+                "promote",
+                "fixture#7",
+                "--version",
+                "3",
+            ],
+            [
+                "--endpoint",
+                &endpoint,
+                "demote",
+                "fixture#7",
+                "--version",
+                "4",
+            ],
+        ] {
+            let output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
+                .args(args)
+                .env("NUCLEUS_ENGINE_CONTROL_KEY", &key)
+                .env("NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY", hex::encode([9; 32]))
+                .output()
+                .expect("CLI output");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .expect("CLI commands completed")
+        .expect("CLI process ran");
+    server.abort();
+    assert_eq!(
+        sent_rx.recv().await.unwrap(),
+        ("fixture#7".into(), json!({"promote": 3}))
+    );
+    assert_eq!(
+        sent_rx.recv().await.unwrap(),
+        ("fixture#7".into(), json!({"demote": 4}))
+    );
+}
+
+#[tokio::test]
 async fn report_ticket_parse_failure_does_not_print_the_credential() {
     let marker = "synthetic-credential-appearing-in-a-wrong-json-type";
     let mut file = tempfile::NamedTempFile::new().expect("owner-only ticket");
