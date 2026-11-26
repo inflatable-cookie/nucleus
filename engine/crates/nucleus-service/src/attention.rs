@@ -36,7 +36,18 @@ fn waiting_for_operator_input(wait: Option<WaitReason>) -> bool {
 }
 
 impl State {
+    #[cfg(test)]
     pub(super) fn task_attention(&self, row: &TaskRow) -> Result<TaskAttention, ServiceError> {
+        self.task_attention_with_dependencies(row, || {
+            self.store.dependency_blocked(&row.task.identity().id)
+        })
+    }
+
+    pub(super) fn task_attention_with_dependencies(
+        &self,
+        row: &TaskRow,
+        dependencies_block: impl FnOnce() -> Result<bool, nucleus_store::StoreError>,
+    ) -> Result<TaskAttention, ServiceError> {
         let task = &row.task;
         if task.phase().is_terminal() {
             return Ok(TaskAttention::Finished);
@@ -66,7 +77,7 @@ impl State {
         {
             return Ok(TaskAttention::Active);
         }
-        if task.phase() != Phase::Closing && self.store.dependency_blocked(id)? {
+        if task.phase() != Phase::Closing && dependencies_block()? {
             return Ok(if self.store.dependency_needs_edit(id)? {
                 TaskAttention::Attention
             } else {

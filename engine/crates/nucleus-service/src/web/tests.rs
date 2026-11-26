@@ -1066,7 +1066,7 @@ async fn workspace_timeout_card_names_the_operation_without_raw_git_diagnostics(
         .lock()
         .await
         .schedule
-        .recover_workspace("timeout", elapsed);
+        .recover_workspace("timeout", elapsed, row.task.phase());
     service
         .schedule_result(&row, &error, previous)
         .await

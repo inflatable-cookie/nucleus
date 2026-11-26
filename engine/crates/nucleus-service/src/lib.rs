@@ -4,6 +4,7 @@ mod acp;
 mod allowance;
 mod attention;
 mod dependencies;
+mod diagnostics;
 mod enrollment;
 pub mod github_accounts;
 mod inbox;
@@ -41,10 +42,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use diagnostics::StateMutex;
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Action, Authority, Command, CommandError, Forge, Identity, Observation, Observed,
-    OperatorDecline, Phase, Report, Task, WaitReason,
+    OperatorDecline, Phase, Report, Task, WaitReason, Workspace,
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostCalls, HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
@@ -52,7 +54,7 @@ use nucleus_store::{
     DispatchMode, EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError,
     TaskRow,
 };
-use nucleus_work::{WorkError, Worktrees, checkout_path};
+use nucleus_work::{Checkout, CheckoutObservation, WorkError, Worktrees, checkout_path};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
 use tokio::{
     sync::{Mutex, Notify, OwnedMutexGuard, RwLock, broadcast, mpsc, watch},
@@ -228,7 +230,7 @@ pub struct Service {
     board: std::sync::OnceLock<web::Board>,
     callback: SocketAddr,
     report_command: PathBuf,
-    state: Mutex<State>,
+    state: StateMutex,
     project_writes: RwLock<()>,
     pass_lock: Mutex<()>,
     watch_lock: Mutex<()>,
@@ -257,6 +259,7 @@ pub struct Service {
     _profile: OwnedFd,
 }
 
+#[derive(Clone, PartialEq, Eq)]
 struct TaskWait {
     reason: Option<WaitReason>,
     since: Instant,
@@ -264,7 +267,7 @@ struct TaskWait {
     detail: Option<WaitDetail>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum WaitDetail {
     BeforeSend(Option<&'static str>),
     ConfirmingDelivery(&'static str),
@@ -439,7 +442,7 @@ impl Service {
             board: std::sync::OnceLock::new(),
             callback,
             report_command,
-            state: Mutex::new(State {
+            state: StateMutex::new(State {
                 store,
                 allowance_clock,
                 settings: runtime_settings,
@@ -561,8 +564,8 @@ impl Service {
     /// # Errors
     /// Returns an error if the engine cannot verify its volume or read its rows.
     pub async fn pass(&self) -> Result<Vec<PassOutcome>, ServiceError> {
-        self.pass_with_host(&self.host.pass(self.storage.scratch().path()))
-            .await
+        let host = self.host.pass(self.storage.scratch().path());
+        diagnostics::scheduler(Box::pin(self.pass_with_host(&host))).await
     }
 
     async fn pass_with_host(
@@ -596,18 +599,21 @@ impl Service {
                 Some(first) => Some(first),
                 None => self.state.lock().await.take_ready(Instant::now(), &visited),
             };
-            let Some(DueTask { id, priority }) = next else {
+            let Some(task) = next else {
                 break;
             };
-            visited.insert(id.clone());
-            match self.run_due_task(&id, priority, host).await {
-                Ok(Some(result)) => results.push(PassOutcome { task: id, result }),
+            visited.insert(task.id.clone());
+            match self.run_due_task(&task, host).await {
+                Ok(Some(result)) => results.push(PassOutcome {
+                    task: task.id,
+                    result,
+                }),
                 Ok(None) => {}
                 Err(error) => {
                     self.state.lock().await.schedule.wake(
-                        &id,
+                        &task.id,
                         Instant::now() + schedule::RETRY,
-                        priority,
+                        task.priority,
                     );
                     return Err(error);
                 }
@@ -618,13 +624,14 @@ impl Service {
 
     async fn run_due_task(
         &self,
-        id: &str,
-        priority: Priority,
+        due: &DueTask,
         host: &nucleus_hosts::T3Pass<'_>,
     ) -> Result<Option<Result<Action, ServiceError>>, ServiceError> {
+        let DueTask { id, priority, .. } = due;
         self.storage.database().verify()?;
-        let row = {
+        let (row, first_service) = {
             let mut state = self.state.lock().await;
+            let started = due.timing.as_ref().map(|_| Instant::now());
             let row = match self.lookup(&state, id) {
                 Ok(row) => row,
                 Err(ServiceError::Missing) => return Ok(None),
@@ -636,8 +643,12 @@ impl Service {
             };
             self.track(&mut state, &row.task);
             state.group_waits.remove(id);
-            row
+            let first_service = state.schedule.first_service(due).zip(started);
+            (row, first_service)
         };
+        if let Some((first, started)) = first_service {
+            first.record(id, row.task.phase(), *priority, started);
+        }
         let result = {
             let scratch = self.existing_run_scratch(&row.task);
             Box::pin(self.advance_due_task(&row, &host.for_task(&row.task, scratch))).await
@@ -672,7 +683,7 @@ impl Service {
         } else {
             result
         };
-        self.schedule_result(&row, &result, priority).await?;
+        self.schedule_result(&row, &result, *priority).await?;
         // The commit can wake the watcher while this task's send fence is still held.
         if matches!(result, Ok(Action::Launch { .. })) {
             self.title_wake.notify_one();
@@ -1170,7 +1181,11 @@ impl Service {
         }
         if current.version != row.version {
             if state.schedule.due(id).is_none() {
-                state.schedule.wake(id, Instant::now(), Priority::Decision);
+                state.schedule.wake(
+                    id,
+                    Instant::now(),
+                    Priority::Decision.for_phase(current.task.phase()),
+                );
             }
             return Ok(());
         }
@@ -1205,7 +1220,7 @@ impl Service {
         let now = Instant::now();
         let checking_workspace = wait == Some(WaitReason::WorkspaceUnknown);
         if checking_workspace {
-            if state.schedule.recover_workspace(id, now) {
+            if state.schedule.recover_workspace(id, now, row.task.phase()) {
                 wait = Some(WaitReason::WorkspaceBlocked);
                 detail = Some(WaitDetail::Blocked(workspace_cause(result)));
             }
@@ -1282,6 +1297,7 @@ impl Service {
             } else {
                 priority
             };
+            let priority = priority.for_phase(row.task.phase());
             match state
                 .group_waits
                 .get(id)
@@ -1695,6 +1711,34 @@ impl Service {
         )?)
     }
 
+    async fn observe_checkout(&self, checkout: &Checkout<'_>) -> Result<Workspace, WorkError> {
+        self.run_checkout_observation(checkout, CheckoutObservation::Standard)
+            .await
+    }
+
+    async fn observe_checkout_for_retirement(
+        &self,
+        checkout: &Checkout<'_>,
+    ) -> Result<Workspace, WorkError> {
+        self.run_checkout_observation(checkout, CheckoutObservation::Retirement)
+            .await
+    }
+
+    async fn run_checkout_observation(
+        &self,
+        checkout: &Checkout<'_>,
+        observation: CheckoutObservation,
+    ) -> Result<Workspace, WorkError> {
+        let observe = checkout.observation_job(
+            self.git.clone(),
+            Redactor::new([], RedactionRules::common()),
+            observation,
+        );
+        tokio::task::spawn_blocking(observe)
+            .await
+            .map_err(std::io::Error::other)?
+    }
+
     async fn save(
         &self,
         prior: &TaskRow,
@@ -1851,7 +1895,7 @@ impl Service {
         self.state.lock().await.schedule.wake(
             &row.task.identity().id,
             Instant::now() + delay,
-            Priority::Effect,
+            Priority::Effect.for_phase(row.task.phase()),
         );
         self.wake.notify_one();
     }
@@ -2105,7 +2149,13 @@ fn process_check_detail(failure: nucleus_hosts::ProcessEvidenceFailure) -> &'sta
 }
 
 fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
-    if (task.phase() != prior.phase() && matches!(task.phase(), Phase::Merging | Phase::Closing))
+    if matches!(
+        task.phase(),
+        Phase::Closing | Phase::Done | Phase::Cancelled
+    ) {
+        return Priority::Closeout;
+    }
+    if (task.phase() != prior.phase() && task.phase() == Phase::Merging)
         || (task.run().is_some_and(nucleus_core::Run::revoked)
             && !prior.run().is_some_and(nucleus_core::Run::revoked))
     {

@@ -1232,7 +1232,7 @@ async fn run_workspace_recheck(
     assert_eq!(recovery.priority, Priority::Effect);
     let host = service.host.pass(service.storage.scratch().path());
     service
-        .run_due_task(&recovery.id, recovery.priority, &host)
+        .run_due_task(&recovery, &host)
         .await
         .unwrap()
         .expect("workspace recovery outcome")

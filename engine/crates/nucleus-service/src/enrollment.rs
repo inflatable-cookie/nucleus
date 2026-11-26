@@ -24,7 +24,7 @@ struct EnrollmentTiming {
 }
 
 impl EnrollmentTiming {
-    async fn lock_state<'a>(&mut self, service: &'a Service) -> tokio::sync::MutexGuard<'a, State> {
+    async fn lock_state<'a>(&mut self, service: &'a Service) -> crate::diagnostics::StateGuard<'a> {
         let start = Instant::now();
         let state = service.state.lock().await;
         self.state_wait += start.elapsed();

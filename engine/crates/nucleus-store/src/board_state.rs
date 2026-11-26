@@ -8,17 +8,16 @@ pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS task_board_state (
 ) STRICT";
 
 impl Store {
-    /// Read the journal and board-state revisions of finished cards in one indexed pass.
+    /// Read the journal and board-state revisions of task cards in one indexed pass.
     ///
     /// # Errors
     /// Returns an error if a revision cannot be read.
-    pub fn finished_card_revisions(
+    pub fn card_revisions(
         &self,
     ) -> Result<std::collections::HashMap<String, (i64, Option<i64>)>, StoreError> {
         let mut query = self.connection.prepare_cached(
-            "SELECT t.id, (SELECT MAX(sequence) FROM events WHERE task_id = t.id), b.since_ms
-             FROM tasks t LEFT JOIN task_board_state b ON b.task_id = t.id
-             WHERE t.phase IN ('done', 'cancelled')",
+            "SELECT t.id, coalesce((SELECT MAX(sequence) FROM events WHERE task_id = t.id), 0), b.since_ms
+             FROM tasks t LEFT JOIN task_board_state b ON b.task_id = t.id",
         )?;
         let rows = query.query_map([], |row| Ok((row.get(0)?, (row.get(1)?, row.get(2)?))))?;
         Ok(rows.collect::<Result<_, _>>()?)

@@ -187,14 +187,15 @@ impl DependencyStatus {
         })
     }
 
-    pub(super) fn finished(
+    pub(super) fn listed(
         state: &State,
         scope: &ControllerScope,
         dependencies: &Dependencies,
+        blocking: bool,
         rows: &std::collections::HashMap<&str, &TaskRow>,
         unreadable: &[nucleus_store::UnreadableTask],
     ) -> Result<Self, ServiceError> {
-        Self::from_facts(dependencies, false, |id| {
+        Self::from_facts(dependencies, blocking, |id| {
             if let Some(row) = unreadable.iter().find(|row| row.identity.id == id) {
                 return Ok(unreadable_fact(state, scope, row));
             }

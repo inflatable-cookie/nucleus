@@ -120,6 +120,15 @@ pub enum Retirement {
     Removed,
 }
 
+/// Select the checkout evidence required by a read-only observation.
+#[derive(Debug, Clone, Copy)]
+pub enum CheckoutObservation {
+    /// Require the normal linked checkout.
+    Standard,
+    /// Also recognize interrupted removal with a prunable Git registration.
+    Retirement,
+}
+
 pub struct Worktrees<'a> {
     root: StorageDirectory,
     scratch: StorageDirectory,
@@ -377,6 +386,37 @@ impl Checkout<'_> {
     #[must_use]
     pub fn branch(&self) -> &str {
         &self.branch
+    }
+
+    /// Prepare a read-only checkout observation for a blocking executor.
+    pub fn observation_job<P: GitPolicy + Send + 'static>(
+        &self,
+        policy: P,
+        redactor: Redactor,
+        observation: CheckoutObservation,
+    ) -> impl FnOnce() -> Result<Workspace, WorkError> + Send + 'static + use<P> {
+        let root = self.worktrees.root.clone();
+        let scratch = self.worktrees.scratch.clone();
+        let repository = self.repository.clone();
+        let path = self.path.clone();
+        let branch = self.branch.clone();
+        move || {
+            let worktrees = Worktrees {
+                root,
+                scratch,
+                git: Git::new(&policy, redactor),
+            };
+            let checkout = Checkout {
+                worktrees: &worktrees,
+                repository,
+                path,
+                branch,
+            };
+            match observation {
+                CheckoutObservation::Standard => checkout.observe(),
+                CheckoutObservation::Retirement => checkout.observe_for_retirement(),
+            }
+        }
     }
 
     /// Observe the owned checkout and any changes that prevent clean removal.

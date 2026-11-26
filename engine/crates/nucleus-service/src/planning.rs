@@ -11,8 +11,9 @@ use nucleus_store::{
     },
 };
 use serde::Deserialize;
-use tokio::sync::{MutexGuard, RwLockReadGuard};
+use tokio::sync::RwLockReadGuard;
 
+use crate::diagnostics::StateGuard;
 use crate::enrollment::PlanningRepository;
 use crate::{
     ControllerScope, Service, ServiceError, State, check_brief_size, event, now_ms,
@@ -54,7 +55,7 @@ impl Service {
         &self,
         selector: Option<&str>,
         scope: &ControllerScope,
-    ) -> Result<(MutexGuard<'_, State>, String), ServiceError> {
+    ) -> Result<(StateGuard<'_>, String), ServiceError> {
         self.storage.database().verify()?;
         scope
             .with_enrollment(|| async {
@@ -78,14 +79,7 @@ impl Service {
         scope: &ControllerScope,
         project: Option<&str>,
         repository: Option<&str>,
-    ) -> Result<
-        (
-            RwLockReadGuard<'_, ()>,
-            MutexGuard<'_, State>,
-            PlanningRepository,
-        ),
-        ServiceError,
-    > {
+    ) -> Result<(RwLockReadGuard<'_, ()>, StateGuard<'_>, PlanningRepository), ServiceError> {
         scope
             .with_enrollment(|| async {
                 let projects = self.project_writes.read().await;
