@@ -691,6 +691,14 @@ async fn throttled_resubmission_waits_for_the_server_deadline_after_restart() {
     };
     assert!(until >= before + std::time::Duration::from_hours(1));
     let row = service.task(TASK).await.unwrap();
+    {
+        let mut state = service.state.lock().await;
+        assert!(
+            state
+                .take_ready(tokio::time::Instant::now(), &Default::default())
+                .is_some()
+        );
+    }
     service
         .schedule_result(
             &row,
