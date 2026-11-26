@@ -791,8 +791,6 @@ test("nucleus#998: Subscriptions ending in group rows is the last section, with 
                   group: "anthropic",
                   weight: "most",
                   enabled: true,
-                  scopes: ["general"],
-                  roles: ["worker"],
                 },
               ],
             };
@@ -1339,8 +1337,6 @@ test("the dispatch row and sliders wait for the board: absent while it loads or 
           group: "anthropic",
           weight: "most",
           enabled: true,
-          scopes: ["general"],
-          roles: ["worker"],
         },
       ],
     } as never);
@@ -1501,8 +1497,6 @@ test("a Profiles card uses shared field heights, slider targets and captions at 
                 group: "anthropic",
                 weight: "most",
                 enabled: true,
-                scopes: ["general"],
-                roles: ["worker"],
               },
             ],
           };
@@ -1914,9 +1908,7 @@ function usageTree(
       profileId,
       group: "codex",
       enabled: true,
-      roles: ["worker"],
       weight: "default",
-      scopes: ["general"],
     })),
     recentAssignments: recent,
     recentAssignmentSample: extra.sample ?? 50,

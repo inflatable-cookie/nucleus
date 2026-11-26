@@ -1479,21 +1479,36 @@ fn profile_domain_defaults_are_read_only_and_stable_ids_survive_name_edits() {
         })
         .expect("save profiles");
     assert!(changed);
-    let document: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(home.join("config/profiles.json")).expect("published settings"),
-    )
-    .expect("versioned JSON");
+    let path = home.join("config/profiles.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("published settings"))
+            .expect("versioned JSON");
     assert_eq!(document["schemaVersion"], 1);
 
+    document["value"]["profiles"][0]["roles"] = serde_json::json!(["reviewer", "coordinator"]);
+    document["value"]["profiles"][0]["scopes"] = serde_json::json!(["mechanical"]);
+    let legacy = document.to_string();
+    std::fs::write(&path, &legacy).expect("old profile file");
     let reopened = SettingsFile::open(&home).expect("reopen settings");
+    let loaded = reopened.read::<Profiles>().expect("load old profiles");
+    assert_eq!(loaded.value, first.value);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), legacy);
     let (saved, changed) = reopened
-        .edit::<Profiles>(&first.revision, |profiles| {
+        .edit::<Profiles>(&loaded.revision, |profiles| {
             profiles.profiles[0].name = "Renamed".into();
             Ok(())
         })
         .expect("rename profile");
     assert!(changed);
     assert_eq!(saved.value.profiles[0].selection.id, "stable-profile");
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        written["value"],
+        serde_json::to_value(&saved.value).unwrap()
+    );
+    assert!(written["value"]["profiles"][0].get("roles").is_none());
+    assert!(written["value"]["profiles"][0].get("scopes").is_none());
     let (same, changed) = reopened
         .edit::<Profiles>(&saved.revision, |_| Ok(()))
         .expect("no-op");

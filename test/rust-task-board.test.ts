@@ -30,8 +30,6 @@ test("Rust board settings retain imported profile fields across edits", () => {
     },
     group: "fixture-group",
     enabled: false,
-    roles: ["reviewer", "coordinator"],
-    scopes: ["general", "complex"],
     providerInstanceId: "claude-fixture",
     modeId: "accept-edits",
     featureValues: { speed: "priority", legacy: { data: true } },
@@ -1823,6 +1821,13 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => Boolean(selector("Fixture worker, all roles: 49 of 49 recent assignments")), "profile usage renders");
   const toggle = selector("Disable Fixture worker");
   assert.ok(toggle && toggle.getAttribute("aria-disabled") !== "true");
+  await click("Edit Fixture worker");
+  const editor = selector("Fixture worker editor");
+  assert.ok(editor);
+  assert.ok(editor.querySelector('[aria-label="Profile dispatch row"]'));
+  assert.doesNotMatch(editor.textContent ?? "", /\b(?:Roles?|Scopes?|Coordinator)\b/i);
+  assert.equal(editor.querySelector('[role="switch"], [role="checkbox"]'), null);
+  await click("Close Fixture worker");
   assert.ok(text().includes("Unavailable"), "the subscription pause renders");
   assert.doesNotMatch(text(), /Reading subscriptions/);
   await click("Reset fixture team");

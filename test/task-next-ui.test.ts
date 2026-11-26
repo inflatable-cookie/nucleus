@@ -160,9 +160,7 @@ const board = (tasks: ReturnType<typeof summaryOf>[]) => ({
       profileId: workerProfile.id,
       enabled: true,
       group: "author",
-      roles: ["worker"],
       weight: "default",
-      scopes: ["general"],
     },
   ],
   availability: [],
@@ -779,9 +777,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       profileId: "frontier",
       enabled: true,
       group: "frontier",
-      roles: ["worker", "reviewer"],
       weight: "default",
-      scopes: ["general"],
 
       capability: "frontier",
     },
@@ -789,9 +785,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       profileId: "cheap",
       enabled: true,
       group: "cheap",
-      roles: ["worker", "reviewer"],
       weight: "default",
-      scopes: ["general"],
 
       capability: "frontier",
     },
@@ -799,9 +793,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       profileId: "coord",
       enabled: true,
       group: "coord",
-      roles: ["coordinator"],
       weight: "default",
-      scopes: ["general"],
 
       capability: "frontier",
     },
@@ -809,9 +801,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
       profileId: "complex",
       enabled: true,
       group: "complex",
-      roles: ["reviewer"],
       weight: "default",
-      scopes: ["complex"],
 
       capability: "frontier",
     },
@@ -819,11 +809,11 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
   const coord = {
     ...workerProfile,
     id: "coord",
-    name: "Coordinator only",
+    name: "Independent frontier",
     model: "test/coord",
   };
   const longName =
-    "Complex-only frontier reviewer with a deliberately long profile name";
+    "Independent frontier reviewer with a deliberately long profile name";
   const complex = {
     ...workerProfile,
     id: "complex",
@@ -974,11 +964,9 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
         "automatic at Maximum: no tag",
       );
       assert.equal(flat(tree.get("Profile Cheap")), "Cheap");
-      // Spec 053: role and scope switches no longer gate, so a coordinator-only or
-      // complex-only entry is offered for the reviewer under the usage policy.
       assert.equal(
-        flat(tree.get("Profile Coordinator only")),
-        "Coordinator only",
+        flat(tree.get("Profile Independent frontier")),
+        "Independent frontier",
       );
       assert.equal(flat(tree.get(`Profile ${longName}`)), longName);
       // A long label wraps inside the row rather than overflowing the compact dialog.
@@ -1049,9 +1037,7 @@ test("Spec 052: bundled dark choosers name an unavailable subscription group ins
       profileId: "down",
       enabled: true,
       group: "down",
-      roles: ["worker", "reviewer"],
       weight: "default",
-      scopes: ["general"],
 
       capability: "frontier",
     },

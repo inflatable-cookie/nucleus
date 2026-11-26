@@ -6,12 +6,8 @@ import { z } from "zod";
  */
 
 /**
- * The three task-type values, under their final name `scope` (Tom 2026-10-12:
- * the scalar task field and the pool list were named `capability`/`capabilities`;
- * that name now belongs to the profile capability brackets below). Current writes
- * use `scope`/`scopes`; the legacy spellings parse only at the wire boundary
- * through `submissionRecordFromLegacy` (submissions and stored tasks) and
- * `poolRecordFromLegacy` (`queue.pool` and `queue.profile` inputs).
+ * The three task-type values are stored as `scope`. The legacy task field
+ * `capability` parses through `submissionRecordFromLegacy`.
  */
 export const scopeSchema = z.enum(["general", "mechanical", "complex"]);
 
