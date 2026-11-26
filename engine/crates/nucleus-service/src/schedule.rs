@@ -142,6 +142,13 @@ impl Schedule {
         next == Recovery::Blocked
     }
 
+    pub(crate) fn recheck(&mut self, id: &str, now: Instant) {
+        if let Some(recovery) = self.workspace.get_mut(id) {
+            *recovery = Recovery::CheckAt(now);
+        }
+        self.wake(id, now, Priority::Effect);
+    }
+
     pub(crate) fn reset_workspace(&mut self, id: &str) {
         self.workspace.remove(id);
     }

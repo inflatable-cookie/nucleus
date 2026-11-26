@@ -491,7 +491,7 @@ Later decisions carry their own attribution.
 37. **Workspace observation has one recheck.** A workspace observation error
     schedules one read after fifteen seconds. If the read still fails, the
     card shows the cause and the task waits for its owner. After fixing the
-    checkout, hold and release the task to retry. Successful Git status output
+    checkout, use the version-bound Recheck action (ruling 48). Successful Git status output
     beyond the capture limit proves the checkout is dirty.
     Before any role has been dispatched or a worker bound, the engine can
     recover an owned Git initialization with no published index. Under the
