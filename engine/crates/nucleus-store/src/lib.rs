@@ -328,10 +328,7 @@ impl Store {
             }
         }
         // This independent table is additive to every supported task schema.
-        tx.execute(usage::PROVIDER_PAUSES, [])?;
-        if !tx.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('provider_pauses') WHERE name='fallback_until_ms')", [], |row| row.get::<_, bool>(0))? {
-            tx.execute("ALTER TABLE provider_pauses ADD COLUMN fallback_until_ms INTEGER", [])?;
-        }
+        usage::prepare_pauses(tx)?;
         tx.execute(LEGACY_PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
         tx.execute_batch(task_rows::SCHEMA)?;
