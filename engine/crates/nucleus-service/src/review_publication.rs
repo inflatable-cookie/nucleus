@@ -17,6 +17,34 @@ const REVIEW_GRACE_MS: i64 = 30_000;
 const FINAL_RETRY_DELAY_MS: i64 = 10 * 60_000;
 
 #[derive(Debug, thiserror::Error)]
+pub enum PublicationBlock {
+    #[error(
+        "GitHub refused access to publish this review. Check the reviewer account and repository access, then use Move to review."
+    )]
+    AccessRefused,
+    #[error("GitHub refused the review. Inspect the pull request, then use Move to review.")]
+    Refused,
+    #[error("GitHub has not confirmed the review after three attempts. Use Move to review.")]
+    AttemptsExhausted,
+}
+
+impl PublicationBlock {
+    fn wait_cause(&self) -> &'static str {
+        match self {
+            Self::AccessRefused => {
+                "GitHub refused access to publish the review. Check repository access for the reviewer account, then use Move to review."
+            }
+            Self::Refused => {
+                "GitHub refused the review. Inspect the pull request, then use Move to review."
+            }
+            Self::AttemptsExhausted => {
+                "GitHub has not confirmed the review after three attempts. Inspect the pull request, then use Move to review."
+            }
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
     #[error("Choose a reviewer account different from the pull request author.")]
     SameAuthor,
@@ -38,7 +66,7 @@ pub enum PublicationError {
     AttemptsExhausted,
     #[error("{error} Last review POST to {pull_url}: {response}")]
     Blocked {
-        error: Box<PublicationError>,
+        error: PublicationBlock,
         pull_url: String,
         response: String,
     },
@@ -68,18 +96,10 @@ impl PublicationError {
                 error,
                 pull_url,
                 response,
-            } => {
-                let (reason, detail) = error.wait();
-                let WaitDetail::Blocked(cause) = detail else {
-                    unreachable!("refused publication requires owner action")
-                };
-                (
-                    reason,
-                    WaitDetail::Blocked(format!(
-                        "{cause} Last review POST to {pull_url}: {response}"
-                    )),
-                )
-            }
+            } => blocked(&format!(
+                "{} Last review POST to {pull_url}: {response}",
+                error.wait_cause()
+            )),
             Self::Refused => blocked(
                 "GitHub refused the review. Inspect the pull request, then use Move to review.",
             ),
@@ -149,6 +169,23 @@ impl ReviewInput<'_> {
 
 impl Service {
     pub(super) async fn apply_reviewer_transition(
+        &self,
+        row: &TaskRow,
+        target: &PullTarget,
+        observation: &Observation,
+        action: Action,
+    ) -> Result<Action, ServiceError> {
+        self.apply_reviewer_transition_inner(row, target, observation, action)
+            .await
+            .map_err(|error| match error {
+                ServiceError::Forge(ForgeError::Deferred { until }) => {
+                    ServiceError::ReviewPublicationDeferred { until }
+                }
+                other => other,
+            })
+    }
+
+    async fn apply_reviewer_transition_inner(
         &self,
         row: &TaskRow,
         target: &PullTarget,
@@ -595,15 +632,15 @@ impl Service {
                     .await
                     .map_err(verified_review_error)?,
             ),
-            Refused => return Err(blocked_response(publication, PublicationError::Refused).into()),
+            Refused => return Err(blocked_response(publication, PublicationBlock::Refused).into()),
             AccessRefused => {
-                return Err(blocked_response(publication, PublicationError::AccessRefused).into());
+                return Err(blocked_response(publication, PublicationBlock::AccessRefused).into());
             }
         };
         let Some(review) = review else {
             if publication.outcome == FinalAttempt {
                 return Err(
-                    blocked_response(publication, PublicationError::AttemptsExhausted).into(),
+                    blocked_response(publication, PublicationBlock::AttemptsExhausted).into(),
                 );
             }
             return Ok(false);
@@ -708,12 +745,16 @@ fn write_cause(write: &ReviewWrite) -> Option<String> {
     }
 }
 
-fn blocked_response(record: &ReviewPublication, fallback: PublicationError) -> PublicationError {
+fn blocked_response(record: &ReviewPublication, fallback: PublicationBlock) -> PublicationError {
     let Some(response) = &record.response else {
-        return fallback;
+        return match fallback {
+            PublicationBlock::Refused => PublicationError::Refused,
+            PublicationBlock::AccessRefused => PublicationError::AccessRefused,
+            PublicationBlock::AttemptsExhausted => PublicationError::AttemptsExhausted,
+        };
     };
     PublicationError::Blocked {
-        error: Box::new(fallback),
+        error: fallback,
         pull_url: record.intent.pull_url.clone(),
         response: response.clone(),
     }
