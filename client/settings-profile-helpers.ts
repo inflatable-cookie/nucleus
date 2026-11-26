@@ -281,13 +281,11 @@ export function defaultPoolEntry(
   return {
     profileId: profile.id,
     enabled: false,
-    roles: ["worker"],
     group:
       profile.provider === "omp"
         ? `omp-${profile.model.split("/")[0]}`
         : profile.provider,
     weight: api.DEFAULT_PROFILE_WEIGHT,
-    scopes: ["general"],
   };
 }
 

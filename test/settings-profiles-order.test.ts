@@ -59,10 +59,8 @@ function storedPoolEntry(
     profileId,
     enabled: true,
     group: "codex",
-    roles: ["worker"],
     ...(capability !== undefined ? { capability } : {}),
     weight: "default",
-    scopes: ["general"],
   });
 }
 

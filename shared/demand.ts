@@ -376,7 +376,6 @@ export type DemandPick = {
  * The profiles the formula picks for a demand. Candidates must be enabled,
  * catalog-available, in an available subscription group, and not share a
  * model in `excludedModels` (a reviewer never reviews its author's model).
- * Roles and scopes are not consulted: Spec 053 retires them.
  */
 export function demandPick(
   demand: DemandLevel,

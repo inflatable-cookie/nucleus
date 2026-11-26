@@ -45,8 +45,6 @@ export const namedProfile = z
     group: z.string().optional(),
     providerInstanceId: z.string().optional(),
     enabled: z.boolean().optional(),
-    roles: z.array(z.enum(["worker", "reviewer", "coordinator"])).optional(),
-    scopes: z.array(z.string()).optional(),
     modeId: z.string().optional(),
     featureValues: z.record(z.string(), z.unknown()).optional(),
     notes: z.string().optional(),

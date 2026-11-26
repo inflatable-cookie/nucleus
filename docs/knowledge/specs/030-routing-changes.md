@@ -122,8 +122,9 @@ mirrors `cost`, an optional matching complexity on every task, and automatic
 model choice weighted so the rated capability sits close to that complexity.
 The owner interpretation recorded with the request renames the existing field:
 the task-type scalar was `capability` and the pool list `capabilities`; those
-names now belong to the ordinal rating, so current writes use task `scope`
-and pool `scopes`, and `capability` means the new five-level rating.
+names became available for the ordinal rating. The task field became `scope`
+and `capability` became the new five-level rating. [Spec 053](053-demand-based-selection.md)
+retired the matching pool field.
 
 - **Fields.** `capabilityLevelSchema` is `very_low | low | medium | high |
   `very_high`` (ascending). A pool entry takes optional nullable `capability`
@@ -148,9 +149,9 @@ and pool `scopes`, and `capability` means the new five-level rating.
   clears; editing complexity affects future selection only and never
   replaces a running worker or reviewer, invalidates a review, or touches
   authenticated approvals.
-- **Naming compatibility.** Stored rows, brief/handoff/draft frontmatter, durable
-  operation payloads and pool settings keep their original bytes. Read and import boundaries rename the legacy keys —
-  submission/task `capability` → `scope`, pool `capabilities` → `scopes`,
+- **Naming compatibility.** Stored rows, brief/handoff/draft frontmatter and durable
+  operation payloads keep their original bytes. Read and import boundaries rename the legacy keys —
+  submission/task `capability` → `scope`,
   outcome `routing.capability` → `routing.scope` — and refuse a record that
   carries both spellings. New writes emit only the current names; `set_routing`
   refuses the legacy `capability` key with a message naming `scope`, and takes
