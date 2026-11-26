@@ -238,6 +238,7 @@ pub struct Service {
     title_wake: Notify,
     enrollment_wake: Notify,
     housekeeping_wake: Notify,
+    trash_wake: Notify,
     backup_failed: std::sync::atomic::AtomicBool,
     tell_wake: Notify,
     #[cfg(test)]
@@ -483,6 +484,7 @@ impl Service {
             title_wake: Notify::new(),
             enrollment_wake: Notify::new(),
             housekeeping_wake: Notify::new(),
+            trash_wake: Notify::new(),
             backup_failed: std::sync::atomic::AtomicBool::default(),
             tell_wake: Notify::new(),
             #[cfg(test)]
@@ -761,6 +763,7 @@ impl Service {
             Box::pin(self.watch_titles()),
             Box::pin(self.watch_enrollments()),
             Box::pin(self.watch_housekeeping()),
+            Box::pin(self.watch_trash()),
             Box::pin(self.watch_tells()),
             Box::pin(self.watch_inbox()),
             Box::pin(self.watch_theme())
@@ -990,6 +993,21 @@ impl Service {
         }
     }
 
+    async fn watch_trash(&self) {
+        loop {
+            let work = self.storage.work().clone();
+            let result =
+                tokio::task::spawn_blocking(move || nucleus_work::prune_trash(&work, now_ms()))
+                    .await;
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => eprintln!("checkout trash housekeeping: {error}"),
+                Err(error) => eprintln!("checkout trash worker: {error}"),
+            }
+            self.trash_wake.notified().await;
+        }
+    }
+
     async fn prune_archived_threads(&self) -> Result<(), ServiceError> {
         if !self.host.can_prune() {
             return Ok(());
@@ -1102,6 +1120,7 @@ impl Service {
             };
             if housekeeping {
                 self.housekeeping_wake.notify_one();
+                self.trash_wake.notify_one();
                 let scratch = self.storage.scratch().clone();
                 tokio::task::spawn_blocking(move || {
                     if let Err(error) = nucleus_work::prune_quarantines(&scratch, now_ms()) {

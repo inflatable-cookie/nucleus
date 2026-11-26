@@ -171,27 +171,24 @@ impl Service {
                 return Ok(Action::Wait(WaitReason::Stopping));
             }
         }
-        let workspace = checkout.observe()?;
+        let workspace = checkout.observe_for_retirement()?;
         if workspace == Workspace::Absent {
+            if checkout.has_prunable_registration()?
+                && self
+                    .retire_if_idle(host, task, &binding, &checkout, None)
+                    .await?
+                    .is_none()
+            {
+                return Err(ServiceError::ArchiveEvidence(
+                    "Waiting for the checkout to be idle before removal.".into(),
+                ));
+            }
             return Ok(Action::Nothing);
         }
         self.stop_checkout_orphans(host, task, &checkout).await?;
-        let head = if task.phase() == Phase::Cancelled {
-            if let Workspace::Clean(head) = &workspace {
-                self.verify_route(identity, &route).await?;
-                self.is_published_checkout(identity, &checkout, head)
-                    .await?
-                    .then(|| head.clone())
-            } else {
-                None
-            }
-        } else if task.report_task().is_some() {
-            self.report_archive_head(row, &checkout).await?
-        } else if task.phase() == Phase::Done {
-            task.pull_request().map(|pr| pr.head.clone())
-        } else {
-            None
-        };
+        let head = self
+            .archive_retirement_head(row, &route, &checkout, &workspace)
+            .await?;
         let retained = || {
             ServiceError::ArchiveEvidence(
                 "The task checkout was retained. Inspect its local changes.".into(),
@@ -228,6 +225,38 @@ impl Service {
             )),
             Some(Retirement::Removed | Retirement::Absent) => Ok(Action::Nothing),
         }
+    }
+
+    async fn archive_retirement_head(
+        &self,
+        row: &TaskRow,
+        route: &ProjectRoute,
+        checkout: &Checkout<'_>,
+        workspace: &Workspace,
+    ) -> Result<Option<Head>, ServiceError> {
+        let task = &row.task;
+        if task.phase() == Phase::Cancelled {
+            let candidate = match workspace {
+                Workspace::Clean(head) => Some(head.clone()),
+                Workspace::Dirty => checkout.deletion_only_head()?,
+                Workspace::Absent => None,
+            };
+            let Some(head) = candidate else {
+                return Ok(None);
+            };
+            let identity = task.identity();
+            self.verify_route(identity, route).await?;
+            return Ok(self
+                .is_published_checkout(identity, checkout, &head)
+                .await?
+                .then_some(head));
+        }
+        if task.report_task().is_some() {
+            return self.report_archive_head(row, checkout).await;
+        }
+        Ok((task.phase() == Phase::Done)
+            .then(|| task.pull_request().map(|pr| pr.head.clone()))
+            .flatten())
     }
 
     #[expect(
@@ -2042,10 +2071,14 @@ impl Service {
             .retire_with_quiet_shell(&parent, &threads, || ())?;
         drop(state);
         // Recheck Git custody and remove synchronously after final writer admission.
-        Ok(Some(match remove {
+        let outcome = match remove {
             Some(remove) => remove()?,
-            None => Retirement::Absent,
-        }))
+            None => checkout.retire_prunable_registration()?,
+        };
+        if outcome == Retirement::Removed {
+            self.trash_wake.notify_one();
+        }
+        Ok(Some(outcome))
     }
 
     async fn close(
@@ -2063,7 +2096,7 @@ impl Service {
         let mut observed = Observation {
             host: Observed::Unknown,
             forge: Observed::Known(forge),
-            workspace: seen(checkout.observe()),
+            workspace: seen(checkout.observe_for_retirement()),
         };
         let action = decide(task, &observed);
         if let Action::Close {
@@ -2085,7 +2118,28 @@ impl Service {
             {
                 return Ok(Action::Wait(WaitReason::Stopping));
             }
-            observed.workspace = seen(checkout.observe());
+            observed.workspace = seen(checkout.observe_for_retirement());
+        } else if matches!(
+            action,
+            Action::Close {
+                workspace: CloseWorkspace::AlreadyAbsent,
+                ..
+            }
+        ) && checkout.has_prunable_registration()?
+        {
+            let _fence = self.effect(row).await?;
+            let _projects = self.project_writes.read().await;
+            let route = self.project_for(task.identity()).await?;
+            if self.checkout_binding(task.identity(), &route, checkout)? != *binding {
+                return Err(HostError::Binding.into());
+            }
+            if self
+                .retire_if_idle(host, task, binding, checkout, None)
+                .await?
+                .is_none()
+            {
+                return Ok(Action::Wait(WaitReason::Stopping));
+            }
         }
         let mut updated = task.clone();
         if !updated.finish_close(&observed) {

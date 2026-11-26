@@ -511,7 +511,7 @@ impl Service {
         {
             return Err(ServiceError::ReportCheckout("archival is paused"));
         }
-        let head = match checkout.observe()? {
+        let head = match checkout.observe_for_retirement()? {
             Workspace::Absent => return Ok(None),
             Workspace::Dirty => {
                 checkout

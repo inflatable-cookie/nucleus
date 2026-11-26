@@ -227,11 +227,15 @@ processes and their descendants stay protected. An incomplete census keeps
 the checkout.
 For a retained Done code checkout, read the merged PR again and match its
 head to the task’s recorded head. An unavailable read leaves the checkout in
-place. The task and project fences span removal. Clean worktrees use unforced removal.
-Only unstaged deletions of files at that exact published head allow forced
-removal. Git-ignored output goes with the checkout. Modified, added, non-ignored
-untracked or uncertain contents retain it. A cancelled task retires a clean
-checkout once its HEAD is proved published on an origin branch.
+place. The task and project fences span removal. Clean worktrees and checkouts
+with only unstaged deletions of files at that exact published head retire by
+atomically renaming the directory into same-volume trash under the work root,
+removing the Git worktree registration, and deleting the trash asynchronously.
+An interrupted cleanup whose `.git` file was already unlinked still proves
+custody through its matching prunable Git registration. Git-ignored output goes
+with the checkout. Modified, added, non-ignored untracked or uncertain contents
+retain it. A cancelled task retires a clean or deletion-only checkout once its
+HEAD is proved published on an origin branch.
 Already archived, absent and deleted threads count
 as settled. An active thread waits. See [Spec 070 rulings 34 and 35](../specs/070-small-engine.md#rulings)
 and [worktree custody](../../../engine/crates/nucleus-work/src/lib.rs).
