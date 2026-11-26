@@ -402,8 +402,7 @@ pub(super) fn role_start_line(task: &Task, store: &Store) -> String {
 
 fn purpose(task: &Task, role: Role, review_round: Option<u64>) -> String {
     match role {
-        Role::Worker => brief_title(&task.brief().text)
-            .map_or_else(|| "Implement the brief".into(), |line| excerpt(line, 100)),
+        Role::Worker => worker_purpose(task.brief().declared_title(), &task.brief().text),
         Role::Reviewer => review_round.map_or_else(
             || "Review the exact PR head".into(),
             |round| format!("Checking round {round}"),
@@ -411,7 +410,30 @@ fn purpose(task: &Task, role: Role, review_round: Option<u64>) -> String {
     }
 }
 
+/// The brief's own title: frontmatter `title`, else its top-level heading.
+/// Section headings such as `## Goal` describe the brief, not the work.
+fn worker_purpose(declared: Option<String>, text: &str) -> String {
+    declared
+        .filter(|title| !title.trim().is_empty())
+        .or_else(|| brief_h1(text).map(str::to_owned))
+        .map_or_else(
+            || "Implement the brief".into(),
+            |title| one_line(&title, 100),
+        )
+}
+
 pub(super) fn brief_title(text: &str) -> Option<&str> {
+    brief_heading(text, None)
+}
+
+/// The brief's first top-level `#` heading, ignoring `##` and deeper sections.
+fn brief_h1(text: &str) -> Option<&str> {
+    brief_heading(text, Some(1))
+}
+
+/// The first heading at `level`, or any level when none is given. Only an
+/// unrestricted search falls back to the first prose line.
+fn brief_heading(text: &str, level: Option<usize>) -> Option<&str> {
     let mut lines = text
         .lines()
         .skip_while(|line| line.trim().is_empty())
@@ -454,12 +476,14 @@ pub(super) fn brief_title(text: &str) -> Option<&str> {
             } else {
                 body.trim()
             };
-            if !heading.is_empty() {
+            if !heading.is_empty() && level.is_none_or(|wanted| wanted == width) {
                 return Some(heading);
             }
             continue;
         }
-        prose.get_or_insert(line);
+        if level.is_none() {
+            prose.get_or_insert(line);
+        }
     }
     prose
 }
@@ -474,6 +498,70 @@ fn brief_title_prefers_a_heading_to_prose_and_code() {
         Some("Écrire le test.")
     );
     assert_eq!(brief_title("---\nkind: work"), None);
+}
+
+#[cfg(test)]
+#[test]
+fn worker_purpose_is_the_brief_title_not_a_section_heading() {
+    let goal_first = "## Goal\n\nDo the thing.\n\n# Fix the retry test\n\n## Acceptance";
+    assert_eq!(worker_purpose(None, goal_first), "Fix the retry test");
+    assert_eq!(
+        worker_purpose(Some("Declared title".into()), goal_first),
+        "Declared title"
+    );
+    assert_eq!(
+        worker_purpose(Some("  ".into()), goal_first),
+        "Fix the retry test"
+    );
+    assert_eq!(
+        worker_purpose(None, "## Goal\n\nDo the thing.\n\n## Acceptance"),
+        "Implement the brief"
+    );
+    assert_eq!(
+        worker_purpose(
+            None,
+            "---\nkind: work\n---\n\n```md\n# Example\n```\n\n# Real"
+        ),
+        "Real"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn history_records_serialize_the_shapes_the_board_reads() {
+    let routing = Milestone::RunRouting {
+        instance: "run-1".into(),
+        provider_instance: "claude-fixture".into(),
+        provider: Some(nucleus_core::profiles::Provider::Claude),
+        model: "fixture-model".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&routing).expect("routing"),
+        json!({
+            "kind": "run_routing", "instance": "run-1", "providerInstance": "claude-fixture",
+            "provider": "claude", "model": "fixture-model"
+        })
+    );
+    let reported = Milestone::RunReported {
+        instance: "run-1".into(),
+        sent_at_ms: 42,
+        outcome: Some(Outcome::Review {
+            decision: Review::Changes,
+            summary: "Two checks fail.".into(),
+            finding_titles: vec!["Retry drops the lease".into()],
+            change_url: None,
+        }),
+    };
+    assert_eq!(
+        serde_json::to_value(&reported).expect("reported"),
+        json!({
+            "kind": "run_reported", "instance": "run-1", "sentAtMs": 42,
+            "outcome": {
+                "kind": "review", "decision": "changes", "summary": "Two checks fail.",
+                "finding_titles": ["Retry drops the lease"], "change_url": null
+            }
+        })
+    );
 }
 
 pub(super) fn excerpt(value: &str, limit: usize) -> String {
