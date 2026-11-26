@@ -902,6 +902,62 @@ async fn a_failed_parent_turn_is_observed_without_preparing_another_prompt() {
 }
 
 #[tokio::test]
+async fn unavailable_parent_recovery_requires_exact_terminal_evidence() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let mut unavailable = parent_snapshot(&binding, "failed", false);
+    let run = &mut unavailable["projection"]["runs"][0];
+    run["providerInstanceId"] = json!("fixture-acp");
+    run["modelSelection"] = json!({"instanceId":"fixture-acp", "model":"nucleus"});
+    let run_id = run["id"].clone();
+    unavailable["projection"]["turnItems"] = json!([{
+        "id":"error", "type":"error", "status":"failed", "runId":run_id,
+        "nodeId":"parent-root", "ordinal":1, "updatedAt":"2026-11-26T04:07:04Z",
+        "failure":{"class":"provider_error", "message":"Nucleus is unavailable."}
+    }]);
+    let mut wrong_run = unavailable.clone();
+    wrong_run["projection"]["turnItems"][0]["runId"] = json!("other");
+    let mut wrong_provider = unavailable.clone();
+    wrong_provider["projection"]["runs"][0]["providerInstanceId"] = json!("other");
+    let mut wrong_node = unavailable.clone();
+    wrong_node["projection"]["turnItems"][0]["nodeId"] = json!("child");
+    let mut wrong_error = unavailable.clone();
+    wrong_error["projection"]["turnItems"][0]["failure"]["message"] = json!("unrelated");
+    for (snapshot, recover) in [
+        (unavailable, true),
+        (wrong_run, false),
+        (wrong_provider, false),
+        (wrong_node, false),
+        (wrong_error, false),
+    ] {
+        let (client, native) = server(vec![(
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(snapshot),
+        )])
+        .await;
+        let step = Box::pin(client.prepare_parent(
+            &binding,
+            "fixture-acp",
+            "Synthetic task",
+            "Starting work",
+            Some(crate::ParentAttempt {
+                command: "fixture-parent-command",
+                released: false,
+                replay_launch: false,
+            }),
+            quiet_pass(&client).profile_catalog(),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(matches!(step, crate::ParentStep::AfterDelivery(_)), recover);
+        if !recover {
+            assert!(matches!(step, crate::ParentStep::Failed));
+        }
+        native.await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
@@ -2336,6 +2392,7 @@ async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody()
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, instance) = reserved_worker_continuation(&binding, true);
+    assert!(crate::retained_worker_continuation(task.run().unwrap()));
     let mut busy = snapshot(&binding, "other-message", "running", false);
     busy["projection"]["thread"]["providerInstanceId"] = json!("alternate-provider");
     busy["projection"]["thread"]["modelSelection"] =
