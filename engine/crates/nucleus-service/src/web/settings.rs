@@ -64,7 +64,9 @@ pub(super) async fn clear_fallback_pause(
         .clear_fallback_pause(&group, pause.until_ms)
         .map_err(ServiceError::from)?
     {
-        return Err(ApiError::PauseChanged);
+        return Err(ApiError::Conflict(
+            "The estimated pause changed. Refresh Profiles.",
+        ));
     }
     api.service.profile_usage_changes.send_replace(());
     api.service.wake_settings_capacity(&mut state);
