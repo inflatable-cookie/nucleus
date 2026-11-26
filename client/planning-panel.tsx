@@ -81,6 +81,7 @@ import {
   ProjectRoadmapView,
   ProjectRow,
   type ProjectRowModel,
+  roadmapSideBySide,
 } from "./planning-roadmap";
 
 /** `error` is set when the plan or its saved version could not be read; `latest` is then the last version read, if any. */
@@ -1091,6 +1092,59 @@ export type PlanningLaneContext = {
   showProject: (project: string) => boolean;
 };
 
+/**
+ * The detail pane beside the list. Side by side with a roadmap (`fill`) it is a fixed box
+ * the roadmap's columns fill and scroll within, so the header and Focus stay put. Otherwise
+ * it scrolls as a whole, as it always has.
+ */
+function DetailScroll({
+  fill,
+  accessibilityLabel,
+  onMeasure,
+  c,
+  children,
+}: {
+  fill: boolean;
+  accessibilityLabel: string;
+  onMeasure: (width: number) => void;
+  c: Colors;
+  children: ReactNode;
+}) {
+  const padding = {
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.xl,
+    gap: space.md,
+  };
+  const onLayout = (event: { nativeEvent: { layout: { width: number } } }) =>
+    onMeasure(event.nativeEvent.layout.width);
+  if (fill)
+    return (
+      <View
+        accessibilityLabel={accessibilityLabel}
+        onLayout={onLayout}
+        style={{
+          ...padding,
+          flex: 1,
+          minHeight: 0,
+          backgroundColor: roles(c).canvas,
+        }}
+      >
+        {children}
+      </View>
+    );
+  return (
+    <ScrollView
+      accessibilityLabel={accessibilityLabel}
+      onLayout={onLayout}
+      style={{ flex: 1, minHeight: 0, backgroundColor: roles(c).canvas }}
+      contentContainerStyle={padding}
+    >
+      {children}
+    </ScrollView>
+  );
+}
+
 export function PlanningTab({
   sections: allSections,
   leads = [],
@@ -1614,16 +1668,17 @@ export function PlanningTab({
       </View>
       </PaneSurfaceContext.Provider>
       {twoPane && (
-        <ScrollView
+        <DetailScroll
+          // Side by side, the roadmap's columns scroll inside the pane, so the pane itself does not.
+          fill={
+            !laneOpen &&
+            Boolean(selectedSection) &&
+            !edits[selectedSection?.project.key ?? ""] &&
+            roadmapSideBySide(detailWidth, false)
+          }
           accessibilityLabel={laneOpen ? "Planning lane" : "Planning project"}
-          onLayout={(event) => setDetailWidth(event.nativeEvent.layout.width)}
-          style={{ flex: 1, minHeight: 0, backgroundColor: roles(c).canvas }}
-          contentContainerStyle={{
-            paddingHorizontal: space.lg,
-            paddingTop: space.md,
-            paddingBottom: space.xl,
-            gap: space.md,
-          }}
+          onMeasure={setDetailWidth}
+          c={c}
         >
           {laneOpen ? (
             lanePage
@@ -1632,7 +1687,7 @@ export function PlanningTab({
           ) : (
             <Text style={muted(c)}>Select a project to see its plan.</Text>
           )}
-        </ScrollView>
+        </DetailScroll>
       )}
       {!twoPane && laneOpen && (
         <Dialog

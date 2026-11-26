@@ -1,5 +1,5 @@
 import React, { useEffect, useState, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import type {
   LaneView,
   LeadListFacts,
@@ -737,6 +737,33 @@ function PlanHistory({
 }
 
 /** What the read view shows for a plan that is loading, failed, or refreshed with an error. */
+/**
+ * Whether Now, Next and Later sit side by side. Stacked (the list pane alone, or a width under
+ * `planningRead.columnsMin`) they are one column and the pane scrolls as a whole. 0 is unmeasured.
+ */
+export function roadmapSideBySide(width: number, stacked: boolean): boolean {
+  return !stacked && !(width > 0 && width < planningRead.columnsMin);
+}
+
+/**
+ * Side by side, the parts above and below the columns keep their own scroll, capped to a
+ * share of the pane, so the columns keep the height the header and Focus leave them.
+ */
+function CappedScroll({
+  active,
+  children,
+}: {
+  active: boolean;
+  children: ReactNode;
+}) {
+  if (!active) return <>{children}</>;
+  return (
+    <ScrollView style={{ flexGrow: 0, flexShrink: 0, maxHeight: "40%" }}>
+      {children}
+    </ScrollView>
+  );
+}
+
 export type RoadmapSection = {
   project: Project;
   latest?: ProjectPlan;
@@ -818,20 +845,46 @@ export function ProjectRoadmapView({
       !planned.has(lane.key) &&
       (lane.status === "active" || lane.status === "paused"),
   );
-  const stacked =
-    forceStacked || (width > 0 && width < planningRead.columnsMin);
+  const sideBySide = roadmapSideBySide(width, forceStacked);
+  const stacked = !sideBySide;
   const column = (horizon: PlanHorizon) => {
     const steps = roadmap[horizon];
+    const cards = (
+      <>
+        {steps.map((step) => (
+          <LaneCard
+            key={step.lane}
+            step={step}
+            lane={laneFor(step.lane)}
+            onOpen={() => onOpenLane(step.lane)}
+            c={c}
+          />
+        ))}
+        {!steps.length && (
+          <View
+            style={{
+              padding: space.md,
+              borderRadius: radius.panel,
+              backgroundColor: roles(c).hover,
+              alignItems: "center",
+            }}
+          >
+            <Text style={meta(c)}>Nothing here</Text>
+          </View>
+        )}
+      </>
+    );
     return (
       <View
         key={horizon}
         accessibilityLabel={`${horizonTitle(horizon)} column`}
         style={{
-          // Stacked, each column takes its own height; side by side, they share the width.
+          // Stacked, each column takes its own height; side by side, they share the width and the height.
           flexGrow: stacked ? 0 : 1,
           flexShrink: stacked ? 0 : 1,
           flexBasis: stacked ? "auto" : 0,
           minWidth: 0,
+          minHeight: 0,
           gap: space.xs,
         }}
       >
@@ -870,32 +923,30 @@ export function ProjectRoadmapView({
           </View>
           <Text style={meta(c)}>{HORIZON_HINTS[horizon]}</Text>
         </View>
-        {steps.map((step) => (
-          <LaneCard
-            key={step.lane}
-            step={step}
-            lane={laneFor(step.lane)}
-            onOpen={() => onOpenLane(step.lane)}
-            c={c}
-          />
-        ))}
-        {!steps.length && (
-          <View
-            style={{
-              padding: space.md,
-              borderRadius: radius.panel,
-              backgroundColor: roles(c).hover,
-              alignItems: "center",
-            }}
+        {/* Side by side, the heading above stays put and only this column's lanes scroll. */}
+        {sideBySide ? (
+          <ScrollView
+            accessibilityLabel={`${horizonTitle(horizon)} lanes`}
+            style={{ flex: 1, minHeight: 0 }}
+            contentContainerStyle={{ gap: space.xs }}
           >
-            <Text style={meta(c)}>Nothing here</Text>
-          </View>
+            {cards}
+          </ScrollView>
+        ) : (
+          cards
         )}
       </View>
     );
   };
   return (
-    <View accessibilityLabel={`Plan for ${name}`} style={{ gap: space.lg }}>
+    <View
+      accessibilityLabel={`Plan for ${name}`}
+      style={{
+        gap: space.lg,
+        // Side by side, the plan fills the pane so the columns can scroll inside it.
+        ...(sideBySide ? { flex: 1, minHeight: 0 } : {}),
+      }}
+    >
       <View
         style={{
           flexDirection: "row",
@@ -1010,16 +1061,18 @@ export function ProjectRoadmapView({
         </View>
       )}
       {latest && history && (
-        <PlanHistory
-          key={project.key}
-          project={project}
-          latest={latest}
-          saved={section.saved}
-          lanes={scopedLanes}
-          unplanned={unplanned}
-          readPlanVersion={readPlanVersion}
-          c={c}
-        />
+        <CappedScroll active={sideBySide}>
+          <PlanHistory
+            key={project.key}
+            project={project}
+            latest={latest}
+            saved={section.saved}
+            lanes={scopedLanes}
+            unplanned={unplanned}
+            readPlanVersion={readPlanVersion}
+            c={c}
+          />
+        </CappedScroll>
       )}
       {latest && <Banner plan={latest} lanes={scopedLanes} group={group} c={c} />}
       {!latest && group === "dormant" && (
@@ -1030,8 +1083,10 @@ export function ProjectRoadmapView({
           accessibilityLabel="Roadmap"
           style={{
             flexDirection: stacked ? "column" : "row",
-            alignItems: stacked ? "stretch" : "flex-start",
+            // Columns stretch to the row's height, so each one's own scroll fills it side by side.
+            alignItems: "stretch",
             gap: space.md,
+            ...(sideBySide ? { flex: 1, minHeight: 0 } : {}),
           }}
         >
           {PLAN_HORIZONS.map(column)}
@@ -1047,75 +1102,77 @@ export function ProjectRoadmapView({
               : "No lanes for this project yet."}
           </Text>
         )}
-      {roadmap.done.length > 0 && (
-        <View
-          accessibilityLabel="Finished lanes"
-          style={{
-            gap: space.xs,
-            paddingTop: space.sm,
-          }}
-        >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Finished lanes, ${roadmap.done.length}`}
-            accessibilityState={{ expanded: finished }}
-            onPress={() => setFinished(!finished)}
+      <CappedScroll active={sideBySide}>
+        {roadmap.done.length > 0 && (
+          <View
+            accessibilityLabel="Finished lanes"
+            style={{
+              gap: space.xs,
+              paddingTop: space.sm,
+            }}
           >
-            <Text style={{ ...body(c), color: r.muted }}>
-              {finished ? "▾" : "▸"} Finished lanes · {roadmap.done.length}
-            </Text>
-          </Pressable>
-          {finished && (
-            <View
-              style={{
-                flexDirection: "row",
-                flexWrap: "wrap",
-                columnGap: space.md,
-                rowGap: space.xxs,
-              }}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Finished lanes, ${roadmap.done.length}`}
+              accessibilityState={{ expanded: finished }}
+              onPress={() => setFinished(!finished)}
             >
-              {roadmap.done.map((item) => (
-                <View
-                  key={item.lane}
-                  style={{ minWidth: planningRead.finishedMin, gap: space.xxs }}
-                >
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Open lane ${item.title}, ${item.status === "done" ? "finished" : "abandoned"}`}
-                    onPress={() => onOpenLane(item.lane)}
+              <Text style={{ ...body(c), color: r.muted }}>
+                {finished ? "▾" : "▸"} Finished lanes · {roadmap.done.length}
+              </Text>
+            </Pressable>
+            {finished && (
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  columnGap: space.md,
+                  rowGap: space.xxs,
+                }}
+              >
+                {roadmap.done.map((item) => (
+                  <View
+                    key={item.lane}
+                    style={{ minWidth: planningRead.finishedMin, gap: space.xxs }}
                   >
-                    <Text style={{ ...body(c), color: r.muted }}>
-                      {item.status === "done" ? "✓" : "✕"} {item.title}
-                      {item.closedAt ? ` · ${item.closedAt.slice(0, 10)}` : ""}
-                    </Text>
-                  </Pressable>
-                  {onReopenLane && (
-                    <View style={row}>
-                      <Button
-                        small
-                        c={c}
-                        text="Reopen"
-                        label={`Reopen lane ${item.title}`}
-                        disabled={busy}
-                        onPress={() => onReopenLane(item.lane)}
-                      />
-                      <ReopenHelp c={c} laneTitle={item.title} />
-                    </View>
-                  )}
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-      )}
-      {section.triage && (
-        <ProjectTriage
-          project={name}
-          triage={section.triage}
-          onOpenTask={onOpenTask}
-          c={c}
-        />
-      )}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open lane ${item.title}, ${item.status === "done" ? "finished" : "abandoned"}`}
+                      onPress={() => onOpenLane(item.lane)}
+                    >
+                      <Text style={{ ...body(c), color: r.muted }}>
+                        {item.status === "done" ? "✓" : "✕"} {item.title}
+                        {item.closedAt ? ` · ${item.closedAt.slice(0, 10)}` : ""}
+                      </Text>
+                    </Pressable>
+                    {onReopenLane && (
+                      <View style={row}>
+                        <Button
+                          small
+                          c={c}
+                          text="Reopen"
+                          label={`Reopen lane ${item.title}`}
+                          disabled={busy}
+                          onPress={() => onReopenLane(item.lane)}
+                        />
+                        <ReopenHelp c={c} laneTitle={item.title} />
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+        {section.triage && (
+          <ProjectTriage
+            project={name}
+            triage={section.triage}
+            onOpenTask={onOpenTask}
+            c={c}
+          />
+        )}
+      </CappedScroll>
     </View>
   );
 }
