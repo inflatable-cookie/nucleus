@@ -329,6 +329,7 @@ pub(super) async fn health(State(api): State<Api>) -> Json<Value> {
                 "lastPass": state.last_pass_calls,
                 "total": api.service.host.host_calls(),
             },
+            "threadReadReasons": api.service.host.thread_read_reasons(),
         }},
         "inbox": api.service.inbox_health(),
         "oldestWaits": oldest,

@@ -160,7 +160,7 @@ impl Fixture {
                     },
                 )
                 .unwrap();
-            self.service.desire_title(&state, pending, None);
+            self.service.desire_title(&mut state, pending, None);
         }
     }
 
@@ -401,7 +401,7 @@ async fn failed_snooze_waits_for_later_shell_evidence() {
     {
         let mut state = fixture.service.state.lock().await;
         state.store.create(&pending, &event("fixture")).unwrap();
-        fixture.service.desire_title(&state, &pending, None);
+        fixture.service.desire_title(&mut state, &pending, None);
     }
     fixture.native.lock().unwrap().fail_next = true;
     fixture.sync().await;
@@ -452,7 +452,7 @@ async fn a_delivered_parent_message_supersedes_an_unconfirmed_snooze_once() {
     {
         let mut state = service.state.lock().await;
         state.store.create(&pending, &event("fixture")).unwrap();
-        service.desire_title(&state, &pending, None);
+        service.desire_title(&mut state, &pending, None);
     }
     fixture.sync().await;
     // Dispatch clears the snooze before the shell publishes its horizon.
@@ -497,7 +497,7 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
             (run.instance.clone(), RunState::IdleWithoutTerminalRun),
         );
         state.store.create(&task, &event("fixture")).unwrap();
-        service.desire_title(&state, &task, None);
+        service.desire_title(&mut state, &task, None);
         service.lookup(&state, ID).unwrap()
     };
     let unknown = Ok(Action::Wait(WaitReason::HostUnknown));
@@ -742,7 +742,7 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
         let mut state = service.state.lock().await;
         state.store.create(&worker, &event("fixture")).unwrap();
         state.set_wait(ID, Some(WaitReason::HostUnknown));
-        service.desire_title(&state, &worker, None);
+        service.desire_title(&mut state, &worker, None);
         service.lookup(&state, ID).unwrap()
     };
     let board = fixture.board_task().await;
@@ -820,7 +820,7 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
     let row = {
         let mut state = service.state.lock().await;
         state.store.create(&task, &event("run_reserved")).unwrap();
-        service.desire_title(&state, &task, None);
+        service.desire_title(&mut state, &task, None);
         service.lookup(&state, ID).unwrap()
     };
     service
@@ -1029,7 +1029,7 @@ async fn a_planner_question_stays_visible_regardless_of_child_activity() {
         state
             .observe_wait(&task, Some(WaitReason::Question))
             .unwrap();
-        service.desire_title(&state, &task, None);
+        service.desire_title(&mut state, &task, None);
     }
     let card = fixture.board_task().await;
     assert_eq!(card["phase"], "merging");
@@ -1052,7 +1052,7 @@ async fn an_actionable_row_retries_its_claimed_clear_with_the_same_command() {
     {
         let mut state = service.state.lock().await;
         state.store.create(&pending, &event("fixture")).unwrap();
-        service.desire_title(&state, &pending, None);
+        service.desire_title(&mut state, &pending, None);
     }
     fixture.sync().await;
     fixture.sync().await;
@@ -1096,7 +1096,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     let row = {
         let mut state = service.state.lock().await;
         state.store.create(&pending, &event("fixture")).unwrap();
-        service.desire_title(&state, &pending, None);
+        service.desire_title(&mut state, &pending, None);
         service.lookup(&state, ID).unwrap()
     };
     fixture.sync().await;
@@ -1278,7 +1278,7 @@ async fn create_visibility_row(fixture: &Fixture, task: &Task) -> TaskRow {
     let row = {
         let mut state = fixture.service.state.lock().await;
         state.store.create(task, &event("fixture")).unwrap();
-        fixture.service.desire_title(&state, task, None);
+        fixture.service.desire_title(&mut state, task, None);
         fixture.service.lookup(&state, ID).unwrap()
     };
     fixture.sync().await;
@@ -1289,7 +1289,7 @@ async fn create_visibility_row(fixture: &Fixture, task: &Task) -> TaskRow {
 }
 
 #[tokio::test]
-async fn snoozed_closing_row_confirms_each_new_title_without_a_visibility_write() {
+async fn snoozed_closing_row_publishes_only_the_stable_title_without_a_visibility_write() {
     let fixture = Fixture::new(&pending_task()).await;
     let service = &fixture.service;
     let head = &service.fixture().start;
@@ -1306,44 +1306,55 @@ async fn snoozed_closing_row_confirms_each_new_title_without_a_visibility_write(
     let snooze = fixture.observed_snooze().await;
     let old = "Starting: #1 Synthetic change";
     fixture.native.lock().unwrap().title = Some(old.into());
-    let mut generation = {
+    let generation = {
         let state = service.state.lock().await;
         state.store.desire_title(ID, &fixture.thread, old).unwrap();
         let prior = state.store.pending_title(&fixture.thread).unwrap().unwrap();
         state.store.confirm_title(&prior).unwrap();
         prior.generation
     };
-    for (result, delay) in [
-        (Err(service.parent_not_sent("waiting for the host")), "T3"),
-        (Ok(Action::Wait(WaitReason::ForgeUnknown)), "GitHub"),
+    for result in [
+        Err(service.parent_not_sent("waiting for the host")),
+        Ok(Action::Wait(WaitReason::ForgeUnknown)),
     ] {
         fixture.publish_shell();
         service
             .schedule_result(&row, &result, Priority::Effect)
             .await
             .unwrap();
-        let title = format!("Closing · {delay}: #1 Synthetic change");
-        generation += 1;
-        {
-            let state = service.state.lock().await;
-            let receipt = state.store.pending_title(&fixture.thread).unwrap().unwrap();
-            assert_eq!(receipt.desired, title);
-            assert_eq!(receipt.generation, generation);
-        }
+        let state = service.state.lock().await;
+        assert!(
+            state
+                .store
+                .pending_title(&fixture.thread)
+                .unwrap()
+                .is_none()
+        );
+    }
+    {
+        let mut state = service.state.lock().await;
+        state
+            .title_candidates
+            .get_mut(&fixture.thread)
+            .unwrap()
+            .ready = tokio::time::Instant::now();
+    }
+    let title = "Closing · GitHub: #1 Synthetic change";
+    {
         let mut watcher = std::pin::pin!(service.watch_titles());
         tokio::time::timeout(
             Duration::from_secs(30),
             std::future::poll_fn(|cx| {
                 assert!(watcher.as_mut().poll(cx).is_pending());
-                if fixture.native.lock().unwrap().title.as_deref() == Some(title.as_str()) {
+                if fixture.native.lock().unwrap().title.as_deref() == Some(title) {
                     fixture.publish_shell();
                 }
                 if service.state.try_lock().is_ok_and(|state| {
                     state
                         .store
-                        .pending_title(&fixture.thread)
+                        .title_state(&fixture.thread)
                         .unwrap()
-                        .is_none()
+                        .is_some_and(|stored| stored.confirmed && stored.receipt.desired == title)
                 }) {
                     std::task::Poll::Ready(())
                 } else {
@@ -1357,7 +1368,7 @@ async fn snoozed_closing_row_confirms_each_new_title_without_a_visibility_write(
             fixture.native.lock().unwrap().commands.last().unwrap(),
             &json!({
                 "type":"thread.metadata.update", "threadId":fixture.thread,
-                "commandId":format!("task-{ID}-title-{generation}"), "title":title,
+                "commandId":format!("task-{ID}-title-{}", generation + 1), "title":title,
             })
         );
         assert!(fixture.sync().await.is_empty());
@@ -1365,11 +1376,7 @@ async fn snoozed_closing_row_confirms_each_new_title_without_a_visibility_write(
     }
     assert_eq!(
         fixture.commands(),
-        [
-            "thread.snooze",
-            "thread.metadata.update",
-            "thread.metadata.update"
-        ]
+        ["thread.snooze", "thread.metadata.update"]
     );
 }
 
@@ -1456,16 +1463,30 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
     fixture.restart();
     fixture.sync().await;
     {
-        let state = fixture.service.state.lock().await;
+        let service = &fixture.service;
+        let mut state = service.state.lock().await;
+        service.desire_phase_title(&mut state, &row.task, row.number);
         let title = state.store.pending_title(&fixture.thread).unwrap().unwrap();
-        assert_eq!(fixture.service.working_row_count(&state).unwrap(), 1);
         assert!(title.desired.starts_with("Waiting:"));
+        assert!(!service.desire_title(&mut state, &row.task, row.number));
+        assert!(!state.title_candidates.contains_key(&fixture.thread));
+        assert_eq!(service.working_row_count(&state).unwrap(), 1);
         assert_eq!(
             fixture.service.acp_turn_view(&state, &row).unwrap(),
             (None, true)
         );
     }
     fixture.child("reviewer", true);
+    fixture.sync().await;
+    fixture
+        .service
+        .state
+        .lock()
+        .await
+        .title_candidates
+        .get_mut(&fixture.thread)
+        .unwrap()
+        .ready = tokio::time::Instant::now();
     fixture.sync().await;
     {
         let state = fixture.service.state.lock().await;
@@ -1500,6 +1521,49 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
     assert_eq!(fixture.service.working_row_count(&state).unwrap(), 0);
     assert!(title.desired.starts_with("Reviewing:"));
     assert_eq!(fixture.commands().len(), 3);
+}
+
+#[tokio::test]
+async fn a_handover_publishes_permission_and_planner_titles_immediately() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let (mut task, _, _) = crate::tests::reserved_reviewer(ID, &service.fixture().start);
+    service
+        .visibility_time
+        .store(1_893_456_000_000, std::sync::atomic::Ordering::Relaxed);
+    fixture.child("worker", false);
+    fixture.native.lock().unwrap().child.as_mut().unwrap()["latestRunCompletedAt"] =
+        json!("2030-01-01T00:00:00Z");
+    fixture.publish_shell();
+
+    let mut state = service.state.lock().await;
+    state.store.create(&task, &event("fixture")).unwrap();
+    let row = service.lookup(&state, ID).unwrap();
+    assert!(service.role_window(&fixture.thread, &task).2.is_some());
+    let pending_title =
+        |state: &crate::State| state.store.pending_title(&fixture.thread).unwrap().unwrap();
+    service.desire_title(&mut state, &task, row.number);
+    assert!(pending_title(&state).desired.starts_with("Waiting:"));
+
+    state.set_wait(ID, Some(WaitReason::Permission));
+    service.desire_title(&mut state, &task, row.number);
+    assert!(
+        pending_title(&state)
+            .desired
+            .starts_with("Reviewing · permission:")
+    );
+    assert!(!state.title_candidates.contains_key(&fixture.thread));
+
+    assert!(task.ask_allowance(2, 1));
+    service
+        .commit(&mut state, &row, &task, &event("fixture_question"), None)
+        .unwrap();
+    assert!(
+        pending_title(&state)
+            .desired
+            .starts_with("Reviewing · planner:")
+    );
+    assert!(!state.title_candidates.contains_key(&fixture.thread));
 }
 
 async fn assert_terminal_forgets_snooze(fixture: &Fixture) {

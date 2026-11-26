@@ -2993,6 +2993,78 @@ async fn held_config_updates_the_board_catalog_and_keeps_choices_after_disconnec
 }
 
 #[tokio::test]
+async fn sent_role_reads_share_changed_evidence_and_recover_a_missed_shell_delta() {
+    use crate::{rpc::ThreadReply, thread_snapshots::ThreadRead};
+    use std::time::Duration;
+
+    let message = "fixture-assignment";
+    let row = |time, status| {
+        json!({
+            "id":THREAD,"updatedAt":time,"status":status,
+            "activeRunId":(status != "completed").then_some(NATIVE_RUN),
+            "pendingRuntimeRequest":null,"pendingBackgroundTasks":[],
+        })
+    };
+    let running = row("2026-11-24T16:00:00Z", "running");
+    let waiting = row("2026-11-24T16:00:02Z", "waiting");
+    let ended = row("2026-11-24T16:01:00Z", "completed");
+    let (host, native) = server([
+        (&running, 1), (&waiting, 2), (&ended, 3), (&ended, 3),
+    ].into_iter().map(|(row, sequence)| ("orchestration.subscribeThread", Response::ParentSnapshot(json!({
+        "kind":"snapshot","snapshotSequence":sequence,"projection":{
+            "thread":row,"runs":[{"id":NATIVE_RUN,"userMessageId":message,"status":row["status"]}],
+            "runtimeRequests":[],"turnItems":[],"messages":[],
+        }
+    })))).collect()).await;
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1,"threads":[running],"projects":[],
+        }}));
+    let rpc = &host.rpc;
+    let read = |policy| async move {
+        let ThreadReply::Snapshot(reply) = rpc.thread(THREAD, policy).await.unwrap() else {
+            panic!("expected a bounded thread snapshot");
+        };
+        reply["snapshotSequence"].as_u64().unwrap()
+    };
+    let sent = ThreadRead::SentRun(message);
+    let count = || host.host_calls()["orchestration.subscribeThread"];
+    assert_eq!(
+        tokio::join!(read(sent), read(ThreadRead::Observation)),
+        (1, 1)
+    );
+    assert_eq!(count(), 1);
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":2,"thread":waiting}));
+    assert_eq!(read(sent).await, 2);
+    assert_eq!(count(), 2);
+
+    let advance = |seconds| async move {
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(seconds)).await;
+        tokio::time::resume();
+    };
+    for _ in 0..2 {
+        advance(45).await;
+        assert_eq!(read(sent).await, 2);
+        assert_eq!(count(), 2);
+    }
+    // No shell delta follows the native completion. Both due observations
+    // recover it from one bounded read despite the lagging marker.
+    advance(45).await;
+    assert_eq!(
+        tokio::join!(read(sent), read(ThreadRead::Observation)),
+        (3, 3)
+    );
+    assert_eq!(read(sent).await, 3);
+    assert_eq!(count(), 3);
+    assert_eq!(host.thread_read_reasons()["sentRunBackstop"], 1);
+    assert_eq!(read(ThreadRead::Exact).await, 3);
+    assert_eq!(native.await.unwrap().len(), 4);
+}
+
+#[tokio::test]
 async fn quiet_inbox_reuses_its_projection_and_held_project() {
     let root = "/fixture/inbox";
     let provider = "fixture-acp";

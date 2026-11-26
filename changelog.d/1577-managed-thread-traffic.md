@@ -1,0 +1,1 @@
+Reuse managed T3 role observations between shell changes, with a timed check for missed updates. Give transient task labels and Inbox counts 30 seconds to settle while showing phase changes and requests for a person immediately.

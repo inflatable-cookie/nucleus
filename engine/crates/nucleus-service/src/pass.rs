@@ -3056,9 +3056,9 @@ mod tests {
             {
                 let state = service.state.lock().await;
                 if let Some(seen) = state.thread_tasks["reviewer"][thread].seen.as_ref() {
-                    assert!(seen.hint.running());
-                    assert_eq!(state.schedule.due("reviewer"), Some(seen.at));
-                    break seen.hint.clone();
+                    assert!(seen.running());
+                    assert!(state.schedule.due("reviewer").unwrap() <= tokio::time::Instant::now());
+                    break seen.clone();
                 }
             }
             changed.await;

@@ -505,7 +505,7 @@ impl Service {
         row.version = state.edit_board_dependency(task, |store, clock| {
             store.edit_dependencies(id, version, edit, &audit, clock)
         })?;
-        self.desire_title(&state, task, row.number);
+        self.desire_title(&mut state, task, row.number);
         self.wake_task(&mut state, id, row.version, Priority::Wake);
         Ok(row)
     }
@@ -547,7 +547,7 @@ impl Service {
         let version = state.edit_board_dependency(&row.task, |store, clock| {
             store.edit_dependencies(id, row.version, DependencyEdit::ReleaseWait, &audit, clock)
         })?;
-        self.desire_title(&state, &row.task, row.number);
+        self.desire_title(&mut state, &row.task, row.number);
         self.wake_task(&mut state, id, version, Priority::Wake);
         Ok(true)
     }

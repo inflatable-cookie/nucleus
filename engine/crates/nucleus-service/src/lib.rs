@@ -304,18 +304,14 @@ struct State {
     enrolled_planners: BTreeMap<String, enrollment::EnrolledPlanner>,
     planner_notice_waiters: BTreeSet<String>,
     thread_tasks: BTreeMap<String, BTreeMap<String, TrackedThread>>,
+    title_candidates: BTreeMap<String, titles::TitleCandidate>,
 }
 
 #[derive(Default)]
 struct TrackedThread {
-    seen: Option<SeenThread>,
+    seen: Option<ThreadHint>,
     role: bool,
     due: bool,
-}
-
-struct SeenThread {
-    hint: ThreadHint,
-    at: Instant,
 }
 
 enum Preflight {
@@ -422,7 +418,6 @@ impl Service {
             runtime_settings.projects = Some(store.clean_removed_projects(settings)?.value);
         }
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
-        let registry_mode = project.is_none();
         if project
             .as_ref()
             .is_none_or(|project| project.mode != ProjectMode::Fixture)
@@ -435,7 +430,6 @@ impl Service {
             storage,
             git,
             settings: settings.clone(),
-            project,
             registry_provider,
             host,
             forge,
@@ -449,7 +443,7 @@ impl Service {
                 store,
                 allowance_clock,
                 settings: runtime_settings,
-                registry_mode,
+                registry_mode: project.is_none(),
                 schedule: Schedule::new(),
                 last_pass_calls: HostCalls::new(),
                 scheduler_error: None,
@@ -470,7 +464,9 @@ impl Service {
                 enrolled_planners: BTreeMap::new(),
                 planner_notice_waiters: BTreeSet::new(),
                 thread_tasks: BTreeMap::new(),
+                title_candidates: BTreeMap::new(),
             }),
+            project,
             project_writes: RwLock::new(()),
             pass_lock: Mutex::new(()),
             watch_lock: Mutex::new(()),
@@ -627,7 +623,7 @@ impl Service {
         host: &nucleus_hosts::T3Pass<'_>,
     ) -> Result<Option<Result<Action, ServiceError>>, ServiceError> {
         self.storage.database().verify()?;
-        let (row, defer_refresh) = {
+        let row = {
             let mut state = self.state.lock().await;
             let row = match self.lookup(&state, id) {
                 Ok(row) => row,
@@ -640,12 +636,9 @@ impl Service {
             };
             self.track(&mut state, &row.task);
             state.group_waits.remove(id);
-            let defer = priority == Priority::Refresh && state.fresh_running_hint(&row.task);
-            (row, defer)
+            row
         };
-        let result = if defer_refresh {
-            Ok(Action::Wait(WaitReason::Running))
-        } else {
+        let result = {
             let scratch = self.existing_run_scratch(&row.task);
             Box::pin(self.advance_due_task(&row, &host.for_task(&row.task, scratch))).await
         };
@@ -862,7 +855,7 @@ impl Service {
                 self.title_wake.notify_one();
             }
             if let Some(tracked) = threads.get_mut(&hint.thread) {
-                let prior = tracked.seen.as_ref().map(|seen| &seen.hint);
+                let prior = tracked.seen.as_ref();
                 if tracked.role && prior != Some(&hint) {
                     self.title_wake.notify_one();
                 }
@@ -876,10 +869,7 @@ impl Service {
                     schedule.wake(id, now, Priority::Decision);
                     self.wake.notify_one();
                 }
-                tracked.seen = Some(SeenThread {
-                    hint: hint.clone(),
-                    at: now,
-                });
+                tracked.seen = Some(hint.clone());
             }
         }
     }
@@ -1313,7 +1303,7 @@ impl Service {
             state.wake_capacity(now);
             self.wake.notify_one();
         }
-        self.desire_title(&state, &row.task, row.number);
+        self.desire_title(&mut state, &row.task, row.number);
         if changed {
             self.title_wake.notify_one();
             self.publish(id, current.version);
@@ -1801,7 +1791,13 @@ impl Service {
         {
             state.role_observations.remove(id);
         }
-        self.desire_title(state, task, prior.number);
+        if titles::phase_label(&prior.task) != titles::phase_label(task)
+            || prior.task.brief() != task.brief()
+        {
+            self.desire_phase_title(state, task, prior.number);
+        } else {
+            self.desire_title(state, task, prior.number);
+        }
         state.schedule.reset_workspace(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
@@ -2129,23 +2125,6 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
 }
 
 impl State {
-    fn fresh_running_hint(&self, task: &Task) -> bool {
-        let id = &task.identity().id;
-        let Some(run) = task
-            .run()
-            .filter(|run| !run.revoked() && run.report().is_none())
-        else {
-            return false;
-        };
-        self.wait_reason(id) == Some(WaitReason::Running)
-            && self
-                .thread_tasks
-                .get(id)
-                .and_then(|threads| threads.get(&run.launch().thread))
-                .and_then(|thread| thread.seen.as_ref())
-                .is_some_and(|seen| seen.hint.running() && seen.at.elapsed() < schedule::LIVE_CHECK)
-    }
-
     fn recheckable(&self, task: &Task) -> bool {
         task.hold().is_none()
             && !task.phase().is_terminal()

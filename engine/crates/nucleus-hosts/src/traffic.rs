@@ -8,12 +8,15 @@ tokio::task_local! {
 }
 
 #[derive(Default)]
-pub(crate) struct Traffic(Mutex<HostCalls>);
+pub(crate) struct Traffic {
+    calls: Mutex<HostCalls>,
+    thread_reads: Mutex<HostCalls>,
+}
 
 impl Traffic {
     pub(crate) fn record(&self, method: &'static str) {
         *self
-            .0
+            .calls
             .lock()
             .expect("host traffic")
             .entry(method)
@@ -24,7 +27,20 @@ impl Traffic {
     }
 
     pub(crate) fn totals(&self) -> HostCalls {
-        self.0.lock().expect("host traffic").clone()
+        self.calls.lock().expect("host traffic").clone()
+    }
+
+    pub(crate) fn record_thread_read(&self, reason: &'static str) {
+        *self
+            .thread_reads
+            .lock()
+            .expect("thread reads")
+            .entry(reason)
+            .or_default() += 1;
+    }
+
+    pub(crate) fn thread_reads(&self) -> HostCalls {
+        self.thread_reads.lock().expect("thread reads").clone()
     }
 }
 
