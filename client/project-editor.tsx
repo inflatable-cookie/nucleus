@@ -527,17 +527,6 @@ function OpenedProject({
               {planner && <Button small c={c} text="Clear" label="Clear claimed planner" disabled={disabled} onPress={() => choosePlanner(NONE)} />}
             </View>
           )}
-          {Boolean(candidates.error) && (
-            <Text
-              style={{
-                color: r.warning,
-                fontSize: type.metadata.fontSize,
-                lineHeight: type.metadata.lineHeight,
-              }}
-            >
-              Couldn't load threads
-            </Text>
-          )}
         </View>
       </Pair>
       {Boolean(actions.focus?.error) && (

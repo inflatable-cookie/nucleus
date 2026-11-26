@@ -139,12 +139,12 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     queryFn: () => fetchProjectSettings({ project: focusKey! }),
     enabled: settingsTab === "projects" && focusKey !== null,
   });
-  // The planner picker's live threads; task threads are left out by `kind` in the picker.
-  // Read only while an opened project shows the picker, never from the list.
+  // Agent registration still uses live threads on engines that expose that feature.
   const candidatesQuery = useQuery({
     queryKey: ["nucleus", "owner-candidates"],
     queryFn: () => fetchOwnerCandidates({}),
-    enabled: settingsTab === "projects" && focusKey !== null,
+    enabled:
+      features.projectAgents && settingsTab === "projects" && focusKey !== null,
   });
   // Spec 028: the listing is a Backups-tab read. The stale/failing warning on every
   // other tab rides the board's snapshot health, so no surface polls this just to age a

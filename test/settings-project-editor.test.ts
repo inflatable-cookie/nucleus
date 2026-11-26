@@ -1614,7 +1614,7 @@ test("loading, a failed re-read keeps fields disabled and never blank, a staged 
       ui.get("Preferred thread, Gone"),
       "a planner thread no longer live stays selected as Gone",
     );
-    assert.match(ui.text(), /Couldn't load threads/);
+    assert.doesNotMatch(ui.text(), /Couldn't load threads/);
     assert.equal(
       ui.get("QA for acme/nucleus").children.join(""),
       "Staged · 3 steps",
@@ -1942,7 +1942,7 @@ test("Settings lists projects before any host read settles; the thread picker an
   }
 });
 
-test("T3-only with a saved offline Paseo planner: Settings lists the project, the picker reports its read failure, and the planner is unknown rather than gone", async () => {
+test("Rust Settings opens a project without requesting owner candidates or showing a planner warning", async () => {
   const data = settingsOf([
     row("suite", "Suite", [repo("acme/suite")], {
       planner: "paseo-synthetic:planner-paseo",
@@ -1982,6 +1982,7 @@ test("T3-only with a saved offline Paseo planner: Settings lists the project, th
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  let candidateReads = 0;
   const invoke = async (method: string, input: unknown) => {
     if (method === "queue.ui-snapshot") return board;
     if (method === "backup.list") return { snapshots: [], localError: null };
@@ -1995,20 +1996,24 @@ test("T3-only with a saved offline Paseo planner: Settings lists the project, th
     }
     // The saved list answers at once, and so does the focused read of the open project.
     if (method === "project.settings") return data;
-    // The Paseo host is offline from a T3-only installation: the picker's read fails.
-    if (method === "project.owner-candidates")
+    if (method === "project.owner-candidates") {
+      candidateReads++;
       throw new Error("Transport not connected (status: disconnected)");
+    }
     return never();
   };
   const ui = mount(
     h(QueryClientProvider, {
       client,
-      children: h(PluginRpcProvider, {
-        invoke: invoke as never,
-        children: h(QueueSettingsScreen as never, {
-          theme: { colors: dark },
-          layout: { compact: false, platform: "ios" },
-          host: { id: "t3code:synthetic", label: "T3" },
+      children: h(EngineFeaturesContext.Provider, {
+        value: RUST_ENGINE_FEATURES,
+        children: h(PluginRpcProvider, {
+          invoke: invoke as never,
+          children: h(QueueSettingsScreen as never, {
+            theme: { colors: dark },
+            layout: { compact: false, platform: "ios" },
+            host: { id: "t3code:synthetic", label: "T3" },
+          }),
         }),
       }),
     }),
@@ -2024,10 +2029,9 @@ test("T3-only with a saved offline Paseo planner: Settings lists the project, th
       "list renders with the Paseo host offline",
     );
     ui.press("Suite");
-    await settle(
-      () => ui.text().includes("Couldn't load threads"),
-      "picker failure is local",
-    );
+    await settle(() => Boolean(ui.query("Project name")), "opened project is visible");
+    assert.equal(candidateReads, 0);
+    assert.doesNotMatch(ui.text(), /Couldn't load threads/);
     // The planner is shown by its saved id and is not reported gone; saved fields stay enabled.
     assert.equal(ui.text().includes("Gone"), false);
     assert.ok(ui.query("Project name"));

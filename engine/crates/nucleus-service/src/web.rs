@@ -60,6 +60,16 @@ const DEFAULT_BODY_LIMIT: usize = 64 * 1024;
 // A JSON escape can use six bytes for one brief byte. The ordinary limit covers metadata.
 const BRIEF_BODY_LIMIT: usize = 6 * MAX_BRIEF_BYTES + DEFAULT_BODY_LIMIT;
 
+fn board_wait_detail(detail: &crate::WaitDetail) -> Option<&str> {
+    match detail {
+        crate::WaitDetail::BeforeSend(message) => *message,
+        crate::WaitDetail::ConfirmingDelivery(message)
+        | crate::WaitDetail::Observation(message) => Some(*message),
+        crate::WaitDetail::Blocked(message) => Some(message.as_str()),
+        crate::WaitDetail::OperatorSnoozed { .. } | crate::WaitDetail::Archive(_) => None,
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -1306,14 +1316,7 @@ impl Card {
             {
                 return None;
             }
-            match detail? {
-                crate::WaitDetail::BeforeSend(message) => *message,
-                crate::WaitDetail::ConfirmingDelivery(message)
-                | crate::WaitDetail::Observation(message) => Some(*message),
-                crate::WaitDetail::OperatorSnoozed { message, .. }
-                | crate::WaitDetail::Blocked(message) => Some(message.as_str()),
-                crate::WaitDetail::Archive(_) => None,
-            }
+            board_wait_detail(detail?)
         });
         Ok(Self {
             identity: task.identity().clone(),

@@ -629,7 +629,7 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
     assert!(service.operator_snooze_wait(&row).await.is_some());
     let board = fixture.board_task().await;
     assert_eq!(board["stateLabel"], "Queued");
-    assert!(board["waitDetail"].as_str().unwrap().contains("until"));
+    assert!(board["waitDetail"].is_null());
     assert_eq!(fixture.attention().await, TaskAttention::Waiting);
     assert!(service.state.lock().await.schedule.due(ID).unwrap() > tokio::time::Instant::now());
 
