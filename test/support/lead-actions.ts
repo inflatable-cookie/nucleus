@@ -13,7 +13,6 @@ export function leadActionHints(
     drop: null,
     reopen: "Only a dropped lead can be reopened",
     park: null,
-    unpark: "This lead is not parked",
     promoteTo: null,
     promote: repositories.map(({ origin }) => ({
       origin,

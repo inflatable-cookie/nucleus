@@ -1,7 +1,7 @@
 use nucleus_store::planning::{
     DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption, DecisionTarget, Horizon,
-    ItemContent, ItemKind, ItemSource, ItemState, LaneDocument, Plan, PlanLane, RecordKind,
-    WriteAt,
+    ItemContent, ItemDisposition, ItemKind, ItemSource, ItemState, LaneDocument, Plan, PlanLane,
+    RecordKind, WriteAt,
 };
 
 use super::*;
@@ -456,4 +456,76 @@ fn compaction_uses_original_dates_and_the_verified_backup_boundary() {
         .map(|v| v.sequence)
         .collect();
     assert_eq!(saved, [vec![1], (4..=25).collect()].concat());
+}
+
+#[test]
+fn reopen_retains_history_and_fences_stale_versions() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut store = Store::open(&fixture_storage(scratch.path())).expect("store");
+    for (id, state) in [
+        (
+            "parked",
+            ItemState::Parked {
+                reason: "Later".into(),
+                revisit_at: Some("2026-01-01".into()),
+            },
+        ),
+        (
+            "dropped",
+            ItemState::Dropped {
+                disposition: ItemDisposition::Completed,
+                reason: Some("Done".into()),
+            },
+        ),
+    ] {
+        store
+            .add_item(
+                "project",
+                id.into(),
+                ItemKind::Papercut,
+                ItemContent {
+                    title: id.into(),
+                    body: "Body".into(),
+                    lanes: vec![],
+                },
+                STAMP,
+            )
+            .unwrap();
+        let stale = store
+            .items_with_times("project")
+            .unwrap()
+            .into_iter()
+            .find(|i| i.item.id == id)
+            .unwrap()
+            .version;
+        store.set_item_state("project", id, state, STAMP).unwrap();
+        assert!(matches!(
+            store.reopen_item("project", id, Some(stale), Some("Again"), STAMP),
+            Err(StoreError::PlanningConflict)
+        ));
+        let version = store
+            .items_with_times("project")
+            .unwrap()
+            .into_iter()
+            .find(|i| i.item.id == id)
+            .unwrap()
+            .version;
+        assert_eq!(
+            store
+                .reopen_item("project", id, Some(version), Some("Again"), STAMP)
+                .unwrap()
+                .item
+                .state,
+            ItemState::Open
+        );
+        let history = store
+            .planning_history("project", RecordKind::Item, id)
+            .unwrap();
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[2].action, "reopen");
+        assert_eq!(history[2].snapshot["note"], "Again");
+        if id == "dropped" {
+            assert_eq!(history[1].snapshot["disposition"], "completed");
+        }
+    }
 }

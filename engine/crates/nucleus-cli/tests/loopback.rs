@@ -404,3 +404,43 @@ fi
     assert!(!classes.join("scratch/nucleus").exists());
     assert!(!classes.join("fallback/nucleus").exists());
 }
+
+#[tokio::test]
+async fn item_reopen_cli_round_trips_note_and_response() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("loopback");
+    let endpoint = listener.local_addr().expect("local address").to_string();
+    let app = Router::new().route(
+        "/v1/planning/product/items/idea/reopen",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body, json!({"note":"Revisit", "version":7}));
+            Json(json!({"id":"idea", "state":"open"}))
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_nucleus"))
+        .args([
+            "--endpoint",
+            &endpoint,
+            "item.reopen",
+            "product",
+            "idea",
+            "--note",
+            "Revisit",
+            "--version",
+            "7",
+        ])
+        .env("NUCLEUS_ENGINE_CONTROL_KEY", hex::encode([4; 32]))
+        .output()
+        .await
+        .expect("CLI output");
+    server.abort();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        json!({"id":"idea", "state":"open"})
+    );
+}

@@ -18,7 +18,7 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   Use the current version and keep unrelated entries. `lane.put` reads Markdown
   on stdin. `lane.status` records the disposition.
 - List leads and papercuts with `item.list`. Use `item.add`, `item.edit`,
-  `item.park` or `item.drop` to maintain them. Promote approved work with
+  `item.park`, `item.drop` or `item.reopen` to maintain them. Reopen a parked or dropped item with `item.reopen [PROJECT] ID [--note NOTE]`; a due revisit stays parked until reopened. Promote approved work with
   `item.promote [PROJECT] ID`. A lead carries its complexity in the brief.
   Supply `--complexity` when promoting a papercut.
 - Send an approved brief on stdin to `nucleus task.add [PROJECT]`. Direct

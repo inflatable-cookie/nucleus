@@ -24,7 +24,7 @@ import {
 } from "../task/parts";
 import { ModalAction, RecordModal } from "./record-modal";
 import { useEngineFeatures } from "../engine-features";
-import { ParkedNote, ParkPanel } from "../park-controls";
+import { ParkPanel } from "../park-controls";
 import { type as typeScale, space } from "../design";
 
 const papercutPromoteReason = (cut: Papercut) =>
@@ -70,14 +70,15 @@ export function PapercutDialog({
     promotePapercut = useRpc(api.papercutPromoteTask),
     closePapercut = useRpc(api.papercutClose);
   const parkLead = useRpc(api.leadPark),
-    unparkLead = useRpc(api.leadUnpark);
+    reopenLead = useRpc(api.leadReopen);
   const [closeNote, setCloseNote] = useState("");
   // Spec 053: a promoted papercut names its complexity; nothing is preselected.
   const [papercutComplexity, setPapercutComplexity] =
     useState<CapabilityLevel | null>(null);
-  const [editBase, setEditBase] = useState<
-    Pick<Papercut, "id" | "project" | "version"> | null
-  >(null);
+  const [editBase, setEditBase] = useState<Pick<
+    Papercut,
+    "id" | "project" | "version"
+  > | null>(null);
   const [papercutEdit, setPapercutEdit] = useState({
     title: "",
     area: "",
@@ -92,7 +93,9 @@ export function PapercutDialog({
     refetchInterval: live ? false : 4000,
   });
   const papercutDetail = papercutDetailQuery.data;
-  const destinations = papercutDetail?.repositories ?? (papercutDetail ? [papercutDetail.repository] : []);
+  const destinations =
+    papercutDetail?.repositories ??
+    (papercutDetail ? [papercutDetail.repository] : []);
   const editsMarkdown = editBase?.project !== undefined;
   // Each papercut starts with no complexity chosen.
   useEffect(() => {
@@ -109,7 +112,8 @@ export function PapercutDialog({
       eyebrow={
         papercutDetail ? (
           <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-            {papercutDetail.state} · {destinations.map(repo => repo.origin).join(", ")}
+            {papercutDetail.state} ·{" "}
+            {destinations.map((repo) => repo.origin).join(", ")}
           </Text>
         ) : undefined
       }
@@ -195,7 +199,10 @@ export function PapercutDialog({
                       const saved = await editPapercut({
                         ...editBase,
                         ...(editsMarkdown
-                          ? { title: papercutEdit.title, body: papercutEdit.happened }
+                          ? {
+                              title: papercutEdit.title,
+                              body: papercutEdit.happened,
+                            }
                           : papercutEdit),
                         author: "operator (board)",
                       });
@@ -301,18 +308,22 @@ export function PapercutDialog({
                         impact: papercutDetail.impact,
                         fix: papercutDetail.fix ?? "",
                       });
-                    setRecordNotice(null);
-                    setEditBase({
-                      id: papercutDetail.id,
-                      project: papercutDetail.project,
-                      version: papercutDetail.version,
-                    });
+                      setRecordNotice(null);
+                      setEditBase({
+                        id: papercutDetail.id,
+                        project: papercutDetail.project,
+                        version: papercutDetail.version,
+                      });
                     }}
                   />
                   {destinations.map(({ origin }) => (
                     <ModalAction
                       key={origin}
-                      text={destinations.length > 1 ? `Promote to ${origin}` : "Promote"}
+                      text={
+                        destinations.length > 1
+                          ? `Promote to ${origin}`
+                          : "Promote"
+                      }
                       busy={busy}
                       reason={
                         papercutPromoteReason(papercutDetail) ??
@@ -359,49 +370,65 @@ export function PapercutDialog({
                   >
                     Parking
                   </Text>
-                  {rust && papercutDetail.parked ? (
-                    <ParkedNote c={c} parked={papercutDetail.parked} recheck={papercutDetail.recheck ?? null} />
-                  ) : (
-                    <ParkPanel
-                      c={c}
+                  <ParkPanel
+                    c={c}
+                    busy={busy}
+                    parked={papercutDetail.parked ?? null}
+                    recheck={papercutDetail.recheck ?? null}
+                    canPark={papercutDetail.state === "open"}
+                    parkReason={
+                      papercutDetail.state === "open"
+                        ? null
+                        : "Only open papercuts can be parked"
+                    }
+                    reopenReason={null}
+                    onPark={(reason, revisitAt) =>
+                      void act(async () => {
+                        await parkLead({
+                          ...scope,
+                          id: papercutDetail.id,
+                          version: papercutDetail.version,
+                          reason,
+                          revisitAt,
+                          author: "operator (board)",
+                        });
+                        setRecordNotice({
+                          kind: "ok",
+                          text: revisitAt
+                            ? "Parked. It will show as due on its recheck date."
+                            : "Parked.",
+                        });
+                      }, "record")
+                    }
+                    onReopen={() =>
+                      void act(async () => {
+                        await reopenLead({
+                          ...scope,
+                          id: papercutDetail.id,
+                          version: papercutDetail.version,
+                          author: "operator (board)",
+                        });
+                        setRecordNotice({
+                          kind: "ok",
+                          text: "Back on the to-do list.",
+                        });
+                      }, "record")
+                    }
+                  />
+                  {papercutDetail.state === "closed" && (
+                    <ModalAction
+                      text="Reopen"
                       busy={busy}
-                      parked={papercutDetail.parked ?? null}
-                      recheck={papercutDetail.recheck ?? null}
-                      canPark={papercutDetail.state === "open"}
-                      parkReason={
-                        papercutDetail.state === "open"
-                          ? null
-                          : "Only open papercuts can be parked"
-                      }
-                      unparkReason={null}
-                      onPark={(reason, revisitAt) =>
+                      c={c}
+                      onPress={() =>
                         void act(async () => {
-                          await parkLead({
+                          await reopenLead({
                             ...scope,
                             id: papercutDetail.id,
                             version: papercutDetail.version,
-                            reason,
-                            revisitAt,
                             author: "operator (board)",
                           });
-                          setRecordNotice({
-                            kind: "ok",
-                            text: revisitAt
-                              ? "Parked. It moves back to Open on its recheck date."
-                              : "Parked.",
-                          });
-                        }, "record")
-                      }
-                      onUnpark={() =>
-                        void act(async () => {
-                          await unparkLead({
-                            id: papercutDetail.id,
-                            version: papercutDetail.version,
-                          });
-                          setRecordNotice({
-                            kind: "ok",
-                            text: "Back on the to-do list.",
-                          });
+                          setRecordNotice({ kind: "ok", text: "Reopened." });
                         }, "record")
                       }
                     />
