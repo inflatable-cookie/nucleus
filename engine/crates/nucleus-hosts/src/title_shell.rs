@@ -193,7 +193,18 @@ impl T3 {
         })
     }
 
+    /// Whether the synchronized shell currently shows `title` for this verified row.
+    #[must_use]
+    pub fn title_matches(&self, target: &TitleTarget, title: &str) -> bool {
+        self.rpc.with_shell(|shell| {
+            shell
+                .and_then(|shell| target.row_in(shell))
+                .is_some_and(|row| row["title"].as_str() == Some(title))
+        })
+    }
+
     /// Deliver the same title bytes under the receipt ID until T3 confirms it.
+    /// Returns `true` once the synchronized shell displays `title`.
     /// # Errors
     /// Returns an error if the proof changes or the write cannot be confirmed.
     pub async fn write_title(
@@ -201,9 +212,9 @@ impl T3 {
         target: TitleTarget,
         command_id: &str,
         title: &str,
-    ) -> Result<(), HostError> {
+    ) -> Result<bool, HostError> {
         if target.current_title() == Some(title) {
-            return Ok(());
+            return Ok(true);
         }
         let payload = json!({"type":"thread.metadata.update","commandId":command_id,"threadId":target.thread(),"title":title});
         match self
@@ -223,7 +234,7 @@ impl T3 {
             )
             .await?
         {
-            Reply::Value(_) => Ok(()),
+            Reply::Value(_) => Ok(self.title_matches(&target, title)),
             Reply::Failure(_) => Err(HostError::Uncertain),
         }
     }

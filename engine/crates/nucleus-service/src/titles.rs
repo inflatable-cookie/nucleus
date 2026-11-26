@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use nucleus_core::{Hold, HoldBy, Phase, Review, Role, Task, Verdict, WaitReason};
 use nucleus_hosts::{HostError, INBOX_THREAD, InboxTarget, TitleTarget};
-use nucleus_store::{DispatchMode, TaskRow, TitleReceipt};
+use nucleus_store::{DispatchMode, StoredTitle, TaskRow, TitleReceipt};
 
 use crate::{Service, ServiceError, State, WaitDetail, now_ms, pass::DispatchTarget, presentation};
 
@@ -215,6 +215,35 @@ fn inbox_title(decisions: usize, running: usize, mode: DispatchMode) -> String {
     format!("{prefix}{status}")
 }
 
+enum TitleOutcome {
+    Confirmed,
+    Pending,
+    Stale,
+}
+
+fn reconcile_stored_title(
+    state: &State,
+    target: Option<&TitleTarget>,
+    stored: StoredTitle,
+) -> Result<Option<TitleReceipt>, ServiceError> {
+    let matched = target
+        .and_then(TitleTarget::current_title)
+        .is_some_and(|shown| shown == stored.receipt.desired);
+    if stored.confirmed {
+        // A confirmed generation whose held shell still displays older wording
+        // re-desires under the same command ID while preserving newer generations.
+        if target.is_some() && !matched && state.store.redesire_title(&stored.receipt)? {
+            return Ok(state.store.pending_for_receipt(&stored.receipt)?);
+        }
+        return Ok(None);
+    }
+    if matched {
+        state.store.confirm_title(&stored.receipt)?;
+        return Ok(None);
+    }
+    Ok(Some(stored.receipt))
+}
+
 impl Service {
     pub(super) fn desire_title(&self, state: &State, task: &Task, number: Option<i64>) -> bool {
         if self.acp_provider().is_none() {
@@ -341,8 +370,20 @@ impl Service {
         for thread in threads {
             let candidate = if thread == INBOX_THREAD {
                 self.inbox_title_work(&state, provider)?
+            } else if let Some(stored) = state.store.title_state(thread)? {
+                let target = stored
+                    .receipt
+                    .task_id
+                    .as_deref()
+                    .and_then(|task_id| self.lookup(&state, task_id).ok())
+                    .and_then(|row| {
+                        self.task_title_target_with_state(&state, &row.task, provider, thread)
+                            .ok()
+                            .flatten()
+                    });
+                reconcile_stored_title(&state, target.as_ref(), stored)?
             } else {
-                state.store.pending_title(thread)?
+                None
             };
             if let Some(receipt) = candidate
                 && earliest
@@ -353,6 +394,25 @@ impl Service {
             }
         }
         Ok(earliest)
+    }
+
+    fn task_title_target_with_state(
+        &self,
+        state: &State,
+        task: &Task,
+        provider: &str,
+        thread: &str,
+    ) -> Result<Option<TitleTarget>, ServiceError> {
+        let identity = task.identity();
+        let route = self.resolve_project(state, identity)?;
+        let worktrees = self.worktrees()?;
+        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let binding = route.binding(&checkout)?;
+        Ok(route
+            .checkout
+            .to_str()
+            .and_then(|root| self.host.title_target(&binding, provider, root))
+            .filter(|target| target.thread() == thread))
     }
 
     fn inbox_title_target(&self, provider: &str) -> Option<TitleTarget> {
@@ -368,9 +428,9 @@ impl Service {
         state: &State,
         provider: &str,
     ) -> Result<Option<TitleReceipt>, ServiceError> {
-        if self.inbox_title_target(provider).is_none() {
+        let Some(target) = self.inbox_title_target(provider) else {
             return Ok(None);
-        }
+        };
         let decisions = crate::native_inbox::pending(state, self)?.len();
         let running = if decisions == 0 {
             self.working_row_count(state)?
@@ -385,7 +445,10 @@ impl Service {
         state
             .store
             .desire_inbox_title(INBOX_THREAD, &inbox_title(decisions, running, mode))?;
-        Ok(state.store.pending_inbox_title(INBOX_THREAD)?)
+        let Some(stored) = state.store.inbox_title_state(INBOX_THREAD)? else {
+            return Ok(None);
+        };
+        reconcile_stored_title(state, Some(&target), stored)
     }
 
     async fn apply_title(
@@ -406,13 +469,13 @@ impl Service {
         &self,
         receipt: &TitleReceipt,
         now: i64,
-        applied: Result<bool, ServiceError>,
+        applied: Result<TitleOutcome, ServiceError>,
     ) -> Result<(), ServiceError> {
         let state = self.state.lock().await;
         match applied {
-            Ok(true) => state.store.confirm_title(receipt)?,
-            Err(ServiceError::Host(HostError::Deferred { .. })) => {}
-            _ => {
+            Ok(TitleOutcome::Confirmed) => state.store.confirm_title(receipt)?,
+            Ok(TitleOutcome::Stale) | Err(ServiceError::Host(HostError::Deferred { .. })) => {}
+            Ok(TitleOutcome::Pending) | Err(_) => {
                 state.store.defer_title(receipt, now)?;
             }
         }
@@ -423,17 +486,20 @@ impl Service {
         &self,
         provider: &str,
         receipt: &TitleReceipt,
-    ) -> Result<bool, ServiceError> {
+    ) -> Result<TitleOutcome, ServiceError> {
         let Some(target) = self.inbox_title_target(provider) else {
-            return Ok(false);
+            return Ok(TitleOutcome::Pending);
         };
-        if target.current_title() != Some(&receipt.desired) {
-            let key = format!("nucleus-rust-inbox-title-{}", receipt.generation);
-            self.host
-                .write_title(target, &key, &receipt.desired)
-                .await?;
+        let key = format!("nucleus-rust-inbox-title-{}", receipt.generation);
+        if self
+            .host
+            .write_title(target, &key, &receipt.desired)
+            .await?
+        {
+            Ok(TitleOutcome::Confirmed)
+        } else {
+            Ok(TitleOutcome::Pending)
         }
-        Ok(true)
     }
 
     async fn write_task_title(
@@ -441,14 +507,14 @@ impl Service {
         provider: &str,
         task_id: &str,
         receipt: &TitleReceipt,
-    ) -> Result<bool, ServiceError> {
+    ) -> Result<TitleOutcome, ServiceError> {
         let row = self.task(task_id).await?;
         let fence = self.task_fence(task_id).await;
         let Ok(_guard) = fence.try_lock_owned() else {
-            return Ok(false);
+            return Ok(TitleOutcome::Pending);
         };
         if !self.title_current(&row, receipt).await? {
-            return Ok(false);
+            return Ok(TitleOutcome::Stale);
         }
         let identity = row.task.identity();
         let route = self.project_for(identity).await?;
@@ -461,17 +527,17 @@ impl Service {
             .and_then(|root| self.host.title_target(&binding, provider, root))
             .filter(|target| target.thread() == receipt.thread)
         else {
-            return Ok(false);
+            return Ok(TitleOutcome::Pending);
         };
         if target.current_title() == Some(&receipt.desired) {
-            return Ok(true);
+            return Ok(TitleOutcome::Confirmed);
         }
         let destination = DispatchTarget::Presentation {
             frozen: target.binding().ok_or(ServiceError::AcpBinding)?,
             checkout: &checkout,
         };
         let Some(_permit) = self.dispatch_gate(&row.task, destination).await? else {
-            return Ok(false);
+            return Ok(TitleOutcome::Pending);
         };
         self.write_task_title_target(target, task_id, receipt).await
     }
@@ -481,15 +547,17 @@ impl Service {
         target: TitleTarget,
         task_id: &str,
         receipt: &TitleReceipt,
-    ) -> Result<bool, ServiceError> {
-        if target.current_title() == Some(&receipt.desired) {
-            return Ok(true);
-        }
+    ) -> Result<TitleOutcome, ServiceError> {
         let key = format!("task-{task_id}-title-{}", receipt.generation);
-        self.host
+        if self
+            .host
             .write_title(target, &key, &receipt.desired)
-            .await?;
-        Ok(true)
+            .await?
+        {
+            Ok(TitleOutcome::Confirmed)
+        } else {
+            Ok(TitleOutcome::Pending)
+        }
     }
 
     /// Try the existing title receipt while the role admission holds both fences.
@@ -509,12 +577,16 @@ impl Service {
             return Ok(());
         };
         let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-        let receipt = self
-            .state
-            .lock()
-            .await
-            .store
-            .pending_title(target.thread())?;
+        let receipt = {
+            let state = self.state.lock().await;
+            state
+                .store
+                .title_state(target.thread())?
+                .and_then(|stored| {
+                    reconcile_stored_title(&state, Some(&target), stored).transpose()
+                })
+                .transpose()?
+        };
         if let Some(receipt) = receipt.filter(|receipt| receipt.retry_at <= now) {
             let result = self
                 .write_task_title_target(target, &identity.id, &receipt)
@@ -752,6 +824,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep the Inbox title generation sequence and shell readback in one fixture"
+    )]
     async fn inbox_status_titles_only_write_changed_metadata_under_a_fresh_generation() {
         use nucleus_store::planning::WriteAt;
 
@@ -776,8 +852,14 @@ mod tests {
         host.fixture_project_shell(&shell("All quiet", &[]), provider);
         service.host = host;
         let inbox = [INBOX_THREAD.to_owned()];
-        let first = service.title_work(provider, &inbox).await.unwrap().unwrap();
-        service.apply_title(provider, &first, 0).await.unwrap();
+        // Already-matching shell readback confirms generation 1 with zero native calls.
+        assert!(
+            service
+                .title_work(provider, &inbox)
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert!(requests.lock().unwrap().is_empty());
 
         let threads = running_review_threads(&service, provider).await;
@@ -787,6 +869,13 @@ mod tests {
         let running = service.title_work(provider, &inbox).await.unwrap().unwrap();
         service.apply_title(provider, &running, 0).await.unwrap();
         assert_eq!(running.desired, "1 task running");
+        // Without shell readback, generation 2 stays pending at the same generation.
+        let still_pending = service.title_work(provider, &inbox).await.unwrap().unwrap();
+        assert_eq!(still_pending.generation, running.generation);
+        assert!(still_pending.retry_at > 0);
+        service
+            .host
+            .fixture_project_shell(&shell("1 task running", &threads), provider);
         assert!(
             service
                 .title_work(provider, &inbox)
@@ -794,9 +883,6 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        service
-            .host
-            .fixture_project_shell(&shell("1 task running", &threads), provider);
 
         let project = service.fixture().host_project.clone();
         let stamp = |actor, at_ms| WriteAt { actor, at_ms };
@@ -823,6 +909,13 @@ mod tests {
         service
             .host
             .fixture_project_shell(&shell(&decision.desired, &[]), provider);
+        assert!(
+            service
+                .title_work(provider, &inbox)
+                .await
+                .unwrap()
+                .is_none()
+        );
         {
             let mut state = service.state.lock().await;
             state.settings.dispatch = None;
@@ -840,8 +933,18 @@ mod tests {
                 .unwrap();
         }
         let quiet = service.title_work(provider, &inbox).await.unwrap().unwrap();
-        assert_eq!(quiet.desired, first.desired);
+        assert_eq!(quiet.desired, "All quiet");
         service.apply_title(provider, &quiet, 0).await.unwrap();
+        service
+            .host
+            .fixture_project_shell(&shell("All quiet", &[]), provider);
+        assert!(
+            service
+                .title_work(provider, &inbox)
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             requests
                 .lock()
@@ -850,6 +953,21 @@ mod tests {
                 .map(|payload| payload["commandId"].as_str().unwrap().to_owned())
                 .collect::<Vec<_>>(),
             [2, 3, 4].map(|generation| format!("nucleus-rust-inbox-title-{generation}"))
+        );
+
+        // If the held shell later shows an older title for a confirmed Inbox generation,
+        // it re-desires under the same command ID rather than advancing the generation.
+        service
+            .host
+            .fixture_project_shell(&shell("1 task running", &[]), provider);
+        let redesi = service.title_work(provider, &inbox).await.unwrap().unwrap();
+        assert_eq!(redesi.generation, quiet.generation);
+        assert_eq!(redesi.desired, "All quiet");
+        assert_eq!(redesi.retry_at, 0);
+        service.apply_title(provider, &redesi, 0).await.unwrap();
+        assert_eq!(
+            requests.lock().unwrap().last().unwrap()["commandId"],
+            "nucleus-rust-inbox-title-4"
         );
         server.abort();
     }
@@ -886,9 +1004,12 @@ mod tests {
         let binding = service.binding(&checkout).expect("workspace binding");
         let parent = nucleus_hosts::parent_thread(checkout.path());
         let root = service.fixture().checkout.clone();
+        let thread_row = |title: &str| {
+            json!({"id":parent,"projectId":binding.project_id,"providerInstanceId":"fixture-acp",
+                "worktreePath":binding.worktree_path,"branch":binding.branch,"title":title})
+        };
         let shell = json!({"kind":"snapshot","snapshot":{"projects":[{"id":binding.project_id,"workspaceRoot":root}],
-            "threads":[{"id":parent,"projectId":binding.project_id,"providerInstanceId":"fixture-acp",
-            "worktreePath":binding.worktree_path,"branch":binding.branch,"title":"old title"}]}});
+            "threads":[thread_row("old title")]}});
         let expected = parent.clone();
         let (host, native) = native_fixture(move |req| match req["tag"].as_str() {
             Some("orchestration.subscribeShell") => {
@@ -932,9 +1053,33 @@ mod tests {
         }
         {
             let mut watcher = std::pin::pin!(service.watch_host());
+            let mut delta_sent = false;
             std::future::poll_fn(|cx| {
                 assert!(watcher.as_mut().poll(cx).is_pending());
-                // The watcher's own wakeups drive the receipt check through durable confirmation.
+                // Dispatch alone must not confirm while the shell still displays the old title.
+                if !delta_sent
+                    && service
+                        .host
+                        .host_calls()
+                        .get("orchestration.dispatchCommand")
+                        .copied()
+                        == Some(1)
+                {
+                    let still_pending = service.state.try_lock().is_ok_and(|state| {
+                        state
+                            .store
+                            .pending_title(&parent)
+                            .expect("receipt")
+                            .is_some()
+                    });
+                    assert!(still_pending, "title confirmed before shell readback");
+                    service.host.fixture_shell_delta(&json!({
+                        "kind":"thread.updated",
+                        "sequence":2,
+                        "thread":thread_row("Queued · planner: #1 Add a greeting")
+                    }));
+                    delta_sent = true;
+                }
                 let confirmed = service.state.try_lock().is_ok_and(|state| {
                     state
                         .store
@@ -969,6 +1114,264 @@ mod tests {
         assert_eq!(
             service.host.host_calls()["orchestration.dispatchCommand"],
             1
+        );
+        native.abort();
+    }
+
+    async fn seeded_title_fixture(
+        shell_title: &str,
+        handler: impl Fn(&serde_json::Value) -> serde_json::Value + Clone + Send + Sync + 'static,
+    ) -> (
+        tempfile::TempDir,
+        Service,
+        tokio::task::JoinHandle<()>,
+        String,
+        String,
+        serde_json::Value,
+    ) {
+        let (home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+        let task = task();
+        let subject = Task::new(
+            Identity {
+                repository: service.fixture().repository.clone(),
+                ..task.identity().clone()
+            },
+            task.brief().text.clone(),
+            None,
+        );
+        let id = subject.identity().id.clone();
+        let worktrees = service.worktrees().expect("fixture worktrees");
+        let checkout = worktrees
+            .checkout(
+                &service.fixture().checkout,
+                &service.fixture().repository,
+                &id,
+            )
+            .expect("checkout");
+        checkout
+            .allocate(&service.fixture().start)
+            .expect("allocate");
+        let binding = service.binding(&checkout).expect("workspace binding");
+        let parent = nucleus_hosts::parent_thread(checkout.path());
+        let root = service.fixture().checkout.clone();
+        let row_json = json!({
+            "id": parent,
+            "projectId": binding.project_id,
+            "providerInstanceId": "fixture-acp",
+            "worktreePath": binding.worktree_path,
+            "branch": binding.branch,
+            "title": shell_title,
+        });
+        let (host, native) = native_fixture(handler).await;
+        host.fixture_project_shell(
+            &json!({"projects":[{"id":binding.project_id,"workspaceRoot":root}],"threads":[row_json.clone()]}),
+            "fixture-acp",
+        );
+        service.host = host;
+        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        {
+            let mut state = service.state.lock().await;
+            state
+                .store
+                .create(&subject, &event("admitted"))
+                .expect("seed task");
+        }
+        (home, service, native, id, parent, row_json)
+    }
+
+    #[tokio::test]
+    async fn confirmed_title_with_stale_shell_redesires_same_command_id_and_bounds_idle_calls() {
+        let dispatches = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&dispatches);
+        let (_home, service, native, id, parent, mut row_json) = seeded_title_fixture(
+            "Reviewing · snoozed until 2099-01-01: #1 Add a greeting",
+            move |req| {
+                assert_eq!(req["tag"], "orchestration.dispatchCommand");
+                seen.lock().unwrap().push(req["payload"].clone());
+                json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
+            },
+        )
+        .await;
+        let desired = "Queued: #1 Add a greeting";
+        {
+            let state = service.state.lock().await;
+            state.store.desire_title(&id, &parent, "Old").unwrap();
+            let gen1 = state.store.pending_title(&parent).unwrap().unwrap();
+            state.store.confirm_title(&gen1).unwrap();
+            state.store.desire_title(&id, &parent, desired).unwrap();
+            let gen2 = state.store.pending_title(&parent).unwrap().unwrap();
+            assert_eq!(gen2.generation, 2);
+            // Simulate a pre-fix confirmed receipt whose shell still shows generation 1 wording.
+            state.store.confirm_title(&gen2).unwrap();
+        }
+        let threads = [parent.clone()];
+        let receipt = service
+            .title_work("fixture-acp", &threads)
+            .await
+            .unwrap()
+            .expect("stale shell must re-desire");
+        assert_eq!(receipt.generation, 2);
+        assert_eq!(receipt.desired, desired);
+        assert_eq!(receipt.retry_at, 0);
+
+        service
+            .apply_title("fixture-acp", &receipt, 1_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            dispatches.lock().unwrap().as_slice(),
+            &[json!({
+                "type":"thread.metadata.update",
+                "threadId":parent,
+                "commandId":"task-fixture-title-2",
+                "title":desired,
+            })]
+        );
+        // Before retry_at and before shell readback arrives, idle checks make no writes.
+        let deferred = service
+            .title_work("fixture-acp", &threads)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(deferred.generation, 2);
+        assert_eq!(deferred.retry_at, 6_000);
+        assert_eq!(dispatches.lock().unwrap().len(), 1);
+
+        // Retry after backoff uses the exact same command ID.
+        service
+            .apply_title("fixture-acp", &deferred, 6_000)
+            .await
+            .unwrap();
+        assert_eq!(dispatches.lock().unwrap().len(), 2);
+        assert_eq!(
+            dispatches.lock().unwrap()[1]["commandId"],
+            "task-fixture-title-2"
+        );
+        let backed_off = service
+            .title_work("fixture-acp", &threads)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(backed_off.retry_at, 16_000);
+
+        // Shell readback confirms generation 2 without another native call.
+        row_json["title"] = json!(desired);
+        service.host.fixture_shell_delta(&json!({
+            "kind":"thread.updated",
+            "sequence":2,
+            "thread":row_json,
+        }));
+        assert!(
+            service
+                .title_work("fixture-acp", &threads)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            service
+                .title_work("fixture-acp", &threads)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(dispatches.lock().unwrap().len(), 2);
+        assert!(
+            !service
+                .host
+                .host_calls()
+                .contains_key("orchestration.subscribeThread")
+        );
+        native.abort();
+    }
+
+    #[tokio::test]
+    async fn already_matching_shell_readback_confirms_without_native_writes() {
+        let desired = "Queued: #1 Add a greeting";
+        let dispatches = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&dispatches);
+        let (_home, service, native, id, parent, _row_json) =
+            seeded_title_fixture(desired, move |req| {
+                seen.lock().unwrap().push(req.clone());
+                json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
+            })
+            .await;
+        {
+            let state = service.state.lock().await;
+            state.store.desire_title(&id, &parent, desired).unwrap();
+            assert!(state.store.pending_title(&parent).unwrap().is_some());
+        }
+        assert!(
+            service
+                .title_work("fixture-acp", std::slice::from_ref(&parent))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let state = service.state.lock().await;
+        assert!(state.store.pending_title(&parent).unwrap().is_none());
+        assert!(dispatches.lock().unwrap().is_empty());
+        assert!(service.host.host_calls().is_empty());
+        native.abort();
+    }
+
+    #[tokio::test]
+    async fn newer_generation_is_preserved_when_prior_generation_apply_finishes() {
+        let dispatches = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&dispatches);
+        let (_home, service, native, id, parent, _row_json) =
+            seeded_title_fixture("old title", move |req| {
+                seen.lock().unwrap().push(req["payload"].clone());
+                json!({"_tag":"Exit","requestId":req["id"],"exit":{"_tag":"Success","value":{}}})
+            })
+            .await;
+        let gen1 = {
+            let state = service.state.lock().await;
+            state
+                .store
+                .desire_title(&id, &parent, "Queued: #1 Add a greeting")
+                .unwrap();
+            state.store.pending_title(&parent).unwrap().unwrap()
+        };
+        assert_eq!(gen1.generation, 1);
+
+        // Generation 2 supersedes generation 1 before generation 1 finishes confirming/deferring.
+        {
+            let state = service.state.lock().await;
+            state
+                .store
+                .desire_title(&id, &parent, "Reviewing: #1 Add a greeting")
+                .unwrap();
+        }
+        service
+            .finish_title(&gen1, 1_000, Ok(TitleOutcome::Confirmed))
+            .await
+            .unwrap();
+        service
+            .finish_title(&gen1, 1_000, Ok(TitleOutcome::Pending))
+            .await
+            .unwrap();
+
+        let next = service
+            .title_work("fixture-acp", std::slice::from_ref(&parent))
+            .await
+            .unwrap()
+            .expect("newer generation must remain pending");
+        assert_eq!(next.generation, 2);
+        assert_eq!(next.desired, "Reviewing: #1 Add a greeting");
+        assert_eq!(next.retry_at, 0);
+        service
+            .apply_title("fixture-acp", &next, 2_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            dispatches.lock().unwrap().as_slice(),
+            &[json!({
+                "type":"thread.metadata.update",
+                "threadId":parent,
+                "commandId":"task-fixture-title-2",
+                "title":"Reviewing: #1 Add a greeting",
+            })]
         );
         native.abort();
     }

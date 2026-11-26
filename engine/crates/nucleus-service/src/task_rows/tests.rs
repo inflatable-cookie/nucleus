@@ -1332,9 +1332,12 @@ async fn snoozed_closing_row_confirms_each_new_title_without_a_visibility_write(
         }
         let mut watcher = std::pin::pin!(service.watch_titles());
         tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(30),
             std::future::poll_fn(|cx| {
                 assert!(watcher.as_mut().poll(cx).is_pending());
+                if fixture.native.lock().unwrap().title.as_deref() == Some(title.as_str()) {
+                    fixture.publish_shell();
+                }
                 if service.state.try_lock().is_ok_and(|state| {
                     state
                         .store

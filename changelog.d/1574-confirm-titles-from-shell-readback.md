@@ -1,0 +1,1 @@
+- Task and Inbox title receipts now require synchronized T3 shell readback showing the desired title before confirming, and re-desire stale confirmed titles under their existing command ID while preserving newer generations.

@@ -758,6 +758,104 @@ fn title_receipts_keep_the_same_request_across_restart_and_retry() {
 }
 
 #[test]
+fn title_redesire_keeps_command_id_and_preserves_newer_generations() {
+    let root = tempfile::tempdir().expect("scratch directory");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("open");
+    store
+        .create(&task("1", "fixture#1"), &event("admitted"))
+        .expect("admit");
+    assert!(
+        store
+            .desire_title("1", "thread", "Reviewing")
+            .expect("initial title")
+    );
+    let first = store
+        .pending_title("thread")
+        .expect("pending")
+        .expect("row");
+
+    // Re-desiring while pending must not reset backoff or clear anything.
+    assert!(!store.redesire_title(&first).expect("pending no-op"));
+    store.confirm_title(&first).expect("confirm first");
+    assert!(store.pending_title("thread").expect("pending").is_none());
+
+    // A stale shell re-desires the confirmed receipt under the same command generation.
+    assert!(store.redesire_title(&first).expect("re-desire confirmed"));
+    let reopened = store
+        .pending_title("thread")
+        .expect("pending")
+        .expect("reopened");
+    assert_eq!(reopened.generation, first.generation);
+    assert_eq!(reopened.retry_at, 0);
+    assert_eq!(reopened.desired, "Reviewing");
+
+    // Advancing to a newer generation preserves it against older confirm/defer/redesire receipts.
+    assert!(
+        store
+            .desire_title("1", "thread", "Closing")
+            .expect("newer desire")
+    );
+    let newer = store
+        .pending_title("thread")
+        .expect("pending")
+        .expect("newer");
+    assert_eq!(newer.generation, first.generation + 1);
+    store
+        .confirm_title(&reopened)
+        .expect("stale confirm ignored");
+    assert!(
+        !store
+            .defer_title(&reopened, 500)
+            .expect("stale defer ignored")
+    );
+    assert!(
+        !store
+            .redesire_title(&reopened)
+            .expect("stale redesire ignored")
+    );
+    let still_newer = store
+        .pending_title("thread")
+        .expect("pending")
+        .expect("newer preserved");
+    assert_eq!(still_newer.generation, newer.generation);
+    assert_eq!(still_newer.retry_at, 0);
+    assert_eq!(still_newer.desired, "Closing");
+
+    // Confirming and re-desiring also preserve Inbox generations.
+    store
+        .desire_inbox_title("inbox", "All quiet")
+        .expect("inbox title");
+    let inbox_first = store
+        .pending_inbox_title("inbox")
+        .expect("pending inbox")
+        .expect("inbox receipt");
+    store.confirm_title(&inbox_first).expect("confirm inbox");
+    assert!(store.redesire_title(&inbox_first).expect("redesire inbox"));
+    let inbox_reopened = store
+        .pending_inbox_title("inbox")
+        .expect("pending inbox")
+        .expect("reopened inbox");
+    assert_eq!(inbox_reopened.generation, inbox_first.generation);
+    store
+        .desire_inbox_title("inbox", "1 task running")
+        .expect("newer inbox title");
+    assert!(
+        !store
+            .redesire_title(&inbox_reopened)
+            .expect("stale inbox redesire")
+    );
+    assert_eq!(
+        store
+            .pending_inbox_title("inbox")
+            .expect("pending inbox")
+            .expect("newer inbox preserved")
+            .generation,
+        inbox_first.generation + 1
+    );
+}
+
+#[test]
 fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());

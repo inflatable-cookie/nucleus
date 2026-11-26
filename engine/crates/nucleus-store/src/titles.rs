@@ -22,12 +22,20 @@ pub(crate) const INBOX_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS inbox_titles (
 ) STRICT";
 
 /// Durable presentation intent. No title participates in a task decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TitleReceipt {
     pub task_id: Option<String>,
     pub thread: String,
     pub desired: String,
     pub generation: i64,
     pub retry_at: i64,
+}
+
+/// Stored title receipt paired with whether its current generation is marked confirmed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredTitle {
+    pub receipt: TitleReceipt,
+    pub confirmed: bool,
 }
 
 impl TitleReceipt {
@@ -93,7 +101,17 @@ impl Store {
     /// # Errors
     /// Returns an error if the receipt cannot be read.
     pub fn pending_title(&self, thread: &str) -> Result<Option<TitleReceipt>, StoreError> {
-        self.title_receipt("task_titles", "task_id", thread)
+        Ok(self
+            .title_state(thread)?
+            .filter(|stored| !stored.confirmed)
+            .map(|stored| stored.receipt))
+    }
+
+    /// Read the stored title receipt and confirmation state for one task thread.
+    /// # Errors
+    /// Returns an error if the receipt cannot be read.
+    pub fn title_state(&self, thread: &str) -> Result<Option<StoredTitle>, StoreError> {
+        self.stored_title("task_titles", "task_id", thread)
     }
 
     /// Record a desired Inbox title using the same generation and backoff as task titles.
@@ -114,32 +132,76 @@ impl Store {
     /// # Errors
     /// Returns an error if the receipt cannot be read.
     pub fn pending_inbox_title(&self, thread: &str) -> Result<Option<TitleReceipt>, StoreError> {
-        self.title_receipt("inbox_titles", "NULL", thread)
+        Ok(self
+            .inbox_title_state(thread)?
+            .filter(|stored| !stored.confirmed)
+            .map(|stored| stored.receipt))
     }
 
-    fn title_receipt(
+    /// Read the stored title receipt and confirmation state for the Inbox.
+    /// # Errors
+    /// Returns an error if the receipt cannot be read.
+    pub fn inbox_title_state(&self, thread: &str) -> Result<Option<StoredTitle>, StoreError> {
+        self.stored_title("inbox_titles", "NULL", thread)
+    }
+
+    /// Read pending title work for the table named by `receipt`.
+    /// # Errors
+    /// Returns an error if the receipt cannot be read.
+    pub fn pending_for_receipt(
+        &self,
+        receipt: &TitleReceipt,
+    ) -> Result<Option<TitleReceipt>, StoreError> {
+        if receipt.task_id.is_some() {
+            self.pending_title(&receipt.thread)
+        } else {
+            self.pending_inbox_title(&receipt.thread)
+        }
+    }
+
+    fn stored_title(
         &self,
         table: &str,
         task: &str,
         thread: &str,
-    ) -> Result<Option<TitleReceipt>, StoreError> {
+    ) -> Result<Option<StoredTitle>, StoreError> {
         let sql = format!(
-            "SELECT {task}, desired, generation, retry_at FROM {table}
-             WHERE thread = ?1 AND confirmed IS NOT desired"
+            "SELECT {task}, desired, generation, retry_at, confirmed IS desired FROM {table}
+             WHERE thread = ?1"
         );
         Ok(self
             .connection
             .prepare_cached(&sql)?
             .query_row([thread], |row| {
-                Ok(TitleReceipt {
-                    task_id: row.get(0)?,
-                    thread: thread.into(),
-                    desired: row.get(1)?,
-                    generation: row.get(2)?,
-                    retry_at: row.get(3)?,
+                Ok(StoredTitle {
+                    receipt: TitleReceipt {
+                        task_id: row.get(0)?,
+                        thread: thread.into(),
+                        desired: row.get(1)?,
+                        generation: row.get(2)?,
+                        retry_at: row.get(3)?,
+                    },
+                    confirmed: row.get(4)?,
                 })
             })
             .optional()?)
+    }
+
+    /// Re-open a confirmed title at the same generation (preserving its command ID)
+    /// when shell readback is stale, while preserving any newer generation.
+    /// # Errors
+    /// Returns an error when the intent cannot be updated.
+    pub fn redesire_title(&self, receipt: &TitleReceipt) -> Result<bool, StoreError> {
+        let (table, key, value) = receipt.row();
+        let sql = format!(
+            "UPDATE {table} SET confirmed = NULL, retry_at = 0, delay_ms = 5000
+             WHERE {key} = ?1 AND generation = ?2 AND confirmed IS desired"
+        );
+        Ok(self
+            .connection
+            .prepare_cached(&sql)?
+            .execute(params![value, receipt.generation])?
+            != 0)
     }
 
     /// Keep the native request ID on retry and record the next due time.
