@@ -186,14 +186,7 @@ fn select_launch(
 
     let brief = BriefPolicy::parse(&task.brief().text).map_err(ProfileLaunchError::Brief)?;
     let request = brief.request(role).filter(|_| policy.planner_brief);
-    let demand = demand(
-        task,
-        observation,
-        role,
-        &brief,
-        policy.usage,
-        policy.step_up,
-    );
+    let demand = demand(task, observation, role, &brief, policy);
     let exclusions = excluded_models(task, role, policy.author_models)?;
     let eligible = policy.candidates.iter().copied().filter(|candidate| {
         let model = model_key(&candidate.profile.model);
@@ -336,12 +329,11 @@ fn demand(
     observation: &Observation,
     role: Role,
     brief: &BriefPolicy,
-    usage: UsageLevel,
-    steps: u8,
+    policy: &LaunchPolicy<'_>,
 ) -> Demand {
-    let mut demand = ordinary_demand(task, observation, role, brief, usage);
-    demand.target = demand.target.raised(steps);
-    demand.ceiling = demand.ceiling.raised(steps);
+    let mut demand = ordinary_demand(task, observation, role, brief, policy.usage);
+    demand.target = demand.target.raised(policy.step_up);
+    demand.ceiling = demand.ceiling.raised(policy.step_up);
     demand
 }
 
