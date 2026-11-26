@@ -12,7 +12,7 @@ use nucleus_core::{
 };
 use nucleus_hosts::{
     HostError, ProfileCatalog, ProfileOffer, ProviderLimit, RoleProfile, TaskHost,
-    launch_provider_instance,
+    launch_provider_instance, snooze_deadline,
 };
 use nucleus_store::{DispatchMode, NamedProfile, PoolRole, Profiles, SubscriptionPause, TaskRow};
 
@@ -35,17 +35,46 @@ pub(super) enum LaunchSelection {
     Paused,
 }
 
-#[derive(Clone, Copy)]
+/// Why a subscription group cannot launch, kept with the group that paused.
+#[derive(Clone)]
 pub(super) enum GroupPause {
-    Manual,
-    Until(u64),
+    Manual { group: String },
+    Until { group: String, reset: u64 },
 }
 
 impl GroupPause {
-    fn remaining(self, now: u64) -> bool {
+    pub(super) fn remaining(&self, now: u64) -> bool {
         match self {
-            Self::Manual => true,
-            Self::Until(reset) => reset > now,
+            Self::Manual { .. } => true,
+            Self::Until { reset, .. } => *reset > now,
+        }
+    }
+
+    fn group(&self) -> &str {
+        match self {
+            Self::Manual { group } | Self::Until { group, .. } => group,
+        }
+    }
+
+    fn reset(&self) -> Option<u64> {
+        match self {
+            Self::Manual { .. } => None,
+            Self::Until { reset, .. } => Some(*reset),
+        }
+    }
+
+    /// The task's wait cause: the paused group and when it resets.
+    pub(super) fn cause(&self) -> String {
+        match self.reset() {
+            Some(reset) => format!(
+                "Paused: subscription group {} resets at {}.",
+                self.group(),
+                snooze_deadline(reset)
+            ),
+            None => format!(
+                "Paused: subscription group {}. Resume it in Profiles.",
+                self.group()
+            ),
         }
     }
 }
@@ -101,6 +130,7 @@ impl Service {
                     state.group_waits.insert(task.identity().id.clone(), pause);
                     return Ok(LaunchSelection::Paused);
                 }
+                state.group_waits.remove(&task.identity().id);
                 return Ok(LaunchSelection::Fixture);
             }
         }
@@ -216,9 +246,14 @@ fn select_profile(
             .rotation_counts(role, &profile.selection.id, &group);
         let efforts: Vec<_> = offer.efforts().collect();
         let pause = if profiles.paused_groups.contains(&group) {
-            Some(GroupPause::Manual)
+            Some(GroupPause::Manual {
+                group: group.clone(),
+            })
         } else {
-            resets.get(&group).copied().map(GroupPause::Until)
+            resets.get(&group).map(|&reset| GroupPause::Until {
+                group: group.clone(),
+                reset,
+            })
         };
         offers.push((&profile.selection, offer, efforts, group, counts, pause));
     }
@@ -266,7 +301,10 @@ fn select_profile(
             error @ (ProfileLaunchError::NoEligibleProfile { .. }
             | ProfileLaunchError::RequiredProfileUnavailable { .. }),
         ) => {
-            let pauses: Vec<_> = offers.iter().map(|(_, _, _, _, _, pause)| *pause).collect();
+            let pauses: Vec<_> = offers
+                .iter()
+                .map(|(_, _, _, _, _, pause)| pause.clone())
+                .collect();
             if let Some(pause) = earliest_eligible_pause(&mut candidates, &pauses, choose) {
                 state.group_waits.insert(task.identity().id.clone(), pause);
                 return Ok(LaunchSelection::Paused);
@@ -275,6 +313,7 @@ fn select_profile(
         }
         Err(error) => return Err(error.into()),
     };
+    state.group_waits.remove(&task.identity().id);
     let (_, offer, _, group, _, _) = offers
         .iter()
         .find(|(profile, ..)| profile.id == intent.profile().id)
@@ -400,12 +439,17 @@ impl State {
             .as_ref()
             .is_some_and(|profiles| profiles.paused_groups.contains(group))
         {
-            return Ok(Some(GroupPause::Manual));
+            return Ok(Some(GroupPause::Manual {
+                group: group.to_owned(),
+            }));
         }
         Ok(self
             .store
             .provider_pause(group, now)?
-            .map(GroupPause::Until))
+            .map(|reset| GroupPause::Until {
+                group: group.to_owned(),
+                reset,
+            }))
     }
 
     pub(super) fn prepared_pause(&self, run: &Run) -> Result<Option<GroupPause>, ServiceError> {
@@ -442,23 +486,32 @@ fn earliest_eligible_pause(
 ) -> Option<GroupPause> {
     let deadlines: BTreeSet<_> = pauses
         .iter()
-        .filter_map(|pause| match pause {
-            Some(GroupPause::Until(reset)) => Some(*reset),
-            _ => None,
-        })
+        .flatten()
+        .filter_map(GroupPause::reset)
         .collect();
     for reset in deadlines {
         for (candidate, pause) in candidates.iter_mut().zip(pauses) {
-            candidate.group_available = pause.is_none_or(|pause| !pause.remaining(reset));
+            candidate.group_available = pause.as_ref().is_none_or(|pause| !pause.remaining(reset));
         }
         if matches!(choose(candidates), Ok(Some(_))) {
-            return Some(GroupPause::Until(reset));
+            return pauses
+                .iter()
+                .flatten()
+                .find(|pause| pause.reset() == Some(reset))
+                .cloned();
         }
     }
     for candidate in &mut *candidates {
         candidate.group_available = true;
     }
-    matches!(choose(candidates), Ok(Some(_))).then_some(GroupPause::Manual)
+    if !matches!(choose(candidates), Ok(Some(_))) {
+        return None;
+    }
+    pauses
+        .iter()
+        .flatten()
+        .find(|pause| matches!(pause, GroupPause::Manual { .. }))
+        .cloned()
 }
 
 pub(super) fn usage(state: &State) -> UsageLevel {
