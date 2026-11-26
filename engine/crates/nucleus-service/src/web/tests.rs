@@ -901,7 +901,7 @@ async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
     clippy::too_many_lines,
     reason = "exercise the actual deadline, detail, and existing repair commands together"
 )]
-async fn persistent_workspace_error_stops_after_one_recheck_and_hold_release_retries() {
+async fn persistent_workspace_error_parks_and_owner_recheck_observes_one_repair() {
     let (forge, server) = serve_forge(Router::new().route(
         &format!("/repos/{REPOSITORY}/pulls"),
         get(|| async { Json(Vec::<serde_json::Value>::new()) }),
@@ -1003,25 +1003,37 @@ async fn persistent_workspace_error_stops_after_one_recheck_and_hold_release_ret
     );
     assert!(service.host.host_calls().is_empty());
 
+    let request = json!({"recheck": blocked["version"]});
+    let command_path = format!("{card}/commands");
+    let recheck = || post_json(&api, &command_path, &BOARD_KEY, &request);
+    assert_eq!(recheck().await, StatusCode::OK);
+    assert_eq!(recheck().await, StatusCode::OK);
+    assert!(service.pass().await.unwrap()[0].result.is_err());
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .schedule
+            .due("unreadable")
+            .is_none()
+    );
+
     std::fs::write(&index, valid_index).unwrap();
-    service
-        .command(
-            "unreadable",
-            &operator,
-            Command::Hold("Workspace checked".into()),
-        )
-        .await
-        .unwrap();
-    service
-        .command("unreadable", &operator, Command::Release)
-        .await
-        .unwrap();
+    assert_eq!(recheck().await, StatusCode::OK);
     assert!(matches!(
         service.pass().await.unwrap()[0].result,
         Ok(Action::Launch { .. })
     ));
     assert_eq!(std::fs::read(path.join("keep.txt")).unwrap(), b"local work");
     assert!(service.host.host_calls().is_empty());
+    service
+        .command("unreadable", &operator, Command::Hold("Owner hold".into()))
+        .await
+        .unwrap();
+    assert_eq!(recheck().await, StatusCode::CONFLICT);
+    let after = json_body(get_as(&api, card, &BOARD_KEY).await).await;
+    assert_eq!(after["hold"]["reason"], "Owner hold");
     server.abort();
 }
 
@@ -1069,7 +1081,7 @@ async fn workspace_timeout_card_names_the_operation_without_raw_git_diagnostics(
     assert_eq!(card["wait"], "workspace_blocked");
     assert_eq!(
         card["waitDetail"],
-        "git worktree add timed out. Check the checkout. Hold and release the task to retry."
+        "git worktree add timed out. Check the checkout. Use Recheck after the repair."
     );
     assert!(card["nextCheckAt"].is_null());
 }

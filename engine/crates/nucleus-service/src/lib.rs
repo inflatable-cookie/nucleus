@@ -94,6 +94,8 @@ pub enum ServiceError {
     RunScratchConflict,
     #[error("the task is outside this engine's configured project")]
     Project,
+    #[error("The task changed or has no mechanical wait to recheck. Read Next again.")]
+    RecheckUnavailable,
     #[error("The brief changed. Reopen Amend to edit the latest version.")]
     BriefConflict,
     #[error("the controller cannot access this project")]
@@ -1401,6 +1403,63 @@ impl Service {
         .await
     }
 
+    async fn command_fence(
+        &self,
+        id: &str,
+        nonblocking: bool,
+    ) -> Result<OwnedMutexGuard<()>, ServiceError> {
+        let fence = self.task_fence(id).await;
+        if nonblocking {
+            fence
+                .try_lock_owned()
+                .map_err(|_| ServiceError::EffectInProgress)
+        } else {
+            Ok(fence.lock_owned().await)
+        }
+    }
+
+    fn command_row(
+        &self,
+        state: &State,
+        id: &str,
+        scope: &ControllerScope,
+        session: Option<&acp::WriteAccess>,
+    ) -> Result<TaskRow, ServiceError> {
+        let row = self.lookup(state, id)?;
+        scope.task(state, row.task.identity())?;
+        if let Some(writer) = session
+            && acp::writer_controller(state, id, &writer.credential) != Some(writer.controller)
+        {
+            return Err(ServiceError::AcpUnauthorized);
+        }
+        Ok(row)
+    }
+
+    async fn recheck(
+        &self,
+        id: &str,
+        version: i64,
+        authority: &Authority,
+        session: Option<&acp::WriteAccess>,
+        scope: &ControllerScope,
+    ) -> Result<CommandOutcome, ServiceError> {
+        let _fence = self.command_fence(id, session.is_some()).await?;
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        let row = self.command_row(&state, id, scope, session)?;
+        let proof = state.command_authority(&row.task, authority);
+        if matches!(proof, Err(ServiceError::PlannerAuthorityUnknown)) {
+            self.request_planner_check(&mut state, &row.task);
+        }
+        proof?;
+        if version != row.version || !state.recheckable(&row.task) {
+            return Err(ServiceError::RecheckUnavailable);
+        }
+        state.schedule.recheck(id, Instant::now());
+        self.wake.notify_one();
+        Ok(CommandOutcome::Applied(Box::new(row)))
+    }
+
     async fn command_with_session(
         &self,
         id: &str,
@@ -1410,32 +1469,21 @@ impl Service {
         session: Option<&acp::WriteAccess>,
         scope: &ControllerScope,
     ) -> Result<CommandOutcome, ServiceError> {
-        let fence = self.task_fence(id).await;
         let local_planner_answer = matches!(
             (&command, authority),
             (Command::Answer(_), Authority::Planner { .. })
         );
-        let _fence = if session.is_some() || local_planner_answer {
-            fence
-                .try_lock_owned()
-                .map_err(|_| ServiceError::EffectInProgress)?
-        } else {
-            fence.lock_owned().await
-        };
+        let _fence = self
+            .command_fence(id, session.is_some() || local_planner_answer)
+            .await?;
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
-        let prior = self.lookup(&state, id)?;
-        scope.task(&state, prior.task.identity())?;
+        let prior = self.command_row(&state, id, scope, session)?;
         if self.uses_operator_inbox()
             && prior.task.operator_question().is_some()
             && matches!(&command, Command::Answer(_))
         {
             return Err(ServiceError::AnswerInInbox);
-        }
-        if let Some(session) = session
-            && acp::writer_controller(&state, id, &session.credential) != Some(session.controller)
-        {
-            return Err(ServiceError::AcpUnauthorized);
         }
         check_amendment(&prior.task, &command, brief_version)?;
         if matches!(
@@ -1858,7 +1906,7 @@ fn workspace_cause(result: &Result<Action, ServiceError>) -> String {
         Err(ServiceError::Workspace(error)) => error.to_string(),
         _ => "The task checkout could not be verified".into(),
     };
-    format!("{cause}. Check the checkout. Hold and release the task to retry.")
+    format!("{cause}. Check the checkout. Use Recheck after the repair.")
 }
 
 fn task_wait(
@@ -1941,7 +1989,7 @@ fn task_wait(
         )) => (
             Some(Wait::ExternalMergeBlocked),
             Some(WaitDetail::Blocked(format!(
-                "{error}. Hold and release the task to recheck."
+                "{error}. Use Recheck after the repair."
             ))),
         ),
         Err(ServiceError::Forge(_)) => (Some(Wait::ForgeUnknown), None),
@@ -2036,6 +2084,20 @@ impl State {
                 .and_then(|threads| threads.get(&run.launch().thread))
                 .and_then(|thread| thread.seen.as_ref())
                 .is_some_and(|seen| seen.hint.running() && seen.at.elapsed() < schedule::LIVE_CHECK)
+    }
+
+    fn recheckable(&self, task: &Task) -> bool {
+        task.hold().is_none()
+            && !task.phase().is_terminal()
+            && matches!(
+                self.wait_reason(&task.identity().id),
+                Some(
+                    WaitReason::WorkspaceBlocked
+                        | WaitReason::ExternalMergeBlocked
+                        | WaitReason::ReviewPublicationBlocked
+                        | WaitReason::ChecksUnreported
+                )
+            )
     }
 
     fn wait_reason(&self, id: &str) -> Option<WaitReason> {
@@ -2245,6 +2307,13 @@ fn active(task: &Task) -> bool {
 }
 
 impl State {
+    fn command_authority(&self, task: &Task, actor: &Authority) -> Result<(), ServiceError> {
+        match actor {
+            Authority::Planner { actor } => self.check_planner_authority(task, actor),
+            Authority::Operator { .. } => Ok(()),
+        }
+    }
+
     fn preflight(
         &self,
         task: &mut Task,
@@ -2272,10 +2341,7 @@ impl State {
         } else {
             false
         };
-        let authority = match actor {
-            Authority::Planner { actor } => self.check_planner_authority(task, actor),
-            Authority::Operator { .. } => Ok(()),
-        };
+        let authority = self.command_authority(task, actor);
         let was_terminal = task.phase().is_terminal();
         let ready = match task.command(command, actor, observation) {
             Ok(()) if !awaiting_planner => Preflight::Ready,

@@ -848,6 +848,13 @@ async fn next(
         &state,
         api.service.uses_operator_inbox(),
     );
+    if state.recheckable(task) && state.command_authority(task, &authority).is_ok() {
+        commands.push(CommandView {
+            name: "recheck",
+            preflight: CommandReadiness::Ready,
+            phase: None,
+        });
+    }
     for (name, available) in [
         ("set_dependencies", dependency_edits.set_dependencies),
         (
@@ -1001,9 +1008,16 @@ fn command_options(
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum TaskCommand {
+    Recheck(Recheck),
     VersionedAmend(VersionedAmend),
     Lifecycle(Command),
     Dependency(DependencyCommand),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Recheck {
+    recheck: i64,
 }
 
 #[derive(Deserialize)]
@@ -1038,6 +1052,11 @@ async fn command(
         return Err(ApiError::Invalid);
     }
     let outcome = match input {
+        TaskCommand::Recheck(input) => {
+            api.service
+                .recheck(&id, input.recheck, &authority, session.as_deref(), &scope)
+                .await?
+        }
         TaskCommand::Lifecycle(command) => {
             api.service
                 .command_with_session(&id, &authority, command, None, session.as_deref(), &scope)
@@ -1623,6 +1642,7 @@ impl IntoResponse for ApiError {
                     }
                     ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
                     | ServiceError::Core(_)
+                    | ServiceError::RecheckUnavailable
                     | ServiceError::EffectInProgress
                     | ServiceError::BriefConflict
                     | ServiceError::ReportOpenPullRequest
