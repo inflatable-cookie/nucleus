@@ -182,8 +182,10 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     task("reviewing", "reviewing"),
     task("merging", "merging"),
     task("closing", "closing"),
-    task("done", "done"),
-    task("cancelled", "cancelled"),
+    { ...task("history-oldest", "done"), stateSinceMs: 1_790_000_000_000, latestEventAtMs: 1_799_000_000_000 },
+    { ...task("history-middle", "cancelled"), latestEventAtMs: 1_795_000_000_000 },
+    ...Array.from({ length: 23 }, (_, i) => task(`past-${String(i).padStart(2, "0")}`, "done")),
+    { ...task("history-newest", "done"), stateSinceMs: 1_796_000_000_000 },
     ...Array.from({ length: 25 }, (_, index) =>
       task(`queued-${index}`, "queued"),
     ),
@@ -588,11 +590,20 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "answer posted",
   );
   assert.deepEqual(posts[6]?.command, { answer: "retry" });
-  await click("History, 2");
-  await eventually(
-    () => /Done/.test(text()) && /Cancelled/.test(text()),
-    "only the terminal phases are history",
+  await click("History, 26");
+  const historyCards = () => Array.from(
+    dom.window.document.querySelectorAll('[aria-label^="history-"], [aria-label^="past-"]'),
+    (card) => card.getAttribute("aria-label"),
   );
+  await eventually(() => historyCards().length === 25, "History first page");
+  assert.deepEqual(historyCards().slice(0, 3), ["history-newest", "history-middle", "past-22"]);
+  assert.ok(!historyCards().includes("history-oldest"));
+  await click("Show 1 more task");
+  await eventually(() => historyCards().length === 26, "History second page");
+  assert.deepEqual(historyCards().filter(label => label?.startsWith("history-")), [
+    "history-newest", "history-middle", "history-oldest",
+  ]);
+  assert.equal(historyCards().at(-1), "history-oldest");
 
   assert.equal(posts.length, 7);
   authorityCold = true;

@@ -1056,7 +1056,8 @@ board contracts from the paired API, so there is no second set of screens.
 
 A Rust card uses the TypeScript three-line layout (Tom, 2026-11-24). The first
 line shows the task number and project badge, with age alone at the right. The
-age uses state entry, then the latest task event, then admission. Leads and
+age uses state entry, then the latest task event, then admission. History pages finished tasks
+newest first by that same timestamp, breaking ties by descending task ID. Leads and
 papercuts use the last update or creation time. The second line uses a regular-weight title on one
 line with ellipsis, the full title on browser hover, and wrapping in detail.
 Labels and status detail use T3's secondary label colour, resting titles use
