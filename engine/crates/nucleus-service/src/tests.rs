@@ -371,13 +371,10 @@ async fn a_held_review_waits_and_a_late_report_wins_the_reminder_reservation() {
         actor: "fixture".into(),
     };
     let ended = Due(AtomicUsize::new(0), Some(nucleus_core::RunState::Ended));
-    let CommandOutcome::Applied(held_row) = service
+    let held_row = service
         .command(id, &owner, Command::Hold("Check the review first".into()))
         .await
-        .unwrap()
-    else {
-        panic!("hold must commit");
-    };
+        .unwrap();
     assert_eq!(held_row.task.brief(), task.brief());
     assert_eq!(held_row.task.pull_request(), task.pull_request());
     assert_eq!(held_row.task.run(), task.run());
@@ -385,11 +382,7 @@ async fn a_held_review_waits_and_a_late_report_wins_the_reminder_reservation() {
         service.advance(&held_row, &ended).await.unwrap(),
         Action::Wait(WaitReason::Hold)
     );
-    let CommandOutcome::Applied(released) =
-        service.command(id, &owner, Command::Release).await.unwrap()
-    else {
-        panic!("release must commit");
-    };
+    let released = service.command(id, &owner, Command::Release).await.unwrap();
 
     let report = Report::Review {
         head,
@@ -553,11 +546,9 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
         results.as_slice(),
         [PassOutcome { task, result: Err(ServiceError::Store(StoreError::StaleTask)) }] if task == id
     ));
-    let CommandOutcome::Applied(moved) = moved else {
-        panic!("move must commit");
-    };
+
     assert_eq!(moved.version, stale.version + 1);
-    assert_eq!(service.task(id).await.expect("current row"), *moved);
+    assert_eq!(service.task(id).await.expect("current row"), moved);
     assert_eq!(
         service
             .state
@@ -1031,13 +1022,10 @@ async fn a_settled_run_wakes_the_oldest_slot_waiter() {
     let actor = Authority::Operator {
         actor: "fixture".into(),
     };
-    let CommandOutcome::Applied(revoked) = service
+    let revoked = service
         .command("holder", &actor, Command::Cancel)
         .await
-        .expect("cancel")
-    else {
-        panic!("cancel must commit");
-    };
+        .expect("cancel");
     {
         let now = Instant::now();
         let state = service.state.lock().await;
@@ -1570,7 +1558,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         old_present.store(1, Ordering::Relaxed);
     }
 
-    let CommandOutcome::Applied(revoked) = service
+    let revoked = service
         .command(
             "winner",
             &Authority::Operator {
@@ -1579,10 +1567,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
             Command::Cancel,
         )
         .await
-        .unwrap()
-    else {
-        panic!("cancel winner")
-    };
+        .unwrap();
     let mut settled = revoked.task.clone();
     settled.reconcile(&Observation {
         host: Observed::Known(Host::Current {

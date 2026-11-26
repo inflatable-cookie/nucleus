@@ -528,6 +528,16 @@ impl Service {
         Ok(())
     }
 
+    pub(super) async fn command_forge(&self, task: &Task) -> Result<Forge, ServiceError> {
+        let identity = task.identity();
+        let route = self.project_for(identity).await?;
+        let worktrees = self.worktrees()?;
+        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        self.read_forge(task, &checkout)
+            .await
+            .map(|(forge, _)| forge)
+    }
+
     async fn read_forge(
         &self,
         task: &Task,
@@ -2969,21 +2979,12 @@ mod tests {
         let authority = Authority::Operator {
             actor: "fixture".into(),
         };
-        assert!(matches!(
-            service
-                .command("reviewer", &authority, Command::Amend("next".into()))
-                .await,
-            Ok(crate::CommandOutcome::Pending { .. })
-        ));
-        assert_eq!(forge_reads.load(Ordering::Relaxed), 0);
-        let _ = service.pass().await.expect("command evidence wake");
+        let amended = service
+            .command("reviewer", &authority, Command::Amend("next".into()))
+            .await
+            .unwrap();
+        assert_eq!(amended.task.brief().text, "next");
         assert_eq!(forge_reads.load(Ordering::Relaxed), 1);
-        assert!(matches!(
-            service
-                .command("reviewer", &authority, Command::Amend("next".into()))
-                .await,
-            Ok(crate::CommandOutcome::Applied(_))
-        ));
         watch.abort();
         forge_server.abort();
         native_server.abort();
