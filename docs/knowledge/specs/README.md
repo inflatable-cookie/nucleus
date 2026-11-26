@@ -65,6 +65,7 @@ implementation it describes.
 | [068 — Self-healing](068-self-healing.md) | approved; batches briefed |
 | [069 — A scheduler that scales with active work](069-scheduler.md) | approved; built as direct PRs |
 | [070 — A small task engine, in Rust](070-small-engine.md) | Current engine and cutover rulings. |
+| [071 — Detail views for tasks, leads and papercuts](071-detail-views.md) | approved; briefed |
 
 ## Host adapters
 

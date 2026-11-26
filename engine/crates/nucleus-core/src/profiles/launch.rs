@@ -41,6 +41,7 @@ pub struct ProfileLaunch {
     pub(crate) pr: Option<PullRequest>,
     pub(crate) findings: Option<String>,
     pub(crate) request_reason: Option<String>,
+    step_up_from: Option<Capability>,
     critical_fallback_worker: Option<String>,
 }
 
@@ -91,6 +92,12 @@ impl ProfileLaunch {
     #[must_use]
     pub fn request_reason(&self) -> Option<&str> {
         self.request_reason.as_deref()
+    }
+
+    /// The ordinary ceiling when all eligible profiles below or at it were paused.
+    #[must_use]
+    pub const fn step_up_from(&self) -> Option<Capability> {
+        self.step_up_from
     }
 
     /// The worker profile for which this new independent reviewer fell short.
@@ -180,51 +187,51 @@ fn select_launch(
         let model = model_key(&candidate.profile.model);
         (role != Role::Reviewer || model.is_some())
             && !model.is_some_and(|model| exclusions.contains(&model))
-            && (role != Role::Reviewer || candidate.profile.capability <= demand.ceiling)
     });
     let requested = request.and_then(|request| {
         eligible.clone().find(|candidate| {
             candidate.profile.id == request.profile_id
+                && (role != Role::Reviewer || candidate.profile.capability <= demand.ceiling)
                 && candidate.usable(request.thinking_option_id)
         })
     });
     let retained = task.threads().profile(role);
-    let (profile, reason, climbed) = if let Some(retained) = instructed_worker(task, role, policy)?
-    {
-        (retained, None, false)
-    } else if let Some(candidate) = requested {
-        let mut profile = candidate.profile.clone();
-        let reason = request.map(|request| {
-            profile.effort = request.thinking_option_id.or(profile.effort);
-            request.reason.clone()
-        });
-        (profile, reason, false)
-    } else {
-        if let Some(request) = request.filter(|request| request.required) {
-            return Err(ProfileLaunchError::RequiredProfileUnavailable {
-                role,
-                id: request.profile_id.clone(),
+    let (profile, reason, climbed, step_up_from) =
+        if let Some(retained) = instructed_worker(task, role, policy)? {
+            (retained, None, false, None)
+        } else if let Some(candidate) = requested {
+            let mut profile = candidate.profile.clone();
+            let reason = request.map(|request| {
+                profile.effort = request.thinking_option_id.or(profile.effort);
+                request.reason.clone()
             });
-        }
-        let automatic = eligible.filter(|candidate| {
-            candidate.usable(None)
-                && candidate.profile.capability <= demand.ceiling
-                && !request_only(
-                    candidate.profile.capability,
-                    policy.usage,
-                    brief.complexity.unwrap_or_default(),
-                    demand.climb.or(demand.earned),
-                )
-        });
-        let best = retain_or_rotate(automatic, &previous, retained, &demand, sample).ok_or(
-            ProfileLaunchError::NoEligibleProfile {
+            (profile, reason, false, None)
+        } else {
+            if let Some(request) = request.filter(|request| request.required) {
+                return Err(ProfileLaunchError::RequiredProfileUnavailable {
+                    role,
+                    id: request.profile_id.clone(),
+                });
+            }
+            let automatic = eligible.filter(|candidate| {
+                candidate.usable_if_unpaused(None)
+                    && !request_only(
+                        candidate.profile.capability,
+                        policy.usage,
+                        brief.complexity.unwrap_or_default(),
+                        demand.climb.or(demand.earned),
+                    )
+            });
+            let (best, step_up_from) = automatic_profile(
+                automatic, &previous, retained, &demand, sample,
+            )
+            .ok_or(ProfileLaunchError::NoEligibleProfile {
                 role,
                 demand: demand.target,
-            },
-        )?;
-        let climbed = demand.climb == Some(best.profile.capability);
-        (best.profile.clone(), None, climbed)
-    };
+            })?;
+            let climbed = demand.climb == Some(best.profile.capability);
+            (best.profile.clone(), None, climbed, step_up_from)
+        };
     let via = match (&previous, retained) {
         (Launch::Continue { .. }, Some(retained)) if retained.same_binding(&profile) => {
             previous.clone()
@@ -240,9 +247,6 @@ fn select_launch(
         } else {
             None
         };
-    let pr = task.pull_request().cloned();
-    let changes = applied_changes(task, observation);
-    let consumed_review = consumed_review(task, role, climbed);
     Ok(Some(ProfileLaunch {
         role,
         via,
@@ -252,12 +256,13 @@ fn select_launch(
             .map_err(|_| ProfileLaunchError::SequenceExhausted)?,
         profile: BoundProfile {
             selected: profile,
-            consumed_review,
+            consumed_review: consumed_review(task, role, climbed),
         },
         brief: task.brief().clone(),
-        pr,
-        findings: changes.map(str::to_owned),
+        pr: task.pull_request().cloned(),
+        findings: applied_changes(task, observation).map(str::to_owned),
         request_reason: reason,
+        step_up_from,
         critical_fallback_worker,
     }))
 }
@@ -381,6 +386,42 @@ pub(crate) fn applied_changes<'a>(task: &'a Task, observation: &Observation) -> 
         ) if task.pull_request() == Some(pr) && head == &pr.head => Some(summary),
         _ => None,
     }
+}
+
+fn automatic_profile<'a>(
+    candidates: impl Iterator<Item = Candidate<'a>> + Clone,
+    launch: &Launch,
+    retained: Option<&Profile>,
+    demand: &Demand,
+    sample: Option<u64>,
+) -> Option<(Candidate<'a>, Option<Capability>)> {
+    let mut ordinary = candidates
+        .clone()
+        .filter(|candidate| candidate.profile.capability <= demand.ceiling);
+    if let Some(best) = retain_or_rotate(
+        ordinary
+            .clone()
+            .filter(|candidate| candidate.group_available),
+        launch,
+        retained,
+        demand,
+        sample,
+    ) {
+        return Some((best, None));
+    }
+    // No ordinary profile is available. An otherwise eligible profile proves
+    // the ordinary selection is blocked by a pause (Spec 070 ruling 51).
+    ordinary.next()?;
+    let higher = candidates.filter(|candidate| {
+        candidate.group_available && candidate.profile.capability > demand.ceiling
+    });
+    let next = higher
+        .clone()
+        .map(|candidate| candidate.profile.capability)
+        .min()?;
+    let peers = higher.filter(|candidate| candidate.profile.capability == next);
+    retain_or_rotate(peers, launch, retained, demand, sample)
+        .map(|best| (best, Some(demand.ceiling)))
 }
 
 fn retain_or_rotate<'a>(

@@ -88,6 +88,12 @@ pub enum ServiceError {
         "Nucleus couldn’t verify the earlier delivery. Open the task thread, then use Next to review recovery."
     )]
     ParentDeliveryHeld,
+    #[error(
+        "The T3 task turn ended immediately three times. Check the task thread, then use Recheck after the role changes."
+    )]
+    ParentHoldLoop,
+    #[error("The T3 task turn ended immediately. Waiting briefly for role activity to change.")]
+    ParentHoldBackoff { until: Instant },
     #[error("Earlier T3 delivery could not be verified. The task is waiting for its planner.")]
     ParentRecoveryPlanner { retry_at: Option<Instant> },
     #[error("You snoozed this thread until {}. Nucleus resumes when it wakes.", nucleus_hosts::snooze_deadline(*until))]
@@ -297,6 +303,7 @@ struct State {
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
+    parent_hold_breakers: BTreeMap<String, ParentHoldBreaker>,
     acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: BTreeSet<(QueuePriority, i64, String)>,
     group_waits: BTreeMap<String, profiles::GroupPause>,
@@ -317,8 +324,29 @@ struct State {
 #[derive(Default)]
 struct TrackedThread {
     seen: Option<ThreadHint>,
+    activity: Option<String>,
     role: bool,
     due: bool,
+}
+
+struct ParentHoldBreaker {
+    command: String,
+    evidence: String,
+    thread: String,
+}
+
+impl ParentHoldBreaker {
+    fn new(write: &nucleus_hosts::ParentWrite, command: &str, evidence: &str) -> Self {
+        Self {
+            command: command.into(),
+            evidence: evidence.into(),
+            thread: write
+                .freeze()
+                .child_thread()
+                .expect("re-entry proof has a child")
+                .into(),
+        }
+    }
 }
 
 enum Preflight {
@@ -431,7 +459,6 @@ impl Service {
         {
             host.use_held_shell();
         }
-        let (changes, _) = broadcast::channel(64);
         let github_accounts = Arc::new(github_accounts::GitHubAccounts::new(settings.clone()));
         Ok(Self {
             storage,
@@ -457,6 +484,7 @@ impl Service {
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
+                parent_hold_breakers: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: BTreeSet::new(),
                 group_waits: BTreeMap::new(),
@@ -477,7 +505,7 @@ impl Service {
             project_writes: RwLock::new(()),
             pass_lock: Mutex::new(()),
             watch_lock: Mutex::new(()),
-            changes,
+            changes: broadcast::Sender::new(64),
             project_changes: watch::Sender::new(()),
             settings_changes: watch::channel(()).0,
             storage_changes: watch::channel(()).0,
@@ -871,20 +899,27 @@ impl Service {
             }
             if let Some(tracked) = threads.get_mut(&hint.thread) {
                 let prior = tracked.seen.as_ref();
+                let activity = tracked
+                    .role
+                    .then(|| self.host.child_activity_hint(&hint.thread))
+                    .flatten();
+                let activity_changed = tracked.activity != activity;
                 if tracked.role && prior != Some(&hint) {
                     self.title_wake.notify_one();
                 }
                 let still_snoozed = matches!(waits.get(id).and_then(|wait| wait.detail.as_ref()),
                     Some(WaitDetail::OperatorSnoozed { thread, until, .. })
                     if thread != &hint.thread || (hint.snoozed_until() == Some(*until) && !hint.closed()));
-                if (tracked.due || (tracked.role && hint.positive_role_activity()))
-                    && prior != Some(&hint)
+                if (activity_changed
+                    || (tracked.due || (tracked.role && hint.positive_role_activity()))
+                        && prior != Some(&hint))
                     && !still_snoozed
                 {
                     schedule.wake(id, now, Priority::Decision);
                     self.wake.notify_one();
                 }
                 tracked.seen = Some(hint.clone());
+                tracked.activity = activity;
             }
         }
     }
@@ -1253,6 +1288,16 @@ impl Service {
         );
         if owner_action {
             state.schedule.park(id);
+            // A shell update can arrive between the breaker read and parking.
+            if matches!(result, Err(ServiceError::ParentHoldLoop))
+                && state.parent_hold_breakers.get(id).is_some_and(|stopped| {
+                    self.host.child_activity_hint(&stopped.thread).as_ref()
+                        != Some(&stopped.evidence)
+                })
+            {
+                state.schedule.wake(id, now, Priority::Decision);
+                self.wake.notify_one();
+            }
         } else if !checking_workspace {
             let (mut delay, priority) = schedule::retry(wait);
             if matches!(&detail, Some(WaitDetail::Observation(_)))
@@ -1279,6 +1324,7 @@ impl Service {
                 Err(
                     ServiceError::InboxUnavailable { until }
                     | ServiceError::Host(HostError::RoleReplyPending { until })
+                    | ServiceError::ParentHoldBackoff { until }
                     | ServiceError::ParentDeliveryUnknown { until, .. }
                     | ServiceError::ParentRecoveryPlanner {
                         retry_at: Some(until),
@@ -1885,6 +1931,7 @@ impl Service {
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);
             state.planner_requests.remove(id);
+            state.parent_hold_breakers.remove(id);
         }
         if task.run().is_none_or(nucleus_core::Run::revoked)
             || task.run().map(|run| &run.launch().instance)
@@ -2117,6 +2164,14 @@ fn task_wait(
             Wait::HostObservationBlocked,
             "No responsible planner is available. Check the earlier delivery in the task thread, then use Next to review recovery.",
         ),
+        Err(error @ ServiceError::ParentHoldLoop) => (
+            Some(Wait::HostObservationBlocked),
+            Some(WaitDetail::Blocked(error.to_string())),
+        ),
+        Err(ServiceError::ParentHoldBackoff { .. }) => observation(
+            Wait::HostUnknown,
+            "Waiting briefly for role activity to change.",
+        ),
         Ok(Action::Wait(Wait::HostObservationBlocked))
         | Err(ServiceError::Host(HostError::ParentHoldRejected)) => observation(
             Wait::HostObservationBlocked,
@@ -2253,17 +2308,21 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
 
 impl State {
     fn recheckable(&self, task: &Task) -> bool {
+        let id = &task.identity().id;
         task.hold().is_none()
             && !task.phase().is_terminal()
-            && matches!(
-                self.wait_reason(&task.identity().id),
+            && match self.wait_reason(id) {
                 Some(
                     WaitReason::WorkspaceBlocked
-                        | WaitReason::ExternalMergeBlocked
-                        | WaitReason::ReviewPublicationBlocked
-                        | WaitReason::ChecksUnreported
-                )
-            )
+                    | WaitReason::ExternalMergeBlocked
+                    | WaitReason::ReviewPublicationBlocked
+                    | WaitReason::ChecksUnreported,
+                ) => true,
+                Some(WaitReason::HostObservationBlocked) => {
+                    matches!(self.wait_detail(id), Some(WaitDetail::Blocked(_)))
+                }
+                _ => false,
+            }
     }
 
     fn can_change_queue_priority(&self, task: &Task) -> bool {
