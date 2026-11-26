@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "./engine-features";
 import { errorText as message } from "./error-text";
 import React, { useEffect, useState } from "react";
 import { Text, View } from "react-native";
@@ -173,6 +174,7 @@ export function LeadScreen({
   c: Colors;
   onRetry: () => void;
 }) {
+  const { planningCeremony } = useEngineFeatures();
   const r = roles(c);
   const fill = useCardFill(c);
   const [notices, setNotices] = useState<Record<string, Notice>>({});
@@ -452,26 +454,30 @@ export function LeadScreen({
         accessibilityLabel={`Decision summary for ${lead.title}`}
         style={{ ...panel, gap: space.xs }}
       >
-        <Text accessibilityRole="header" style={sectionHeader}>
-          Decision status
-        </Text>
-        <Text style={text}>
-          {checkView.kind === "pending"
-            ? "Check running"
-            : checkView.kind === "none"
-              ? "Not checked"
-              : checkView.kind === "stale"
-                ? `Check stale · version ${checkView.version}`
-                : checkView.check.ok
-                  ? `Current check passed · version ${lead.version}`
-                  : `Current check failed · version ${lead.version}`}
-          {" · "}
-          {approvalView.kind === "none"
-            ? "Not approved"
-            : approvalView.kind === "stale"
-              ? `Approval stale · version ${approvalView.approval.version}`
-              : `Approved · version ${approvalView.approval.version}`}
-        </Text>
+        {planningCeremony && (
+          <>
+            <Text accessibilityRole="header" style={sectionHeader}>
+              Decision status
+            </Text>
+            <Text style={text}>
+              {checkView.kind === "pending"
+                ? "Check running"
+                : checkView.kind === "none"
+                  ? "Not checked"
+                  : checkView.kind === "stale"
+                    ? `Check stale · version ${checkView.version}`
+                    : checkView.check.ok
+                      ? `Current check passed · version ${lead.version}`
+                      : `Current check failed · version ${lead.version}`}
+              {" · "}
+              {approvalView.kind === "none"
+                ? "Not approved"
+                : approvalView.kind === "stale"
+                  ? `Approval stale · version ${approvalView.approval.version}`
+                  : `Approved · version ${approvalView.approval.version}`}
+            </Text>
+          </>
+        )}
         {(lead.parked || lead.recheck) && (
           <View style={{ gap: space.xxs }}>
             <ParkedNote
@@ -496,24 +502,28 @@ export function LeadScreen({
           </View>
         )}
         <View style={row}>
-          <Button
-            small
-            c={c}
-            text={running === "check" ? "Checking…" : "Check brief"}
-            label="Check the brief"
-            disabled={blocked || Boolean(checkReason)}
-            hint={checkReason ?? undefined}
-            onPress={() => void run("check", onCheck)}
-          />
-          <Button
-            small
-            c={c}
-            text={running === "approve" ? "Approving…" : "Approve"}
-            label="Approve the checked version"
-            disabled={blocked || Boolean(approveReason)}
-            hint={approveReason ?? undefined}
-            onPress={() => void run("approve", onApprove)}
-          />
+          {planningCeremony && (
+            <>
+              <Button
+                small
+                c={c}
+                text={running === "check" ? "Checking…" : "Check brief"}
+                label="Check the brief"
+                disabled={blocked || Boolean(checkReason)}
+                hint={checkReason ?? undefined}
+                onPress={() => void run("check", onCheck)}
+              />
+              <Button
+                small
+                c={c}
+                text={running === "approve" ? "Approving…" : "Approve"}
+                label="Approve the checked version"
+                disabled={blocked || Boolean(approveReason)}
+                hint={approveReason ?? undefined}
+                onPress={() => void run("approve", onApprove)}
+              />
+            </>
+          )}
           {lead.repositories.map((repo) => {
             const reason = lead.actions.promote.find(
                 (item) => item.origin === repo.origin,
@@ -537,7 +547,7 @@ export function LeadScreen({
             );
           })}
         </View>
-        {[
+        {planningCeremony && [
           checkReason && `Check: ${checkReason}`,
           approveReason && `Approve: ${approveReason}`,
         ]
@@ -557,8 +567,12 @@ export function LeadScreen({
             </Text>
           ) : null;
         })}
-        <NoticeLine notice={notices.check} label="Check" c={c} />
-        <NoticeLine notice={notices.approve} label="Approve" c={c} />
+        {planningCeremony && (
+          <>
+            <NoticeLine notice={notices.check} label="Check" c={c} />
+            <NoticeLine notice={notices.approve} label="Approve" c={c} />
+          </>
+        )}
         {lead.repositories.map((repo) => (
           <NoticeLine
             key={repo.origin}
@@ -611,22 +625,24 @@ export function LeadScreen({
           </View>
         </View>
 
-        <View accessibilityLabel="Check result and approval" style={column}>
-          <Text accessibilityRole="header" style={sectionHeader}>
-            Check
-          </Text>
-          <View style={panel}>{checkBody()}</View>
-          <Text accessibilityRole="header" style={sectionHeader}>
-            Approval
-          </Text>
-          <View style={panel}>{approvalBody()}</View>
-          <View style={{ gap: space.xs }}>
-            <Text style={meta}>
-              Promotion is a separate step. A lead and its approval grant no
-              dispatch authority by themselves.
+        {(planningCeremony || checkView.kind !== "none" || approvalView.kind !== "none") && (
+          <View accessibilityLabel="Check result and approval" style={column}>
+            <Text accessibilityRole="header" style={sectionHeader}>
+              Check
             </Text>
+            <View style={panel}>{checkBody()}</View>
+            <Text accessibilityRole="header" style={sectionHeader}>
+              Approval
+            </Text>
+            <View style={panel}>{approvalBody()}</View>
+            <View style={{ gap: space.xs }}>
+              <Text style={meta}>
+                Promotion is a separate step. A lead and its approval grant no
+                dispatch authority by themselves.
+              </Text>
+            </View>
           </View>
-        </View>
+        )}
       </View>
 
       <View accessibilityLabel={`More actions for ${lead.title}`}>

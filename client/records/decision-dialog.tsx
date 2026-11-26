@@ -1,3 +1,4 @@
+import { useEngineFeatures } from "../engine-features";
 import { useContext, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
@@ -70,6 +71,7 @@ export function DecisionDialog({
   onClose: () => void;
   c: Colors;
 }) {
+  const { decisionWithdraw } = useEngineFeatures();
   const live = useContext(BoardLiveContext);
   const scope = project ? { project } : {};
   const fetchDecision = useRpc(api.decisionGet),
@@ -169,9 +171,8 @@ export function DecisionDialog({
                 fontSize: typeScale.metadata.fontSize,
               }}
             >
-              Stale: every linked task, lead and papercut has finished. The
-              decision is never closed automatically; the asker or the operator
-              withdraws it.
+              Stale: every linked task, lead and papercut has finished.
+              {decisionWithdraw && " The decision stays open until answered or withdrawn."}
             </Text>
           )}
           <DetailSection title="Question" c={c}>
@@ -299,24 +300,26 @@ export function DecisionDialog({
                   </Text>
                 </Pressable>
               ))}
-              <Button
-                small
-                c={c}
-                text="Withdraw as overtaken"
-                disabled={busy}
-                onPress={() => {
-                  const ref = decisionDetail.overtakenBy!.at(-1)!;
-                  void act(async () => {
-                    await withdrawDecision({
-                      id: decisionDetail.id,
-                      version: decisionDetail.version,
-                      reason: `Withdrawn after ${ref.label}`,
-                      withdrawnBy: "operator (board)",
-                    });
-                    setRecordNotice({ kind: "ok", text: "Withdrawn" });
-                  }, "record");
-                }}
-              />
+              {decisionWithdraw && (
+                <Button
+                  small
+                  c={c}
+                  text="Withdraw as overtaken"
+                  disabled={busy}
+                  onPress={() => {
+                    const ref = decisionDetail.overtakenBy!.at(-1)!;
+                    void act(async () => {
+                      await withdrawDecision({
+                        id: decisionDetail.id,
+                        version: decisionDetail.version,
+                        reason: `Withdrawn after ${ref.label}`,
+                        withdrawnBy: "operator (board)",
+                      });
+                      setRecordNotice({ kind: "ok", text: "Withdrawn" });
+                    }, "record");
+                  }}
+                />
+              )}
             </View>
           )}
           <DetailSection title="Links" c={c}>
@@ -496,39 +499,43 @@ export function DecisionDialog({
                 Answering carries operator authority and notifies the asking
                 agent's thread once per answer.
               </Text>
-              <Text
-                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-              >
-                Withdraw reason
-              </Text>
-              <TextInput
-                accessibilityLabel="Withdraw reason"
-                value={decisionWithdrawReason}
-                onChangeText={setDecisionWithdrawReason}
-                placeholder="Why this decision is overtaken"
-                placeholderTextColor={c.foregroundMuted}
-                style={{ ...controlFrame(c), ...controlText(c) }}
-              />
-              <Button
-                small
-                c={c}
-                text="Withdraw"
-                danger
-                disabled={busy || !decisionWithdrawReason.trim()}
-                onPress={() =>
-                  void act(async () => {
-                    await withdrawDecision({
-                      id: decisionDetail.id,
-                      version: decisionDetail.version,
-                      reason: decisionWithdrawReason.trim(),
-                      withdrawnBy: "operator (board)",
-                    });
-                    setRecordNotice({ kind: "ok", text: "Withdrawn" });
-                    setDecisionAnswerText("");
-                    setDecisionWithdrawReason("");
-                  }, "record")
-                }
-              />
+              {decisionWithdraw && (
+                <>
+                  <Text
+                    style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+                  >
+                    Withdraw reason
+                  </Text>
+                  <TextInput
+                    accessibilityLabel="Withdraw reason"
+                    value={decisionWithdrawReason}
+                    onChangeText={setDecisionWithdrawReason}
+                    placeholder="Why this decision is overtaken"
+                    placeholderTextColor={c.foregroundMuted}
+                    style={{ ...controlFrame(c), ...controlText(c) }}
+                  />
+                  <Button
+                    small
+                    c={c}
+                    text="Withdraw"
+                    danger
+                    disabled={busy || !decisionWithdrawReason.trim()}
+                    onPress={() =>
+                      void act(async () => {
+                        await withdrawDecision({
+                          id: decisionDetail.id,
+                          version: decisionDetail.version,
+                          reason: decisionWithdrawReason.trim(),
+                          withdrawnBy: "operator (board)",
+                        });
+                        setRecordNotice({ kind: "ok", text: "Withdrawn" });
+                        setDecisionAnswerText("");
+                        setDecisionWithdrawReason("");
+                      }, "record")
+                    }
+                  />
+                </>
+              )}
             </DetailSection>
           )}
         </>

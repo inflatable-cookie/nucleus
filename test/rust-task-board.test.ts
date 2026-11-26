@@ -1604,6 +1604,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     const current = event === "planning" ? itemBody : decisionQuestion;
     await eventually(() => selector(detail)?.textContent?.includes(current) === true, detail + " initial read");
     assert.equal(count(route) - beforeOpen, 1, detail + " reads once on opening");
+    if (detail === "Lead detail") {
+      assert.doesNotMatch(selector(detail)!.textContent!, /Check brief|Not checked|Not approved/);
+      assert.equal(selector("Approve the checked version"), null);
+    }
+    if (detail === "Decision detail") assert.equal(selector("Withdraw reason"), null);
 
     const collectionRoute = event === "decisions" ? route + "?pending=true" : route;
     const beforeIdle = count(route);
