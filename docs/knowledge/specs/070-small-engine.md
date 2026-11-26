@@ -737,6 +737,8 @@ Later decisions carry their own attribution.
 
 50. **Promote queued work ahead of a backlog.** Tom, 2026-11-26, with about 60 tasks waiting for capacity: “We should probably look at adding a queue priority field so when there's a backlog like this we can tag tasks that need to get dispatched first?” Planner ruling, following the TypeScript queue priority: a task has two orders, Normal and Promoted. When a slot frees, promoted capacity waiters take it before normal ones, oldest first within each order. Promotion never bypasses the global or project slot limit. A held or parked task keeps its order and original age when it rejoins. The operator promotes or demotes from the board. The task's planner uses the command line or `queue.priority: promoted` in the brief at admission. Queued cards show “Promoted”.
 
+51. **Step up a tier when every eligible profile is paused.** On 2026-11-26, 15 tasks waited until 5 December because the only eligible reviewer or worker profiles at their tier were in a paused subscription group. Tom was asked: “How should Nucleus handle 'every eligible profile is paused'?” He chose “Step up one tier (Recommended)”: when every eligible profile for a role is paused, use the next tier up, still with a different model from the author. It reverts automatically when the group unpauses. A required profile in the brief still waits. A task waiting on a paused group shows “paused” with the group and its reset, not “capacity”.
+
 ## The model
 
 ### Stored state per task
