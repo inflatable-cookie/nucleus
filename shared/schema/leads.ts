@@ -263,6 +263,7 @@ export type LeadListFacts = Pick<
   Lead,
   "id" | "title" | "state" | "lanes" | "repositories"
 > & {
+  projectKey?: string;
   /** Nucleus#1543: a parked lead is off the to-do list and out of every count. */
   parked?: { revisitAt: string | null } | null;
 };

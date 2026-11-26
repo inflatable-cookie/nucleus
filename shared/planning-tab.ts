@@ -164,7 +164,9 @@ export function projectPlanningCounts(
       (lead) =>
         lead.state === "open" &&
         !lead.parked &&
-        lead.repositories.some((repo) => owns(repo.origin, repo.path)),
+        (lead.projectKey !== undefined
+          ? lead.projectKey === project.key
+          : lead.repositories.some((repo) => owns(repo.origin, repo.path))),
     ).length,
   };
 }
@@ -239,7 +241,8 @@ export function roadmapView(input: {
         (lead) =>
           lead.state === "open" &&
           !lead.parked &&
-          lead.lanes.includes(entry.lane),
+          lead.lanes.includes(entry.lane) &&
+          (!lane?.project || !lead.projectKey || lead.projectKey === lane.project),
       ).length,
       lastActivityAt: lane?.lastActivityAt ?? null,
       drained: lane?.drain ? { since: lane.drain.since } : null,
