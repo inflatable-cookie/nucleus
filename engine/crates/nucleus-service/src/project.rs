@@ -11,15 +11,13 @@ use nucleus_forge::Branches;
 use nucleus_hosts::{Binding, HostError, RoleProfile};
 use nucleus_store::RepositorySettings;
 use nucleus_work::Checkout;
-use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{Service, ServiceError, State};
 
 const FIXTURE_REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 
 /// The single-repository fixture configuration that tests build in memory.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone)]
 pub struct Project {
     pub repository: String,
     pub checkout: PathBuf,
@@ -29,33 +27,13 @@ pub struct Project {
     pub worker: RoleProfile,
     pub reviewer: RoleProfile,
     /// The local T3 ACP provider running the Rust session agent.
-    #[serde(default)]
     pub acp_provider: Option<String>,
-    #[serde(default, deserialize_with = "read_launch_budget")]
     pub launch_budget: LaunchBudget,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone)]
 pub struct LaunchBudget {
     pub slots: u32,
-}
-
-impl Default for LaunchBudget {
-    fn default() -> Self {
-        Self { slots: 1 }
-    }
-}
-
-fn read_launch_budget<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<LaunchBudget, D::Error> {
-    let mut value = serde_json::Value::deserialize(deserializer)?;
-    if let Some(fields) = value.as_object_mut() {
-        fields.remove("maxLoad");
-        fields.remove("max_load");
-    }
-    serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
 impl Project {
@@ -485,18 +463,10 @@ mod tests {
     };
 
     #[test]
-    fn fixture_files_keep_their_scope_and_both_remotes_must_name_the_repository() {
+    fn fixture_scope_and_both_remotes_must_name_the_repository() {
         let (_home, service) = fixture(GitHub::new("unused-fixture").expect("forge"));
-        let mut legacy = serde_json::to_value(service.fixture()).expect("fixture configuration");
-        legacy["launchBudget"]["maxLoad"] = json!(18);
-        let mut project: Project = serde_json::from_value(legacy).expect("old serve file");
-        assert_eq!(
-            serde_json::to_value(&project.launch_budget).expect("current budget"),
-            json!({"slots": 1})
-        );
-        project
-            .verify(&service.git)
-            .expect("old fixture is still accepted");
+        let mut project = service.fixture().clone();
+        project.verify(&service.git).expect("fixture repository");
 
         // A Project serves only the fixture repository. The remote checks run on the
         // same repository verification that the registry route uses.
