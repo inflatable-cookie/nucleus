@@ -75,7 +75,6 @@ const repository = z
     origin: z.string(),
     path: z.string(),
     base: z.string(),
-    requiredChecks: z.array(z.string()),
     hungToolMinutes: repositoryToolQuietLimitSchema,
     hostProject: z.string().optional(),
     hostProjectTitle: z.string().optional(),

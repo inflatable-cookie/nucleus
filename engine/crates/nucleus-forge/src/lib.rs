@@ -127,7 +127,6 @@ pub struct Branches {
     repository: String,
     base: String,
     head: Option<String>,
-    required_checks: Vec<String>,
 }
 
 impl Branches {
@@ -168,7 +167,6 @@ impl Branches {
             repository: name.into(),
             base: base.into(),
             head,
-            required_checks: Vec::new(),
         })
     }
 
@@ -226,13 +224,6 @@ impl PullTarget {
     #[must_use]
     pub const fn number(&self) -> i32 {
         self.number
-    }
-
-    /// Bind this target to the current project check requirements.
-    #[must_use]
-    pub fn with_required_checks(mut self, checks: Vec<String>) -> Self {
-        self.branches.required_checks = checks;
-        self
     }
 
     fn path(&self) -> String {
@@ -575,11 +566,9 @@ impl GitHub {
     ) -> Result<Forge, ForgeError> {
         let pull = self.confirm_merge_commit(target, pull).await?;
         let checks = if !pull.merged && pull.state == PullState::Open {
-            let required = &target.branches.required_checks;
-            let named = merge || !required.is_empty();
-            let page = self.query_pull(target, CHECKS_QUERY, named, None).await?;
+            let page = self.query_pull(target, CHECKS_QUERY, merge, None).await?;
             let mut checks =
-                page.checks(&pull.head.sha, &target.branches.base, &pull.base.sha, named)?;
+                page.checks(&pull.head.sha, &target.branches.base, &pull.base.sha, merge)?;
             let mut cursors = std::collections::BTreeSet::new();
             while let Some(cursor) = checks.next_cursor() {
                 if cursors.len() + 1 >= MAX_CHECK_PAGES || !cursors.insert(cursor.to_owned()) {
@@ -595,7 +584,7 @@ impl GitHub {
                     true,
                 )?)?;
             }
-            checks.state(required, named)
+            checks.state(merge)
         } else {
             CheckState::Unknown
         };

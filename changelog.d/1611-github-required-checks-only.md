@@ -1,0 +1,1 @@
+- Merge gate now reads required checks only from GitHub's own required-check evidence and removes the Nucleus-side repository Checks setting (Spec 070 ruling 53). Old stored projects with `requiredChecks` still load with that key ignored and drop it on the next save.

@@ -1043,8 +1043,8 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const snap = <T>(value: T, revision: string) => ({ value, revision, configured: true });
   let fixtureOrigin = "example/board-fixture";
   const fixtureProject = () => ({ name: "Fixture project", archived: projectArchived, repositories: [
-    { origin: fixtureOrigin, path: "/work/fixture", base: "main", requiredChecks: [], hungToolMinutes: 30 },
-    { origin: boundRepository, path: "/work/bound", base: "main", requiredChecks: [], hungToolMinutes: 30,
+    { origin: fixtureOrigin, path: "/work/fixture", base: "main", hungToolMinutes: 30 },
+    { origin: boundRepository, path: "/work/bound", base: "main", hungToolMinutes: 30,
       hostProject: "fixture-bound", hostProjectTitle: boundTitle },
   ] });
   const scratchOverride = "/custom/run-scratch";

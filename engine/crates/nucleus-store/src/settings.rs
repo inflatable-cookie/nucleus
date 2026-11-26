@@ -889,6 +889,62 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_projects_domain_discards_retired_required_checks() {
+        let temporary = tempfile::tempdir().expect("fixture home");
+        let home = temporary.path().canonicalize().expect("canonical home");
+        let state = home.join("state");
+        std::fs::create_dir(&state).expect("state directory");
+        let document = serde_json::json!({
+            "domain": Projects::ID,
+            "schemaVersion": 1,
+            "value": {
+                "projects": {
+                    "alpha": {
+                        "name": "Alpha",
+                        "archived": false,
+                        "repositories": [{
+                            "origin": "example/alpha",
+                            "path": "/synthetic/alpha",
+                            "base": "main",
+                            "requiredChecks": ["CI", "lint"],
+                            "hungToolMinutes": 30
+                        }]
+                    }
+                }
+            }
+        });
+        std::fs::write(state.join(Projects::FILE), document.to_string())
+            .expect("old projects settings");
+        let file = SettingsFile::open(&home).expect("settings");
+        let saved = file.read::<Projects>().expect("decode legacy projects");
+        assert!(saved.configured);
+        assert_eq!(
+            saved.value.projects["alpha"].repositories[0].origin,
+            "example/alpha"
+        );
+        let serialized = serde_json::to_value(&saved.value).expect("current settings");
+        assert!(
+            serialized["projects"]["alpha"]["repositories"][0]
+                .get("requiredChecks")
+                .is_none()
+        );
+        file.edit::<Projects>(&saved.revision, |projects| {
+            projects.projects.get_mut("alpha").expect("alpha").name = "Alpha updated".into();
+            Ok(())
+        })
+        .expect("resave projects");
+        let raw: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(state.join(Projects::FILE)).expect("saved projects"),
+        )
+        .expect("saved json");
+        assert!(
+            raw["value"]["projects"]["alpha"]["repositories"][0]
+                .get("requiredChecks")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn a_missing_pinned_volume_never_creates_startup_roots() {
         let temporary = tempfile::tempdir().expect("fixture home");
         let mount = temporary.path().join("unmounted");

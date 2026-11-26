@@ -309,13 +309,9 @@ impl Checks {
         Ok(())
     }
 
-    fn required_state(&self, required: &[String], named: bool) -> CheckState {
+    fn required_state(&self, named: bool) -> CheckState {
         let Some(rollup) = &self.status_check_rollup else {
-            return if required.is_empty() {
-                CheckState::Ready
-            } else {
-                CheckState::Unreported
-            };
+            return CheckState::Ready;
         };
         let Some(contexts) = &rollup.contexts else {
             return if named {
@@ -355,12 +351,6 @@ impl Checks {
         {
             return CheckState::Unknown;
         }
-        if required
-            .iter()
-            .any(|name| !results.contains_key(name.as_str()))
-        {
-            return CheckState::Unreported;
-        }
         if results
             .values()
             .any(|result| *result == CheckResult::Pending)
@@ -370,7 +360,7 @@ impl Checks {
         CheckState::Ready
     }
 
-    pub(crate) fn state(&self, required: &[String], named: bool) -> CheckState {
+    pub(crate) fn state(&self, named: bool) -> CheckState {
         if self.is_draft {
             return CheckState::Blocked;
         }
@@ -380,9 +370,9 @@ impl Checks {
         if self.mergeable == "MERGEABLE" && self.merge_state_status == "BEHIND" {
             return CheckState::BaseMoved;
         }
-        let named = self.required_state(required, named);
-        if matches!(named, CheckState::FailedRequired(_)) {
-            return named;
+        let required = self.required_state(named);
+        if matches!(required, CheckState::FailedRequired(_)) {
+            return required;
         }
         let review = self.review_decision.as_deref();
         let rollup = self
@@ -396,11 +386,17 @@ impl Checks {
             rollup,
         ) {
             (_, _, Some("CHANGES_REQUESTED" | "REVIEW_REQUIRED"), _) => CheckState::Blocked,
-            _ if named != CheckState::Ready => named,
+            _ if required != CheckState::Ready => required,
             (_, _, _, Some("PENDING" | "EXPECTED")) => CheckState::Pending,
             ("MERGEABLE", "CLEAN", None | Some("APPROVED"), None | Some("SUCCESS")) => {
                 CheckState::Ready
             }
+            (
+                "MERGEABLE",
+                "CLEAN" | "UNSTABLE",
+                None | Some("APPROVED"),
+                Some("ERROR" | "FAILURE"),
+            ) if named => CheckState::Ready,
             (_, _, _, Some("ERROR" | "FAILURE"))
             | (_, "BEHIND" | "BLOCKED" | "DRAFT" | "UNSTABLE", _, _) => CheckState::Blocked,
             _ => CheckState::Unknown,

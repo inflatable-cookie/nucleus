@@ -272,11 +272,6 @@ impl RuntimeSettings {
             )
     }
 
-    pub(crate) fn fixture_checks(&self, fixture: &Project) -> Vec<String> {
-        self.fixture_project(fixture)
-            .map_or_else(Vec::new, |(_, _, repo)| repo.required_checks.clone())
-    }
-
     pub(crate) fn fixture_slots(&self, fixture: &Project) -> Option<u32> {
         match &self.projects {
             None => Some(self.project_slots(&fixture.host_project)),
@@ -845,7 +840,6 @@ fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), S
                 {
                     return Err(changed_route());
                 }
-                repo.required_checks = edit.required_checks;
                 repo.hung_tool_minutes = edit.hung_tool_minutes;
             }
             project.repositories.extend(edits.repositories);

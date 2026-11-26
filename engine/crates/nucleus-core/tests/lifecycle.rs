@@ -1296,12 +1296,6 @@ fn a_legacy_merge_blocked_answer_uses_the_code_owner_continuation() {
             }
         }
     );
-
-    let gate = open('a', CheckState::Unreported);
-    assert_eq!(
-        decide(&ready_for_merge(), &gate),
-        Action::Wait(WaitReason::ChecksUnreported)
-    );
 }
 
 #[test]

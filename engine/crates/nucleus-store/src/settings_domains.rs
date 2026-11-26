@@ -268,8 +268,8 @@ impl SettingsValue for DispatchSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RepositorySettings {
     /// Canonical GitHub repository identity, such as `owner/repo`.
     pub origin: String,
@@ -283,10 +283,40 @@ pub struct RepositorySettings {
     /// Exact T3 callers enrolled for this route.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub planner_threads: Vec<String>,
-    #[serde(default)]
-    pub required_checks: Vec<String>,
     #[serde(default = "default_hung_tool_minutes")]
     pub hung_tool_minutes: u32,
+}
+
+impl<'de> Deserialize<'de> for RepositorySettings {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct SavedRepository {
+            origin: String,
+            path: PathBuf,
+            base: String,
+            #[serde(default)]
+            host_project: Option<String>,
+            #[serde(default)]
+            host_project_title: Option<String>,
+            #[serde(default)]
+            planner_threads: Vec<String>,
+            #[serde(default, rename = "requiredChecks")]
+            _retired_required_checks: Option<serde::de::IgnoredAny>,
+            #[serde(default = "default_hung_tool_minutes")]
+            hung_tool_minutes: u32,
+        }
+        let saved = SavedRepository::deserialize(deserializer)?;
+        Ok(Self {
+            origin: saved.origin,
+            path: saved.path,
+            base: saved.base,
+            host_project: saved.host_project,
+            host_project_title: saved.host_project_title,
+            planner_threads: saved.planner_threads,
+            hung_tool_minutes: saved.hung_tool_minutes,
+        })
+    }
 }
 
 const fn default_hung_tool_minutes() -> u32 {
@@ -443,17 +473,6 @@ impl SettingsValue for Projects {
                     }),
                     "routing",
                     "a planner binding requires its native project",
-                )?;
-                check(
-                    repo.required_checks.iter().all(|name| text(name))
-                        && repo
-                            .required_checks
-                            .iter()
-                            .collect::<std::collections::BTreeSet<_>>()
-                            .len()
-                            == repo.required_checks.len(),
-                    "checks",
-                    "GitHub check names must be nonempty and unique",
                 )?;
             }
         }
