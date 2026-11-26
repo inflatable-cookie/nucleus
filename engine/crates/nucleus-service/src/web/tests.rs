@@ -3489,6 +3489,135 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
     assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
 }
 
+#[tokio::test]
+async fn board_pairing_at_capacity_reclaims_the_least_recently_used_device() {
+    let forge = || GitHub::new("unused-fixture-forge").expect("fixture forge");
+    let (home, service) = fixture(forge());
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let controllers = [Controller {
+        credential: BOARD_KEY,
+        authority: Authority::Operator {
+            actor: "operator".into(),
+        },
+    }];
+    let api = router_with_board(Arc::new(service), controllers, &assets).unwrap();
+    let session_path = "/api/engine/session";
+    let mut cookies = Vec::new();
+    for _ in 0..64 {
+        cookies.push(pair_board(&api, &BOARD_KEY).await);
+    }
+    // Device 1 opens an event stream first, then every other device is used
+    // again. Device 1 is therefore the least recently used device at capacity.
+    let mut idle_events = browser_request(
+        &api,
+        Method::GET,
+        "/api/engine/events",
+        Some(cookies[1].as_str()),
+        None,
+    )
+    .await
+    .into_body()
+    .into_data_stream();
+    assert_event(&mut idle_events, &["event: refresh"]).await;
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    for (index, cookie) in cookies.iter().enumerate().filter(|(index, _)| *index != 1) {
+        let used = browser_request(&api, Method::GET, session_path, Some(cookie), None).await;
+        assert_eq!(used.status(), StatusCode::OK, "device {index}");
+    }
+
+    let fresh = pair_board(&api, &BOARD_KEY).await;
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), idle_events.next())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let fresh_session = browser_request(&api, Method::GET, session_path, Some(&fresh), None).await;
+    assert_eq!(fresh_session.status(), StatusCode::OK);
+    let recent = browser_request(
+        &api,
+        Method::GET,
+        session_path,
+        Some(cookies[0].as_str()),
+        None,
+    )
+    .await;
+    assert_eq!(recent.status(), StatusCode::OK);
+    let evicted = browser_request(
+        &api,
+        Method::GET,
+        session_path,
+        Some(cookies[1].as_str()),
+        None,
+    )
+    .await;
+    assert_eq!(evicted.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn board_pairing_after_a_restart_at_capacity_keeps_the_recently_used_device() {
+    let forge = || GitHub::new("unused-fixture-forge").expect("fixture forge");
+    let (home, service) = fixture(forge());
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let settings = service.settings.clone();
+    let project = service.fixture().clone();
+    let controllers = || {
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator".into(),
+            },
+        }]
+    };
+    let setup = |service| router_with_board(Arc::new(service), controllers(), &assets).unwrap();
+    let reopen = || reopen_fixture(&settings, project.clone(), forge());
+    let api = setup(service);
+    let session_path = "/api/engine/session";
+    let mut cookies = Vec::new();
+    for _ in 0..64 {
+        cookies.push(pair_board(&api, &BOARD_KEY).await);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    // Every device except device 1 is used after pairing, so device 1 is the
+    // least recently used when the engine restarts at capacity.
+    for (index, cookie) in cookies.iter().enumerate().filter(|(index, _)| *index != 1) {
+        let used = browser_request(&api, Method::GET, session_path, Some(cookie), None).await;
+        assert_eq!(used.status(), StatusCode::OK, "device {index}");
+    }
+    drop(api);
+
+    let api = setup(reopen());
+    let fresh = pair_board(&api, &BOARD_KEY).await;
+
+    let fresh_session = browser_request(&api, Method::GET, session_path, Some(&fresh), None).await;
+    assert_eq!(fresh_session.status(), StatusCode::OK);
+    let recent = browser_request(
+        &api,
+        Method::GET,
+        session_path,
+        Some(cookies[0].as_str()),
+        None,
+    )
+    .await;
+    assert_eq!(recent.status(), StatusCode::OK);
+    let evicted = browser_request(
+        &api,
+        Method::GET,
+        session_path,
+        Some(cookies[1].as_str()),
+        None,
+    )
+    .await;
+    assert_eq!(evicted.status(), StatusCode::UNAUTHORIZED);
+}
+
 async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyDataStream) {
     let plan = "/api/engine/planning/local-fixture/plan";
     let lane = "/api/engine/planning/local-fixture/lanes/board";
