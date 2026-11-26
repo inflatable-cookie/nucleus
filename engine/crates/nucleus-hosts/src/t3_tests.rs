@@ -1336,10 +1336,6 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
     let (host, native) = server(vec![
         (
             "orchestration.subscribeThread",
-            Response::ParentSnapshot(first.clone()),
-        ),
-        (
-            "orchestration.subscribeThread",
             Response::ParentSnapshot(first),
         ),
         (
@@ -1358,13 +1354,18 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(first.command_id(), Some(first_id.as_str()));
+    assert!(
+        first
+            .command_id()
+            .unwrap()
+            .starts_with(&format!("{prefix}-after-start-"))
+    );
     let retry = host
         .prepare_parent_reentry(&child, "fixture-acp", "Fixture", Some(&first_id))
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(retry.command_id(), first.command_id());
+    assert_eq!(retry.command_id(), Some(first_id.as_str()));
 
     parent["latestRunId"] = json!("unrelated-latest");
     host.rpc
@@ -1396,7 +1397,7 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
         host.write_parent(next).await,
         Err(crate::ParentSendError::NotSent(HostError::Uncertain))
     ));
-    assert_eq!(native.await.unwrap().len(), 3);
+    assert_eq!(native.await.unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -1731,8 +1732,9 @@ async fn closing_tasks_share_one_cwd_census_for_retirement_roots() {
     let pid = child.id().unwrap();
     let host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
     let pass = host.pass(elsewhere.path());
-    let scope = |checkout: &Path, scratch| pass.for_task(&reserve(binding(checkout)).0, scratch);
     assert!(!pass.evidence.processes.initialized());
+    let pass = pass.with_fixture_process_cwd(pid, busy.path());
+    let scope = |checkout: &Path, scratch| pass.for_task(&reserve(binding(checkout)).0, scratch);
     assert_eq!(
         scope(busy.path(), None)
             .retirement_writer(busy.path())

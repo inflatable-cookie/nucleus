@@ -94,9 +94,14 @@ impl Inventory {
 
     #[cfg(test)]
     pub(crate) fn cwd_fixture(path: &Path) -> Self {
+        Self::process_fixture(2, path)
+    }
+
+    #[cfg(any(test, feature = "loopback-fixture"))]
+    pub(crate) fn process_fixture(pid: u32, path: &Path) -> Self {
         let mut inventory = Self::quiet_fixture();
         inventory.processes.insert(
-            2,
+            pid,
             ProcessPaths {
                 parent: 1,
                 cwd: Some(path.into()),

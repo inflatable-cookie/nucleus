@@ -1,0 +1,1 @@
+The Planning roadmap's Now, Next and Later columns scroll on their own when they sit side by side. The plan header and Focus stay in place, and each column keeps its heading at the top while its lanes scroll beneath it. Narrower panes still scroll as one.

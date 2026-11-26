@@ -3,15 +3,19 @@ import assert from "node:assert/strict";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
+import { t3HostCatalog } from "../hosts/t3code/catalog";
+import { configProvider } from "../hosts/t3code/config";
+import { t3codeVocabulary } from "../hosts/t3code/vocabulary";
+import { nightlyProviders } from "./support/pool-shapes";
 import { mount, useNativeStubs } from "./support/render";
 import type { NucleusProfile } from "../shared/profiles";
 import type { StoredHostCatalog } from "../shared/host";
+import { canonicalCatalog } from "../shared/profile-vocabulary";
 
 /**
- * Spec 052, step 2 of the Paseo split: Settings' Profiles section creates and
- * edits Nucleus's own profiles from the canonical vocabulary every registered
- * host's catalog converges on (`profile.vocabulary`, task 1158), and shows each
- * one's availability with its plain reason. Routing uses the stored profiles.
+ * Settings' Profiles section creates and edits Nucleus's own profiles from the
+ * canonical vocabulary exposed by the current host (`profile.vocabulary`, task
+ * 1158), and shows each one's availability with its plain reason.
  */
 
 useNativeStubs();
@@ -1741,11 +1745,24 @@ test("nucleus#970: while the first catalog read is in flight, no row reads unava
 
 test("nucleus#1322: the model picker shows each model's name and its model ID, once when they match", async () => {
   await load();
-  const { paseoCatalog } = await import("./support/pool-shapes");
-  // Paseo's pi catalog shape; a synthetic second upstream shares the Deepseek label, so only the ID tells them apart.
-  const host = paseoCatalog();
+  // A synthetic second upstream shares the Deepseek label, so only the ID tells them apart.
+  const host = canonicalCatalog(
+    t3codeVocabulary,
+    t3HostCatalog(
+      nightlyProviders().map((provider) => configProvider.parse(provider)),
+    ),
+  );
   const pi = host.providers.find((provider) => provider.key === "pi")!;
-  pi.models.push({ ...pi.models[1]!, id: "opencode/deepseek-v4.1-flash" });
+  pi.models[0]!.label = "Muse";
+  pi.models[1]!.label = "Deepseek";
+  pi.models.push({
+    ...pi.models[1]!,
+    id: "opencode/deepseek-v4.1-flash",
+  });
+  const claude = host.providers.find(
+    (provider) => provider.key === "claude",
+  )!;
+  claude.models.forEach((model) => (model.label = model.id));
   const state = fixture();
   state.catalogAnswer = async () => ({
     ...host,
