@@ -215,11 +215,59 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
         );
     }
     let requests = calls.join().expect("HTTP requests");
-    let [read, graph, preflight, merge, readback, replay] = requests.as_slice() else {
-        panic!("six requests")
-    };
-    assert!(read.method_and_path.starts_with(&format!("GET {PR_PATH} ")));
-    assert!(graph.method_and_path.starts_with("POST /graphql "));
+    assert!(
+        requests.len() <= 8,
+        "unexpected merge traffic: {}",
+        requests.len()
+    );
+    let writes: Vec<_> = requests
+        .iter()
+        .enumerate()
+        .filter(|(_, request)| {
+            request
+                .method_and_path
+                .starts_with(&format!("PUT {PR_PATH}/merge "))
+        })
+        .collect();
+    assert_eq!(writes.len(), 1, "the unknown write must not be repeated");
+    let (write_index, merge) = writes[0];
+    assert_eq!(
+        merge.body,
+        Some(json!({"sha": sha('a'), "merge_method": "squash"}))
+    );
+    let before = &requests[..write_index];
+    let pr_reads = before
+        .iter()
+        .filter(|request| {
+            request
+                .method_and_path
+                .starts_with(&format!("GET {PR_PATH} "))
+        })
+        .count();
+    assert!(
+        pr_reads >= 2,
+        "initial and preflight PR evidence must precede the write"
+    );
+    let graph = before
+        .iter()
+        .find(|request| request.method_and_path.starts_with("POST /graphql "))
+        .expect("checks must precede the merge write");
+    let graph_index = before
+        .iter()
+        .position(|request| std::ptr::eq(request, graph))
+        .unwrap();
+    assert!(
+        before[..graph_index].iter().any(|request| request
+            .method_and_path
+            .starts_with(&format!("GET {PR_PATH} "))),
+        "PR observation must precede checks"
+    );
+    assert!(
+        before[graph_index + 1..].iter().any(|request| request
+            .method_and_path
+            .starts_with(&format!("GET {PR_PATH} "))),
+        "fresh PR preflight must follow checks"
+    );
     let query = graph.body.as_ref().expect("GraphQL body")["query"]
         .as_str()
         .expect("GraphQL query");
@@ -228,21 +276,15 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
     for field in ["reviewDecision", "statusCheckRollup"] {
         assert!(
             tokens.clone().any(|token| token == field),
-            "separate GraphQL field {field}"
+            "missing GraphQL field {field}"
         );
     }
     assert!(
-        merge
+        requests[write_index + 1..].iter().any(|request| request
             .method_and_path
-            .starts_with(&format!("PUT {PR_PATH}/merge "))
+            .starts_with(&format!("GET {PR_PATH} "))),
+        "unknown merge must be read back"
     );
-    assert_eq!(
-        merge.body,
-        Some(json!({"sha": sha('a'), "merge_method": "squash"}))
-    );
-    for read in [preflight, readback, replay] {
-        assert!(read.method_and_path.starts_with(&format!("GET {PR_PATH} ")));
-    }
 }
 
 #[tokio::test]
