@@ -577,7 +577,11 @@ impl T3 {
     ///
     /// # Errors
     /// Returns an error if T3 refuses the command or delivery is uncertain.
-    pub async fn write_archive(&self, write: ArchiveWrite) -> Result<bool, HostError> {
+    pub async fn write_archive(
+        &self,
+        write: ArchiveWrite,
+        dispatch_running: impl FnOnce() -> bool + Send,
+    ) -> Result<bool, HostError> {
         let same_row = || {
             self.rpc
                 .thread_row(&write.thread)
@@ -598,7 +602,7 @@ impl T3 {
                 }),
                 Read::Background,
                 || {
-                    sent = same_row();
+                    sent = same_row() && dispatch_running();
                     Ok(sent)
                 },
             )

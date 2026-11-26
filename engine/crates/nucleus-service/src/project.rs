@@ -135,14 +135,18 @@ impl ProjectRoute {
         if checkout.repository() != self.checkout {
             return Err(HostError::Binding.into());
         }
+        self.thread_binding(checkout.path(), checkout.branch())
+    }
+
+    pub(super) fn thread_binding(
+        &self,
+        path: &Path,
+        branch: &str,
+    ) -> Result<Binding, ServiceError> {
         Ok(Binding {
             project_id: self.host_project.clone(),
-            worktree_path: checkout
-                .path()
-                .to_str()
-                .ok_or(ServiceError::Project)?
-                .into(),
-            branch: checkout.branch().into(),
+            worktree_path: path.to_str().ok_or(ServiceError::Project)?.into(),
+            branch: branch.into(),
         })
     }
 }
