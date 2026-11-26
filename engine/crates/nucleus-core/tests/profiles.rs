@@ -309,6 +309,15 @@ fn pick(
     usage: UsageLevel,
     pool: &[Candidate<'_>],
 ) -> ProfileLaunch {
+    select(task, obs, usage, pool).unwrap().expect("new launch")
+}
+
+fn select(
+    task: &Task,
+    obs: &Observation,
+    usage: UsageLevel,
+    pool: &[Candidate<'_>],
+) -> Result<Option<ProfileLaunch>, ProfileLaunchError> {
     decide_profile_launch(
         task,
         obs,
@@ -319,8 +328,120 @@ fn pick(
             author_models: &[],
         },
     )
-    .unwrap()
-    .expect("new launch")
+}
+
+#[test]
+fn a_paused_mechanical_reviewer_steps_up_to_an_independent_worker() {
+    let luna = profile("luna-mechanic", Mechanical);
+    let muse = profile("muse-mechanic", Mechanical);
+    let peer = profile("peer-worker", Worker);
+    let author = Profile {
+        model: luna.model.clone(),
+        ..profile("author-worker", Worker)
+    };
+    let mut task = working("Fix a typo.");
+    finish_worker(&mut task, &luna);
+    let mut pool = [
+        candidate(&luna),
+        candidate(&muse),
+        candidate(&author),
+        candidate(&peer),
+    ];
+    let obs = open('a');
+    pool[1].group_available = false;
+
+    for usage in USAGES {
+        let stepped = pick(&task, &obs, usage, &pool);
+        assert_eq!(stepped.profile(), &peer);
+        assert_eq!(stepped.step_up_from(), Some(Mechanical));
+    }
+    pool[1].group_available = true;
+    for usage in USAGES {
+        let ordinary = pick(&task, &obs, usage, &pool);
+        assert_eq!(ordinary.profile(), &muse);
+        assert_eq!(ordinary.step_up_from(), None);
+    }
+}
+
+#[test]
+fn a_pause_can_skip_multiple_tiers_within_the_usage_level_request_rules() {
+    let luna = profile("luna-mechanic", Mechanical);
+    let muse = profile("muse-mechanic", Mechanical);
+    let worker = profile("worker", Worker);
+    let heavyweight = profile("heavyweight", Heavyweight);
+    let frontier = profile("frontier", Frontier);
+    let mut task = working("---\nqueue: {complexity: low}\n---\nFix a typo.");
+    finish_worker(&mut task, &luna);
+    let obs = open('a');
+    let paused = |profile| Candidate {
+        group_available: false,
+        ..candidate(profile)
+    };
+    let pool = [
+        paused(&muse),
+        paused(&worker),
+        candidate(&heavyweight),
+        candidate(&frontier),
+    ];
+    assert_eq!(
+        pick(&task, &obs, UsageLevel::High, &pool).profile(),
+        &heavyweight
+    );
+    for usage in [UsageLevel::Low, Normal] {
+        assert!(matches!(
+            select(&task, &obs, usage, &pool),
+            Err(ProfileLaunchError::NoEligibleProfile {
+                role: Role::Reviewer,
+                ..
+            })
+        ));
+    }
+    let pool = [
+        paused(&muse),
+        paused(&worker),
+        paused(&heavyweight),
+        candidate(&frontier),
+    ];
+    assert!(matches!(
+        select(&task, &obs, UsageLevel::High, &pool),
+        Err(ProfileLaunchError::NoEligibleProfile {
+            role: Role::Reviewer,
+            ..
+        })
+    ));
+    for usage in [ExtraHigh, Maximum] {
+        assert_eq!(pick(&task, &obs, usage, &pool).profile(), &frontier);
+        assert!(matches!(
+            select(&task, &obs, usage, &pool[1..]),
+            Err(ProfileLaunchError::NoEligibleProfile {
+                role: Role::Reviewer,
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
+fn a_required_reviewer_still_waits_for_its_paused_group() {
+    let luna = profile("luna-mechanic", Mechanical);
+    let muse = profile("muse-mechanic", Mechanical);
+    let peer = profile("peer-worker", Worker);
+    let mut task = working(
+        "---\nqueue: {complexity: low, profileRequests: {reviewer: {profileId: muse-mechanic, reason: independent, required: true}}}\n---\nFix a typo.",
+    );
+    finish_worker(&mut task, &luna);
+    let pool = [
+        Candidate {
+            group_available: false,
+            ..candidate(&muse)
+        },
+        candidate(&peer),
+    ];
+    assert!(matches!(
+        select(&task, &open('a'), Normal, &pool),
+        Err(ProfileLaunchError::RequiredProfileUnavailable { role: Role::Reviewer, id })
+            if id == muse.id
+    ));
 }
 
 #[test]
