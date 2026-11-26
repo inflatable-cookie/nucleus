@@ -277,16 +277,16 @@ impl ThreadSnapshots {
                     .unwrap_or(0);
                 let child = if closed_row(row) {
                     RowChildren::Quiet
-                } else if row["activeRunId"].is_string()
-                    || matches!(row["status"].as_str(), Some("running" | "waiting"))
-                {
-                    RowChildren::Active
-                } else if row["status"].is_string()
-                    && row.get("activeRunId").is_some_and(Value::is_null)
-                {
-                    RowChildren::Quiet
                 } else {
-                    RowChildren::Unknown
+                    match ShellCustody(row).activity() {
+                        RowChildren::Unknown
+                            if row["status"].is_string()
+                                && row.get("activeRunId").is_some_and(Value::is_null) =>
+                        {
+                            RowChildren::Quiet
+                        }
+                        activity => activity,
+                    }
                 };
                 (activity.max(child), latest.max(ended))
             })
