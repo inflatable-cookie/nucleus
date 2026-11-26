@@ -110,7 +110,6 @@ export type LeadActions = {
   onReopen: (reason: string) => Promise<string>;
   /** Nucleus#1543: `revisitAt` is null for a park with no recheck day. */
   onPark: (reason: string, revisitAt: string | null) => Promise<string>;
-  onUnpark: () => Promise<string>;
   onPromoteTo: (
     kind: "question" | "knowledge",
     reference: string,
@@ -133,9 +132,6 @@ const unloaded: LeadActions = {
     throw new Error("The lead has not loaded yet");
   },
   onPark: async () => {
-    throw new Error("The lead has not loaded yet");
-  },
-  onUnpark: async () => {
     throw new Error("The lead has not loaded yet");
   },
   onPromoteTo: async () => {
@@ -311,7 +307,6 @@ export function LeadScreen({
     onDrop,
     onReopen,
     onPark,
-    onUnpark,
     onPromoteTo,
   } = actions ?? unloaded;
   const {
@@ -321,7 +316,6 @@ export function LeadScreen({
     reopen: reopenReason,
     promoteTo: promoteToReason,
     park: parkReason,
-    unpark: unparkReason,
   } = lead.actions;
 
   const checkBody = () => {
@@ -490,15 +484,15 @@ export function LeadScreen({
                 <Button
                   small
                   c={c}
-                  text={running === "unpark" ? "Returning…" : "Unpark"}
+                  text={running === "reopen" ? "Reopening…" : "Reopen"}
                   label="Return the lead to the to-do list"
-                  disabled={blocked || Boolean(unparkReason)}
-                  hint={unparkReason ?? undefined}
-                  onPress={() => void run("unpark", onUnpark)}
+                  disabled={blocked || Boolean(reopenReason)}
+                  hint={reopenReason ?? undefined}
+                  onPress={() => void run("reopen", () => onReopen(""))}
                 />
               </View>
             )}
-            <NoticeLine notice={notices.unpark} label="Unpark" c={c} />
+            <NoticeLine notice={notices.reopen} label="Reopen" c={c} />
           </View>
         )}
         <View style={row}>
@@ -547,16 +541,17 @@ export function LeadScreen({
             );
           })}
         </View>
-        {planningCeremony && [
-          checkReason && `Check: ${checkReason}`,
-          approveReason && `Approve: ${approveReason}`,
-        ]
-          .filter(Boolean)
-          .map((reason) => (
-            <Text key={reason} style={meta}>
-              {reason}
-            </Text>
-          ))}
+        {planningCeremony &&
+          [
+            checkReason && `Check: ${checkReason}`,
+            approveReason && `Approve: ${approveReason}`,
+          ]
+            .filter(Boolean)
+            .map((reason) => (
+              <Text key={reason} style={meta}>
+                {reason}
+              </Text>
+            ))}
         {lead.repositories.map((repo) => {
           const reason = lead.actions.promote.find(
             (item) => item.origin === repo.origin,
@@ -625,7 +620,9 @@ export function LeadScreen({
           </View>
         </View>
 
-        {(planningCeremony || checkView.kind !== "none" || approvalView.kind !== "none") && (
+        {(planningCeremony ||
+          checkView.kind !== "none" ||
+          approvalView.kind !== "none") && (
           <View accessibilityLabel="Check result and approval" style={column}>
             <Text accessibilityRole="header" style={sectionHeader}>
               Check
@@ -720,7 +717,7 @@ export function LeadScreen({
             <View style={{ gap: space.xxs }}>
               <Field
                 c={c}
-                label="Reopen reason"
+                label="Reopen note (optional)"
                 value={reopen}
                 onChange={setReopen}
                 disabled={blocked || Boolean(reopenReason)}
@@ -731,7 +728,7 @@ export function LeadScreen({
                   c={c}
                   text={running === "reopen" ? "Reopening…" : "Reopen lead"}
                   label="Reopen the lead"
-                  disabled={blocked || Boolean(reopenReason) || !reopen.trim()}
+                  disabled={blocked || Boolean(reopenReason)}
                   hint={reopenReason ?? undefined}
                   onPress={() => void run("reopen", () => onReopen(reopen))}
                 />

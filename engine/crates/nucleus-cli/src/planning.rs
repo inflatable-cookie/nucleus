@@ -114,6 +114,19 @@ pub(super) enum Action {
         #[arg(long, value_parser = ["completed", "deprecated"], default_value = "deprecated")]
         disposition: String,
     },
+    /// Reopen a parked or dropped lead or papercut.
+    #[command(
+        name = "item.reopen",
+        override_usage = "nucleus item.reopen [OPTIONS] [PROJECT] <ID>"
+    )]
+    ItemReopen {
+        #[arg(required = true, num_args = 1..=2, hide = true)]
+        args: Vec<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        version: Option<i64>,
+    },
     /// Admit a task from an item's current body.
     #[command(
         name = "item.promote",
@@ -357,6 +370,19 @@ impl Action {
                     Some(json!({ "reason": reason, "disposition": disposition })),
                 )
             }
+            A::ItemReopen {
+                args,
+                note,
+                version,
+            } => {
+                let (project, [id]) = project_and_args(args)?;
+                (
+                    Method::POST,
+                    project,
+                    format!("items/{}/reopen", segment(&id)?),
+                    Some(json!({ "note": note, "version": version })),
+                )
+            }
             A::ItemPromote { args, complexity } => {
                 let (project, [id]) = project_and_args(args)?;
                 (
@@ -581,6 +607,14 @@ mod tests {
                 "/v1/planning/product/items/item-id/park",
             ),
             (
+                &["item.reopen", "item-id", "--note", "Again"],
+                "/v1/planning-current/items/item-id/reopen",
+            ),
+            (
+                &["item.reopen", "product", "item-id"],
+                "/v1/planning/product/items/item-id/reopen",
+            ),
+            (
                 &["item.promote", "item-id"],
                 "/v1/planning-current/items/item-id/promote",
             ),
@@ -593,6 +627,31 @@ mod tests {
             let (_, path, _) = action.request().expect("planning request");
             assert_eq!(path, expected);
         }
+    }
+
+    #[test]
+    fn item_reopen_cli_sends_note_and_version() {
+        let parsed = Cli::try_parse_from([
+            "nucleus",
+            "item.reopen",
+            "product",
+            "item-id",
+            "--note",
+            "Again",
+            "--version",
+            "7",
+        ])
+        .unwrap();
+        let Action::Planning(action) = parsed.action else {
+            panic!("expected planning command")
+        };
+        let (method, path, body) = action.request().unwrap();
+        assert_eq!(method, reqwest::Method::POST);
+        assert_eq!(path, "/v1/planning/product/items/item-id/reopen");
+        assert_eq!(
+            body.unwrap(),
+            serde_json::json!({"note":"Again", "version":7})
+        );
     }
 
     #[test]

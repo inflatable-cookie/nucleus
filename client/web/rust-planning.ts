@@ -57,7 +57,14 @@ function repositories(project: RustProject, members?: readonly string[]) {
 
 export function boardProject(key: string, project: RustProject): api.Project {
   const repos = repositories(project);
-  return { key, name: project.name, version: 1, repositories: repos, primary: repos[0] ?? null, drain: null };
+  return {
+    key,
+    name: project.name,
+    version: 1,
+    repositories: repos,
+    primary: repos[0] ?? null,
+    drain: null,
+  };
 }
 
 export function boardLane(
@@ -125,7 +132,7 @@ export function boardItem(
     tags: item.kind === "papercut" ? ["papercut"] : [],
     papercutArea: null,
     state: "open",
-    version: 1,
+    version: item.version ?? 1,
     check: null,
     approved: false,
     targets: [],
@@ -194,7 +201,6 @@ export function boardDecision(
   };
 }
 
-
 const RUST_ONLY = "Not part of the Rust engine (Spec 070 planning model).";
 
 /** A Rust item as the board's lead record. Both kinds keep their names (ruling 12). */
@@ -217,7 +223,7 @@ export function boardLeadRecord(item: RustItem, project: RustProject) {
         : item.state === "dropped"
           ? ("dropped" as const)
           : ("open" as const),
-    version: 1,
+    version: item.version ?? 1,
     check: null,
     checkOperationId: null,
     approval: null,
@@ -226,12 +232,24 @@ export function boardLeadRecord(item: RustItem, project: RustProject) {
     reopens: [],
     parked:
       item.state === "parked"
-        ? { reason: item.reason || "Parked", revisitAt: item.revisitAt ?? null, by: item.author || "Nucleus", at: "" }
+        ? {
+            reason: item.reason || "Parked",
+            revisitAt: item.revisitAt ?? null,
+            by: item.author || "Nucleus",
+            at: "",
+          }
         : null,
     recheck: null,
     targets:
       item.state === "promoted" && item.taskId
-        ? [{ kind: "task" as const, repository: repos[0]?.origin ?? null, reference: item.taskId, at: "" }]
+        ? [
+            {
+              kind: "task" as const,
+              repository: repos[0]?.origin ?? null,
+              reference: item.taskId,
+              at: "",
+            },
+          ]
         : [],
     source: null,
     createdAt: item.createdAtMs == null ? "" : iso(item.createdAtMs),
@@ -242,22 +260,33 @@ export function boardLeadRecord(item: RustItem, project: RustProject) {
 
 function leadDetail(item: RustItem, project: RustProject) {
   const open = item.state === "open";
-  const bound = new Set(project.repositories.filter((repo) => repo.hostProject).map((repo) => repo.origin.toLowerCase()));
+  const bound = new Set(
+    project.repositories
+      .filter((repo) => repo.hostProject)
+      .map((repo) => repo.origin.toLowerCase()),
+  );
   return {
     ...boardLeadRecord(item, project),
     actions: {
       check: RUST_ONLY,
       approve: RUST_ONLY,
-      drop: open || item.state === "parked" ? null : "Only an open item can be dropped.",
-      reopen: RUST_ONLY,
+      drop:
+        open || item.state === "parked"
+          ? null
+          : "Only an open item can be dropped.",
+      reopen:
+        item.state === "parked" || item.state === "dropped"
+          ? null
+          : "Only parked or dropped items can be reopened.",
       park: open ? null : "Only an open item can be parked.",
-      unpark: RUST_ONLY,
       promoteTo: RUST_ONLY,
       promote: repositories(project, item.repositories).map((repo) => ({
         origin: repo.origin,
         reason: !open
           ? "Only an open item can be promoted."
-          : bound.has(repo.origin.toLowerCase()) ? null : "Bind this repository to T3Code before promoting.",
+          : bound.has(repo.origin.toLowerCase())
+            ? null
+            : "Bind this repository to T3Code before promoting.",
       })),
     },
     versions: [],
@@ -287,7 +316,10 @@ function boardPapercut(item: RustItem, row: ProjectRow) {
           : ("open" as const),
     version: item.version ?? 1,
     taskId: item.state === "promoted" ? (item.taskId ?? null) : null,
-    closedReason: item.state === "dropped" ? (item.disposition ?? "deprecated" as const) : null,
+    closedReason:
+      item.state === "dropped"
+        ? (item.disposition ?? ("deprecated" as const))
+        : null,
     draftId: null,
     note: item.state === "dropped" ? (item.reason ?? null) : null,
     closedAt: null,
@@ -295,41 +327,83 @@ function boardPapercut(item: RustItem, row: ProjectRow) {
     lanes: item.lanes,
     parked:
       item.state === "parked"
-        ? { reason: item.reason || "Parked", revisitAt: item.revisitAt ?? null, by: item.author || "Nucleus", at: "" }
+        ? {
+            reason: item.reason || "Parked",
+            revisitAt: item.revisitAt ?? null,
+            by: item.author || "Nucleus",
+            at: "",
+          }
         : null,
   };
 }
 
 type PlanningCollection = "Plans" | "Items" | "Decisions";
-type ReportPlanningIssues = (collection: PlanningCollection, issues: string[]) => void;
+type ReportPlanningIssues = (
+  collection: PlanningCollection,
+  issues: string[],
+) => void;
 const listeners = new WeakMap<RustApi, ReportPlanningIssues>();
 
-export function listenForPlanningIssues(rust: RustApi, report: ReportPlanningIssues) {
+export function listenForPlanningIssues(
+  rust: RustApi,
+  report: ReportPlanningIssues,
+) {
   listeners.set(rust, report);
-  return () => { listeners.delete(rust); };
+  return () => {
+    listeners.delete(rust);
+  };
 }
 
-const history = z.array(z.object({
-  actor: z.string(), atMs: z.number().int(), action: z.string(), snapshot: z.unknown(),
-}));
+const history = z.array(
+  z.object({
+    actor: z.string(),
+    atMs: z.number().int(),
+    action: z.string(),
+    snapshot: z.unknown(),
+  }),
+);
 const snapshotVersion = z.object({ version: z.number().int() });
 
-async function laneRevision(saved: RustLane, author: string, createdAt: string) {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(saved.document));
-  const hex = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
-  return { key: saved.key, version: saved.version, text: saved.document, digest: `sha256:${hex}`, author, createdAt };
+async function laneRevision(
+  saved: RustLane,
+  author: string,
+  createdAt: string,
+) {
+  const hash = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(saved.document),
+  );
+  const hex = Array.from(new Uint8Array(hash), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return {
+    key: saved.key,
+    version: saved.version,
+    text: saved.document,
+    digest: `sha256:${hex}`,
+    author,
+    createdAt,
+  };
 }
 
 const rawList = z.array(z.unknown());
 const rawPlan = planView.extend({ documents: rawList, lanes: rawList });
-const address = z.object({ id: z.string().optional(), key: z.string().optional() });
+const address = z.object({
+  id: z.string().optional(),
+  key: z.string().optional(),
+});
 
 function recordLabel(raw: unknown, index: number) {
   const parsed = address.safeParse(raw).data;
   return parsed?.id ?? parsed?.key ?? `#${index + 1}`;
 }
 
-function collectRows<T>(raw: unknown[], label: string, issues: string[], project: (value: unknown) => T): T[] {
+function collectRows<T>(
+  raw: unknown[],
+  label: string,
+  issues: string[],
+  project: (value: unknown) => T,
+): T[] {
   return raw.flatMap((value, index) => {
     try {
       return [project(value)];
@@ -362,8 +436,10 @@ export function createRustPlanning(
         if (
           project.archived ||
           access.denied.has(id) ||
-          (caller.planningProjects !== null && !caller.planningProjects.includes(id))
-        ) return [];
+          (caller.planningProjects !== null &&
+            !caller.planningProjects.includes(id))
+        )
+          return [];
         return [
           {
             id,
@@ -390,46 +466,82 @@ export function createRustPlanning(
     }
   }
 
-  function planningRead<T>(row: ProjectRow, path: string, schema: z.ZodType<T>) {
-    return readProject(row, id => rust.board.read(schema, `/planning/${encodeURIComponent(id)}/${path}`));
+  function planningRead<T>(
+    row: ProjectRow,
+    path: string,
+    schema: z.ZodType<T>,
+  ) {
+    return readProject(row, (id) =>
+      rust.board.read(schema, `/planning/${encodeURIComponent(id)}/${path}`),
+    );
   }
 
-  async function savedRevision(row: ProjectRow, kind: "plan" | "lane", id: string, version: number) {
-    const records = await planningRead(row, `history/${kind}/${encodeURIComponent(id)}`, history);
-    const matches = records?.filter(record => snapshotVersion.safeParse(record.snapshot).data?.version === version);
+  async function savedRevision(
+    row: ProjectRow,
+    kind: "plan" | "lane",
+    id: string,
+    version: number,
+  ) {
+    const records = await planningRead(
+      row,
+      `history/${kind}/${encodeURIComponent(id)}`,
+      history,
+    );
+    const matches = records?.filter(
+      (record) =>
+        snapshotVersion.safeParse(record.snapshot).data?.version === version,
+    );
     // Imports can record the normalized snapshot again. The original version
     // owns its author and timestamp. Native history is ordered by sequence;
     // later disposition changes and re-imports do not create a revision.
-    const saved = matches?.find(record => record.action === "legacy_version") ?? matches?.[0];
-    if (!saved) throw new Error(`Version ${version} of ${kind} ${id} is unavailable.`);
+    const saved =
+      matches?.find((record) => record.action === "legacy_version") ??
+      matches?.[0];
+    if (!saved)
+      throw new Error(`Version ${version} of ${kind} ${id} is unavailable.`);
     return saved;
   }
 
   // Publish diagnostics with the read that produced them. A late read from
   // an older pairing or an earlier refresh cannot replace the current notice.
   const latestRead = new Map<PlanningCollection, symbol>();
-  async function collectProjects<T>(collection: PlanningCollection, read: (row: ProjectRow, issues: string[]) => Promise<T[]>) {
+  async function collectProjects<T>(
+    collection: PlanningCollection,
+    read: (row: ProjectRow, issues: string[]) => Promise<T[]>,
+  ) {
     const ticket = Symbol();
     latestRead.set(collection, ticket);
     const [rows, caller] = await Promise.all([projects(), session()]);
-    const results = await Promise.all(rows.map(async row => {
-      const issues: string[] = [];
-      try {
-        return { values: await read(row, issues), issues };
-      } catch (error) {
-        if (isRustHttpError(error, 401)) throw error;
-        issues.push(`${row.id} ${collection}: ${errorText(error)}`);
-        return { values: [], issues };
-      }
-    }));
-    if (latestRead.get(collection) === ticket && caller === await session())
-      listeners.get(rust)?.(collection, results.flatMap(result => result.issues));
-    return results.flatMap(result => result.values);
+    const results = await Promise.all(
+      rows.map(async (row) => {
+        const issues: string[] = [];
+        try {
+          return { values: await read(row, issues), issues };
+        } catch (error) {
+          if (isRustHttpError(error, 401)) throw error;
+          issues.push(`${row.id} ${collection}: ${errorText(error)}`);
+          return { values: [], issues };
+        }
+      }),
+    );
+    if (latestRead.get(collection) === ticket && caller === (await session()))
+      listeners.get(rust)?.(
+        collection,
+        results.flatMap((result) => result.issues),
+      );
+    return results.flatMap((result) => result.values);
   }
 
-  async function findRecord<T>(row: ProjectRow, path: string, schema: z.ZodType<T>, id: string) {
+  async function findRecord<T>(
+    row: ProjectRow,
+    path: string,
+    schema: z.ZodType<T>,
+    id: string,
+  ) {
     const records = await planningRead(row, path, rawList);
-    const raw = records?.find(record => address.safeParse(record).data?.id === id);
+    const raw = records?.find(
+      (record) => address.safeParse(record).data?.id === id,
+    );
     return raw === undefined ? undefined : schema.parse(raw);
   }
 
@@ -437,13 +549,22 @@ export function createRustPlanning(
     const row = (await projects()).find((entry) => entry.board.key === project);
     if (!row) throw new Error(`Project ${project} has no accessible plan.`);
     const plan = await planningRead(row, "plan", rawPlan);
-    const raw = plan?.documents.find(document => address.safeParse(document).data?.key === key);
-    if (raw === undefined) throw new Error(`Lane ${key} is not in project ${project}'s accessible plan.`);
+    const raw = plan?.documents.find(
+      (document) => address.safeParse(document).data?.key === key,
+    );
+    if (raw === undefined)
+      throw new Error(
+        `Lane ${key} is not in project ${project}'s accessible plan.`,
+      );
     return { row, lane: lane.parse(raw) };
   }
 
   async function recordOwner<T>(
-    path: string, schema: z.ZodType<T>, id: string, project?: string, matches?: (record: T) => boolean,
+    path: string,
+    schema: z.ZodType<T>,
+    id: string,
+    project?: string,
+    matches?: (record: T) => boolean,
   ) {
     let match: { row: ProjectRow; record: T } | undefined;
     for (const row of await projects()) {
@@ -453,40 +574,71 @@ export function createRustPlanning(
       if (match) throw new Error(`Record ${id} is ambiguous across projects.`);
       match = { row, record };
     }
-    if (!match) throw new Error(`Could not identify ${id} in the accessible projects.`);
+    if (!match)
+      throw new Error(`Could not identify ${id} in the accessible projects.`);
     return match;
   }
 
-  async function promote({ id, project, repository, complexity }: { id: string; project?: string; repository?: string; complexity?: api.CapabilityLevel }) {
+  async function promote({
+    id,
+    project,
+    repository,
+    complexity,
+  }: {
+    id: string;
+    project?: string;
+    repository?: string;
+    complexity?: api.CapabilityLevel;
+  }) {
     const { row } = await recordOwner("items", item, id, project);
     const task = await rust.promoteItem(row.id, id, { repository, complexity });
     return { taskId: task.identity.id, reference: task.reference };
   }
 
   const handlers = {
-    "queue.plans": () => collectProjects("Plans", async (row, issues) => {
-      const raw = await planningRead(row, "plan", z.unknown());
-      if (raw === undefined) return [];
-      try {
-        const plan = rawPlan.parse(raw);
-        // The saved order is one versioned record. Editing a partial order
-        // could erase a step, so withhold that project's plan if a step fails.
-        const entries = collectRows(plan.lanes, `${row.id} plan step`, issues, value => {
-          const step = planView.shape.lanes.element.parse(value);
-          return api.planEntrySchema.parse(boardStep(step));
-        });
-        if (entries.length !== plan.lanes.length) return [];
-        const laneViews = collectRows(plan.documents, `${row.id} lane`, issues, value =>
-          api.laneViewSchema.parse(boardLane(lane.parse(value), row.project, row.board.key)));
-        return [api.planningPlanSnapshotSchema.parse({
-          project: row.board.key, version: plan.version, entries, savedEntries: entries,
-          author: null, createdAt: null, laneViews,
-        })];
-      } catch (error) {
-        issues.push(`${row.id} plan: ${errorText(error)}`);
-        return [];
-      }
-    }),
+    "queue.plans": () =>
+      collectProjects("Plans", async (row, issues) => {
+        const raw = await planningRead(row, "plan", z.unknown());
+        if (raw === undefined) return [];
+        try {
+          const plan = rawPlan.parse(raw);
+          // The saved order is one versioned record. Editing a partial order
+          // could erase a step, so withhold that project's plan if a step fails.
+          const entries = collectRows(
+            plan.lanes,
+            `${row.id} plan step`,
+            issues,
+            (value) => {
+              const step = planView.shape.lanes.element.parse(value);
+              return api.planEntrySchema.parse(boardStep(step));
+            },
+          );
+          if (entries.length !== plan.lanes.length) return [];
+          const laneViews = collectRows(
+            plan.documents,
+            `${row.id} lane`,
+            issues,
+            (value) =>
+              api.laneViewSchema.parse(
+                boardLane(lane.parse(value), row.project, row.board.key),
+              ),
+          );
+          return [
+            api.planningPlanSnapshotSchema.parse({
+              project: row.board.key,
+              version: plan.version,
+              entries,
+              savedEntries: entries,
+              author: null,
+              createdAt: null,
+              laneViews,
+            }),
+          ];
+        } catch (error) {
+          issues.push(`${row.id} plan: ${errorText(error)}`);
+          return [];
+        }
+      }),
     "plan.get": async (input: { project?: string; version?: number }) => {
       const row = (await projects()).find(
         (entry) => entry.board.key === input.project,
@@ -495,12 +647,20 @@ export function createRustPlanning(
       if (input.version !== undefined) {
         const saved = await savedRevision(row, "plan", row.id, input.version);
         if (saved.action === "legacy_version") {
-          return { ...projectPlanSchema.parse(saved.snapshot), project: row.board.key };
+          return {
+            ...projectPlanSchema.parse(saved.snapshot),
+            project: row.board.key,
+          };
         }
-        return { ...boardPlan(row.board.key, plan.parse(saved.snapshot)), author: saved.actor, createdAt: iso(saved.atMs) };
+        return {
+          ...boardPlan(row.board.key, plan.parse(saved.snapshot)),
+          author: saved.actor,
+          createdAt: iso(saved.atMs),
+        };
       }
       const current = await readProject(row, rust.plan);
-      if (!current) throw new Error(`Project ${input.project} has no accessible plan.`);
+      if (!current)
+        throw new Error(`Project ${input.project} has no accessible plan.`);
       return boardPlan(row.board.key, current);
     },
     "plan.set": async (input: {
@@ -528,15 +688,33 @@ export function createRustPlanning(
       });
       return boardPlan(row.board.key, await rust.plan(row.id));
     },
-    "lane.document.get": async (input: { key: string; project: string; version?: number }) => {
+    "lane.document.get": async (input: {
+      key: string;
+      project: string;
+      version?: number;
+    }) => {
       if (input.version !== undefined) {
-        const row = (await projects()).find(entry => entry.board.key === input.project);
-        if (!row) throw new Error(`Project ${input.project} has no accessible plan.`);
-        const saved = await savedRevision(row, "lane", input.key, input.version);
-        const document = saved.action === "legacy_version"
-          ? laneDocumentVersionSchema.parse(saved.snapshot)
-          : await laneRevision(lane.parse(saved.snapshot), saved.actor, iso(saved.atMs));
-        if (document.key !== input.key) throw new Error("The saved lane key differs.");
+        const row = (await projects()).find(
+          (entry) => entry.board.key === input.project,
+        );
+        if (!row)
+          throw new Error(`Project ${input.project} has no accessible plan.`);
+        const saved = await savedRevision(
+          row,
+          "lane",
+          input.key,
+          input.version,
+        );
+        const document =
+          saved.action === "legacy_version"
+            ? laneDocumentVersionSchema.parse(saved.snapshot)
+            : await laneRevision(
+                lane.parse(saved.snapshot),
+                saved.actor,
+                iso(saved.atMs),
+              );
+        if (document.key !== input.key)
+          throw new Error("The saved lane key differs.");
         return document;
       }
       const { lane: current } = await projectLane(input.project, input.key);
@@ -564,7 +742,8 @@ export function createRustPlanning(
       note?: string;
     }) => {
       const { row } = await projectLane(input.project, input.key);
-      if (input.status === "paused") throw new Error("This engine supports Open, Done and Abandon.");
+      if (input.status === "paused")
+        throw new Error("This engine supports Open, Done and Abandon.");
       const status =
         input.status === "done"
           ? { status: "done" as const, note: input.note ?? "" }
@@ -574,28 +753,50 @@ export function createRustPlanning(
       const saved = await rust.laneStatus(row.id, input.key, status);
       const view = boardLane(saved, row.project, row.board.key);
       if (!view) throw new Error(`Lane ${input.key} needs a title and aim.`);
-      const { project, liveByPhase, liveByRepository, terminalCount, lastActivityAt, recentOutcomes, ...lane } = view;
-      void [project, liveByPhase, liveByRepository, terminalCount, lastActivityAt, recentOutcomes];
+      const {
+        project,
+        liveByPhase,
+        liveByRepository,
+        terminalCount,
+        lastActivityAt,
+        recentOutcomes,
+        ...lane
+      } = view;
+      void [
+        project,
+        liveByPhase,
+        liveByRepository,
+        terminalCount,
+        lastActivityAt,
+        recentOutcomes,
+      ];
       return lane;
     },
     "lead.board": async () => {
       const items = await collectProjects("Items", async (row, issues) => {
         const raw = await planningRead(row, "items", rawList);
-        return collectRows(raw ?? [], `${row.id} item`, issues, value => {
+        return collectRows(raw ?? [], `${row.id} item`, issues, (value) => {
           const record = item.parse(value);
           const card = boardItem(record, row.project, row.board.key);
           const at = record.updatedAtMs ?? record.createdAtMs;
           return {
             card: card && api.boardLeadSchema.parse(card),
             activity: {
-              project: row.board.key, id: record.id, at: at == null ? null : iso(at),
-              taskIds: [...new Set([...(record.taskLinks ?? []), ...(record.taskId ? [record.taskId] : [])])],
+              project: row.board.key,
+              id: record.id,
+              at: at == null ? null : iso(at),
+              taskIds: [
+                ...new Set([
+                  ...(record.taskLinks ?? []),
+                  ...(record.taskId ? [record.taskId] : []),
+                ]),
+              ],
             },
           };
         });
       });
       return {
-        cards: items.flatMap(({ card }) => card ? [card] : []),
+        cards: items.flatMap(({ card }) => (card ? [card] : [])),
         activity: items.map(({ activity }) => activity),
         links: [],
       };
@@ -603,13 +804,24 @@ export function createRustPlanning(
     "decision.list": (input: { status?: string; project?: string }) =>
       collectProjects("Decisions", async (row, issues) => {
         if (input.project && input.project !== row.board.key) return [];
-        const raw = await planningRead(row, input.status === "open" ? "decisions?pending=true" : "decisions", rawList);
-        return collectRows(raw ?? [], `${row.id} decision`, issues, value =>
-          api.decisionViewSchema.parse(boardDecision(decision.parse(value), row.board.key, row.project)),
-        ).filter(view => !input.status || view.status === input.status);
+        const raw = await planningRead(
+          row,
+          input.status === "open" ? "decisions?pending=true" : "decisions",
+          rawList,
+        );
+        return collectRows(raw ?? [], `${row.id} decision`, issues, (value) =>
+          api.decisionViewSchema.parse(
+            boardDecision(decision.parse(value), row.board.key, row.project),
+          ),
+        ).filter((view) => !input.status || view.status === input.status);
       }),
     "decision.get": async (input: { id: string; project?: string }) => {
-      const { row, record } = await recordOwner("decisions", decision, input.id, input.project);
+      const { row, record } = await recordOwner(
+        "decisions",
+        decision,
+        input.id,
+        input.project,
+      );
       return boardDecision(record, row.board.key, row.project);
     },
     "decision.answer": async (input: {
@@ -618,7 +830,12 @@ export function createRustPlanning(
       optionId?: string;
       note?: string;
     }) => {
-      const { row, record } = await recordOwner("decisions", decision, input.id, input.project);
+      const { row, record } = await recordOwner(
+        "decisions",
+        decision,
+        input.id,
+        input.project,
+      );
       const { optionId } = input;
       if (!optionId || !record.options.some((option) => option.id === optionId))
         throw new Error("Choose one of the decision's options.");
@@ -629,19 +846,39 @@ export function createRustPlanning(
       return boardDecision(saved, row.board.key, row.project);
     },
     "lead.get": async (input: { project?: string; id: string }) => {
-      const { row, record } = await recordOwner("items", item, input.id, input.project);
+      const { row, record } = await recordOwner(
+        "items",
+        item,
+        input.id,
+        input.project,
+      );
       return leadDetail(record, row.project);
     },
     "papercut.get": async (input: { project?: string; id: string }) => {
-      const { row, record } = await recordOwner("items", item, input.id, input.project, value => value.kind === "papercut");
-      if (record.version === undefined) throw new Error("The engine did not supply the papercut version.");
+      const { row, record } = await recordOwner(
+        "items",
+        item,
+        input.id,
+        input.project,
+        (value) => value.kind === "papercut",
+      );
+      if (record.version === undefined)
+        throw new Error("The engine did not supply the papercut version.");
       return boardPapercut(record, row);
     },
     "papercut.edit": async (input: output<typeof api.papercutEdit.input>) => {
       const { id, project, version, title, body, happened } = input;
-      if (project === undefined) throw new Error("Reopen the papercut before editing it.");
-      const { row, record } = await recordOwner("items", item, id, keys().key(project), value => value.kind === "papercut");
-      if (version !== record.version) throw new Error("The papercut changed since you started editing.");
+      if (project === undefined)
+        throw new Error("Reopen the papercut before editing it.");
+      const { row, record } = await recordOwner(
+        "items",
+        item,
+        id,
+        keys().key(project),
+        (value) => value.kind === "papercut",
+      );
+      if (version !== record.version)
+        throw new Error("The papercut changed since you started editing.");
       const saved = await rust.editItem(row.id, id, {
         version,
         title: title ?? record.title,
@@ -652,19 +889,54 @@ export function createRustPlanning(
     },
     "lead.promote-task": promote,
     "papercut.promote-task": promote,
-    "lead.park": async (input: { project?: string; id: string; reason: string; revisitAt?: string | null }) => {
+    "lead.park": async (input: {
+      project?: string;
+      id: string;
+      reason: string;
+      revisitAt?: string | null;
+    }) => {
       const { row } = await recordOwner("items", item, input.id, input.project);
-      const saved = await rust.parkItem(row.id, input.id, { reason: input.reason, revisitAt: input.revisitAt ?? null });
+      const saved = await rust.parkItem(row.id, input.id, {
+        reason: input.reason,
+        revisitAt: input.revisitAt ?? null,
+      });
       return boardLeadRecord(saved, row.project);
     },
-    "lead.drop": async (input: { project?: string; id: string; reason: string }) => {
+    "lead.reopen": async (input: {
+      project?: string;
+      id: string;
+      reason?: string;
+      version?: number;
+    }) => {
+      const { row } = await recordOwner("items", item, input.id, input.project);
+      const saved = await rust.reopenItem(row.id, input.id, {
+        note: input.reason || undefined,
+        version: input.version,
+      });
+      return { ...boardLeadRecord(saved, row.project), version: saved.version };
+    },
+    "lead.drop": async (input: {
+      project?: string;
+      id: string;
+      reason: string;
+    }) => {
       const { row } = await recordOwner("items", item, input.id, input.project);
       const saved = await rust.dropItem(row.id, input.id, input.reason);
       return boardLeadRecord(saved, row.project);
     },
-    "papercut.close": async (input: { project?: string; id: string; reason: "completed" | "deprecated"; note?: string }) => {
+    "papercut.close": async (input: {
+      project?: string;
+      id: string;
+      reason: "completed" | "deprecated";
+      note?: string;
+    }) => {
       const { row } = await recordOwner("items", item, input.id, input.project);
-      const saved = await rust.dropItem(row.id, input.id, input.note || null, input.reason);
+      const saved = await rust.dropItem(
+        row.id,
+        input.id,
+        input.note || null,
+        input.reason,
+      );
       return boardPapercut(saved, row);
     },
   };
