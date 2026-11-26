@@ -1,0 +1,1 @@
+- Settings → Hosts: the Rust board offers registered ADEs and Planner's host in Default host, and keeps an unregistered saved choice unavailable without changing it.
