@@ -5,10 +5,57 @@ use std::time::Duration;
 use nucleus_core::{Hold, HoldBy, Phase, Review, Role, Task, Verdict, WaitReason};
 use nucleus_hosts::{HostError, INBOX_THREAD, InboxTarget, TitleTarget};
 use nucleus_store::{DispatchMode, StoredTitle, TaskRow, TitleReceipt};
+use tokio::time::Instant;
 
 use crate::{Service, ServiceError, State, WaitDetail, now_ms, pass::DispatchTarget, presentation};
 
 const T3_TITLE_LIMIT: usize = 200;
+const TITLE_STABILITY: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TitleTiming {
+    Immediate,
+    Stable,
+}
+
+pub(super) struct TitleCandidate {
+    task_id: Option<String>,
+    text: String,
+    pub(super) ready: Instant,
+}
+
+impl State {
+    fn title_ready(
+        &mut self,
+        thread: &str,
+        task_id: Option<&str>,
+        text: &str,
+        timing: TitleTiming,
+        desired: Option<&str>,
+    ) -> bool {
+        if desired == Some(text) {
+            self.title_candidates.remove(thread);
+            return false;
+        }
+        if timing == TitleTiming::Immediate {
+            return true;
+        }
+        let now = Instant::now();
+        let candidate = self
+            .title_candidates
+            .entry(thread.to_owned())
+            .or_insert_with(|| TitleCandidate {
+                task_id: task_id.map(str::to_owned),
+                text: text.to_owned(),
+                ready: now + TITLE_STABILITY,
+            });
+        if candidate.text != text {
+            text.clone_into(&mut candidate.text);
+            candidate.ready = now + TITLE_STABILITY;
+        }
+        candidate.ready <= now
+    }
+}
 
 pub(super) fn child_title(task: &Task, number: Option<i64>, role: Role) -> String {
     let prefix = match (number, role) {
@@ -245,7 +292,21 @@ fn reconcile_stored_title(
 }
 
 impl Service {
-    pub(super) fn desire_title(&self, state: &State, task: &Task, number: Option<i64>) -> bool {
+    pub(super) fn desire_title(&self, state: &mut State, task: &Task, number: Option<i64>) -> bool {
+        self.desire_task_title(state, task, number, TitleTiming::Stable)
+    }
+
+    pub(super) fn desire_phase_title(&self, state: &mut State, task: &Task, number: Option<i64>) {
+        self.desire_task_title(state, task, number, TitleTiming::Immediate);
+    }
+
+    fn desire_task_title(
+        &self,
+        state: &mut State,
+        task: &Task,
+        number: Option<i64>,
+        timing: TitleTiming,
+    ) -> bool {
         if self.acp_provider().is_none() {
             return false;
         }
@@ -256,11 +317,7 @@ impl Service {
             id,
         );
         let thread = nucleus_hosts::parent_thread(&path);
-        let desired = self.row_label(state, task, &thread).and_then(|label| {
-            state
-                .store
-                .desire_title(id, &thread, &task_title(task, number, &label))
-        });
+        let desired = self.stage_task_title(state, task, number, &thread, timing);
         match desired {
             Ok(true) => {
                 self.title_wake.notify_one();
@@ -274,14 +331,49 @@ impl Service {
         }
     }
 
+    fn stage_task_title(
+        &self,
+        state: &mut State,
+        task: &Task,
+        number: Option<i64>,
+        thread: &str,
+        timing: TitleTiming,
+    ) -> Result<bool, nucleus_store::StoreError> {
+        let stored = state.store.title_state(thread)?;
+        let desired = stored.as_ref().map(|title| title.receipt.desired.as_str());
+        let (label, timing) = self.row_label(state, task, thread, timing)?;
+        let id = &task.identity().id;
+        let text = task_title(task, number, &label);
+        let timing = if desired.is_none() {
+            TitleTiming::Immediate
+        } else {
+            timing
+        };
+        let prior_deadline = state
+            .title_candidates
+            .get(thread)
+            .map(|candidate| candidate.ready);
+        if state.title_ready(thread, Some(id), &text, timing, desired) {
+            let changed = state.store.desire_title(id, thread, &text)?;
+            state.title_candidates.remove(thread);
+            return Ok(changed);
+        }
+        let deadline = state
+            .title_candidates
+            .get(thread)
+            .map(|candidate| candidate.ready);
+        Ok(deadline != prior_deadline)
+    }
+
     fn row_label(
         &self,
         state: &State,
         task: &Task,
         thread: &str,
-    ) -> Result<String, nucleus_store::StoreError> {
-        if task.phase().is_terminal() {
-            return Ok(phase_label(task).into());
+        timing: TitleTiming,
+    ) -> Result<(String, TitleTiming), nucleus_store::StoreError> {
+        if let Some(label) = task_label_from_facts(task) {
+            return Ok((label, TitleTiming::Immediate));
         }
         let id = &task.identity().id;
         let snooze = self
@@ -291,13 +383,25 @@ impl Service {
             .filter(|&until| until > self.visibility_now());
         let detail = state.wait_detail(id);
         let (activity, _, handover) = self.role_window(thread, task);
-        if snooze.is_none() && handover.is_some() {
-            return Ok("Waiting".into());
-        }
         let wait = state.effective_wait(task)?.filter(|wait| {
             *wait != WaitReason::Starting || activity != nucleus_hosts::RowChildren::Active
         });
-        Ok(task_state_label(task, wait, detail))
+        let person_needed = crate::attention::waiting_for_person(task, wait);
+        let timing = if person_needed
+            || matches!(
+                wait,
+                Some(WaitReason::HostObservationBlocked | WaitReason::AssignmentTooLarge)
+            ) {
+            TitleTiming::Immediate
+        } else {
+            timing
+        };
+        let label = if !person_needed && snooze.is_none() && handover.is_some() {
+            "Waiting".into()
+        } else {
+            task_state_label(task, wait, detail)
+        };
+        Ok((label, timing))
     }
 
     pub(super) async fn watch_titles(&self) {
@@ -305,14 +409,14 @@ impl Service {
             return;
         };
         {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
             match state.store.tasks_without_titles() {
                 Ok(rows) => {
                     for row in rows
                         .into_iter()
                         .filter(|row| self.task_scope(row.task.identity()).is_ok())
                     {
-                        self.desire_title(&state, &row.task, row.number);
+                        self.desire_title(&mut state, &row.task, row.number);
                     }
                 }
                 Err(error) => eprintln!("{error}"),
@@ -322,6 +426,7 @@ impl Service {
             self.host.wait_for_requests().await;
             let threads = self.host.title_threads(provider);
             let next = self.title_work(provider, &threads).await;
+            let checked_stability = next.is_ok();
             let wait = match next {
                 Ok(Some(receipt)) => {
                     let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
@@ -348,7 +453,17 @@ impl Service {
                     Some(Duration::from_secs(15))
                 }
             };
-            let wait = wait.into_iter().chain(row_wait).min();
+            let stability_wait = if checked_stability {
+                let state = self.state.lock().await;
+                threads
+                    .iter()
+                    .filter_map(|thread| state.title_candidates.get(thread))
+                    .map(|candidate| candidate.ready.saturating_duration_since(Instant::now()))
+                    .min()
+            } else {
+                None
+            };
+            let wait = wait.into_iter().chain(row_wait).chain(stability_wait).min();
             tokio::select! {
                 () = self.title_wake.notified() => {}
                 () = self.host.title_shell_changed() => {}
@@ -365,25 +480,42 @@ impl Service {
         provider: &str,
         threads: &[String],
     ) -> Result<Option<TitleReceipt>, ServiceError> {
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
         let mut earliest: Option<TitleReceipt> = None;
         for thread in threads {
             let candidate = if thread == INBOX_THREAD {
-                self.inbox_title_work(&state, provider)?
-            } else if let Some(stored) = state.store.title_state(thread)? {
-                let target = stored
-                    .receipt
-                    .task_id
-                    .as_deref()
-                    .and_then(|task_id| self.lookup(&state, task_id).ok())
-                    .and_then(|row| {
-                        self.task_title_target_with_state(&state, &row.task, provider, thread)
-                            .ok()
-                            .flatten()
-                    });
-                reconcile_stored_title(&state, target.as_ref(), stored)?
+                self.inbox_title_work(&mut state, provider)?
             } else {
-                None
+                if let Some(id) = state
+                    .title_candidates
+                    .get(thread)
+                    .filter(|candidate| candidate.ready <= Instant::now())
+                    .and_then(|candidate| candidate.task_id.clone())
+                {
+                    let row = self.lookup(&state, &id)?;
+                    self.stage_task_title(
+                        &mut state,
+                        &row.task,
+                        row.number,
+                        thread,
+                        TitleTiming::Stable,
+                    )?;
+                }
+                if let Some(stored) = state.store.title_state(thread)? {
+                    let target = stored
+                        .receipt
+                        .task_id
+                        .as_deref()
+                        .and_then(|task_id| self.lookup(&state, task_id).ok())
+                        .and_then(|row| {
+                            self.task_title_target_with_state(&state, &row.task, provider, thread)
+                                .ok()
+                                .flatten()
+                        });
+                    reconcile_stored_title(&state, target.as_ref(), stored)?
+                } else {
+                    None
+                }
             };
             if let Some(receipt) = candidate
                 && earliest
@@ -425,10 +557,11 @@ impl Service {
 
     fn inbox_title_work(
         &self,
-        state: &State,
+        state: &mut State,
         provider: &str,
     ) -> Result<Option<TitleReceipt>, ServiceError> {
         let Some(target) = self.inbox_title_target(provider) else {
+            state.title_candidates.remove(INBOX_THREAD);
             return Ok(None);
         };
         let decisions = crate::native_inbox::pending(state, self)?.len();
@@ -442,10 +575,25 @@ impl Service {
             .dispatch
             .as_ref()
             .map_or(DispatchMode::Running, |dispatch| dispatch.mode);
-        state
-            .store
-            .desire_inbox_title(INBOX_THREAD, &inbox_title(decisions, running, mode))?;
-        let Some(stored) = state.store.inbox_title_state(INBOX_THREAD)? else {
+        let text = inbox_title(decisions, running, mode);
+        let mut stored = state.store.inbox_title_state(INBOX_THREAD)?;
+        let desired = stored.as_ref().map(|title| title.receipt.desired.as_str());
+        let shown = target.current_title();
+        let timing = if decisions > 0
+            || shown == Some(text.as_str())
+            || desired.or(shown).is_some_and(|title| {
+                title.starts_with("Paused: ") != (mode != DispatchMode::Running)
+            }) {
+            TitleTiming::Immediate
+        } else {
+            TitleTiming::Stable
+        };
+        if state.title_ready(INBOX_THREAD, None, &text, timing, desired) {
+            state.store.desire_inbox_title(INBOX_THREAD, &text)?;
+            state.title_candidates.remove(INBOX_THREAD);
+            stored = state.store.inbox_title_state(INBOX_THREAD)?;
+        }
+        let Some(stored) = stored else {
             return Ok(None);
         };
         reconcile_stored_title(state, Some(&target), stored)
@@ -824,6 +972,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_transient_wait_does_not_replace_an_unpublished_phase() {
+        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        let mut task = task();
+        let id = task.identity().id.clone();
+        let thread = nucleus_hosts::parent_thread(&nucleus_work::checkout_path(
+            service.storage.work().path(),
+            &task.identity().repository,
+            &id,
+        ));
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.desire_title(&mut state, &task, None);
+        let row = state.store.row(&id).unwrap().unwrap();
+        let observation = nucleus_core::Observation {
+            host: nucleus_core::Observed::Unknown,
+            forge: nucleus_core::Observed::Known(nucleus_core::Forge::Absent),
+            workspace: nucleus_core::Observed::Known(nucleus_core::Workspace::Absent),
+        };
+        assert_eq!(
+            task.reconcile(&observation),
+            nucleus_core::Action::Advance(Phase::Working)
+        );
+        service
+            .commit(&mut state, &row, &task, &event("queue_admitted"), None)
+            .unwrap();
+        state.set_wait(&id, Some(WaitReason::Capacity));
+        service.desire_title(&mut state, &task, row.number);
+        assert!(
+            state
+                .store
+                .pending_title(&thread)
+                .unwrap()
+                .unwrap()
+                .desired
+                .starts_with("Working:")
+        );
+        assert!(state.title_candidates.contains_key(&thread));
+        state.set_wait(&id, Some(WaitReason::Input));
+        service.desire_title(&mut state, &task, row.number);
+        assert!(
+            state
+                .store
+                .pending_title(&thread)
+                .unwrap()
+                .unwrap()
+                .desired
+                .starts_with("Working · input:")
+        );
+        assert!(!state.title_candidates.contains_key(&thread));
+    }
+
+    async fn apply_stable_inbox_count(
+        service: &Service,
+        provider: &str,
+        root: &str,
+        inbox: &[String],
+    ) {
+        let threads = running_review_threads(service, provider).await;
+        for roles in [threads.as_slice(), &[], threads.as_slice()] {
+            service
+                .host
+                .fixture_project_shell(&inbox_shell(root, provider, "All quiet", roles), provider);
+            assert!(service.title_work(provider, inbox).await.unwrap().is_none());
+            assert_eq!(
+                service
+                    .state
+                    .lock()
+                    .await
+                    .title_candidates
+                    .contains_key(INBOX_THREAD),
+                !roles.is_empty()
+            );
+        }
+        service
+            .state
+            .lock()
+            .await
+            .title_candidates
+            .get_mut(INBOX_THREAD)
+            .unwrap()
+            .ready = Instant::now();
+        let receipt = service.title_work(provider, inbox).await.unwrap().unwrap();
+        assert_eq!(receipt.desired, "1 task running");
+        service.apply_title(provider, &receipt, 0).await.unwrap();
+        let still_pending = service.title_work(provider, inbox).await.unwrap().unwrap();
+        assert_eq!(still_pending.generation, receipt.generation);
+        assert!(still_pending.retry_at > 0);
+        service.host.fixture_project_shell(
+            &inbox_shell(root, provider, &receipt.desired, &threads),
+            provider,
+        );
+        assert!(service.title_work(provider, inbox).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
     #[expect(
         clippy::too_many_lines,
         reason = "keep the Inbox title generation sequence and shell readback in one fixture"
@@ -862,27 +1106,7 @@ mod tests {
         );
         assert!(requests.lock().unwrap().is_empty());
 
-        let threads = running_review_threads(&service, provider).await;
-        service
-            .host
-            .fixture_project_shell(&shell("All quiet", &threads), provider);
-        let running = service.title_work(provider, &inbox).await.unwrap().unwrap();
-        service.apply_title(provider, &running, 0).await.unwrap();
-        assert_eq!(running.desired, "1 task running");
-        // Without shell readback, generation 2 stays pending at the same generation.
-        let still_pending = service.title_work(provider, &inbox).await.unwrap().unwrap();
-        assert_eq!(still_pending.generation, running.generation);
-        assert!(still_pending.retry_at > 0);
-        service
-            .host
-            .fixture_project_shell(&shell("1 task running", &threads), provider);
-        assert!(
-            service
-                .title_work(provider, &inbox)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        apply_stable_inbox_count(&service, provider, &root, &inbox).await;
 
         let project = service.fixture().host_project.clone();
         let stamp = |actor, at_ms| WriteAt { actor, at_ms };
@@ -1042,7 +1266,7 @@ mod tests {
             let row = service
                 .lookup(&state, &subject.identity().id)
                 .expect("task");
-            service.desire_title(&state, &row.task, row.number);
+            service.desire_title(&mut state, &row.task, row.number);
             assert!(
                 state
                     .store
@@ -1100,9 +1324,9 @@ mod tests {
         assert_eq!(counts["orchestration.dispatchCommand"], 1);
         assert!(!counts.contains_key("orchestration.subscribeThread"));
         {
-            let state = service.state.lock().await;
+            let mut state = service.state.lock().await;
             let row = service.lookup(&state, id).unwrap();
-            service.desire_title(&state, &row.task, row.number);
+            service.desire_title(&mut state, &row.task, row.number);
         }
         assert!(
             service

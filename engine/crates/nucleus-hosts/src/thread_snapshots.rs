@@ -1,19 +1,40 @@
 //! Exact thread snapshots are reusable while their synchronized shell row holds.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use serde_json::{Value, json};
+use tokio::time::Instant;
 
 use crate::{RegisteredProject, rpc::closed_row, task_row::RowChildren};
 
 const MAX_SNAPSHOTS: usize = 64;
 const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
+const RUN_BACKSTOP: Duration = Duration::from_mins(2);
 
 #[derive(Clone, Copy)]
-pub(crate) enum ThreadRead {
+pub(crate) enum ThreadRead<'a> {
     Observation,
+    SentRun(&'a str),
     Exact,
     Inbox,
+}
+
+impl ThreadRead<'_> {
+    pub(crate) fn reason(self, shell: Option<&ThreadSnapshots>, id: &str) -> &'static str {
+        match self {
+            Self::Observation => "observation",
+            Self::SentRun(message)
+                if shell
+                    .and_then(|shell| shell.held.get(id))
+                    .is_some_and(|held| held.usable_for_run(message) && !held.fresh()) =>
+            {
+                "sentRunBackstop"
+            }
+            Self::SentRun(_) => "sentRunEvidence",
+            Self::Exact => "orderedEvidence",
+            Self::Inbox => "inboxEvidence",
+        }
+    }
 }
 
 pub(crate) struct ShellCustody<'a>(pub &'a Value);
@@ -104,6 +125,24 @@ pub(crate) struct ThreadSnapshots {
 struct Held {
     reply: Value,
     used_at: u64,
+    observed_at: Instant,
+    active: bool,
+    same_marker: bool,
+}
+
+impl Held {
+    fn fresh(&self) -> bool {
+        self.observed_at.elapsed() < RUN_BACKSTOP
+    }
+
+    fn usable_for_run(&self, message: &str) -> bool {
+        // Preserve the held observation of a quiet thread, for example when
+        // a queued send was fenced before it could reach T3.
+        (self.same_marker && !self.active)
+            || self.reply["projection"]["runs"]
+                .as_array()
+                .is_some_and(|runs| runs.iter().any(|run| run["userMessageId"] == message))
+    }
 }
 
 pub(crate) fn row_activity(row: &Value) -> RowChildren {
@@ -282,30 +321,46 @@ impl ThreadSnapshots {
         json!({"snapshot": {"threads": threads, "projects": projects}})
     }
 
-    pub(crate) fn get(&mut self, id: &str) -> Option<Value> {
+    pub(crate) fn get(
+        &mut self,
+        id: &str,
+        policy: ThreadRead<'_>,
+        requested_at: Instant,
+    ) -> Option<Value> {
         let held = self.held.get_mut(id)?;
+        // Admission serializes native calls. Readers already waiting can share
+        // the result even when it is too volatile for a later observation.
+        let fresh = held.fresh();
+        let overlapping = fresh && requested_at < held.observed_at;
+        let reusable = match policy {
+            ThreadRead::Exact => false,
+            ThreadRead::Inbox => held.same_marker || overlapping,
+            ThreadRead::Observation => (held.same_marker && !held.active) || overlapping,
+            ThreadRead::SentRun(message) => (fresh && held.usable_for_run(message)) || overlapping,
+        };
+        if !reusable {
+            return None;
+        }
         self.reads += 1;
         held.used_at = self.reads;
         Some(held.reply.clone())
     }
 
-    pub(crate) fn keep(&mut self, id: &str, marker: &Value, reply: &Value, policy: ThreadRead) {
-        // Shell rows can omit active turn items and the bodies of pending requests.
-        if !matches!(policy, ThreadRead::Inbox) && row_activity(marker) == RowChildren::Active {
-            return;
-        }
+    pub(crate) fn keep(&mut self, id: &str, marker: &Value, reply: &Value, ahead: bool) {
+        let same_marker = marker["updatedAt"].as_str().is_none_or(|updated| {
+            reply
+                .pointer("/projection/thread/updatedAt")
+                .and_then(Value::as_str)
+                == Some(updated)
+        });
         if reply
             .pointer("/projection/thread/id")
             .and_then(Value::as_str)
             != Some(id)
-            || marker["updatedAt"].as_str().is_some_and(|updated| {
-                reply
-                    .pointer("/projection/thread/updatedAt")
-                    .and_then(Value::as_str)
-                    != Some(updated)
-            })
+            || (!same_marker && !ahead)
             || reply.to_string().len() > MAX_SNAPSHOT_BYTES
         {
+            self.forget(id);
             return;
         }
         if self.held.len() == MAX_SNAPSHOTS
@@ -324,6 +379,9 @@ impl ThreadSnapshots {
             Held {
                 reply: reply.clone(),
                 used_at: self.reads,
+                observed_at: Instant::now(),
+                active: row_activity(marker) == RowChildren::Active,
+                same_marker,
             },
         );
     }

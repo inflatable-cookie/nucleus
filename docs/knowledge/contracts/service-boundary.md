@@ -152,3 +152,34 @@ write. Use typed state and push invalidations for the board. See the
 [scheduler pass](../../../engine/crates/nucleus-service/src/pass.rs),
 [T3 observations](../../../engine/crates/nucleus-hosts/src/thread_snapshots.rs)
 and [Spec 070 ruling 11](../specs/070-small-engine.md#rulings).
+
+The 45-second task check still evaluates due work. For a sent role, it reuses
+the bounded projection while the shell row holds when the projection names the
+assignment's exact native run or the held thread shows no activity. After two
+minutes, the next due check refreshes that evidence even if the shell missed a
+change. Shell changes, reconnects and
+native commands targeting the thread invalidate the held evidence. Observers
+already waiting for the same thread can use the completed read. Ordered reads
+still take fresh evidence for send, stop, archive and workspace custody.
+
+The T3 health response counts actual thread reads under `threadReadReasons`.
+`sentRunEvidence` covers cold, changed or unconfirmed role state.
+`sentRunBackstop` covers expired role evidence. `observation` covers retained
+roles, planner authority and parent decisions using the held shell.
+`orderedEvidence` covers exact reads for pending effects and safety fences.
+`inboxEvidence` covers Inbox reconciliation when its projection needs updating.
+
+Native task titles wait 30 seconds for a transient label to settle, including
+on snoozed rows. Phase changes and states needing a person publish immediately.
+During an unsnoozed handover, committed task labels and waits that need a
+person take precedence over `Waiting`.
+The Inbox uses the same interval for routine running counts and publishes
+pending decisions and dispatch pause changes immediately. A candidate that
+reverts to the current title is discarded. Visibility and scheduler decisions
+use current state throughout.
+
+Measure the change in maintenance-free ten-minute windows on signed builds
+after the provider-limit and review-publication releases. Record native thread
+reads by reason, accepted task and Inbox titles, and how many lasted under 60
+seconds. Record role sends, reports, launches and visibility writes alongside
+them so workload changes remain visible in the comparison.

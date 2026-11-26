@@ -483,6 +483,12 @@ impl T3 {
         self.rpc.traffic.totals()
     }
 
+    /// Counts native thread reads by the evidence the caller needed.
+    #[must_use]
+    pub fn thread_read_reasons(&self) -> HostCalls {
+        self.rpc.traffic.thread_reads()
+    }
+
     pub async fn wait_for_requests(&self) {
         while let Some(until) = self.request_retry_at() {
             tokio::time::sleep_until(until).await;
@@ -693,7 +699,7 @@ impl T3 {
         &self,
         binding: &Binding,
         id: &str,
-        policy: ThreadRead,
+        policy: ThreadRead<'_>,
     ) -> Result<Option<Projection>, HostError> {
         Ok(self.observe_thread(binding, id, policy).await?.0)
     }
@@ -702,7 +708,7 @@ impl T3 {
         &self,
         binding: &Binding,
         id: &str,
-        policy: ThreadRead,
+        policy: ThreadRead<'_>,
     ) -> Result<(Option<Projection>, rpc::ThreadFence), HostError> {
         self.observe_thread_with(binding, id, policy, || {}).await
     }
@@ -711,7 +717,7 @@ impl T3 {
         &self,
         binding: &Binding,
         id: &str,
-        policy: ThreadRead,
+        policy: ThreadRead<'_>,
         before_read: impl FnOnce() + Send,
     ) -> Result<(Option<Projection>, rpc::ThreadFence), HostError> {
         let rpc::ThreadObservation { reply, fence } = self
@@ -738,7 +744,7 @@ impl T3 {
         &self,
         run: &Run,
         wire: &Wire,
-        policy: ThreadRead,
+        policy: ThreadRead<'_>,
     ) -> Result<(Option<Projection>, RunState), HostError> {
         let launch = run.launch();
         let thread = self
@@ -1037,10 +1043,13 @@ impl TaskHost for T3Pass<'_> {
         if run.last_send_at_ms().is_none() && wire.assignment_too_large() {
             return Ok(assignment_rejected(run));
         }
-        let (thread, state) = self
-            .host
-            .delivery(run, &wire, ThreadRead::Observation)
-            .await?;
+        let message = wire.message_id(&run.launch().instance);
+        let policy = if run.last_send_at_ms().is_some() {
+            ThreadRead::SentRun(&message)
+        } else {
+            ThreadRead::Observation
+        };
+        let (thread, state) = self.host.delivery(run, &wire, policy).await?;
         if thread.is_none() && self.closed_delegation(run, &wire).await? {
             return Ok(RunObservation {
                 host: current(run, RunState::ParentEnded),
@@ -1071,7 +1080,6 @@ impl TaskHost for T3Pass<'_> {
             }
             _ => false,
         };
-        let message = wire.message_id(&run.launch().instance);
         if !background_pending
             && state == RunState::Ended
             && thread

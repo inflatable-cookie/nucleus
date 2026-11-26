@@ -256,7 +256,7 @@ impl Service {
 
     fn row_plan(
         &self,
-        state: &State,
+        state: &mut State,
         row: &TaskRow,
         thread: &str,
         visibility: RowVisibility,
@@ -299,14 +299,14 @@ impl Service {
             return Ok(None);
         };
         let (row, prior, plan, ended, deadline) = {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
             let row = self.lookup(&state, id)?;
             if row.task.phase().is_terminal() {
                 return Ok(None);
             }
             let prior = state.store.row_snooze(id, thread)?;
             let (plan, ended, handover) =
-                self.row_plan(&state, &row, thread, visibility, prior.clone())?;
+                self.row_plan(&mut state, &row, thread, visibility, prior.clone())?;
             (row, prior, plan, ended, handover)
         };
         if let Plan::Idle(next) = plan {

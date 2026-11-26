@@ -611,7 +611,7 @@ impl Rpc {
     pub(crate) async fn thread(
         &self,
         id: &str,
-        policy: ThreadRead,
+        policy: ThreadRead<'_>,
     ) -> Result<ThreadReply, HostError> {
         Ok(self.observe_thread(id, policy).await?.reply)
     }
@@ -619,7 +619,7 @@ impl Rpc {
     pub(crate) async fn observe_thread(
         &self,
         id: &str,
-        policy: ThreadRead,
+        policy: ThreadRead<'_>,
     ) -> Result<ThreadObservation, HostError> {
         self.observe_thread_with(id, policy, || {}).await
     }
@@ -627,14 +627,15 @@ impl Rpc {
     pub(crate) async fn observe_thread_with(
         &self,
         id: &str,
-        policy: ThreadRead,
+        policy: ThreadRead<'_>,
         before_read: impl FnOnce() + Send,
     ) -> Result<ThreadObservation, HostError> {
+        let requested_at = time::Instant::now();
         let _admission = self
             .admission
             .enter(matches!(policy, ThreadRead::Exact))
             .await?;
-        let before = {
+        let (before, reason) = {
             let mut snapshots = self.snapshots.lock().expect("thread snapshots");
             let fence = self.fence_at(id, snapshots.as_ref());
             if let Some(shell) = snapshots.as_mut() {
@@ -645,16 +646,14 @@ impl Rpc {
                     };
                     return Ok(ThreadObservation { reply, fence });
                 }
-                if !matches!(policy, ThreadRead::Exact)
-                    && let Some(reply) = shell.get(id)
-                {
+                if let Some(reply) = shell.get(id, policy, requested_at) {
                     return Ok(ThreadObservation {
                         reply: ThreadReply::Snapshot(reply),
                         fence,
                     });
                 }
             }
-            fence
+            (fence, policy.reason(snapshots.as_ref(), id))
         };
         self.check_thread_read(before.row.as_deref(), policy)?;
         let reply = Box::pin(self.call_locked(
@@ -666,6 +665,7 @@ impl Rpc {
             || {
                 self.check_thread_read(self.thread_row(id).as_deref(), policy)?;
                 before_read();
+                self.traffic.record_thread_read(reason);
                 Ok(true)
             },
         ))
@@ -680,23 +680,28 @@ impl Rpc {
                     .pointer("/projection/thread/updatedAt")
                     .and_then(Value::as_str);
                 let expected = row.and_then(|row| row["updatedAt"].as_str());
+                let times = updated
+                    .and_then(parse_native_time)
+                    .zip(expected.and_then(parse_native_time));
                 if (!same_marker && (expected.is_none() || updated != expected))
-                    || matches!((updated.and_then(parse_native_time), expected.and_then(parse_native_time)),
-                        (Some(updated), Some(expected)) if updated < expected)
+                    || times.is_some_and(|(updated, expected)| updated < expected)
                 {
                     return Err(HostError::Uncertain);
                 }
                 if let Some(marker) = &fence.row
                     && let Some(shell) = snapshots.as_mut()
                 {
-                    shell.keep(id, marker, &value, policy);
+                    let ahead = times.is_some_and(|(updated, expected)| updated > expected);
+                    shell.keep(id, marker, &value, ahead);
                 }
                 ThreadReply::Snapshot(value)
             }
             Reply::Failure(cause) if crate::projection::missing_thread(&cause, id) => {
                 if !same_marker || row.is_some() {
                     return Err(
-                        if matches!(policy, ThreadRead::Observation) && row.is_some() {
+                        if matches!(policy, ThreadRead::Observation | ThreadRead::SentRun(_))
+                            && row.is_some()
+                        {
                             HostError::HeldThreadMissing {
                                 revision: snapshots.as_ref().and_then(ThreadSnapshots::revision),
                             }
@@ -718,7 +723,11 @@ impl Rpc {
         Ok(ThreadObservation { reply, fence })
     }
 
-    fn check_thread_read(&self, row: Option<&Value>, policy: ThreadRead) -> Result<(), HostError> {
+    fn check_thread_read(
+        &self,
+        row: Option<&Value>,
+        policy: ThreadRead<'_>,
+    ) -> Result<(), HostError> {
         if row.is_some_and(closed_row)
             || (row.is_none() && self.uses_held_shell() && matches!(policy, ThreadRead::Inbox))
         {
