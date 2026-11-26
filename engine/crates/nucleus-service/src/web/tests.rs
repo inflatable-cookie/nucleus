@@ -3130,6 +3130,117 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     assert_browser_lanes(&api, &operator, &mut events).await;
 }
 
+// The browser exercises the same paired routes, stored task and command guard as
+// the native assertions; the child exits before the fixture server is stopped.
+#[tokio::test]
+async fn mounted_task_detail_uses_the_paired_stored_task() {
+    let (home, mut service) = fixture(GitHub::new("unused-forge-fixture").unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    service.callback = address;
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
+    std::fs::write(assets.join("app.js"), "").unwrap();
+    let api = router_with_board(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+        &assets,
+    )
+    .unwrap();
+    let request = |method, path: &str, credential: &str, body: Body| {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(HOST, address.to_string())
+            .header(ORIGIN, format!("http://{address}"))
+            .header("x-nucleus-board", "1")
+            .header(AUTHORIZATION, format!("Bearer {credential}"))
+            .header("content-type", "application/json")
+            .body(body)
+            .unwrap()
+    };
+    let link = json_body(
+        api.clone()
+            .oneshot(request(
+                Method::POST,
+                "/v1/board/link",
+                &hex::encode(BOARD_KEY),
+                Body::from("{}"),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let token = link["url"]
+        .as_str()
+        .unwrap()
+        .split("#token=")
+        .nth(1)
+        .unwrap();
+    let pair = api
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            "/api/engine/pair",
+            token,
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(pair.status(), StatusCode::NO_CONTENT);
+    let cookie = pair.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let admission = json!({"id":"board-task", "reference":"D1", "brief":"---\nqueue:\n  complexity: low\n---\n# Standalone task"});
+    let response = api
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/engine/tasks")
+                .header(HOST, address.to_string())
+                .header(ORIGIN, format!("http://{address}"))
+                .header("x-nucleus-board", "1")
+                .header("content-type", "application/json")
+                .header("cookie", &cookie)
+                .body(Body::from(admission.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let server = tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let mut child = tokio::process::Command::new("node");
+    child
+        .current_dir(root)
+        .arg("test/support/mounted-rust-task.mjs")
+        .env("BOARD_FIXTURE_ORIGIN", format!("http://{address}"))
+        .env("BOARD_FIXTURE_COOKIE", cookie)
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(90), child.output()).await;
+    server.abort();
+    let output = output
+        .expect("mounted board timed out")
+        .expect("run mounted board fixture");
+    assert!(
+        output.status.success(),
+        "mounted board failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[tokio::test]
 async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     let forge = || GitHub::new("unused-fixture-forge").unwrap();
