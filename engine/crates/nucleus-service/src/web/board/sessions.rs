@@ -28,14 +28,15 @@ pub(super) struct Session {
     pub authority: Authority,
     pub scope: ControllerScope,
     pub expires_at: u64,
+    // Written by every authenticated use. Files from before it existed read 0,
+    // and the renewal time bounds last use for them.
+    #[serde(default)]
+    pub last_used_at: u64,
 }
 
 pub(super) struct SessionStore {
     directory: StorageDirectory,
     entries: BTreeMap<String, Session>,
-    // The last successful use this process saw. A stored expiry records only the
-    // last renewal, which can trail real use by up to REFRESH_MS.
-    used: BTreeMap<String, u64>,
 }
 
 impl SessionStore {
@@ -68,18 +69,13 @@ impl SessionStore {
             Err(rustix::io::Errno::NOENT) => BTreeMap::new(),
             Err(error) => return Err(error.into()),
         };
-        let mut store = Self {
-            directory,
-            entries,
-            used: BTreeMap::new(),
-        };
+        let mut store = Self { directory, entries };
         store.prune(now);
         Ok(store)
     }
 
     fn prune(&mut self, now: u64) {
         self.entries.retain(|_, session| session.expires_at > now);
-        self.used.retain(|key, _| self.entries.contains_key(key));
     }
 
     /// Store a new session, reclaiming capacity first when `limit` is reached.
@@ -97,7 +93,7 @@ impl SessionStore {
         let mut entries = self.entries.clone();
         let mut evicted = 0;
         while entries.len() >= limit {
-            let Some(oldest) = self.least_recently_used(&entries) else {
+            let Some(oldest) = least_recently_used(&entries) else {
                 break;
             };
             entries.remove(&oldest);
@@ -109,23 +105,13 @@ impl SessionStore {
                 authority,
                 scope,
                 expires_at: now + IDLE_MS,
+                last_used_at: now,
             },
         );
-        self.commit(entries)?;
+        self.commit(entries, true)?;
         Ok(evicted)
     }
 
-    fn least_recently_used(&self, entries: &BTreeMap<String, Session>) -> Option<String> {
-        entries
-            .iter()
-            .min_by_key(|(key, session)| self.last_use(key, session))
-            .map(|(key, _)| key.clone())
-    }
-
-    fn last_use(&self, key: &str, session: &Session) -> u64 {
-        let renewed = session.expires_at.saturating_sub(IDLE_MS);
-        self.used.get(key).copied().unwrap_or(0).max(renewed)
-    }
 
     pub fn authenticate(
         &mut self,
@@ -141,43 +127,64 @@ impl SessionStore {
         else {
             return Ok(None);
         };
-        self.used.insert(key.clone(), now);
         let refresh = session.expires_at <= now + IDLE_MS - REFRESH_MS;
         if refresh {
             self.prune(now);
-            let mut entries = self.entries.clone();
             session.expires_at = now + IDLE_MS;
-            entries.insert(key, session.clone());
-            self.commit(entries)?;
         }
+        session.last_used_at = now;
+        let mut entries = self.entries.clone();
+        entries.insert(key, session.clone());
+        // Every use is written so eviction order survives a restart. Only renewals
+        // wait for the disk to sync; a crash can lose the order of the last few uses.
+        self.commit(entries, refresh)?;
         Ok(Some((session, refresh)))
     }
 
     pub fn revoke(&mut self, now: u64) -> io::Result<usize> {
         self.prune(now);
         let revoked = self.entries.len();
-        self.commit(BTreeMap::new())?;
+        self.commit(BTreeMap::new(), true)?;
         Ok(revoked)
     }
 
-    fn commit(&mut self, entries: BTreeMap<String, Session>) -> io::Result<()> {
+    fn commit(&mut self, entries: BTreeMap<String, Session>, sync: bool) -> io::Result<()> {
         self.directory.verify().map_err(io::Error::other)?;
         let root = self.directory.path();
         let directory = File::open(root)?;
         let mut stage = tempfile::NamedTempFile::new_in(root)?;
         serde_json::to_writer(&mut stage, &entries)?;
-        stage.as_file().sync_all()?;
+        if sync {
+            stage.as_file().sync_all()?;
+        }
         stage
             .persist(root.join(FILE))
             .map_err(|error| error.error)?;
-        self.used.retain(|key, _| entries.contains_key(key));
         self.entries = entries;
-        directory.sync_all()
+        if sync {
+            directory.sync_all()?;
+        }
+        Ok(())
     }
 }
 
 fn digest(key: &[u8; 32]) -> String {
     hex::encode(Sha256::digest(key))
+}
+
+/// Last use is the recorded use. The renewal time bounds it for files written
+/// before uses were recorded.
+fn last_use(session: &Session) -> u64 {
+    session
+        .last_used_at
+        .max(session.expires_at.saturating_sub(IDLE_MS))
+}
+
+fn least_recently_used(entries: &BTreeMap<String, Session>) -> Option<String> {
+    entries
+        .iter()
+        .min_by_key(|(_, session)| last_use(session))
+        .map(|(key, _)| key.clone())
 }
 
 #[test]
@@ -233,8 +240,7 @@ fn a_full_store_reclaims_the_least_recently_used_session_for_a_new_pairing() {
     for n in 1..=64_u8 {
         assert_eq!(pair(&mut store, n, u64::from(n)).unwrap(), 0);
     }
-    // Device 1 was paired first but used most recently. Its renewal is still
-    // recent, so the stored expiry does not record this use.
+    // Device 1 was paired first but used most recently, inside the same renewal window.
     assert!(store.authenticate(&key(1), 1_000).unwrap().is_some());
     assert_eq!(pair(&mut store, 65, 2_000).unwrap(), 1);
     assert!(store.authenticate(&key(1), 2_001).unwrap().is_some());
@@ -279,4 +285,46 @@ fn a_full_store_of_stale_sessions_accepts_a_new_pairing_without_eviction() {
         .unwrap();
     assert_eq!(evicted, 0);
     assert_eq!(store.entries.len(), 1);
+}
+
+#[test]
+fn eviction_order_survives_a_restart() {
+    const CAPACITY: usize = 64;
+    let home = tempfile::tempdir().unwrap();
+    let settings = nucleus_store::SettingsFile::open(&home.path().canonicalize().unwrap()).unwrap();
+    let storage = settings.configured_storage().unwrap();
+    let directory = storage.database();
+    directory.ensure().unwrap();
+    let mut store = SessionStore::open(directory.clone(), 0).unwrap();
+    let key = |n: u8| [n; 32];
+    for n in 1..=64_u8 {
+        store
+            .insert(
+                &key(n),
+                Authority::Operator {
+                    actor: "operator".into(),
+                },
+                ControllerScope::default(),
+                u64::from(n),
+                CAPACITY,
+            )
+            .unwrap();
+    }
+    // Device 1 was paired first but used most recently. The restart must keep that.
+    assert!(store.authenticate(&key(1), 1_000).unwrap().is_some());
+    let mut store = SessionStore::open(directory.clone(), 1_500).unwrap();
+    let evicted = store
+        .insert(
+            &key(65),
+            Authority::Operator {
+                actor: "operator".into(),
+            },
+            ControllerScope::default(),
+            2_000,
+            CAPACITY,
+        )
+        .unwrap();
+    assert_eq!(evicted, 1);
+    assert!(store.authenticate(&key(1), 2_001).unwrap().is_some());
+    assert!(store.authenticate(&key(2), 2_001).unwrap().is_none());
 }
