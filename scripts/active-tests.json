@@ -69,7 +69,6 @@
   "test/t3-project-badge-web.test.ts",
   "test/task-attention.test.ts",
   "test/task-control-schema.test.ts",
-  "test/task-detail-layout.test.ts",
   "test/task-detail-redesign.test.ts",
   "test/task-detail-summary.test.ts",
   "test/task-events.test.ts",

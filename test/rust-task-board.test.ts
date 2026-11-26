@@ -199,6 +199,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   }[] = [];
   const streams = new Set<ServerResponse>();
   let activity = "Editing the fixture";
+  let historyPurpose = "Checking round 1";
   let moveReadiness: "pending" | "ready" = "pending";
   let authorityCold = false;
   let briefVersion = 3;
@@ -364,7 +365,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
               kind: "run_started",
               instance: "finished",
               role: "reviewer",
-              purpose: "Checking round 1",
+              purpose: historyPurpose,
               reviewHead: head,
             },
             {
@@ -473,6 +474,11 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   await eventually(() => text().includes(activity), "initial activity");
   const detail = dom.window.document.querySelector('[aria-label="Task detail"]');
   assert.ok(detail);
+  const tabs = detail.querySelector('[role="tablist"][aria-label="Task detail sections"]');
+  assert.ok(tabs);
+  assert.deepEqual(Array.from(tabs.querySelectorAll('[role="tab"]'), tab => tab.getAttribute("aria-label")),
+    ["Overview", "Activity", "Details"]);
+  assert.ok(detail.querySelector('[aria-label="Amend"]'));
   assert.ok(detail.querySelector('[aria-label="Step Working: current · 13m 51s"]'));
   assert.match(text(), /fixture-worker-model/);
   assert.match(text(), /fixture-review-model/);
@@ -519,6 +525,17 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     "paged history is visible",
   );
   assert.doesNotMatch(text(), /run ticket material/);
+  historyPurpose = "Checking the refreshed patch";
+  invalidate();
+  await eventually(() => text().includes(historyPurpose), "activity refreshes while its tab remains open");
+  assert.ok(!text().includes(activity), "refresh does not return to Overview");
+  await click("Details");
+  assert.match(text(), /Fixture brief/);
+  briefText = "Refreshed fixture brief";
+  invalidate();
+  await eventually(() => text().includes(briefText), "details refresh while selected");
+  assert.ok(!text().includes(activity));
+  await click("Activity");
   const beforeReconnect = {
     list: reads("/api/engine/tasks"),
     detail: reads("/api/engine/tasks/running"),
@@ -1694,7 +1711,6 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.equal(style(name).color, activeName);
   project.blur();
   project.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, shiftKey: true }));
-  const selected = "rgba(245, 245, 245, 0.1)";
   await eventually(() => style(frame).backgroundColor === selected, "the checked row uses a stronger tint");
   assert.equal(style(name).color, activeName);
   assert.ok(selector("Working, 1"), "the selected project owns its mixed-case repository's working task");
