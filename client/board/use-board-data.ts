@@ -132,6 +132,10 @@ export function useRecordQueries({
 }
 export type RecordQueries = ReturnType<typeof useRecordQueries>;
 
+function needsAttention(task: RustTask): boolean {
+  return task.attention === "attention";
+}
+
 /**
  * The Planning tab's reads: the projects it lists, the open lane, its document
  * and task page, and the lane's leads.
@@ -168,7 +172,7 @@ export function usePlanningData({
         if (!project || !projectHasRepository(project, origin, origin)) continue;
         if (task.phase !== "done" && task.phase !== "cancelled") {
           counts.live++;
-          if (task.attention === "attention") counts.attention++;
+          if (needsAttention(task)) counts.attention++;
         }
         for (const key of task.lanes ?? []) {
           const rows = byLane.get(key);
@@ -196,7 +200,7 @@ export function usePlanningData({
           }
         }
         recentOutcomes.sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? ""));
-        const view = { ...lane, liveByPhase, terminalCount: recentOutcomes.length, recentOutcomes };
+        const view = { ...lane, liveByPhase, attentionCount: live.filter(needsAttention).length, terminalCount: recentOutcomes.length, recentOutcomes };
         if (rustTasks) members.set(view, live);
         return view;
       });

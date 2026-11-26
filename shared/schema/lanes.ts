@@ -61,6 +61,7 @@ export const laneOutcomeSummarySchema = z.object({
 export const laneViewSchema = laneSchema.extend({
   project: z.string().min(1).optional(),
   liveByPhase: z.record(z.string(), z.number()),
+  attentionCount: z.number().int().nonnegative().optional(),
   liveByRepository: z.record(z.string(), z.number()),
   terminalCount: z.number().int().nonnegative(),
   lastActivityAt: z.string().nullable(),
