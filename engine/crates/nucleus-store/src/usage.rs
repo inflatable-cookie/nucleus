@@ -30,21 +30,76 @@ CREATE TABLE IF NOT EXISTS provider_pauses (
   until_ms INTEGER NOT NULL CHECK (until_ms > 0)
 ) STRICT";
 
-pub(super) fn record_pause(
-    connection: &Connection,
-    group: &str,
-    until_ms: u64,
-    now_ms: u64,
-) -> rusqlite::Result<()> {
-    if until_ms > now_ms {
-        connection.execute(
-            "INSERT INTO provider_pauses (group_id, until_ms) VALUES (?1, ?2)
-             ON CONFLICT (group_id) DO UPDATE SET until_ms = excluded.until_ms
-             WHERE excluded.until_ms > provider_pauses.until_ms",
-            params![group, sql_millis(until_ms)?],
-        )?;
+/// A subscription deadline and whether it estimates an unknown provider reset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SubscriptionPause {
+    pub until_ms: u64,
+    pub fallback: bool,
+}
+
+impl super::Store {
+    /// Record the stronger evidence or a later deadline of the same kind.
+    ///
+    /// # Errors
+    /// Returns a database error if the deadline could not be recorded.
+    pub fn set_subscription_pause(
+        &self,
+        group: &str,
+        pause: SubscriptionPause,
+        now: u64,
+    ) -> Result<bool, super::StoreError> {
+        if pause.until_ms <= now {
+            return Ok(false);
+        }
+        let until = sql_millis(pause.until_ms)?;
+        Ok(self.connection.execute(
+            "INSERT INTO provider_pauses (group_id,until_ms,fallback_until_ms) VALUES (?1,?2,?3)
+             ON CONFLICT(group_id) DO UPDATE SET until_ms=excluded.until_ms, fallback_until_ms=excluded.fallback_until_ms
+             WHERE until_ms <= ?4 OR CASE WHEN fallback_until_ms IS until_ms
+                 THEN excluded.fallback_until_ms IS NULL OR excluded.until_ms > until_ms
+                 ELSE excluded.fallback_until_ms IS NULL AND excluded.until_ms > until_ms END",
+            params![group,until,pause.fallback.then_some(until),sql_millis(now)?],
+        )? > 0)
     }
-    Ok(())
+
+    /// Read the effective pause, including the provenance of its exact deadline.
+    ///
+    /// # Errors
+    /// Returns a database error if the deadline cannot be read.
+    pub fn subscription_pause(
+        &self,
+        group: &str,
+        now: u64,
+    ) -> Result<Option<SubscriptionPause>, super::StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT until_ms, fallback_until_ms IS until_ms FROM provider_pauses WHERE group_id=?1 AND until_ms>?2",
+            params![group,sql_millis(now)?], |row| Ok(SubscriptionPause { until_ms:read_millis(row,0)?,fallback:row.get(1)? })
+        ).optional()?)
+    }
+
+    /// Groups currently waiting for an estimated reset.
+    ///
+    /// # Errors
+    /// Returns a database error if the groups cannot be read.
+    pub fn fallback_pause_groups(&self, now: u64) -> Result<Vec<String>, super::StoreError> {
+        Ok(self.connection.prepare("SELECT group_id FROM provider_pauses WHERE fallback_until_ms=until_ms AND until_ms>?1 ORDER BY group_id")?
+            .query_map([sql_millis(now)?], |row| row.get(0))?.collect::<Result<_,_>>()?)
+    }
+
+    /// Release only the estimated deadline that the operator saw.
+    ///
+    /// # Errors
+    /// Returns a database error if the deadline cannot be cleared.
+    pub fn clear_fallback_pause(
+        &self,
+        group: &str,
+        expected: u64,
+    ) -> Result<bool, super::StoreError> {
+        Ok(self.connection.execute(
+            "DELETE FROM provider_pauses WHERE group_id=?1 AND until_ms=?2 AND fallback_until_ms=?2",
+            params![group,sql_millis(expected)?],
+        )? > 0)
+    }
 }
 
 pub(super) fn active_pauses(
