@@ -356,8 +356,35 @@ impl Fixture {
                 .deliver_parent(row, write, None, refresh)
                 .await
                 .unwrap_err();
-            assert!(matches!(error, ServiceError::ParentNotSent { .. }));
-            assert!(error.to_string().contains("operator snooze is active"));
+            let until = self
+                .service
+                .host
+                .row_visibility_hint(&self.thread)
+                .unwrap()
+                .snoozed_until_ms
+                .unwrap();
+            assert!(
+                matches!(&error, ServiceError::OperatorSnoozed { thread, until: observed } if thread == &self.thread && *observed == until)
+            );
+            self.service
+                .schedule_result(row, &Err(error), Priority::Effect)
+                .await
+                .unwrap();
+            let remaining = self
+                .service
+                .state
+                .lock()
+                .await
+                .schedule
+                .due(ID)
+                .unwrap()
+                .saturating_duration_since(tokio::time::Instant::now());
+            assert!(
+                remaining
+                    .as_millis()
+                    .abs_diff(u128::from(until.saturating_sub(now_ms())))
+                    < 1000
+            );
         }
         let history = self.service.history(ID, None, 100).await.unwrap();
         assert!(history.iter().all(|event| !matches!(

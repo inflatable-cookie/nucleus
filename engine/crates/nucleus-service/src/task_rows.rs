@@ -454,15 +454,7 @@ impl Service {
         if let Some(until) = shown
             && owned.is_none()
         {
-            let retry = tokio::time::Instant::now()
-                + Duration::from_millis(until.saturating_sub(now_ms()).min(45_000));
-            return Err(ServiceError::ParentNotSent {
-                reason: format!(
-                    "operator snooze is active (horizon {until}, revision {})",
-                    observed.sequence
-                ),
-                retry_at: self.host.request_retry_at().max(Some(retry)),
-            });
+            return Err(ServiceError::OperatorSnoozed { thread, until });
         }
         Ok(())
     }
