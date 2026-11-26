@@ -266,6 +266,15 @@ export function RustTaskDialog({
                         onPress={() => toggle("amend")}
                       />
                     )}
+                    {commands && offered("recheck") && (
+                      <Button
+                        c={c}
+                        small
+                        text="Recheck"
+                        disabled={busy || section === "amend"}
+                        onPress={() => run({ recheck: commands.version })}
+                      />
+                    )}
                     {offered("hold") && (
                       <Button
                         c={c}

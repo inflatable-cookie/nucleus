@@ -62,7 +62,8 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   `set-dependencies` before dispatch or `set-prerequisite-wait` after dispatch.
   See the [prerequisite commands](https://github.com/inflatable-cookie/nucleus/blob/main/docs/knowledge/specs/070-small-engine.md#commands)
   for references and how to clear a wait. `move`, `answer`, `cancel`, `amend`,
-  `hold` and `release` act on the task. The task's planner answers its work and
+  `hold` and `release` act on the task. After a repair, use `recheck REF --version N`
+  when Next offers it. The task's planner answers its work and
   retry questions and approves allowance extensions by default, including
   beyond twice the original allowance. The planner uses `complete` to accept
   the exact report version and lane artifact. The operator owns review-entry
