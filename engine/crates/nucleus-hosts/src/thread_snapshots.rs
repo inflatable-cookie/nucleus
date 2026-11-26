@@ -42,13 +42,12 @@ impl<'a> ShellCustody<'a> {
             )
     }
 
-    pub(crate) fn activity(&self) -> RowChildren {
+    pub(crate) fn turn_activity(&self) -> RowChildren {
         let row = self.0;
-        if self.has_active_turn() || self.background() == Some(true) {
+        if self.has_active_turn() {
             RowChildren::Active
         } else if row.get("activeRunId").is_some_and(Value::is_null)
             && row.get("pendingRuntimeRequest").is_some_and(Value::is_null)
-            && self.background() == Some(false)
             && matches!(
                 row["status"].as_str(),
                 Some("idle" | "completed" | "failed" | "interrupted" | "cancelled")
@@ -57,6 +56,14 @@ impl<'a> ShellCustody<'a> {
             RowChildren::Quiet
         } else {
             RowChildren::Unknown
+        }
+    }
+
+    pub(crate) fn activity(&self) -> RowChildren {
+        match (self.turn_activity(), self.background()) {
+            (RowChildren::Active, _) | (_, Some(true)) => RowChildren::Active,
+            (RowChildren::Quiet, Some(false)) => RowChildren::Quiet,
+            _ => RowChildren::Unknown,
         }
     }
 

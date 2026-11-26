@@ -119,8 +119,9 @@ nucleus move 'repo#42' work --instruction 'Rerun the incomplete slice and update
 
 A report-only task starts no reviewer and no blocker escalation. On the Rust engine, task detail shows the
 delivered artifact and offers Complete and Return to work. Completion takes
-the exact delivered version even if the lane has since advanced. The engine
-archives the workspace after custody and Git publication checks pass.
+the exact delivered version even if the lane has since advanced. The synchronized
+T3 shell must show the bound worker idle with no running turn or outstanding input.
+Checkout retirement checks writers and Git publication separately.
 
 ## Legacy history and upgrades
 
