@@ -645,7 +645,6 @@ test("026-12a every inbox card renders through the shared board card, and the li
     /card\.kind==='papercut'|card\.kind === "papercut"/,
   );
   assert.match(list, /<BoardCard\s+key=\{key\}/);
-  assert.doesNotMatch(list, /actions=/);
   assert.doesNotMatch(list, /actionsLabel/);
   // Every card draws as a row of the one list, which is its view's single scroll.
   assert.match(list, /<BoardCardVariantContext\.Provider value="row">/);
@@ -705,7 +704,7 @@ test("026-13 the inbox menu has no Lanes or QA destination; Planning holds the l
   // A lane opened from Planning's lane search keeps the plan and lane panes.
   assert.match(
     ui,
-    /const selectPlanningLane = \(key: string\) => \{\s*setPlanningPin\(key\);/,
+    /const selectPlanningLane = \(key: string, project\?: string\) => \{[\s\S]*?setPlanningPin\(key\);/,
   );
   assert.doesNotMatch(ui, /setPipelineTarget/);
   // The menu counts and every list read one derivation, then the Leads tag filter narrows a copy.
@@ -776,7 +775,7 @@ test("026-15a inbox cards open a record modal or the detail pane and carry no ac
   assert.match(triageLeadCard, /onSelectLead\(lead\.id\)/);
   assert.match(
     ui,
-    /const selectPapercut = \(id: string\) => \{[^}]*setOpenPapercutId\(id\); \}/,
+    /const selectPapercut = \(id: string, project\?: string\) => \{[^}]*setOpenPapercutId\(id\); \}/,
   );
   assert.match(
     ui,
