@@ -13,6 +13,7 @@ use crate::{
     schedule::Priority,
     tests::{NativeTraffic, REPOSITORY, fixture, native_fixture_with_traffic, serve_forge},
 };
+use nucleus_store::DispatchSettings;
 
 const IDS: [&str; 3] = ["overlap-a", "overlap-b", "overlap-c"];
 const RESET_MS: u64 = 4_070_908_800_000;
@@ -112,17 +113,35 @@ async fn worker_launches_exclude_disabled_wrong_role_and_unavailable_profiles() 
 }
 
 #[test]
-fn an_unusable_reset_uses_the_configured_cooldown_from_failure() {
+fn an_unknown_reset_pauses_for_a_day_from_the_failure() {
     let mut limit = ProviderLimit {
         instance: "fixture".into(),
         ended_at_ms: 1_000_000,
         reset_at_ms: Some(1_015_000),
     };
-    assert_eq!(limit_deadline(&limit, 50), 1_015_000);
+    assert_eq!(
+        limit_pause(&limit),
+        SubscriptionPause {
+            until_ms: 1_015_000,
+            fallback: false
+        }
+    );
     limit.reset_at_ms = None;
-    assert_eq!(limit_deadline(&limit, 50), 1_050_000);
+    assert_eq!(
+        limit_pause(&limit),
+        SubscriptionPause {
+            until_ms: 87_400_000,
+            fallback: true
+        }
+    );
     limit.reset_at_ms = Some(999_999);
-    assert_eq!(limit_deadline(&limit, 50), 1_050_000);
+    assert_eq!(
+        limit_pause(&limit),
+        SubscriptionPause {
+            until_ms: 87_400_000,
+            fallback: true
+        }
+    );
 }
 
 #[derive(Default)]
@@ -149,7 +168,7 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
             "providers":[
                 {"instanceId":"codex","enabled":true,"status":"ready",
                  "usageLimits":{"windows":[{"id":"monthly","kind":"monthly","label":"Monthly",
-                    "usedPercent":100,"resetsAt":"2099-01-01T00:00:00Z"}]},
+                    "usedPercent":100,"modelIds":["first","second"],"resetsAt":"2099-01-01T00:00:00Z"}]},
                  "models":[{"slug":"first"},{"slug":"second","capabilities":{
                     "optionDescriptors":[{"id":"serviceTier","type":"select",
                                           "options":[{"id":"default"},{"id":"priority"}]}]
