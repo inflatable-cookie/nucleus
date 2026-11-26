@@ -1226,13 +1226,27 @@ test("the board reads, edits, and closes the selected project's lane when keys c
     document: `# ${name} document`,
     status: "open",
   });
-  const lanes = { Orbit_Main: lane("Orbit"), lantern: lane("Lantern") };
+  const lanes = { Orbit_Main: lane("Orbit"), lantern: lane("Lantern"), meadow: lane("Meadow") };
   const fake = engine(lanes);
   fake.setSession({
     id: "scoped-planner-session", canEditSettings: false,
-    planningProjects: ["Orbit_Main", "lantern"],
+    planningProjects: ["Orbit_Main", "lantern", "meadow"],
   });
-  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const adapter = createRustAdapter(createRustApi(async (url, init) => {
+    const response = await fake.fetcher(url, init);
+    const path = String(url);
+    if (path.endsWith("/settings")) {
+      const settings = await response.json();
+      settings.projects.settings.value.projects.meadow = { name: "Meadow", repositories: [], archived: false };
+      return Response.json(settings);
+    }
+    const owner = /\/planning\/(\w+)\/items$/.exec(path)?.[1];
+    if (owner && response.ok) return Response.json([{
+      id: "shared", author: "planner", kind: "lead", title: owner + " idea", body: "Work to plan",
+      state: "open", lanes: ["Delivery_Q4"], createdAtMs: 10,
+    }]);
+    return response;
+  }));
   const logStart = fake.reads.length;
   const missing = { key: "Delivery_Q4" };
   await assert.rejects(adapter.rpc(api.laneDocumentGet, missing as never), /project/);
@@ -1287,6 +1301,11 @@ test("the board reads, edits, and closes the selected project's lane when keys c
 
   ui.press(/^Planning(?:,|$)/);
   await visible("Project row Orbit");
+  ui.press("Project row Meadow");
+  await visible("Open lane Meadow delivery");
+  ui.press("Open lane Meadow delivery");
+  await visible("Open lead meadow idea");
+  assert.equal(ui.query("Open lead lantern idea"), undefined);
   ui.press("Project row Orbit");
   await visible("Open lane Orbit delivery");
   ui.press("Open lane Orbit delivery");
@@ -1307,6 +1326,8 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   ]);
 
   await visible("lantern#2, Lantern work");
+  await visible("Open lead lantern idea");
+  assert.equal(ui.query("Open lead meadow idea"), undefined);
   await visible("Live tasks: 1");
   assert.equal(ui.query("orbit#1, Orbit work"), undefined);
   assert.doesNotMatch(ui.text(), /Different lane|Finished work|Couldn’t load work/);
