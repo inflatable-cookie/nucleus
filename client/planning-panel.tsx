@@ -10,7 +10,6 @@ import {
 import type {
   LaneView,
   LeadListFacts,
-  PlanningTriage,
   Project,
   ProjectPlan,
   TaskSummary,
@@ -74,7 +73,6 @@ import {
   projectStatusParts,
 } from "../shared/planning-read";
 import type { ProjectBadge } from "../shared/t3/project-badge";
-import { ProjectTriage } from "./planning-triage";
 import {
   Breadcrumb,
   GroupHeader,
@@ -89,7 +87,6 @@ export type PlanSection = {
   project: Project;
   latest?: ProjectPlan;
   saved?: ProjectPlan;
-  triage?: PlanningTriage;
   error?: string;
 };
 /** A draft: the order, horizons and idle change the operator is making, and the version it was based on. See `PlanDraft`. */
@@ -836,14 +833,7 @@ function PlanEditor({
           )}
         </>
       )}
-      {section.triage && (
-        <ProjectTriage
-          project={name}
-          triage={section.triage}
-          onOpenTask={onOpenTask}
-          c={c}
-        />
-      )}
+
       {confirmLane && onCloseLane && (
         <MarkDoneConfirm
           c={c}
