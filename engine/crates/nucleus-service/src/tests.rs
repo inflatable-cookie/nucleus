@@ -1596,16 +1596,21 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         .await
         .unwrap();
     let released = pass(&service).await;
-    assert_eq!(released[0].task, oldest);
+    // The settled holder can receive a closeout turn in the same pass.
+    let admission = released
+        .iter()
+        .find(|outcome| outcome.task != "winner")
+        .expect("released capacity reaches an admission decision");
+    assert_eq!(admission.task, oldest);
     let advance = async |service: &Service| {
         let row = service.task(oldest).await.unwrap();
         Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await
     };
     if lose_launch_reply {
         assert!(
-            matches!(released[0].result, Ok(Action::Launch { .. })),
+            matches!(admission.result, Ok(Action::Launch { .. })),
             "{:?}",
-            released[0].result
+            admission.result
         );
         assert_eq!(launches.lock().unwrap().len(), 1);
         assert!(holds.lock().unwrap().is_empty());
