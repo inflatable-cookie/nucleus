@@ -151,6 +151,222 @@ test("Rust task detail keeps Answer available alongside unknown command names", 
   await assert.rejects(transport.next(id, signal), /invalid response/);
 });
 
+test("Rust task detail schema accepts full transcripts, per-step times, and pre-1601 nulls", async () => {
+  const fullId = "full-cycle";
+  const legacyId = "pre-1601";
+  const baseTask = task(fullId, "done");
+  const fullDetail = {
+    ...baseTask,
+    lifecycle: {
+      ...baseTask.lifecycle,
+      finishedAtMs: 43_000,
+      steps: [
+        {
+          ...baseTask.lifecycle.steps[0]!,
+          state: "done",
+          tone: "success",
+          enteredAtMs: 1_000,
+          leftAtMs: 2_000,
+          visits: [{ enteredAtMs: 1_000, leftAtMs: 2_000 }],
+        },
+        {
+          ...baseTask.lifecycle.steps[1]!,
+          state: "done",
+          tone: "success",
+          enteredAtMs: 21_000,
+          leftAtMs: 31_000,
+          visits: [
+            { enteredAtMs: 2_000, leftAtMs: 11_000 },
+            { enteredAtMs: 21_000, leftAtMs: 31_000 },
+          ],
+        },
+        {
+          ...baseTask.lifecycle.steps[2]!,
+          state: "done",
+          tone: "success",
+          enteredAtMs: 31_000,
+          leftAtMs: 41_000,
+          visits: [
+            { enteredAtMs: 11_000, leftAtMs: 21_000 },
+            { enteredAtMs: 31_000, leftAtMs: 41_000 },
+          ],
+        },
+        {
+          ...baseTask.lifecycle.steps[3]!,
+          state: "done",
+          tone: "success",
+          enteredAtMs: 41_000,
+          leftAtMs: 42_000,
+          visits: [{ enteredAtMs: 41_000, leftAtMs: 42_000 }],
+        },
+        {
+          ...baseTask.lifecycle.steps[4]!,
+          state: "done",
+          tone: "success",
+          enteredAtMs: 42_000,
+          leftAtMs: 43_000,
+          visits: [{ enteredAtMs: 42_000, leftAtMs: 43_000 }],
+        },
+      ],
+      transcript: {
+        completedReviews: 2,
+        merged: true,
+        question: null,
+        questionUrl: null,
+        questionOwner: null,
+        externalAcceptances: [],
+        cards: [
+          {
+            instance: "task-full-cycle-run-1",
+            role: "worker",
+            round: 1,
+            purpose: "Full cycle",
+            threadUrl: "t3-thread://v1/thread-w1",
+            provider: "claude",
+            providerInstance: "claude-fixture",
+            model: "claude-model-1",
+            modelObserved: true,
+            startedAtMs: 3_000,
+            endedAtMs: 11_000,
+            elapsedMs: 7_000,
+            ended: true,
+            outcome: {
+              kind: "work",
+              url: "https://github.com/example/repo/pull/1",
+              summary: "Initial work",
+              revision: false,
+            },
+            activity: null,
+          },
+          {
+            instance: "task-full-cycle-run-2",
+            role: "reviewer",
+            round: 1,
+            purpose: "Checking round 1",
+            threadUrl: "t3-thread://v1/thread-r1",
+            provider: "codex",
+            providerInstance: "codex-fixture",
+            model: "codex-model-1",
+            modelObserved: true,
+            startedAtMs: 12_000,
+            endedAtMs: 21_000,
+            elapsedMs: 8_000,
+            ended: true,
+            outcome: {
+              kind: "review",
+              decision: "changes",
+              summary: "Fix edge case",
+              finding_titles: ["Missing null guard"],
+              change_url: "https://github.com/example/repo/pull/1/commits/" + head,
+            },
+            activity: null,
+          },
+          {
+            instance: "task-full-cycle-run-3",
+            role: "worker",
+            round: 2,
+            purpose: "Full cycle",
+            threadUrl: "t3-thread://v1/thread-w1",
+            provider: "claude",
+            model: "claude-model-2",
+            startedAtMs: 22_000,
+            endedAtMs: 25_000,
+            elapsedMs: null,
+            ended: true,
+            outcome: {
+              kind: "provider_limit",
+              group: "shared",
+              reset_at_ms: 90_000,
+              cause: "Usage limit",
+            },
+            activity: null,
+          },
+          {
+            instance: "task-full-cycle-run-4",
+            role: "worker",
+            round: 2,
+            purpose: "Full cycle",
+            threadUrl: "t3-thread://v1/thread-w1",
+            provider: "claude",
+            model: "claude-model-2",
+            startedAtMs: 26_000,
+            endedAtMs: 29_000,
+            elapsedMs: 2_000,
+            ended: true,
+            outcome: {
+              kind: "question",
+              question: {
+                work: { prompt: "Which option?", options: ["A", "B"] },
+              },
+            },
+            activity: null,
+          },
+        ],
+      },
+    },
+    createdAtMs: 1_000,
+    brief: { text: "Fixture brief", version: 1 },
+    pullRequest: { url: "https://github.com/example/repo/pull/1", head },
+    verdict: {
+      reviewed: { head, decision: "approve", summary: "Looks solid" },
+    },
+    run: null,
+  };
+  const legacyDetail = {
+    ...task(legacyId, "done"),
+    lifecycle: {
+      ...baseTask.lifecycle,
+      finishedAtMs: 10_000,
+      steps: baseTask.lifecycle.steps.map((step, index) => ({
+        ...step,
+        state: "done",
+        tone: "success",
+        enteredAtMs: index === 0 ? 1_000 : null,
+        leftAtMs: index === 4 ? 10_000 : null,
+        visits: index === 0 ? [{ enteredAtMs: 1_000, leftAtMs: null }] : index === 4 ? [{ enteredAtMs: null, leftAtMs: 10_000 }] : [],
+      })),
+      transcript: {
+        completedReviews: 0,
+        merged: true,
+        question: null,
+        questionUrl: null,
+        questionOwner: null,
+        externalAcceptances: [],
+        cards: [],
+      },
+    },
+    createdAtMs: 1_000,
+    brief: { text: "Legacy brief", version: 1 },
+    pullRequest: null,
+    verdict: null,
+    run: null,
+  };
+  const responses = new Map<string, unknown>([
+    [`/api/engine/tasks/${fullId}`, fullDetail],
+    [`/api/engine/tasks/${legacyId}`, legacyDetail],
+  ]);
+  const transport = createRustBoardTransport(async (url) =>
+    Response.json(responses.get(String(url))),
+  );
+  const { signal } = new AbortController();
+  const parsedFull = await transport.detail(fullId, signal);
+  assert.equal(parsedFull.lifecycle.steps[1]?.enteredAtMs, 21_000);
+  assert.equal(parsedFull.lifecycle.steps[1]?.leftAtMs, 31_000);
+  assert.equal(parsedFull.lifecycle.steps[1]?.visits?.length, 2);
+  assert.equal(parsedFull.lifecycle.transcript?.cards.length, 4);
+  assert.equal(parsedFull.lifecycle.transcript?.cards[1]?.round, 1);
+  assert.equal(
+    parsedFull.lifecycle.transcript?.cards[2]?.outcome?.kind,
+    "provider_limit",
+  );
+
+  const parsedLegacy = await transport.detail(legacyId, signal);
+  assert.equal(parsedLegacy.lifecycle.steps[0]?.enteredAtMs, 1_000);
+  assert.equal(parsedLegacy.lifecycle.steps[0]?.leftAtMs, null);
+  assert.equal(parsedLegacy.lifecycle.steps[1]?.enteredAtMs, null);
+  assert.equal(parsedLegacy.lifecycle.steps[4]?.leftAtMs, 10_000);
+});
+
 async function eventually(
   check: () => boolean,
   message: string,

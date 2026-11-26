@@ -67,6 +67,60 @@ const participant = z.object({
   providerInstance: z.string().optional(),
   model: z.string().nullable(),
 });
+const stepVisit = z.object({
+  enteredAtMs: timestamp.nullable(),
+  leftAtMs: timestamp.nullable(),
+});
+const transcriptOutcome = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("work"),
+    url: z.string(),
+    summary: z.string().nullish(),
+    revision: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("review"),
+    decision: z.enum(["approve", "changes"]),
+    summary: z.string(),
+    finding_titles: z.array(z.string()),
+    change_url: z.string().nullish(),
+  }),
+  z.object({ kind: z.literal("report"), summary: z.string() }),
+  z.object({ kind: z.literal("blocked"), reason: z.string() }),
+  z.object({ kind: z.literal("question"), question }),
+  z.object({
+    kind: z.literal("provider_limit"),
+    group: z.string().nullish(),
+    reset_at_ms: timestamp.nullish(),
+    cause: z.string().nullish(),
+  }),
+]);
+const transcriptCard = z.object({
+  instance: z.string(),
+  role,
+  round: revision.nullish(),
+  purpose: z.string(),
+  threadUrl: z.string().nullable(),
+  provider: z.string().nullable(),
+  providerInstance: z.string().nullish(),
+  model: z.string().nullable(),
+  modelObserved: z.boolean().optional(),
+  startedAtMs: timestamp.nullable(),
+  endedAtMs: timestamp.nullish(),
+  elapsedMs: revision.nullable(),
+  ended: z.boolean(),
+  outcome: transcriptOutcome.nullable(),
+  activity: z.string().nullable(),
+});
+const transcript = z.object({
+  cards: z.array(transcriptCard),
+  completedReviews: revision,
+  merged: z.boolean(),
+  question: question.nullable(),
+  questionUrl: z.string().nullable(),
+  questionOwner: z.string().nullable(),
+  externalAcceptances: z.array(z.tuple([timestamp, z.string()])),
+});
 const lifecycle = z.object({
   steps: z.array(z.object({
     key: z.enum(["queued", "working", "review", "merge", "close", "report_ready", "done"]),
@@ -77,12 +131,16 @@ const lifecycle = z.object({
     roundLabel: z.string().nullable(),
     elapsedMs: revision.nullable(),
     activeSinceMs: timestamp.nullable(),
+    enteredAtMs: timestamp.nullish(),
+    leftAtMs: timestamp.nullish(),
+    visits: z.array(stepVisit).optional(),
   })),
   admittedAtMs: timestamp.nullable(),
   finishedAtMs: timestamp.nullable(),
   reviewRound: revision.nullable(),
   worker: participant.nullable(),
   reviewer: participant.nullable(),
+  transcript: transcript.nullish(),
 });
 const summary = current.extend({
   lanes: z.array(z.string()).optional(),
@@ -288,6 +346,10 @@ export type RustNext = z.infer<typeof next>;
 export type RustVerdict = z.infer<typeof verdict>;
 export type RustHistoryPage = z.infer<typeof history>;
 export type RustRunOutcome = z.infer<typeof runOutcome>;
+export type RustStepVisit = z.infer<typeof stepVisit>;
+export type RustTranscript = z.infer<typeof transcript>;
+export type RustTranscriptCard = z.infer<typeof transcriptCard>;
+export type RustTranscriptOutcome = z.infer<typeof transcriptOutcome>;
 export type RustCommand =
   | { move: RustPhase }
   | { move_work: { instruction: string } }

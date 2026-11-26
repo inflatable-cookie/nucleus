@@ -28,6 +28,13 @@ pub struct Participant {
     pub model: Option<String>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepVisit {
+    pub entered_at_ms: Option<u64>,
+    pub left_at_ms: Option<u64>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Step {
@@ -39,6 +46,12 @@ pub struct Step {
     pub round_label: Option<String>,
     pub elapsed_ms: Option<u64>,
     pub active_since_ms: Option<u64>,
+    #[serde(default)]
+    pub entered_at_ms: Option<u64>,
+    #[serde(default)]
+    pub left_at_ms: Option<u64>,
+    #[serde(default)]
+    pub visits: Vec<StepVisit>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +181,11 @@ pub enum Outcome {
     Question {
         question: Question,
     },
+    ProviderLimit {
+        group: Option<String>,
+        reset_at_ms: Option<u64>,
+        cause: Option<String>,
+    },
 }
 
 /// Role facts from the same audit as the lifecycle steps.
@@ -188,6 +206,8 @@ pub struct Transcript {
 pub struct RoleCard {
     pub instance: String,
     pub role: Role,
+    #[serde(default)]
+    pub round: Option<u64>,
     pub purpose: String,
     pub thread_url: Option<String>,
     pub provider: Option<Provider>,
@@ -198,6 +218,8 @@ pub struct RoleCard {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub model_observed: bool,
     pub started_at_ms: Option<u64>,
+    #[serde(default)]
+    pub ended_at_ms: Option<u64>,
     pub elapsed_ms: Option<u64>,
     pub ended: bool,
     pub outcome: Option<Outcome>,
