@@ -792,7 +792,6 @@ impl T3Pass<'_> {
         thread: &Projection,
         message: &str,
         routing: Option<&RunRouting>,
-        group: Option<&str>,
     ) -> Option<ProviderLimit> {
         let mut limit = thread.provider_limit(message)?;
         if let Some(routing) = routing
@@ -803,7 +802,7 @@ impl T3Pass<'_> {
             limit.reset_at_ms = self
                 .host
                 .cached_profile_catalog()
-                .and_then(|catalog| catalog.exhausted_reset(routing, group, limit.ended_at_ms));
+                .and_then(|catalog| catalog.exhausted_reset(routing, limit.ended_at_ms));
         }
         Some(limit)
     }
@@ -1043,14 +1042,7 @@ impl TaskHost for T3Pass<'_> {
         let provider_limit = thread
             .as_ref()
             .filter(|_| state == RunState::Ended)
-            .and_then(|thread| {
-                self.terminal_limit(
-                    thread,
-                    &message,
-                    routing.as_ref(),
-                    run.launch().subscription_group(),
-                )
-            });
+            .and_then(|thread| self.terminal_limit(thread, &message, routing.as_ref()));
         let state = if background_pending {
             RunState::Running
         } else if provider_limit.is_some() {
