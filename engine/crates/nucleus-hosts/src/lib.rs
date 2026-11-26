@@ -461,6 +461,12 @@ impl T3 {
         })
     }
 
+    #[cfg(feature = "loopback-fixture")]
+    #[doc(hidden)]
+    pub fn fixture_disconnect_shell(&self) {
+        self.rpc.clear_shell();
+    }
+
     /// Start serving shell reads from the service's sole live subscription.
     pub fn use_held_shell(&self) {
         self.rpc.use_held_shell();

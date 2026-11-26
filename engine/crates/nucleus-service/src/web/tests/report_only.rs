@@ -390,15 +390,9 @@ async fn report_only_ticket_revision_and_historical_owner_acceptance() {
         StatusCode::CONFLICT
     );
     fixture.open_pr.store(false, Ordering::Relaxed);
-    let mut worker = json!({"id":WORKER,"projectId":PROJECT,"worktreePath":fixture.checkout,
-        "branch":format!("ns-{TASK}"),"status":"completed","latestRunId":"native-run",
-        "activeRunId":null,"pendingRuntimeRequest":{"kind":"permission"}});
-    let observe = |row: &Value| {
-        fixture.service.host.fixture_held_shell(&json!({
-            "kind":"snapshot","snapshot":{"projects":[],"threads":[row],"snapshotSequence":9}
-        }));
-    };
-    observe(&worker);
+    let mut worker = fixture.idle_worker();
+    worker["pendingRuntimeRequest"] = json!({"kind":"permission"});
+    fixture.observe_worker(&worker);
     assert_eq!(
         fixture
             .command(complete(ready.version, amended_artifact))
@@ -409,7 +403,7 @@ async fn report_only_ticket_revision_and_historical_owner_acceptance() {
     worker["pendingRuntimeRequest"] = Value::Null;
     let mut unknown = worker.clone();
     unknown.as_object_mut().unwrap().remove("activeRunId");
-    observe(&unknown);
+    fixture.observe_worker(&unknown);
     let refused = fixture
         .command(complete(ready.version, amended_artifact))
         .await;
@@ -421,7 +415,7 @@ async fn report_only_ticket_revision_and_historical_owner_acceptance() {
             .contains("turn or input state is unknown")
     );
     // The idle worker has no pendingBackgroundTasks field.
-    observe(&worker);
+    fixture.observe_worker(&worker);
     let accept = complete(ready.version, amended_artifact);
     let done = fixture.command(accept.clone()).await;
     assert_eq!(done.status(), StatusCode::OK);
@@ -456,12 +450,15 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
         StatusCode::NO_CONTENT
     );
     let ready = fixture.settle(&turn).await;
+    fixture.observe_worker(&fixture.idle_worker());
     let response = fixture
         .command(
             json!({"complete":{"version":ready.version,"artifact":artifact,"reason":"accepted"}}),
         )
         .await;
     assert_eq!(response.status(), StatusCode::OK);
+    // A disconnect after acceptance must leave the physical checkout in place.
+    fixture.service.host.fixture_disconnect_shell();
     let done = fixture.service.task(TASK).await.expect("done");
     std::fs::write(fixture.checkout.join("dirty"), "work").expect("untracked");
     assert!(fixture.service.archive_done(&done).await.is_err());
@@ -751,6 +748,18 @@ struct ReportFixture {
 }
 
 impl ReportFixture {
+    fn idle_worker(&self) -> Value {
+        json!({"id":WORKER,"projectId":PROJECT,"worktreePath":self.checkout,
+            "branch":format!("ns-{TASK}"),"status":"completed","latestRunId":"native-run",
+            "activeRunId":null,"pendingRuntimeRequest":null})
+    }
+
+    fn observe_worker(&self, row: &Value) {
+        self.service.host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{"projects":[],"threads":[row],"snapshotSequence":9}
+        }));
+    }
+
     async fn new() -> Self {
         let (home, mut service) = fixture(GitHub::new("fixture").expect("forge"));
         let head = service.fixture().start.clone();
