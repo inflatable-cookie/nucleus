@@ -267,23 +267,19 @@ fn select_profile(
             error @ (ProfileLaunchError::NoEligibleProfile { .. }
             | ProfileLaunchError::RequiredProfileUnavailable { .. }),
         ) => {
-            // A required profile waits for its own group; only an automatic
-            // bracket with nothing eligible steps up.
             if matches!(error, ProfileLaunchError::NoEligibleProfile { .. })
                 && let Some(intent) = step_up(&candidates, &choose)
             {
                 intent
             } else {
-                let pauses: Vec<_> = offers.iter().map(|(_, _, _, _, _, pause)| *pause).collect();
-                if let Some(pause) =
-                    earliest_eligible_pause(&mut candidates, &pauses, |candidates| {
-                        choose(candidates, 0)
-                    })
-                {
-                    state.group_waits.insert(task.identity().id.clone(), pause);
-                    return Ok(LaunchSelection::Paused);
-                }
-                return Err(error.into());
+                let pauses: Vec<_> = offers.iter().map(|(.., pause)| *pause).collect();
+                let ordinary = |candidates: &[Candidate<'_>]| choose(candidates, 0);
+                let Some(pause) = earliest_eligible_pause(&mut candidates, &pauses, ordinary)
+                else {
+                    return Err(error.into());
+                };
+                state.group_waits.insert(task.identity().id.clone(), pause);
+                return Ok(LaunchSelection::Paused);
             }
         }
         Err(error) => return Err(error.into()),
