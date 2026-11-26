@@ -2020,17 +2020,30 @@ impl Service {
     ) -> Result<(), ServiceError> {
         let scratch = self.storage.scratch().path();
         let run_scratch = self.existing_run_scratch(task);
-        let mut roots = std::iter::once(checkout.path().to_owned())
+        let roots = std::iter::once(checkout.path().to_owned())
             .chain(run_scratch)
             .chain(self.earlier_scratch_roots(task));
-        let (root, mut targets) = loop {
-            let Some(root) = roots.next() else {
-                return Ok(());
-            };
-            let targets = host.terminal_orphans(&root, scratch).await?;
-            if !targets.is_empty() {
-                break (root, targets);
+        let mut retained = Vec::new();
+        let mut found = None;
+        for root in roots {
+            let scan = host.terminal_orphans(&root, scratch).await?;
+            retained.extend(scan.retained);
+            if found.is_none() && !scan.targets.is_empty() {
+                found = Some((root, scan.targets));
             }
+        }
+        // A shared service keeps its cwd in the checkout and holds retirement by PID.
+        // Identical evidence on a later pass does not add a second record.
+        if !retained.is_empty() {
+            let mut state = self.state.lock().await;
+            let mut record = event("checkout_process_retained");
+            record.detail = serde_json::json!({"processes":retained}).to_string();
+            state
+                .store
+                .claim_task_effect(&task.identity().id, &record, false)?;
+        }
+        let Some((root, mut targets)) = found else {
+            return Ok(());
         };
         let parent = nucleus_hosts::parent_thread(checkout.path());
         let roles: Vec<_> = [
@@ -2679,10 +2692,17 @@ mod tests {
         let orphan_dir = scratch.as_deref().unwrap_or(base);
         let mut host_child = spawn(orphan_dir);
         let mut outside = spawn(home.path());
+        // The orphan runs a script from its root directory, so its argv names the task's own code.
         // The launching shell exits. One child handles TERM and the orphan root and second child ignore it.
-        let script = r#"/bin/sh -c '/bin/sleep 60 >/dev/null 2>&1 & soft=$!; trap "" TERM; /bin/sleep 60 >/dev/null 2>&1 & echo "$$ $! $soft"; exec >/dev/null 2>&1; wait' </dev/null &"#;
+        let orphan = orphan_dir.join("orphan.sh");
+        std::fs::write(
+            &orphan,
+            r#"/bin/sleep 60 >/dev/null 2>&1 & soft=$!; trap "" TERM; /bin/sleep 60 >/dev/null 2>&1 & echo "$$ $! $soft"; exec >/dev/null 2>&1; wait"#,
+        )
+        .unwrap();
+        let script = format!("/bin/sh '{}' </dev/null &", orphan.display());
         let output = tokio::process::Command::new("/bin/sh")
-            .args(["-c", script])
+            .args(["-c", &script])
             .current_dir(orphan_dir)
             .output()
             .await
@@ -2737,6 +2757,99 @@ mod tests {
         assert!(outside.try_wait().unwrap().is_none());
         host_child.kill().await.unwrap();
         outside.kill().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_external_orphan_in_the_checkout_is_retained_and_holds_retirement() {
+        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.host = crate::tests::verified_native_fixture(
+            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
+            home.path(),
+        );
+        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
+        service.fixture_mut().acp_provider = Some("fixture".into());
+        service.state.lock().await.settings.dispatch =
+            Some(nucleus_store::DispatchSettings::default());
+        let terminal = cancelled_cleanup_task(&service).await;
+        let id = &terminal.task.identity().id;
+        let work = service.worktrees().unwrap();
+        let checkout = work
+            .checkout(&service.fixture().checkout, REPOSITORY, id)
+            .unwrap();
+        checkout.allocate(&service.fixture().start).unwrap();
+        // The checkout stays clean at its recorded head, so archive reaches the writer hold.
+        let base = checkout.path();
+        // The launching shell exits, so sleep is orphaned. Its argv names no checkout path.
+        let output = tokio::process::Command::new("/bin/sh")
+            .args(["-c", "/bin/sleep 60 >/dev/null 2>&1 & echo $!"])
+            .current_dir(base)
+            .output()
+            .await
+            .unwrap();
+        let pid: u32 = std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // The closeout sequence: stop the checkout's orphans, then retire only if idle.
+        let route = service.project_for(terminal.task.identity()).await.unwrap();
+        let binding = service
+            .checkout_binding(terminal.task.identity(), &route, &checkout)
+            .unwrap();
+        let head = service.fixture().start.clone();
+        let host = service
+            .host
+            .pass(service.storage.scratch().path())
+            .for_task(&terminal.task, service.existing_run_scratch(&terminal.task));
+        let stopped = service
+            .stop_checkout_orphans(&host, &terminal.task, &checkout)
+            .await;
+        let outcome = service
+            .retire_if_idle(&host, &terminal.task, &binding, &checkout, Some(&head))
+            .await;
+        let alive = tokio::process::Command::new("/bin/ps")
+            .args(["-p", &pid.to_string(), "-o", "stat="])
+            .output()
+            .await
+            .unwrap();
+        let history = service.history(id, None, 25).await.unwrap();
+        tokio::process::Command::new("/bin/kill")
+            .arg(pid.to_string())
+            .status()
+            .await
+            .unwrap();
+        assert!(stopped.is_ok(), "{stopped:?}");
+        assert!(
+            matches!(&outcome, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
+            "{outcome:?}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&alive.stdout).trim().is_empty(),
+            "the external service must keep running"
+        );
+        let retained = history
+            .iter()
+            .filter(|e| e.content.kind == "checkout_process_retained")
+            .any(|e| {
+                let detail: serde_json::Value = serde_json::from_str(&e.content.detail).unwrap();
+                detail["processes"].as_array().unwrap().iter().any(|entry| {
+                    entry["pid"].as_u64() == Some(u64::from(pid))
+                        && entry["command"]
+                            .as_str()
+                            .is_some_and(|name| !name.is_empty())
+                })
+            });
+        assert!(
+            retained,
+            "the retained process must be recorded with its PID"
+        );
+        assert!(
+            !history
+                .iter()
+                .any(|e| e.content.kind == "checkout_process_result"),
+            "no signal may be sent to a retained service"
+        );
+        assert!(base.exists());
     }
 
     #[tokio::test]

@@ -1,0 +1,1 @@
+- Terminal cleanup stops an orphaned process tree only when it runs the task's own code. A shared service that merely started in a checkout, such as a container VM host, is left running and recorded in task history with its PID, and it keeps the checkout held until the operator restarts it.

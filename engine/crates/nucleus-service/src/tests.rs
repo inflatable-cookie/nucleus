@@ -426,7 +426,7 @@ impl TaskHost for Due {
         &self,
         _: &Path,
         _: &Path,
-    ) -> Result<Vec<nucleus_hosts::OrphanProcess>, HostError> {
+    ) -> Result<nucleus_hosts::OrphanScan, HostError> {
         unreachable!()
     }
 
