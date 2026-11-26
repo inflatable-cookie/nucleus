@@ -231,9 +231,13 @@ verify idle participants in the held shell, Dispatch, the Git registration and
 published head. Each pass shares one census of the local user’s working
 directories. A PID in the checkout or run scratch holds removal and appears in
 the wait detail. At terminal closeout, Nucleus stops a process tree rooted in the checkout
-or the task’s recorded run scratch and orphaned to PID 1 and records the signal outcomes in task history. Host
-processes and their descendants stay protected. An incomplete census keeps
-the checkout.
+or the task’s recorded run scratch, orphaned to PID 1, when one of its processes
+runs the task’s own code: its executable or an absolute argument names a path
+inside that checkout or scratch. It records the signal outcomes in task history.
+A tree that only inherited the cwd is a shared service. Nucleus leaves it running,
+records its PIDs and commands in task history, and keeps the checkout held by
+PID until the operator restarts it. Host processes and their descendants stay
+protected. An incomplete census keeps the checkout.
 For a retained Done code checkout, read the merged PR again and match its
 head to the task’s recorded head. An unavailable read leaves the checkout in
 place. The task and project fences span removal. Clean worktrees and checkouts

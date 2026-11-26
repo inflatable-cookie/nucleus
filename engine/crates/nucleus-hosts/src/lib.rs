@@ -60,7 +60,7 @@ pub fn thread_link(thread: &str) -> Option<String> {
 
 use process::Inventory;
 pub use process::ProcessEvidenceFailure;
-pub use process::orphans::{OrphanProcess, verify_orphans};
+pub use process::orphans::{OrphanProcess, OrphanScan, verify_orphans};
 pub use projection::RunActivity;
 use projection::{MissingReceipt, Projection};
 pub use provider_setup::{
@@ -329,14 +329,15 @@ pub trait TaskHost: Send + Sync {
         root: &Path,
     ) -> impl Future<Output = Result<Option<u32>, HostError>> + Send;
 
-    /// Identify checkout-owned orphan trees for a terminal task.
+    /// Identify checkout-owned orphan trees for a terminal task, and the shared
+    /// services that only inherited its cwd.
     /// # Errors
     /// Missing host identity or process evidence prevents cleanup.
     fn terminal_orphans(
         &self,
         checkout: &Path,
         scratch: &Path,
-    ) -> impl Future<Output = Result<Vec<OrphanProcess>, HostError>> + Send;
+    ) -> impl Future<Output = Result<OrphanScan, HostError>> + Send;
 
     fn observe_retained(
         &self,
@@ -951,7 +952,7 @@ impl TaskHost for T3Pass<'_> {
         &self,
         checkout: &Path,
         scratch: &Path,
-    ) -> Result<Vec<OrphanProcess>, HostError> {
+    ) -> Result<OrphanScan, HostError> {
         let inventory = self.process_inventory().await?;
         inventory.terminal_orphans(checkout, scratch).await
     }
