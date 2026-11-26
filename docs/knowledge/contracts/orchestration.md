@@ -167,6 +167,15 @@ observed head, merge commit and reason with the task's outcome. See
 [command authority](../../../engine/crates/nucleus-core/src/command.rs) and
 [merge scheduling](../../../engine/crates/nucleus-service/src/pass.rs).
 
+### Manual merges of Nucleus PRs
+
+Before merging a Nucleus PR by hand, fetch `origin/main` and merge its tip with
+the reviewed PR head in a scratch checkout. For each affected Rust crate, run
+`effigy engine:check --tests -p <crate>` on that tree. If main has moved since the
+PR's checks ran, also run `effigy engine:clippy -p <crate>` there. Record the
+base, head and tested tree. Recheck the base immediately before merging at the
+exact head. If the base moved, rebuild the merge result and repeat the checks.
+
 ### Owner acceptance
 
 The responsible planner can explicitly accept an observed external merge for
