@@ -1,1 +1,1 @@
-Checkout retirement and orphan cleanup use the same checkout and run scratch paths, including earlier settled runs.
+Share retirement root derivation internally between writer checks and orphan cleanup.

@@ -2679,28 +2679,69 @@ mod tests {
         }
     }
 
+    struct ProtectedTree(Vec<u32>);
+
+    impl Drop for ProtectedTree {
+        fn drop(&mut self) {
+            for pid in self.0.iter().rev() {
+                let _ = std::process::Command::new("/bin/kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .output();
+            }
+        }
+    }
+
+    async fn protected_host_tree(dir: &Path) -> ProtectedTree {
+        // The orphan root contains the described host and its child.
+        let script = r#"/bin/sh -c '/bin/sh -c '\''/bin/sleep 60 >/dev/null 2>&1 & echo "$PPID $$ $!"; exec >/dev/null 2>&1; wait'\'' & exec >/dev/null 2>&1; wait' </dev/null &"#;
+        let output = tokio::process::Command::new("/bin/sh")
+            .args(["-c", script])
+            .current_dir(dir)
+            .output()
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        let pids: Vec<u32> = std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .split_whitespace()
+            .map(|pid| pid.parse().unwrap())
+            .collect();
+        assert_eq!(pids.len(), 3);
+        let tree = ProtectedTree(pids);
+        for (pid, parent) in [
+            (tree.0[0], 1),
+            (tree.0[1], tree.0[0]),
+            (tree.0[2], tree.0[1]),
+        ] {
+            let output = std::process::Command::new("/bin/ps")
+                .args(["-p", &pid.to_string(), "-o", "ppid="])
+                .output()
+                .unwrap();
+            assert_eq!(
+                std::str::from_utf8(&output.stdout).unwrap().trim(),
+                parent.to_string()
+            );
+        }
+        tree
+    }
+
     #[tokio::test]
     async fn terminal_cleanup_stops_only_the_checkout_orphan_tree() {
-        exercise_terminal_orphan_cleanup(false, false).await;
+        exercise_terminal_orphan_cleanup(false, false, true).await;
     }
 
     #[tokio::test]
     async fn terminal_cleanup_stops_only_the_settled_scratch_orphan_tree() {
-        exercise_terminal_orphan_cleanup(true, false).await;
+        exercise_terminal_orphan_cleanup(true, false, false).await;
     }
 
     #[tokio::test]
     async fn terminal_cleanup_handles_pre_upgrade_scratch() {
-        exercise_terminal_orphan_cleanup(true, true).await;
+        exercise_terminal_orphan_cleanup(true, true, false).await;
     }
 
-    async fn exercise_terminal_orphan_cleanup(in_scratch: bool, legacy: bool) {
+    async fn exercise_terminal_orphan_cleanup(in_scratch: bool, legacy: bool, host_tree: bool) {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.host = crate::tests::verified_native_fixture(
-            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
-            home.path(),
-        );
-        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
         service.fixture_mut().acp_provider = Some("fixture".into());
         service.state.lock().await.settings.dispatch =
             Some(nucleus_store::DispatchSettings::default());
@@ -2712,12 +2753,14 @@ mod tests {
         };
         let id = &terminal.task.identity().id;
         assert_eq!(terminal.task.phase(), Phase::Cancelled);
-        let work = service.worktrees().unwrap();
-        let checkout = work
-            .checkout(&service.fixture().checkout, REPOSITORY, id)
-            .unwrap();
-        checkout.allocate(&service.fixture().start).unwrap();
-        let base = checkout.path();
+        let base = {
+            let work = service.worktrees().unwrap();
+            let checkout = work
+                .checkout(&service.fixture().checkout, REPOSITORY, id)
+                .unwrap();
+            checkout.allocate(&service.fixture().start).unwrap();
+            checkout.path().to_owned()
+        };
         std::fs::write(base.join("unpublished"), "retain").unwrap();
         let spawn = |dir: &Path| {
             tokio::process::Command::new("/bin/sleep")
@@ -2727,7 +2770,18 @@ mod tests {
                 .spawn()
                 .unwrap()
         };
-        let orphan_dir = scratch.as_deref().unwrap_or(base);
+        let orphan_dir = scratch.as_deref().unwrap_or(&base);
+        let protected = if host_tree {
+            Some(protected_host_tree(orphan_dir).await)
+        } else {
+            None
+        };
+        let native = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+        service.host = match &protected {
+            Some(tree) => crate::tests::described_native_fixture(native, home.path(), tree.0[1]),
+            None => crate::tests::verified_native_fixture(native, home.path()),
+        };
+        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
         let mut host_child = spawn(orphan_dir);
         let mut outside = spawn(home.path());
         // The launching shell exits. One child handles TERM and the orphan root and second child ignore it.
@@ -2750,6 +2804,20 @@ mod tests {
             matches!(&outcome, Err(ServiceError::ArchiveEvidence(s)) if s.contains("exited")),
             "{outcome:?}"
         );
+        assert_cleanup_history(&service, id, &pids, protected.as_ref()).await;
+        assert!(base.join("unpublished").exists());
+        assert!(host_child.try_wait().unwrap().is_none());
+        assert!(outside.try_wait().unwrap().is_none());
+        host_child.kill().await.unwrap();
+        outside.kill().await.unwrap();
+    }
+
+    async fn assert_cleanup_history(
+        service: &Service,
+        id: &str,
+        pids: &[u32],
+        protected: Option<&ProtectedTree>,
+    ) {
         let history = service.history(id, None, 25).await.unwrap();
         let sent = |pid: u32, signal: &str| {
             history
@@ -2768,7 +2836,7 @@ mod tests {
                         })
                 })
         };
-        for (index, pid) in pids.into_iter().enumerate() {
+        for (index, &pid) in pids.iter().enumerate() {
             assert!(sent(pid, "SIGTERM"));
             assert_eq!(sent(pid, "SIGKILL"), index < 2);
             let probe = tokio::process::Command::new("/bin/ps")
@@ -2783,11 +2851,19 @@ mod tests {
                         .starts_with('Z')
             );
         }
-        assert!(base.join("unpublished").exists());
-        assert!(host_child.try_wait().unwrap().is_none());
-        assert!(outside.try_wait().unwrap().is_none());
-        host_child.kill().await.unwrap();
-        outside.kill().await.unwrap();
+        if let Some(tree) = protected {
+            for &pid in &tree.0 {
+                assert!(!sent(pid, "SIGTERM"));
+                assert!(!sent(pid, "SIGKILL"));
+                assert!(
+                    std::process::Command::new("/bin/kill")
+                        .args(["-0", &pid.to_string()])
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+            }
+        }
     }
 
     #[tokio::test]

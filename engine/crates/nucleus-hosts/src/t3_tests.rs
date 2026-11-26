@@ -1713,7 +1713,7 @@ async fn ready_notice(
 }
 
 #[tokio::test]
-async fn closing_tasks_share_one_cwd_census_for_checkout_and_scratch() {
+async fn closing_tasks_share_one_cwd_census_for_retirement_roots() {
     let busy = checkout_fixture();
     let idle = checkout_fixture();
     let elsewhere = checkout_fixture();
@@ -1743,7 +1743,7 @@ async fn closing_tasks_share_one_cwd_census_for_checkout_and_scratch() {
     child.kill().await.unwrap();
     // A second census here would see that the child has exited.
     assert_eq!(
-        scope(idle.path(), Some(busy.path().to_owned()))
+        scope(idle.path(), None)
             .retirement_writer(busy.path())
             .await
             .unwrap(),
