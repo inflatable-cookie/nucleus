@@ -3,13 +3,14 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, de};
 
 use super::{Complexity, Effort};
-use crate::{Brief, Role};
+use crate::{Brief, QueuePriority, Role};
 
 /// Only the routing keys from the existing `queue` frontmatter.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BriefPolicy {
     pub complexity: Option<Complexity>,
+    pub priority: Option<QueuePriority>,
     pub critical: bool,
     pub notify_origin_on_closeout: bool,
     profile_requests: Requests,

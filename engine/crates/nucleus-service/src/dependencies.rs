@@ -601,6 +601,16 @@ impl Service {
             return;
         };
         for (dependent, version) in dependents {
+            if let Ok(Some(row)) = state.store.row(&dependent)
+                && row.task.run().is_none()
+                && row.task.hold().is_none()
+                && row.task.question().is_none()
+                && !row.task.phase().is_terminal()
+                && !state.store.dependency_blocked(&dependent).unwrap_or(true)
+                && !state.has_open_usage_decision(&row.task).unwrap_or(true)
+            {
+                let _ = state.enqueue_capacity(&row.task);
+            }
             self.wake_task(state, &dependent, version, Priority::Wake);
         }
     }

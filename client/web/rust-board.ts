@@ -86,6 +86,7 @@ const lifecycle = z.object({
 });
 const summary = current.extend({
   lanes: z.array(z.string()).optional(),
+  queuePriority: z.enum(["normal", "promoted"]).optional(),
   lifecycle,
   latestEventAtMs: timestamp.nullish(),
   title: z.string().optional(),
@@ -159,6 +160,8 @@ const commandName = z.enum([
   "hold",
   "release",
   "recheck",
+  "promote",
+  "demote",
   "complete",
   "move_work",
   "set_dependencies",
@@ -249,6 +252,8 @@ export type RustCommand =
     }
   | { amend: string; briefVersion: number }
   | { recheck: number }
+  | { promote: number }
+  | { demote: number }
   | { hold: string }
   | "cancel"
   | "release";

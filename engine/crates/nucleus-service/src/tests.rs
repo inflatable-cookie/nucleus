@@ -1484,7 +1484,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
                 .await
                 .capacity_waiters
                 .iter()
-                .map(|(_, id)| id.as_str())
+                .map(|(_, _, id)| id.as_str())
                 .collect::<Vec<_>>(),
             [oldest, newest[0], newest[1]]
         );
