@@ -1112,7 +1112,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   dom.window.eval(`(() => { ${script} })()`);
   const planningReads = () => requests.filter((path) => path.startsWith("/api/engine/planning/"));
-  const menuCounts = ["Planning, 1 open lanes", "Leads, 3", "Papercuts, 2", "Needs you, 1"];
+  const menuCounts = ["Planning, 1 open lanes", "Leads, 4", "Papercuts, 3", "Needs you, 1"];
   await eventually(() => menuCounts.every((label) => Boolean(selector(label))),
     "planning and decision counts settle before any navigation");
   assert.ok(stream, "the board subscribed to engine changes");
@@ -1272,7 +1272,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => !selector("Draining · 1 active · 0 unconfirmed"), "resuming clears the draining pill");
 
   const beforeLeads = planningReads().length;
-  await click("Leads, 3");
+  await click("Leads, 4");
   await eventually(() => Boolean(selector(`Lead: ${longLead}, Status: Unchecked · awaiting a check`)),
     "the Leads view uses the loaded items");
   assert.equal(planningReads().length, beforeLeads, "opening Leads makes no collection reads");
@@ -1336,7 +1336,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const leadHeading = selector("Lead detail")!.querySelector('[role="heading"]')!;
   assert.notEqual(style(leadHeading).whiteSpace, "nowrap");
   assert.equal(style(leadHeading).getPropertyValue("-webkit-line-clamp"), "");
-  await click("Papercuts, 2");
+  await click("Papercuts, 3");
   await eventually(() => triageTitles("Papercuts", "Papercut").length === 3, "all papercuts shown");
   assert.deepEqual(triageTitles("Papercuts", "Papercut"), [papercut, parkedCut, secondCut]);
   expectParked("Papercut", parkedCut, `Papercut: ${papercut}, Status: Open`);
@@ -1627,11 +1627,11 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   const decisionRoute = "/planning/fixture/decisions";
   const records = [
     {
-      detail: "Lead detail", view: "Leads, 3", event: "planning", route: itemRoute,
+      detail: "Lead detail", view: "Leads, 4", event: "planning", route: itemRoute,
       card: () => selector(`Lead: ${longLead}, Status: Unchecked · awaiting a check`),
     },
     {
-      detail: "Papercut detail", view: "Papercuts, 2", event: "planning", route: itemRoute,
+      detail: "Papercut detail", view: "Papercuts, 3", event: "planning", route: itemRoute,
       card: () => selector(`Papercut: ${papercut}, Status: Open`),
     },
     {
@@ -1782,7 +1782,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     "Settings restores the project using the same domain write");
   assert.equal(archiveWrites().length, 2);
   await click("Back to board");
-  await eventually(() => Boolean(selector("Leads, 3")), "restored project is counted on the board");
+  await eventually(() => Boolean(selector("Leads, 4")), "restored project is counted on the board");
   await click("Projects, All projects");
   await eventually(() => Boolean(projectRow()), "the restored project is in the picker");
   await click("Project settings");

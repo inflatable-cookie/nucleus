@@ -44,9 +44,9 @@ export function triageCards(
   );
 }
 
-/** Menu counts and open work ignore parked records. */
-export const leadsCards = (board: PipelineBoard) => triageCards(board, "leads", "Open");
-export const papercutCards = (board: PipelineBoard) => triageCards(board, "papercuts", "Open");
+/** Menu counts use the same open-plus-parked set as each list's default view. */
+export const leadsCards = (board: PipelineBoard) => triageCards(board, "leads", "All");
+export const papercutCards = (board: PipelineBoard) => triageCards(board, "papercuts", "All");
 
 /**
  * When a Needs you card began to need the operator: a decision's ask, a drained

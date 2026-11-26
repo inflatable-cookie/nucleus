@@ -1300,6 +1300,61 @@ test("a board click and action address the selected project's colliding decision
   assert.equal(saved?.note, null);
 });
 
+test("the mounted Rust board counts parked leads and papercuts like their All lists", async (t) => {
+  const fake = engine();
+  const openLead = {
+    id: "open-lead", kind: "lead", author: "Planner", title: "Open lead",
+    body: "An open idea", lanes: [], state: "open", createdAtMs: 10,
+  };
+  const items = [
+    openLead,
+    { ...openLead, id: "parked-lead", title: "Parked lead", state: "parked", reason: "Later" },
+    { ...openLead, id: "parked-papercut", kind: "papercut", title: "Parked papercut", state: "parked", reason: "Later" },
+  ];
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = String(url);
+    if (path === "/api/engine/planning/Orbit_Main/items") return Response.json(items);
+    if (path === "/api/engine/planning/lantern/items") return Response.json([]);
+    return fake.fetcher(url, init);
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  useNativeStubs();
+  const { MainSurface } = await import("../client/queue");
+  const { bindBoardShell } = await import("../client/shell");
+  const web = await import("../client/web/shell");
+  bindBoardShell({ ...web, Icon: () => null });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const h = React.createElement;
+  const ui = mount(h(QueryClientProvider, {
+    client,
+    children: h(web.WebContext.Provider, {
+      value: { transport: adapter, settings: false },
+      children: h(EngineFeaturesContext.Provider, {
+        value: RUST_ENGINE_FEATURES,
+        children: h(MainSurface, {
+          theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
+          layout: { compact: false },
+        }),
+      }),
+    }),
+  }));
+  t.after(() => {
+    ui.update(h(React.Fragment));
+    client.clear();
+    useNativeStubs();
+  });
+  const press = async (label: string | RegExp) => {
+    await waitFor(() => Boolean(ui.query(label)), 4000, String(label));
+    ui.press(label);
+  };
+
+  await press(/^Leads, 2$/);
+  await waitFor(() => ui.text().includes("2 items") && Boolean(ui.query(/^Lead: Parked lead,/)), 4000, "All leads and matching menu count");
+  assert.ok(ui.query(/^Lead: Open lead,/));
+  await press(/^Papercuts, 1$/);
+  await waitFor(() => ui.text().includes("1 item") && Boolean(ui.query(/^Papercut: Parked papercut,/)), 4000, "All papercuts and matching menu count");
+});
+
 test("the board reads, edits, and closes the selected project's lane when keys collide", async (t) => {
   const lane = (name: string): RustLane => ({
     key: "Delivery_Q4",

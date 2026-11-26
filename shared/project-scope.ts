@@ -367,7 +367,7 @@ export function planningLaneLeads(
   return leads.filter(
     (lead) =>
       lead.state === "open" &&
-      // A parked lead is off the to-do list and out of every count (Nucleus#1543).
+      // A parked lead is off the to-do list and excluded from planning counts (Nucleus#1543).
       !lead.parked &&
       lead.lanes.includes(lane) &&
       (lead.projectKey !== undefined
