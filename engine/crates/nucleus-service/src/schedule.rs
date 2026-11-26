@@ -194,6 +194,12 @@ impl Schedule {
         });
     }
 
+    /// The pending deadline for one priority slot of a task.
+    #[cfg(test)]
+    pub(crate) fn due_at(&self, id: &str, priority: Priority) -> Option<Instant> {
+        self.tasks.get(id)?.deadlines[priority as usize]
+    }
+
     pub(crate) fn wake(&mut self, id: &str, due: Instant, priority: Priority) {
         let due = match self.workspace.get(id) {
             Some(Recovery::CheckAt(after)) => due.max(*after),
