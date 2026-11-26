@@ -56,8 +56,11 @@ impl State {
             Some(WaitReason::Starting)
         } else if prior.phase() == task.phase()
             && run_basis(prior) == run_basis(task)
-            && titles::task_state_label(prior, None, None)
-                == titles::task_state_label(task, None, None)
+            && prior.hold() == task.hold()
+            && prior.question() == task.question()
+            && prior.operator_decline() == task.operator_decline()
+            && prior.pull_request() == task.pull_request()
+            && prior.verdict() == task.verdict()
         {
             before
         } else {
@@ -97,15 +100,15 @@ impl State {
     }
 }
 
-fn run_basis(task: &Task) -> Option<(&str, bool)> {
-    task.run()
-        .filter(|run| !run.revoked() && run.report().is_none())
-        .map(|run| {
-            (
-                run.launch().instance.as_str(),
-                run.last_send_at_ms().is_some(),
-            )
-        })
+fn run_basis(task: &Task) -> Option<(&str, bool, bool, Option<&Report>)> {
+    task.run().map(|run| {
+        (
+            run.launch().instance.as_str(),
+            run.last_send_at_ms().is_some(),
+            run.revoked(),
+            run.report(),
+        )
+    })
 }
 
 #[derive(Serialize)]

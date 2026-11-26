@@ -2007,3 +2007,37 @@ async fn host_backoff_does_not_delay_a_local_task_decision() {
 }
 
 mod close_requests;
+
+#[tokio::test]
+async fn wait_retention_tracks_the_question_even_when_its_title_stays_the_same() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (reserved, _, obs) = reservation("same-title", Entry::Brief, &service.fixture().start);
+    let mut task = Task::new(reserved.identity().clone(), "Initial brief".into(), None);
+    assert!(task.ask_allowance(20, 10));
+    let mut state = service.state.lock().await;
+    state.store.create(&task, &event("admitted")).unwrap();
+    let id = &task.identity().id;
+    state.set_wait(id, Some(WaitReason::Question));
+    let deadline = Instant::now() + Duration::from_mins(1);
+    state.schedule.wake(id, deadline, Priority::Effect);
+    let mut amended = task.clone();
+    amended
+        .command(
+            Command::Amend("Updated brief".into()),
+            &Authority::Planner {
+                actor: "planner".into(),
+            },
+            &obs,
+        )
+        .unwrap();
+    let (reason, entered) = state.task_wait_transition(&task, &amended).unwrap();
+    assert_eq!(reason, Some(WaitReason::Question));
+    state.apply_task_wait(&amended, reason, entered);
+    assert_eq!(state.schedule.due(id), Some(deadline));
+    let mut changed = amended.clone();
+    assert!(changed.clear_allowance_question());
+    assert!(changed.ask_allowance(35, 30));
+    let (reason, label_changed) = state.task_wait_transition(&amended, &changed).unwrap();
+    assert_eq!(reason, None);
+    assert!(!label_changed);
+}
