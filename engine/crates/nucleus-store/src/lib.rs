@@ -49,7 +49,7 @@ pub use task_rows::{RowSnooze, SnoozeOutcome};
 pub use tells::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };
-pub use titles::TitleReceipt;
+pub use titles::{StoredTitle, TitleReceipt};
 pub use usage::{ProfileUsage, SubscriptionPause, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 

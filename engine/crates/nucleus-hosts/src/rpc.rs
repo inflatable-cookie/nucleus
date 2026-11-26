@@ -798,6 +798,8 @@ impl Rpc {
         } else {
             snapshots.as_mut().expect("fixture snapshot").update(item);
         }
+        drop(snapshots);
+        self.shell_changed.notify_one();
     }
 
     pub(crate) async fn shell(&self, payload: Value) -> Result<Value, HostError> {
