@@ -1028,10 +1028,13 @@ impl TaskHost for T3Pass<'_> {
                 .reset_at_ms
                 .is_none_or(|reset| reset <= limit.ended_at_ms)
         {
-            limit.reset_at_ms = self
-                .host
-                .cached_profile_catalog()
-                .and_then(|catalog| catalog.exhausted_reset(routing, limit.ended_at_ms));
+            limit.reset_at_ms = self.host.cached_profile_catalog().and_then(|catalog| {
+                catalog.exhausted_reset(
+                    routing,
+                    run.launch().subscription_group(),
+                    limit.ended_at_ms,
+                )
+            });
         }
         let state = if background_pending {
             RunState::Running
