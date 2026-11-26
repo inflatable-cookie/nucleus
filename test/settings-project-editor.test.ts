@@ -2029,7 +2029,7 @@ test("Rust Settings opens a project without requesting owner candidates or showi
       "list renders with the Paseo host offline",
     );
     ui.press("Suite");
-    await settle(() => Boolean(ui.query("Planner")), "project planner is visible");
+    await settle(() => Boolean(ui.query("Project name")), "opened project is visible");
     assert.equal(candidateReads, 0);
     assert.doesNotMatch(ui.text(), /Couldn't load threads/);
     // The planner is shown by its saved id and is not reported gone; saved fields stay enabled.

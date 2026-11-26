@@ -509,7 +509,7 @@ test("the board snapshot carries the engine's settings and its dispatch mode", a
   assert.ok(board.repositoryBadges?.["/work/orbit"]);
 });
 
-test("the Rust Hosts panel uses only the host returned by its settings adapter", async () => {
+test("the Rust Hosts panel hides the default picker below two registered hosts", async () => {
   useNativeStubs();
   const fake = engine();
   const adapter = createRustAdapter(createRustApi(fake.fetcher));
@@ -563,17 +563,7 @@ test("the Rust Hosts panel uses only the host returned by its settings adapter",
   const registered = mountPanel(list, "t3code");
   try {
     assert.ok(registered.ui.query("T3 Code host t3, Online, default"));
-    assert.ok(registered.ui.get("Default host, T3 Code"));
-    assert.doesNotMatch(registered.ui.text(), /Paseo|BB/);
-    registered.ui.press("Default host, T3 Code");
-    assert.deepEqual(
-      registered.ui
-        .all(/^Default host: /)
-        .map(({ props }) => props.accessibilityLabel)
-        .sort(),
-      ["Default host: Planner's host", "Default host: T3 Code"],
-    );
-    assert.match(registered.ui.text(), /Planner's host/);
+    assert.equal(registered.ui.query("Default host, T3 Code"), undefined);
     assert.doesNotMatch(registered.ui.text(), /Paseo|BB/);
   } finally {
     registered.close();
@@ -587,7 +577,7 @@ test("the Rust Hosts panel uses only the host returned by its settings adapter",
     saves++;
   });
   try {
-    assert.ok(unavailable.ui.get("Default host, Unavailable"));
+    assert.equal(unavailable.ui.query("Default host, Unavailable"), undefined);
     assert.doesNotMatch(unavailable.ui.text(), /Paseo|BB/);
     assert.equal(saves, 0);
   } finally {
