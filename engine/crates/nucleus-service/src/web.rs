@@ -644,12 +644,10 @@ async fn detail(
     scope.task(&state, row.task.identity())?;
     let task = &row.task;
     let activity = state.activity.get(&id);
-    let transcript = credential
-        .as_ref()
-        .map(|_| crate::presentation::TranscriptRequest {
-            activity: crate::presentation::run_activity(&row, activity)
-                .map(|activity| activity.label.as_str()),
-        });
+    let transcript = Some(crate::presentation::TranscriptRequest {
+        activity: crate::presentation::run_activity(&row, activity)
+            .map(|activity| activity.label.as_str()),
+    });
     let summary = Summary::read(&row, &state, &scope, authority.as_deref(), transcript)?;
     let run = RunView::read(&row, activity, summary.card.lifecycle.review_round);
     let (parent_hold, active_child) = if credential.is_some() {

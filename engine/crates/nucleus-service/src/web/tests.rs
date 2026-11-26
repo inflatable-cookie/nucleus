@@ -422,9 +422,25 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     assert_worker_history(&history, &instance, thread, sent_at_ms);
     let detail = json_body(get_as(&api, "/v1/tasks/worker", &BOARD_KEY).await).await;
     let list = json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
+    assert_worker_detail(&detail, &list, thread);
+}
+
+fn assert_worker_detail(detail: &Value, list: &Value, thread: &str) {
     let lifecycle = &detail["lifecycle"];
-    assert_eq!(list[0]["lifecycle"], *lifecycle);
-    assert!(lifecycle.get("transcript").is_none());
+    assert!(list[0]["lifecycle"].get("transcript").is_none());
+    assert_eq!(list[0]["lifecycle"]["steps"], lifecycle["steps"]);
+    assert_eq!(list[0]["lifecycle"]["worker"], lifecycle["worker"]);
+    assert_eq!(
+        lifecycle["transcript"]["cards"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(lifecycle["transcript"]["cards"][0]["role"], "worker");
+    assert_eq!(lifecycle["transcript"]["cards"][0]["round"], 1);
+    assert_eq!(lifecycle["transcript"]["cards"][0]["elapsedMs"], 831_000);
+    assert_eq!(
+        lifecycle["transcript"]["cards"][0]["threadUrl"],
+        format!("t3-thread://v1/{thread}")
+    );
     assert_eq!(lifecycle["steps"][1]["elapsedMs"], 831_000);
     assert!(lifecycle["steps"][1]["activeSinceMs"].is_null());
     assert_eq!(lifecycle["steps"][2]["roundLabel"], "Round 1");
@@ -432,10 +448,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
     assert_eq!(lifecycle["steps"][2]["note"], detail["stateLabel"]);
     assert_eq!(lifecycle["admittedAtMs"], detail["createdAtMs"]);
     assert!(lifecycle["steps"][2]["activeSinceMs"].is_null());
-    assert_eq!(
-        lifecycle["worker"]["thread"],
-        task.run().unwrap().launch().thread
-    );
+    assert_eq!(lifecycle["worker"]["thread"], thread);
     assert!(lifecycle["reviewer"].is_null());
 }
 
@@ -4035,4 +4048,680 @@ async fn planner_extend_via_http_raises_the_exhausted_allowance_once() {
     assert_eq!(restored.limit_ms, extended_limit);
     assert!(!restored.exhausted);
     native.abort();
+}
+
+fn at_event(kind: &str, time: u64) -> EventDraft {
+    EventDraft {
+        at: i64::try_from(time).unwrap(),
+        ..event(kind)
+    }
+}
+
+async fn run_routed_report(
+    service: &Service,
+    mut row: nucleus_store::TaskRow,
+    obs: &Observation,
+    thread: &str,
+    routing: (&str, &str),
+    times: (u64, u64, u64),
+    (seed, report): (u8, Report),
+) -> nucleus_store::TaskRow {
+    let mut updated = row.task.clone();
+    let key = updated
+        .reserve_launch(
+            obs,
+            LaunchInputs {
+                scratch: None,
+                thread: thread.into(),
+                started_at: times.0 - 500,
+                input: format!("input-{seed}"),
+            },
+            &[seed; 32],
+        )
+        .unwrap();
+    let id = updated.run().unwrap().launch().instance.clone();
+    updated.record_send(&id, times.0).unwrap();
+    row = service
+        .save(&row, updated, &at_event("host_send", times.0))
+        .await
+        .unwrap();
+    service
+        .observe_run_routing(
+            &row,
+            row.task.run().unwrap(),
+            &nucleus_hosts::RunRouting {
+                provider: routing.0.into(),
+                model: routing.1.into(),
+            },
+        )
+        .await
+        .unwrap();
+    let mut ended_obs = obs.clone();
+    if let Report::Work(ref work) = report {
+        ended_obs.forge = Observed::Known(Forge::Open {
+            pr: work.pull_request.clone(),
+            checks: CheckState::Ready,
+        });
+    }
+    let mut updated = row.task.clone();
+    updated.record_report(&id, key.as_bytes(), report).unwrap();
+    row = service
+        .save(&row, updated, &at_event("reported", times.1))
+        .await
+        .unwrap();
+    ended_obs.host = Observed::Known(Host::Current {
+        instance: id,
+        state: RunState::Ended,
+    });
+    let mut updated = row.task.clone();
+    assert!(matches!(updated.reconcile(&ended_obs), Action::Advance(_)));
+    service
+        .save(&row, updated, &at_event("phase_reconciled", times.2))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn board_detail_serves_full_transcript_and_per_step_times_without_t3_calls() {
+    let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (host, native) = crate::tests::native_fixture(|_| {
+        panic!("reading task detail must not call T3");
+    })
+    .await;
+    service.host = host;
+    let head1 = service.fixture().start.clone();
+    let head2 = nucleus_core::Head::try_from("b".repeat(40)).unwrap();
+    let (row, pr1) = Box::pin(start_full_cycle_task(&service, head1)).await;
+    Box::pin(finish_full_cycle_task(&service, row, pr1, head2)).await;
+
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "board".into(),
+            },
+        }],
+    );
+    let detail = json_body(get_as(&api, "/v1/tasks/full-cycle", &BOARD_KEY).await).await;
+    assert_full_cycle_detail(&detail);
+    assert!(service.host.host_calls().is_empty());
+    native.abort();
+}
+
+async fn start_full_cycle_task(
+    service: &Service,
+    head1: nucleus_core::Head,
+) -> (nucleus_store::TaskRow, PullRequest) {
+    let queued = nucleus_core::Task::new(
+        nucleus_core::Identity {
+            id: "full-cycle".into(),
+            reference: "full-cycle".into(),
+            repository: REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        "---\ncomplexity: normal\n---\n\n# Full cycle fixture\n".into(),
+        None,
+    );
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&queued, &at_event("admitted", 1_000))
+        .expect("admit queued");
+    let row = service.task("full-cycle").await.unwrap();
+    let obs_work = Observation {
+        forge: Observed::Known(Forge::Absent),
+        host: Observed::Unknown,
+        workspace: Observed::Known(nucleus_core::Workspace::Clean(head1.clone())),
+    };
+    let mut updated = row.task.clone();
+    assert_eq!(
+        updated.reconcile(&obs_work),
+        Action::Advance(Phase::Working)
+    );
+    let row = service
+        .save(&row, updated, &at_event("phase_reconciled", 2_000))
+        .await
+        .unwrap();
+    let pr1 = PullRequest {
+        url: PR.into(),
+        head: head1.clone(),
+    };
+    let row = Box::pin(run_routed_report(
+        service,
+        row,
+        &obs_work,
+        "thread-w1",
+        ("claude-fixture", "claude-model-1"),
+        (3_000, 10_000, 11_000),
+        (
+            1,
+            Report::Work(nucleus_core::WorkReport {
+                pull_request: pr1.clone(),
+                summary: Some("Initial work".into()),
+            }),
+        ),
+    ))
+    .await;
+    let obs_pr1 = Observation {
+        forge: Observed::Known(Forge::Open {
+            pr: pr1.clone(),
+            checks: CheckState::Ready,
+        }),
+        host: Observed::Unknown,
+        workspace: Observed::Known(nucleus_core::Workspace::Clean(head1.clone())),
+    };
+    let row = Box::pin(run_routed_report(
+        service,
+        row,
+        &obs_pr1,
+        "thread-r1",
+        ("codex-fixture", "codex-model-1"),
+        (12_000, 20_000, 21_000),
+        (
+            2,
+            Report::Review {
+                head: head1,
+                decision: Review::Changes,
+                summary: "Fix edge case".into(),
+                finding_titles: vec!["Missing null guard".into()],
+            },
+        ),
+    ))
+    .await;
+    (row, pr1)
+}
+
+async fn finish_full_cycle_task(
+    service: &Service,
+    row: nucleus_store::TaskRow,
+    pr1: PullRequest,
+    head2: nucleus_core::Head,
+) {
+    let obs_work_two = Observation {
+        forge: Observed::Known(Forge::Open {
+            pr: pr1,
+            checks: CheckState::Ready,
+        }),
+        host: Observed::Known(Host::Retained {
+            thread: "thread-w1".into(),
+            state: RetainedThread::Idle,
+        }),
+        workspace: Observed::Known(nucleus_core::Workspace::Clean(head2.clone())),
+    };
+    let pr2 = PullRequest {
+        url: PR.into(),
+        head: head2.clone(),
+    };
+    let row = run_routed_report(
+        service,
+        row,
+        &obs_work_two,
+        "thread-w1",
+        ("claude-fixture", "claude-model-2"),
+        (22_000, 30_000, 31_000),
+        (
+            3,
+            Report::Work(nucleus_core::WorkReport {
+                pull_request: pr2.clone(),
+                summary: Some("Addressed review".into()),
+            }),
+        ),
+    )
+    .await;
+    let obs_review_two = Observation {
+        forge: Observed::Known(Forge::Open {
+            pr: pr2.clone(),
+            checks: CheckState::Ready,
+        }),
+        host: Observed::Known(Host::Retained {
+            thread: "thread-r1".into(),
+            state: RetainedThread::Idle,
+        }),
+        workspace: Observed::Known(nucleus_core::Workspace::Clean(head2.clone())),
+    };
+    let row = run_routed_report(
+        service,
+        row,
+        &obs_review_two,
+        "thread-r1",
+        ("codex-fixture", "codex-model-2"),
+        (32_000, 40_000, 41_000),
+        (
+            4,
+            Report::Review {
+                head: head2.clone(),
+                decision: Review::Approve,
+                summary: "Looks solid".into(),
+                finding_titles: Vec::new(),
+            },
+        ),
+    )
+    .await;
+    let obs_merged = Observation {
+        forge: Observed::Known(Forge::Merged {
+            pr: pr2,
+            commit: head2,
+        }),
+        host: Observed::Unknown,
+        workspace: Observed::Known(nucleus_core::Workspace::Absent),
+    };
+    let mut updated = row.task.clone();
+    assert_eq!(
+        updated.reconcile(&obs_merged),
+        Action::Advance(Phase::Closing)
+    );
+    let mut merge_audit = at_event("phase_reconciled", 42_000);
+    crate::presentation::note_merge(&mut merge_audit, &obs_merged.forge);
+    let row = service.save(&row, updated, &merge_audit).await.unwrap();
+    let mut updated = row.task.clone();
+    assert!(updated.finish_close(&obs_merged));
+    service
+        .save(&row, updated, &at_event("phase_reconciled", 43_000))
+        .await
+        .unwrap();
+}
+
+fn assert_full_cycle_detail(detail: &Value) {
+    assert_eq!(detail["phase"], "done");
+    let steps = detail["lifecycle"]["steps"].as_array().unwrap();
+    let bounds: Vec<_> = steps
+        .iter()
+        .map(|s| (&s["key"], &s["enteredAtMs"], &s["leftAtMs"]))
+        .collect();
+    assert_eq!(
+        bounds,
+        [
+            (&json!("queued"), &json!(1_000), &json!(2_000)),
+            (&json!("working"), &json!(2_000), &json!(31_000)),
+            (&json!("review"), &json!(11_000), &json!(41_000)),
+            (&json!("merge"), &json!(41_000), &json!(42_000)),
+            (&json!("close"), &json!(42_000), &json!(43_000)),
+        ]
+    );
+    let transcript = &detail["lifecycle"]["transcript"];
+    assert_eq!(transcript["completedReviews"], 2);
+    assert_eq!(transcript["merged"], true);
+    let cards = transcript["cards"].as_array().unwrap();
+    assert_eq!(cards.len(), 4);
+    assert_eq!(cards[0]["role"], "worker");
+    assert_eq!(cards[0]["round"], 1);
+    assert_eq!(cards[0]["startedAtMs"], 3_000);
+    assert_eq!(cards[0]["endedAtMs"], 11_000);
+    assert_eq!(cards[0]["elapsedMs"], 7_000);
+    assert_eq!(cards[0]["model"], "claude-model-1");
+    assert_eq!(cards[0]["providerInstance"], "claude-fixture");
+    assert_eq!(cards[0]["modelObserved"], true);
+    assert_eq!(cards[0]["threadUrl"], "t3-thread://v1/thread-w1");
+    assert_eq!(cards[0]["outcome"]["kind"], "work");
+    assert_eq!(cards[0]["outcome"]["revision"], false);
+
+    assert_eq!(cards[1]["role"], "reviewer");
+    assert_eq!(cards[1]["round"], 1);
+    assert_eq!(cards[1]["startedAtMs"], 12_000);
+    assert_eq!(cards[1]["endedAtMs"], 21_000);
+    assert_eq!(cards[1]["elapsedMs"], 8_000);
+    assert_eq!(cards[1]["model"], "codex-model-1");
+    assert_eq!(cards[1]["providerInstance"], "codex-fixture");
+    assert_eq!(cards[1]["modelObserved"], true);
+    assert_eq!(cards[1]["threadUrl"], "t3-thread://v1/thread-r1");
+    assert_eq!(cards[1]["outcome"]["kind"], "review");
+    assert_eq!(cards[1]["outcome"]["decision"], "changes");
+    assert_eq!(
+        cards[1]["outcome"]["finding_titles"],
+        json!(["Missing null guard"])
+    );
+
+    assert_eq!(cards[2]["role"], "worker");
+    assert_eq!(cards[2]["round"], 2);
+    assert_eq!(cards[2]["startedAtMs"], 22_000);
+    assert_eq!(cards[2]["endedAtMs"], 31_000);
+    assert_eq!(cards[2]["model"], "claude-model-2");
+    assert_eq!(cards[2]["outcome"]["kind"], "work");
+    assert_eq!(cards[2]["outcome"]["revision"], true);
+
+    assert_eq!(cards[3]["role"], "reviewer");
+    assert_eq!(cards[3]["round"], 2);
+    assert_eq!(cards[3]["startedAtMs"], 32_000);
+    assert_eq!(cards[3]["endedAtMs"], 41_000);
+    assert_eq!(cards[3]["model"], "codex-model-2");
+    assert_eq!(cards[3]["outcome"]["kind"], "review");
+    assert_eq!(cards[3]["outcome"]["decision"], "approve");
+    assert_eq!(cards[3]["outcome"]["finding_titles"], json!([]));
+}
+
+async fn seed_pre_1601_task(service: &Service, head: &nucleus_core::Head) {
+    let pr = PullRequest {
+        url: PR.into(),
+        head: head.clone(),
+    };
+    let (mut legacy, legacy_key, mut obs) = reservation("pre-1601", Entry::Brief, head);
+    let legacy_instance = legacy.run().unwrap().launch().instance.clone();
+    legacy.record_send(&legacy_instance, 2_000).unwrap();
+    legacy
+        .record_report(
+            &legacy_instance,
+            legacy_key.as_bytes(),
+            Report::Work(nucleus_core::WorkReport {
+                pull_request: pr.clone(),
+                summary: Some("Pre-1601 work".into()),
+            }),
+        )
+        .unwrap();
+    obs.host = Observed::Known(Host::Current {
+        instance: legacy_instance.clone(),
+        state: RunState::Ended,
+    });
+    obs.forge = Observed::Known(Forge::Merged {
+        pr,
+        commit: head.clone(),
+    });
+    obs.workspace = Observed::Known(nucleus_core::Workspace::Absent);
+    assert!(matches!(
+        legacy.reconcile(&obs),
+        Action::Ask(Question::Accept { .. })
+    ));
+    legacy
+        .command(
+            Command::Answer(nucleus_core::Answer::Accept {
+                head: head.clone(),
+                reason: "Legacy acceptance".into(),
+            }),
+            &Authority::Operator {
+                actor: "board".into(),
+            },
+            &obs,
+        )
+        .unwrap();
+    assert_eq!(legacy.reconcile(&obs), Action::Advance(Phase::Closing));
+    assert!(legacy.finish_close(&obs));
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&legacy, &at_event("admitted", 1_000))
+        .unwrap();
+    insert_legacy_events(service, &legacy_instance, head);
+}
+
+fn insert_legacy_events(service: &Service, instance: &str, head: &nucleus_core::Head) {
+    let connection =
+        rusqlite::Connection::open(service.storage.database().path().join("engine.sqlite"))
+            .unwrap();
+    for (at, kind, detail) in [
+        (
+            2_000_i64,
+            "host_send",
+            json!({
+                "presentation": [{
+                    "kind": "run_started", "instance": instance, "role": "worker",
+                    "purpose": "Legacy work", "reviewHead": null, "thread": "thread-legacy",
+                    "startedAtMs": 2_000
+                }]
+            }),
+        ),
+        (
+            5_000,
+            "reported",
+            json!({
+                "presentation": [{
+                    "kind": "run_reported", "instance": instance, "sentAtMs": 2_000,
+                    "outcome": {
+                        "kind": "work", "url": PR, "summary": "Pre-1601 work", "revision": false
+                    }
+                }]
+            }),
+        ),
+        (
+            10_000,
+            "phase_reconciled",
+            json!({
+                "presentation": [
+                    { "kind": "run_ended", "instance": instance },
+                    { "kind": "pull_request", "url": PR },
+                    { "kind": "merged", "commit": head },
+                    { "kind": "finished", "phase": "done", "previousPhase": "closing" }
+                ]
+            }),
+        ),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO events (task_id, at, kind, detail) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params!["pre-1601", at, kind, detail.to_string()],
+            )
+            .unwrap();
+    }
+}
+
+async fn seed_outcome_runs(service: &Service, head: &nucleus_core::Head) {
+    let (mut outcomes_task, _, _) = reservation("outcomes", Entry::Brief, head);
+    let r1 = outcomes_task.run().unwrap().launch().instance.clone();
+    outcomes_task.record_send(&r1, 20_000).unwrap();
+    {
+        let mut state = service.state.lock().await;
+        state
+            .store
+            .create(&outcomes_task, &at_event("admitted", 19_000))
+            .unwrap();
+        let row = service.lookup(&state, "outcomes").unwrap();
+        let send_audit = crate::presentation::decorate(
+            &nucleus_core::Task::new(
+                outcomes_task.identity().clone(),
+                outcomes_task.brief().text.clone(),
+                None,
+            ),
+            &outcomes_task,
+            &at_event("host_send", 20_000),
+            &state.store,
+        );
+        state
+            .store
+            .save_row(&row, &outcomes_task, &send_audit)
+            .unwrap();
+    }
+    let row = service.task("outcomes").await.unwrap();
+    let limit_obs = Observation {
+        forge: Observed::Known(Forge::Absent),
+        host: Observed::Known(Host::ProviderLimited {
+            instance: r1.clone(),
+            cause: "Provider usage limit for subscription group shared. Reset at 90000.".into(),
+        }),
+        workspace: Observed::Known(nucleus_core::Workspace::Clean(head.clone())),
+    };
+    let mut after_limit = row.task.clone();
+    assert!(matches!(
+        after_limit.reconcile(&limit_obs),
+        Action::Relaunch(nucleus_core::Role::Worker)
+    ));
+    let mut limit_event = at_event("provider_limit", 25_000);
+    limit_event.detail = json!({
+        "cause": after_limit.threads().last_provider_limit,
+        "providerLimit": { "instance": r1, "group": "shared", "resetAtMs": 90_000 }
+    })
+    .to_string();
+    let row = service.save(&row, after_limit, &limit_event).await.unwrap();
+    Box::pin(seed_question_and_failed_runs(service, head, row)).await;
+}
+
+async fn seed_question_and_failed_runs(
+    service: &Service,
+    head: &nucleus_core::Head,
+    row: nucleus_store::TaskRow,
+) {
+    let mut with_r2 = row.task.clone();
+    let r2_key = with_r2
+        .reserve_launch(
+            &obs_absent_host(head),
+            LaunchInputs {
+                scratch: None,
+                thread: "thread:outcomes".into(),
+                started_at: 26_000,
+                input: "work-2".into(),
+            },
+            &[7; 32],
+        )
+        .unwrap();
+    let r2 = with_r2.run().unwrap().launch().instance.clone();
+    with_r2.record_send(&r2, 27_000).unwrap();
+    let row = service
+        .save(&row, with_r2, &at_event("host_send", 27_000))
+        .await
+        .unwrap();
+    let mut reported_q = row.task.clone();
+    reported_q
+        .record_report(
+            &r2,
+            r2_key.as_bytes(),
+            Report::Question {
+                prompt: "Which strategy?".into(),
+                options: vec!["First".into(), "Second".into()],
+            },
+        )
+        .unwrap();
+    let row = service
+        .save(&row, reported_q, &at_event("reported", 28_000))
+        .await
+        .unwrap();
+    let mut asked = row.task.clone();
+    assert!(matches!(
+        asked.reconcile(&Observation {
+            forge: Observed::Known(Forge::Absent),
+            host: Observed::Known(Host::Current {
+                instance: r2,
+                state: RunState::Ended,
+            }),
+            workspace: Observed::Known(nucleus_core::Workspace::Clean(head.clone())),
+        }),
+        Action::Ask(Question::Work { .. })
+    ));
+    let row = service
+        .save(&row, asked, &at_event("question_asked", 29_000))
+        .await
+        .unwrap();
+    let mut answered = row.task.clone();
+    answered
+        .command(
+            Command::Answer(nucleus_core::Answer::Work("First".into())),
+            &Authority::Planner {
+                actor: "planner".into(),
+            },
+            &obs_absent_host(head),
+        )
+        .unwrap();
+    let row = service
+        .save(&row, answered, &at_event("command", 30_000))
+        .await
+        .unwrap();
+    seed_failed_run(service, head, row).await;
+}
+
+async fn seed_failed_run(
+    service: &Service,
+    head: &nucleus_core::Head,
+    row: nucleus_store::TaskRow,
+) {
+    let mut with_r3 = row.task.clone();
+    with_r3
+        .reserve_launch(
+            &obs_absent_host(head),
+            LaunchInputs {
+                scratch: None,
+                thread: "thread:outcomes".into(),
+                started_at: 31_000,
+                input: "work-3".into(),
+            },
+            &[8; 32],
+        )
+        .unwrap();
+    let r3 = with_r3.run().unwrap().launch().instance.clone();
+    with_r3.record_send(&r3, 32_000).unwrap();
+    let row = service
+        .save(&row, with_r3, &at_event("host_send", 32_000))
+        .await
+        .unwrap();
+    let mut failed = row.task.clone();
+    assert!(matches!(
+        failed.reconcile(&Observation {
+            forge: Observed::Known(Forge::Absent),
+            host: Observed::Known(Host::Current {
+                instance: r3,
+                state: RunState::Gone,
+            }),
+            workspace: Observed::Known(nucleus_core::Workspace::Clean(head.clone())),
+        }),
+        Action::Relaunch(nucleus_core::Role::Worker)
+    ));
+    service
+        .save(&row, failed, &at_event("run_failed", 35_000))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn board_detail_serves_pre_1601_nulls_and_failure_outcomes() {
+    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let head = service.fixture().start.clone();
+    Box::pin(seed_pre_1601_task(&service, &head)).await;
+    Box::pin(seed_outcome_runs(&service, &head)).await;
+
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "board".into(),
+            },
+        }],
+    );
+
+    let legacy_detail = json_body(get_as(&api, "/v1/tasks/pre-1601", &BOARD_KEY).await).await;
+    let legacy_steps = legacy_detail["lifecycle"]["steps"].as_array().unwrap();
+    assert_eq!(legacy_steps[0]["enteredAtMs"], 1_000);
+    assert!(legacy_steps[0]["leftAtMs"].is_null());
+    for step in &legacy_steps[1..=3] {
+        assert!(step["enteredAtMs"].is_null());
+        assert!(step["leftAtMs"].is_null());
+    }
+    assert!(legacy_steps[4]["enteredAtMs"].is_null());
+    assert_eq!(legacy_steps[4]["leftAtMs"], 10_000);
+    assert_eq!(
+        legacy_detail["lifecycle"]["transcript"]["cards"][0]["endedAtMs"],
+        10_000
+    );
+
+    let outcomes_detail = json_body(get_as(&api, "/v1/tasks/outcomes", &BOARD_KEY).await).await;
+    let cards = outcomes_detail["lifecycle"]["transcript"]["cards"]
+        .as_array()
+        .unwrap();
+    assert_eq!(cards.len(), 3);
+    assert_eq!(cards[0]["outcome"]["kind"], "provider_limit");
+    assert_eq!(cards[0]["outcome"]["group"], "shared");
+    assert_eq!(cards[0]["outcome"]["reset_at_ms"], 90_000);
+    assert_eq!(cards[0]["endedAtMs"], 25_000);
+    assert_eq!(cards[1]["outcome"]["kind"], "question");
+    assert_eq!(
+        cards[1]["outcome"]["question"]["work"]["prompt"],
+        "Which strategy?"
+    );
+    assert_eq!(cards[1]["endedAtMs"], 29_000);
+    assert_eq!(cards[2]["outcome"]["kind"], "blocked");
+    assert_eq!(cards[2]["endedAtMs"], 35_000);
+}
+
+fn obs_absent_host(head: &nucleus_core::Head) -> Observation {
+    Observation {
+        forge: Observed::Known(Forge::Absent),
+        host: Observed::Known(Host::Retained {
+            thread: "thread:outcomes".into(),
+            state: RetainedThread::Idle,
+        }),
+        workspace: Observed::Known(nucleus_core::Workspace::Clean(head.clone())),
+    }
 }

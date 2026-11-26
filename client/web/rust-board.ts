@@ -1,5 +1,9 @@
 import { matchesRepository } from "../../shared/project-scope";
-import { activityItems, EXECUTING_TASK_PHASES, projectActivityRows } from "../../shared/project-activity";
+import {
+  activityItems,
+  EXECUTING_TASK_PHASES,
+  projectActivityRows,
+} from "../../shared/project-activity";
 import type { Project, leadBoard } from "../../shared/contracts";
 import {
   useInfiniteQuery,
@@ -67,22 +71,85 @@ const participant = z.object({
   providerInstance: z.string().optional(),
   model: z.string().nullable(),
 });
+const transcriptOutcome = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("work"),
+    url: z.string(),
+    summary: z.string().nullish(),
+    revision: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("review"),
+    decision: z.enum(["approve", "changes"]),
+    summary: z.string(),
+    finding_titles: z.array(z.string()),
+    change_url: z.string().nullish(),
+  }),
+  z.object({ kind: z.literal("report"), summary: z.string() }),
+  z.object({ kind: z.literal("blocked"), reason: z.string() }),
+  z.object({ kind: z.literal("question"), question }),
+  z.object({
+    kind: z.literal("provider_limit"),
+    group: z.string().nullish(),
+    reset_at_ms: timestamp.nullish(),
+    cause: z.string().nullish(),
+  }),
+]);
+const transcriptCard = z.object({
+  instance: z.string(),
+  role,
+  round: revision.nullish(),
+  purpose: z.string(),
+  threadUrl: z.string().nullable(),
+  provider: z.string().nullable(),
+  providerInstance: z.string().nullish(),
+  model: z.string().nullable(),
+  modelObserved: z.boolean().optional(),
+  startedAtMs: timestamp.nullable(),
+  endedAtMs: timestamp.nullish(),
+  elapsedMs: revision.nullable(),
+  ended: z.boolean(),
+  outcome: transcriptOutcome.nullable(),
+  activity: z.string().nullable(),
+});
+const transcript = z.object({
+  cards: z.array(transcriptCard),
+  completedReviews: revision,
+  merged: z.boolean(),
+  question: question.nullable(),
+  questionUrl: z.string().nullable(),
+  questionOwner: z.string().nullable(),
+  externalAcceptances: z.array(z.tuple([timestamp, z.string()])),
+});
 const lifecycle = z.object({
-  steps: z.array(z.object({
-    key: z.enum(["queued", "working", "review", "merge", "close", "report_ready", "done"]),
-    label: z.string(),
-    state: z.enum(["todo", "current", "done"]),
-    tone: z.enum(["accent", "danger", "warning", "success", "muted"]),
-    note: z.string().nullable(),
-    roundLabel: z.string().nullable(),
-    elapsedMs: revision.nullable(),
-    activeSinceMs: timestamp.nullable(),
-  })),
+  steps: z.array(
+    z.object({
+      key: z.enum([
+        "queued",
+        "working",
+        "review",
+        "merge",
+        "close",
+        "report_ready",
+        "done",
+      ]),
+      label: z.string(),
+      state: z.enum(["todo", "current", "done"]),
+      tone: z.enum(["accent", "danger", "warning", "success", "muted"]),
+      note: z.string().nullable(),
+      roundLabel: z.string().nullable(),
+      elapsedMs: revision.nullable(),
+      activeSinceMs: timestamp.nullable(),
+      enteredAtMs: timestamp.nullish(),
+      leftAtMs: timestamp.nullish(),
+    }),
+  ),
   admittedAtMs: timestamp.nullable(),
   finishedAtMs: timestamp.nullable(),
   reviewRound: revision.nullable(),
   worker: participant.nullable(),
   reviewer: participant.nullable(),
+  transcript: transcript.nullish(),
 });
 const summary = current.extend({
   lanes: z.array(z.string()).optional(),
@@ -128,15 +195,19 @@ const detail = summary.extend({
   brief: z.object({ text: z.string(), version: revision }),
   pullRequest: z.object({ url: z.httpUrl(), head }).nullable(),
   verdict: verdict.nullable(),
-  report: z.object({
-    lane: z.string(),
-    planningBase: head,
-    failure: z.string().nullable(),
-    delivery: z.object({
-      artifact: reportArtifact,
-      summary: z.string(),
-    }).nullable(),
-  }).optional(),
+  report: z
+    .object({
+      lane: z.string(),
+      planningBase: head,
+      failure: z.string().nullable(),
+      delivery: z
+        .object({
+          artifact: reportArtifact,
+          summary: z.string(),
+        })
+        .nullable(),
+    })
+    .optional(),
   run: z
     .object({
       role,
@@ -288,10 +359,19 @@ export type RustNext = z.infer<typeof next>;
 export type RustVerdict = z.infer<typeof verdict>;
 export type RustHistoryPage = z.infer<typeof history>;
 export type RustRunOutcome = z.infer<typeof runOutcome>;
+export type RustTranscript = z.infer<typeof transcript>;
+export type RustTranscriptCard = z.infer<typeof transcriptCard>;
+export type RustTranscriptOutcome = z.infer<typeof transcriptOutcome>;
 export type RustCommand =
   | { move: RustPhase }
   | { move_work: { instruction: string } }
-  | { complete: { version: number; artifact: z.infer<typeof reportArtifact>; reason: string } }
+  | {
+      complete: {
+        version: number;
+        artifact: z.infer<typeof reportArtifact>;
+        reason: string;
+      };
+    }
   | {
       answer:
         | { work: string }
@@ -328,9 +408,10 @@ export function createRustBoardTransport(fetcher: typeof fetch = fetch) {
         })
         .safeParse(body);
       const error = refusal.data?.error;
-      const message = typeof error === "string"
-        ? error
-        : (error?.message ?? `Engine request failed (${response.status})`);
+      const message =
+        typeof error === "string"
+          ? error
+          : (error?.message ?? `Engine request failed (${response.status})`);
       throw Object.assign(new Error(message), { status: response.status });
     }
     const result = schema.safeParse(body);
@@ -387,12 +468,17 @@ export function rustProjectActivity(
   leads: NonNullable<z.infer<typeof leadBoard.output>["activity"]>,
 ) {
   const items = activityItems();
-  const byProject = new Map(projects.map(project => [project.key, project.repositories]));
-  const repositories = projects.flatMap(project => project.repositories);
+  const byProject = new Map(
+    projects.map((project) => [project.key, project.repositories]),
+  );
+  const repositories = projects.flatMap((project) => project.repositories);
   for (const task of tasks) {
     const origin = task.identity.repository;
-    const repo = repositories.find(candidate => matchesRepository(candidate, origin, origin));
-    const at = task.latestEventAtMs ?? task.stateSinceMs ?? task.lifecycle.admittedAtMs;
+    const repo = repositories.find((candidate) =>
+      matchesRepository(candidate, origin, origin),
+    );
+    const at =
+      task.latestEventAtMs ?? task.stateSinceMs ?? task.lifecycle.admittedAtMs;
     items.add(`task:${task.identity.id}`, {
       at: at == null ? null : new Date(at).toISOString(),
       executing: EXECUTING_TASK_PHASES.includes(task.phase),
@@ -401,7 +487,11 @@ export function rustProjectActivity(
   }
   for (const lead of leads) {
     const key = `lead:${JSON.stringify([lead.project, lead.id])}`;
-    items.add(key, { at: lead.at, executing: false, repositories: byProject.get(lead.project) ?? [] });
+    items.add(key, {
+      at: lead.at,
+      executing: false,
+      repositories: byProject.get(lead.project) ?? [],
+    });
     for (const task of lead.taskIds) {
       const linked = `task:${task}`;
       items.join(key, linked);
@@ -409,7 +499,8 @@ export function rustProjectActivity(
   }
   return projectActivityRows(projects, {
     items: [...items.components()].flatMap(([id, item]) =>
-      item.at || item.executing ? [{ ...item, id, at: item.at ?? "" }] : []),
+      item.at || item.executing ? [{ ...item, id, at: item.at ?? "" }] : [],
+    ),
   });
 }
 
@@ -460,7 +551,8 @@ export function rustInvalidationFromFrame(
   } else if (frame.event === "invalidate" && frame.data !== null) {
     try {
       const parsed = change.safeParse(JSON.parse(frame.data));
-      if (parsed.success) invalidate(parsed.data.taskId, parsed.data.detailOnly);
+      if (parsed.success)
+        invalidate(parsed.data.taskId, parsed.data.detailOnly);
     } catch {
       // Ignore malformed events. A subsequent refresh or invalidation recovers the view.
     }
@@ -550,8 +642,7 @@ export async function listenForRustChanges(
             if (frame.event === "decisions") board?.decisionsChanged?.();
             if (frame.event === "theme" || frame.event === "refresh")
               board?.themeChanged?.();
-            if (frame.event === "catalog")
-              board?.catalogChanged?.();
+            if (frame.event === "catalog") board?.catalogChanged?.();
           }
         }
       } finally {
@@ -615,7 +706,11 @@ export function groupRustTasks(
     const aTime = rustCardAgeAt(a) ?? -Infinity;
     const bTime = rustCardAgeAt(b) ?? -Infinity;
     if (aTime !== bTime) return bTime - aTime;
-    return a.identity.id < b.identity.id ? 1 : a.identity.id > b.identity.id ? -1 : 0;
+    return a.identity.id < b.identity.id
+      ? 1
+      : a.identity.id > b.identity.id
+        ? -1
+        : 0;
   });
   return columns;
 }
@@ -674,7 +769,8 @@ export function rustQuestionText(question: RustQuestion): string {
   if ("retry" in question)
     return `The ${question.retry.role} could not finish. Try again?`;
   if ("accept" in question) return "Accept the external merge?";
-  if ("allowance" in question) return "The task needs more allowance before its next run.";
+  if ("allowance" in question)
+    return "The task needs more allowance before its next run.";
   return repairPrompts[question.repair];
 }
 
