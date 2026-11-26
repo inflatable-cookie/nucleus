@@ -2126,7 +2126,11 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     let now = tokio::time::Instant::now();
     {
         let mut state = service.state.lock().await;
-        state.capacity_waiters.insert((1, "awaiting-slot".into()));
+        state.capacity_waiters.insert((
+            nucleus_core::QueuePriority::Normal,
+            1,
+            "awaiting-slot".into(),
+        ));
         state.set_wait("awaiting-slot", Some(nucleus_core::WaitReason::Capacity));
         state.schedule.wake(
             "awaiting-slot",

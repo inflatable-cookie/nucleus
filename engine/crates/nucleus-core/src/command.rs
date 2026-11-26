@@ -71,6 +71,7 @@ pub enum CommandError {
     ReportDoesNotMatch,
     ReportAlreadyReceived,
     ReportPolicyChanged,
+    QueuePriorityChanged,
     ReportOwnerAction,
     ReportAcceptanceMismatch,
     ReportInstructionRequired,
@@ -104,6 +105,9 @@ impl fmt::Display for CommandError {
             Self::ReportAlreadyReceived => "the run already sent a different report",
             Self::ReportPolicyChanged => {
                 "amend cannot change report-only delivery or its attached lanes; resubmit"
+            }
+            Self::QueuePriorityChanged => {
+                "queue.priority is read at admission only; use promote or demote commands"
             }
             Self::ReportOwnerAction => {
                 "use complete to accept the delivered report or move to work with an instruction"
@@ -890,6 +894,10 @@ impl Task {
                         != next.as_ref().map(BriefPolicy::lanes)))
         {
             return Err(CommandError::ReportPolicyChanged);
+        }
+        let priority = |policy: Option<&BriefPolicy>| policy.and_then(|policy| policy.priority);
+        if priority(previous.as_ref()) != priority(next.as_ref()) {
+            return Err(CommandError::QueuePriorityChanged);
         }
         let version = self
             .brief

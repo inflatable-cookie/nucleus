@@ -10,11 +10,37 @@ use nucleus_store::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::{Service, ServiceError, event, github_accounts::ReviewerCredential};
+use crate::{Service, ServiceError, WaitDetail, event, github_accounts::ReviewerCredential};
 
 // Give GitHub time to expose a review whose POST reply was lost.
 const REVIEW_GRACE_MS: i64 = 30_000;
 const FINAL_RETRY_DELAY_MS: i64 = 10 * 60_000;
+
+#[derive(Debug, thiserror::Error)]
+pub enum PublicationBlock {
+    #[error("{}", PublicationBlock::AccessRefused.wait_cause())]
+    AccessRefused,
+    #[error("{}", PublicationBlock::Refused.wait_cause())]
+    Refused,
+    #[error("{}", PublicationBlock::AttemptsExhausted.wait_cause())]
+    AttemptsExhausted,
+}
+
+impl PublicationBlock {
+    fn wait_cause(&self) -> &'static str {
+        match self {
+            Self::AccessRefused => {
+                "GitHub refused access to publish the review. Check repository access for the reviewer account, then use Move to review."
+            }
+            Self::Refused => {
+                "GitHub refused the review. Inspect the pull request, then use Move to review."
+            }
+            Self::AttemptsExhausted => {
+                "GitHub has not confirmed the review after three attempts. Inspect the pull request, then use Move to review."
+            }
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
@@ -22,11 +48,9 @@ pub enum PublicationError {
     SameAuthor,
     #[error("Check the reviewer account in Settings, then hold and release the task to retry.")]
     AccountUnavailable,
-    #[error(
-        "GitHub refused access to publish this review. Check the reviewer account and repository access, then use Move to review."
-    )]
+    #[error("{}", PublicationBlock::AccessRefused.wait_cause())]
     AccessRefused,
-    #[error("GitHub refused the review. Inspect the pull request, then use Move to review.")]
+    #[error("{}", PublicationBlock::Refused.wait_cause())]
     Refused,
     #[error(
         "The recorded GitHub review could not be verified. Inspect the pull request, then use Move to review if another review is needed."
@@ -34,49 +58,54 @@ pub enum PublicationError {
     Unverified,
     #[error("Review delivery is unconfirmed. Checking GitHub for the original review.")]
     UnknownDelivery,
-    #[error("GitHub has not confirmed the review after three attempts. Use Move to review.")]
+    #[error("{}", PublicationBlock::AttemptsExhausted.wait_cause())]
     AttemptsExhausted,
-    #[error("{0}")]
-    Blocked(String),
+    #[error("{error} Last review POST to {pull_url}: {response}")]
+    Blocked {
+        error: PublicationBlock,
+        pull_url: String,
+        response: String,
+    },
     #[error("The reviewed commit is no longer the open pull request head.")]
     StaleHead,
 }
 
 impl PublicationError {
-    pub(super) fn wait(&self) -> (WaitReason, &str) {
-        match self {
-            Self::SameAuthor => (
+    pub(super) fn wait(&self) -> (WaitReason, WaitDetail) {
+        let blocked = |cause: &str| {
+            (
                 WaitReason::ReviewPublicationBlocked,
+                WaitDetail::Blocked(cause.to_owned()),
+            )
+        };
+        match self {
+            Self::SameAuthor => blocked(
                 "Select a reviewer account different from the pull request author, then hold and release the task.",
             ),
-            Self::AccountUnavailable => (
-                WaitReason::ReviewPublicationBlocked,
-                "Check the reviewer account in Settings, then hold and release the task.",
-            ),
-            Self::AccessRefused => (
-                WaitReason::ReviewPublicationBlocked,
-                "GitHub refused access to publish the review. Check repository access for the reviewer account, then use Move to review.",
-            ),
-            Self::Blocked(cause) => (WaitReason::ReviewPublicationBlocked, cause),
-            Self::Refused => (
-                WaitReason::ReviewPublicationBlocked,
-                "GitHub refused the review. Inspect the pull request, then use Move to review.",
-            ),
-            Self::Unverified => (
-                WaitReason::ReviewPublicationBlocked,
+            Self::AccountUnavailable => {
+                blocked("Check the reviewer account in Settings, then hold and release the task.")
+            }
+            Self::AccessRefused => blocked(PublicationBlock::AccessRefused.wait_cause()),
+            Self::Blocked {
+                error,
+                pull_url,
+                response,
+            } => blocked(&format!(
+                "{} Last review POST to {pull_url}: {response}",
+                error.wait_cause()
+            )),
+            Self::Refused => blocked(PublicationBlock::Refused.wait_cause()),
+            Self::Unverified => blocked(
                 "The recorded review could not be verified. Inspect the pull request, then use Move to review if needed.",
             ),
-            Self::AttemptsExhausted => (
-                WaitReason::ReviewPublicationBlocked,
-                "GitHub has not confirmed the review after three attempts. Inspect the pull request, then use Move to review.",
-            ),
+            Self::AttemptsExhausted => blocked(PublicationBlock::AttemptsExhausted.wait_cause()),
             Self::UnknownDelivery => (
                 WaitReason::ForgeUnknown,
-                "Review delivery is unconfirmed. Checking GitHub for the original review.",
+                WaitDetail::ConfirmingDelivery("Checking GitHub for the original review."),
             ),
             Self::StaleHead => (
                 WaitReason::ForgeUnknown,
-                "Checking the current pull request head.",
+                WaitDetail::Observation("Checking the current pull request head."),
             ),
         }
     }
@@ -130,6 +159,23 @@ impl ReviewInput<'_> {
 
 impl Service {
     pub(super) async fn apply_reviewer_transition(
+        &self,
+        row: &TaskRow,
+        target: &PullTarget,
+        observation: &Observation,
+        action: Action,
+    ) -> Result<Action, ServiceError> {
+        self.apply_reviewer_transition_inner(row, target, observation, action)
+            .await
+            .map_err(|error| match error {
+                ServiceError::Forge(ForgeError::Deferred { until }) => {
+                    ServiceError::ReviewTransitionDeferred { until }
+                }
+                other => other,
+            })
+    }
+
+    async fn apply_reviewer_transition_inner(
         &self,
         row: &TaskRow,
         target: &PullTarget,
@@ -576,15 +622,15 @@ impl Service {
                     .await
                     .map_err(verified_review_error)?,
             ),
-            Refused => return Err(blocked_response(publication, PublicationError::Refused).into()),
+            Refused => return Err(blocked_response(publication, PublicationBlock::Refused).into()),
             AccessRefused => {
-                return Err(blocked_response(publication, PublicationError::AccessRefused).into());
+                return Err(blocked_response(publication, PublicationBlock::AccessRefused).into());
             }
         };
         let Some(review) = review else {
             if publication.outcome == FinalAttempt {
                 return Err(
-                    blocked_response(publication, PublicationError::AttemptsExhausted).into(),
+                    blocked_response(publication, PublicationBlock::AttemptsExhausted).into(),
                 );
             }
             return Ok(false);
@@ -689,15 +735,19 @@ fn write_cause(write: &ReviewWrite) -> Option<String> {
     }
 }
 
-fn blocked_response(record: &ReviewPublication, fallback: PublicationError) -> PublicationError {
+fn blocked_response(record: &ReviewPublication, fallback: PublicationBlock) -> PublicationError {
     let Some(response) = &record.response else {
-        return fallback;
+        return match fallback {
+            PublicationBlock::Refused => PublicationError::Refused,
+            PublicationBlock::AccessRefused => PublicationError::AccessRefused,
+            PublicationBlock::AttemptsExhausted => PublicationError::AttemptsExhausted,
+        };
     };
-    PublicationError::Blocked(format!(
-        "{} Last review POST to {}: {response}",
-        fallback.wait().1,
-        record.intent.pull_url
-    ))
+    PublicationError::Blocked {
+        error: fallback,
+        pull_url: record.intent.pull_url.clone(),
+        response: response.clone(),
+    }
 }
 
 fn binding(intent: &ReviewIntent) -> ReviewBinding<'_> {

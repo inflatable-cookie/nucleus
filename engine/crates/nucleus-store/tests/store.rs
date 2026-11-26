@@ -634,6 +634,7 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
             id: "1".into(),
             admission_order: None,
             closeout: true,
+            queue_priority: nucleus_core::QueuePriority::Normal,
         }]
     );
     assert!(
@@ -936,7 +937,7 @@ fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
     store.create(&task, &event("admitted")).unwrap();
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; PRAGMA user_version = 10;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN queue_priority; ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; PRAGMA user_version = 10;")
         .unwrap();
     drop(db);
 
@@ -1600,7 +1601,7 @@ fn schema_twelve_preserves_existing_snooze_ownership() {
 
 fn revert_parent_schema(storage: &EngineStorage) {
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("DROP TABLE parent_deliveries; PRAGMA user_version=11;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN queue_priority; DROP TABLE parent_deliveries; PRAGMA user_version=11;")
         .unwrap();
 }
 
@@ -1755,4 +1756,64 @@ fn scheduled_backup_restores_the_live_rows_and_rotates_verified_utc_tiers() {
     capture(at + 6 * 3_600_000);
     assert_eq!(storage.scheduled_list().unwrap().verified.len(), 2);
     assert_eq!(fs::read(foreign).unwrap(), b"keep");
+}
+
+#[test]
+fn migrating_version_twelve_defaults_queue_priority_without_rewriting_rows() {
+    let root = tempfile::tempdir().expect("scratch directory");
+    let storage = fixture_storage(root.path());
+    let mut store = Store::open(&storage).expect("fixture store");
+    let legacy = task("legacy", "fixture#1");
+    let promoted = Task::new(
+        Identity {
+            id: "promoted".into(),
+            reference: "fixture#2".into(),
+            repository: legacy.identity().repository.clone(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        "---\nqueue:\n  complexity: low\n  priority: promoted\n---\nPromoted brief".into(),
+        None,
+    );
+    assert_eq!(
+        promoted.queue_priority(),
+        nucleus_core::QueuePriority::Promoted
+    );
+    store.create(&legacy, &event("admitted")).unwrap();
+    store.create(&promoted, &event("admitted")).unwrap();
+    let expected_rowid = store.admission_order("legacy").unwrap();
+    drop(store);
+
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN queue_priority; PRAGMA user_version = 12;")
+        .unwrap();
+    drop(db);
+
+    let store = Store::open(&storage).expect("migrate v12 to v13");
+    let restored = row(&store, "legacy");
+    assert_eq!(restored.task, legacy);
+    assert_eq!(restored.version, 1);
+    assert_eq!(store.admission_order("legacy").unwrap(), expected_rowid);
+    assert_eq!(
+        restored.task.queue_priority(),
+        nucleus_core::QueuePriority::Normal
+    );
+    assert_eq!(
+        store.active_ids(None, 10).unwrap(),
+        [
+            nucleus_store::TaskSeed {
+                id: "legacy".into(),
+                admission_order: Some(expected_rowid),
+                closeout: false,
+                queue_priority: nucleus_core::QueuePriority::Normal,
+            },
+            nucleus_store::TaskSeed {
+                id: "promoted".into(),
+                admission_order: Some(expected_rowid + 1),
+                closeout: false,
+                queue_priority: nucleus_core::QueuePriority::Normal,
+            },
+        ]
+    );
 }

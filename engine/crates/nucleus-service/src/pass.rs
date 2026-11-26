@@ -474,9 +474,8 @@ impl Service {
                 }
                 let mut admitted = task.clone();
                 admitted.reconcile(&observation);
-                let order = state.store.admission_order(&identity.id)?;
                 self.commit(&mut state, row, &admitted, &event("queue_admitted"), None)?;
-                state.capacity_waiters.insert((order, identity.id.clone()));
+                state.enqueue_capacity(&admitted)?;
                 Ok(action)
             }
             Action::Wait(WaitReason::WorkspaceUnknown) if let Err(error) = workspace => {

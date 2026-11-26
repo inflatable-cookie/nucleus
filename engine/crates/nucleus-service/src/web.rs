@@ -29,7 +29,7 @@ use axum::{
 use futures_util::{Stream, TryStreamExt, stream};
 use nucleus_core::{
     Answer, Authority, Brief, Command, Hold, Identity, Observation, Phase, PullRequest, Question,
-    Report, ReportAcceptance, ReportDelivery, ReportTask, Task, Verdict, WaitReason,
+    QueuePriority, Report, ReportAcceptance, ReportDelivery, ReportTask, Task, Verdict, WaitReason,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -707,6 +707,17 @@ async fn next(
             phase: None,
         });
     }
+    if state.can_change_queue_priority(task) && state.command_authority(task, &authority).is_ok() {
+        commands.push(CommandView {
+            name: if task.queue_priority().is_promoted() {
+                "demote"
+            } else {
+                "promote"
+            },
+            preflight: CommandReadiness::Ready,
+            phase: None,
+        });
+    }
     for (name, available) in [
         ("set_dependencies", dependency_edits.set_dependencies),
         (
@@ -740,6 +751,7 @@ async fn next(
         last_provider_limit: task.threads().last_provider_limit.clone(),
         version: row.version,
         phase: summary.card.phase,
+        queue_priority: summary.card.queue_priority,
         state_label: summary.card.state_label,
         state_since_ms: summary.card.state_since_ms,
         wait: summary.card.wait,
@@ -862,9 +874,17 @@ fn command_options(
 #[serde(untagged)]
 enum TaskCommand {
     Recheck(Recheck),
+    QueuePriority(QueuePriorityCommand),
     VersionedAmend(VersionedAmend),
     Lifecycle(Command),
     Dependency(DependencyCommand),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+enum QueuePriorityCommand {
+    Promote(i64),
+    Demote(i64),
 }
 
 #[derive(Deserialize)]
@@ -908,6 +928,22 @@ async fn command(
         TaskCommand::Recheck(input) => {
             api.service
                 .recheck(&id, input.recheck, &authority, session.as_deref(), &scope)
+                .await?
+        }
+        TaskCommand::QueuePriority(input) => {
+            let (version, priority) = match input {
+                QueuePriorityCommand::Promote(version) => (version, QueuePriority::Promoted),
+                QueuePriorityCommand::Demote(version) => (version, QueuePriority::Normal),
+            };
+            api.service
+                .set_queue_priority(
+                    &id,
+                    version,
+                    priority,
+                    &authority,
+                    session.as_deref(),
+                    &scope,
+                )
                 .await?
         }
         TaskCommand::Lifecycle(command) => {
@@ -1120,6 +1156,7 @@ struct Card {
     reference: String,
     version: i64,
     phase: Phase,
+    queue_priority: QueuePriority,
     state_label: String,
     state_since_ms: Option<u64>,
     latest_event_at_ms: Option<u64>,
@@ -1184,6 +1221,7 @@ impl Card {
             reference: row.reference,
             version: row.version,
             phase: Phase::Error,
+            queue_priority: QueuePriority::Normal,
             title: "Unreadable task".into(),
             state_label: "Error".into(),
             attention: crate::attention::TaskAttention::Attention,
@@ -1286,6 +1324,7 @@ impl Card {
             reference: row.reference().into_owned(),
             version: row.version,
             phase: task.phase(),
+            queue_priority: task.queue_priority(),
             attention: inputs.attention,
             lifecycle: crate::presentation::task_lifecycle(
                 task,
@@ -1375,6 +1414,7 @@ struct NextView {
     last_provider_limit: Option<String>,
     version: i64,
     phase: Phase,
+    queue_priority: QueuePriority,
     state_label: String,
     state_since_ms: Option<u64>,
     wait: Option<WaitReason>,
@@ -1518,6 +1558,7 @@ impl IntoResponse for ApiError {
                     | ServiceError::Core(_)
                     | ServiceError::QuestionUnassigned
                     | ServiceError::RecheckUnavailable
+                    | ServiceError::QueuePriorityUnavailable
                     | ServiceError::EffectInProgress
                     | ServiceError::BriefConflict
                     | ServiceError::ReportOpenPullRequest

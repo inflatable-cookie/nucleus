@@ -52,7 +52,7 @@ import {
 } from "./board/use-board-data";
 import { TaskDialog } from "./task/task-dialog";
 import { RustTaskDialog } from "./task/rust-task";
-import { groupRustTasks, rustProjectActivity, useRustTasks, type RustTask, type RustInvalidation } from "./web/rust-board";
+import { groupRustTasks, postRustCommand, rustProjectActivity, useRustTasks, type RustCommand, type RustTask, type RustInvalidation } from "./web/rust-board";
 import { useTaskDraftStore } from "./task/drafts";
 import { LeadDialog } from "./records/lead-dialog";
 import { PapercutDialog } from "./records/papercut-dialog";
@@ -304,11 +304,25 @@ export function MainSurface({
     state?.projects.find((project) =>
       projectHasRepository(project, repoPath, origin),
     );
+  const [rustBusy, setRustBusy] = useState(false);
   const rustListProps = {
     error: rustTasks.error,
     retry: () => void rustTasks.refetch(),
     selected: rustTaskId,
     onSelect: selectRustTask,
+    busy: rustBusy,
+    onCommand: rustBoard
+      ? (id: string, command: RustCommand) => {
+          setRustBusy(true);
+          setError("");
+          void postRustCommand(id, command).then(
+            () => {
+              rustBoard(id);
+            },
+            (err: unknown) => setError(errorText(err)),
+          ).finally(() => setRustBusy(false));
+        }
+      : undefined,
     project: ({ identity }: RustTask) => {
       const origin = normalizeRepositoryOrigin(identity.repository);
       const project = projectForRepository(identity.repository, identity.repository);
