@@ -2165,14 +2165,25 @@ async fn wait_retention_tracks_the_question_even_when_its_title_stays_the_same()
             &obs,
         )
         .unwrap();
-    let (reason, entered) = state.task_wait_transition(&task, &amended).unwrap();
-    assert_eq!(reason, Some(WaitReason::Question));
-    state.apply_task_wait(&amended, reason, entered);
-    assert_eq!(state.schedule.due(id), Some(deadline));
-    let mut changed = amended.clone();
+    let row = service.lookup(&state, id).unwrap();
+    service
+        .commit(&mut state, &row, &amended, &event("fixture"), None)
+        .unwrap();
+    assert_eq!(state.wait_reason(id), Some(WaitReason::Question));
+    let row = service.lookup(&state, id).unwrap();
+    let mut changed = row.task.clone();
     assert!(changed.clear_allowance_question());
     assert!(changed.ask_allowance(35, 30));
-    let (reason, label_changed) = state.task_wait_transition(&amended, &changed).unwrap();
+    let before = titles::task_state_label(&row.task, state.wait_reason(id), state.wait_detail(id));
+    let (reason, label_changed) = state.task_wait_transition(&row.task, &changed).unwrap();
     assert_eq!(reason, None);
     assert!(!label_changed);
+    assert_eq!(
+        before,
+        titles::task_state_label(&changed, reason, state.wait_detail(id))
+    );
+    service
+        .commit(&mut state, &row, &changed, &event("fixture"), None)
+        .unwrap();
+    assert_eq!(state.wait_reason(id), None);
 }

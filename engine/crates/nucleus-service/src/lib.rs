@@ -214,6 +214,8 @@ pub enum ServiceError {
     Forge(#[from] ForgeError),
     #[error(transparent)]
     ReviewPublication(#[from] PublicationError),
+    #[error("review transition deferred")]
+    ReviewTransitionDeferred { until: SystemTime },
 }
 
 pub struct Service {
@@ -1262,6 +1264,13 @@ impl Service {
             }
             let due = match result {
                 Err(ServiceError::Host(HostError::Deferred { until })) => (*until).max(now + delay),
+                Err(ServiceError::ReviewTransitionDeferred { until }) => {
+                    now + until
+                        .duration_since(SystemTime::now())
+                        .unwrap_or_default()
+                        .max(self.forge_backoff())
+                        .max(delay)
+                }
                 Err(ServiceError::ParentNotSent { retry_at, .. }) => {
                     (now + delay).max(retry_at.unwrap_or(now))
                 }
@@ -2089,16 +2098,7 @@ fn task_wait(
         }
         Err(ServiceError::Workspace(_)) => (Some(Wait::WorkspaceUnknown), None),
         Err(ServiceError::ReviewPublication(error)) => {
-            let (wait, cause) = error.wait();
-            let detail = match error {
-                PublicationError::UnknownDelivery => {
-                    WaitDetail::ConfirmingDelivery("Checking GitHub for the original review.")
-                }
-                PublicationError::StaleHead => {
-                    WaitDetail::Observation("Checking the current pull request head.")
-                }
-                _ => WaitDetail::Blocked(cause.to_owned()),
-            };
+            let (wait, detail) = error.wait();
             (Some(wait), Some(detail))
         }
         Err(ServiceError::Forge(
@@ -2109,7 +2109,9 @@ fn task_wait(
                 "{error}. Use Recheck after the repair."
             ))),
         ),
-        Err(ServiceError::Forge(_)) => (Some(Wait::ForgeUnknown), None),
+        Err(ServiceError::Forge(_) | ServiceError::ReviewTransitionDeferred { .. }) => {
+            (Some(Wait::ForgeUnknown), None)
+        }
         Err(ServiceError::InboxUnavailable { .. }) => (Some(Wait::Question), None),
         Err(ServiceError::Profile(_) | ServiceError::ProfileConfiguration) => {
             (Some(Wait::Capacity), None)

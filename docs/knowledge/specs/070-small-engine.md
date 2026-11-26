@@ -125,7 +125,7 @@ Later decisions carry their own attribution.
 
    Fresh installs start at 32 global slots and 5 per project, matching the TypeScript defaults. During cutover, `limits.import` read five capacity and retention meta keys from a fenced TypeScript copy and published them to Dispatch under the stopped profile lock. Projects without an imported override inherit the per-project default. The active CLI retires this command in milestone 4. The settings loader accepts profiles written with the retired import marker.
 
-   Tom retired Papercuts slots, Stall threshold, Hold reminder, Hold escalation and Host outage notice on 2026-11-24. Ruling 12 retires Lane drain and Lane drain escalation. Ruling 5 retires Default host. The import carries retention settings ahead of the scheduler pruning change.
+   Tom retired Papercuts slots, Stall threshold, Hold reminder, Hold escalation and Host outage notice on 2026-11-24. Ruling 12 retires Lane drain and Lane drain escalation. Default host stays. Tom, 2026-11-26: “those mechanics were valid - we may only support T3 now, but I was aiming on adding support for most ADEs so it would have still come into place”. Its options are the registered hosts plus the planner's host, never a static list of supported host kinds. The import carries retention settings ahead of the scheduler pruning change.
 
 9. **The profile matrix carries over exactly.** Tom, 2026-11-23: "The profile matrix we agreed earlier definitely needs to come over, we've finally got that working just as I want it". The usage-level matrices in [Spec 052](052-usage-level.md), as amended on 2026-11-23, are ported cell for cell. That covers worker start brackets by complexity and level, the reviewer bracket relative to the worker, the step-up after an applied changes-required review, the smoothed Maximum, the Frontier request rule and critical tasks. So is [Spec 053](053-demand-based-selection.md)'s demand-based selection (the five-stop weight slider). They become pure functions with a test for every cell of both matrices, matching today's `test/demand.test.ts`. The only change is that the retired coordinator role drops out. A climb to a new profile starts a new worker child thread, as the TypeScript engine does. Tom, 2026-11-23: "The current TS policy of creating a new child thread is correct, we won't be able to switch profiles in the same thread when they have different providers".
    New tasks and item promotions require `queue.complexity` in the brief. For a papercut, the board choice or `item.promote --complexity` supplies it in the task brief. Board promotion sends the selected repository with that complexity. Existing tasks remain readable. A High or Very High admission at Low usage commits its operator decision with the task. The scheduler waits for approval through the Inbox, preserving independent holds. Raising usage or lowering complexity below High withdraws that permission requirement.
@@ -537,6 +537,9 @@ Later decisions carry their own attribution.
       The journal retains the review POST’s HTTP status and bounded GitHub error
       message when available. A marker check on a responsive forge reads “confirming review”.
       A definite throttle preserves the attempt and deadline across restarts.
+      Publication errors classify the scheduler wait and card detail together;
+      changing the wording does not change the wait or its deadline. Wait
+      retention follows the task's authority, not its rendered label.
       Nucleus verifies the review ID, author, head, state and body
       before applying the verdict, and rechecks a published approval before
       merging. Previously applied approvals keep their original exact-head gate.

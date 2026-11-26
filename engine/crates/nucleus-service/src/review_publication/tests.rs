@@ -435,7 +435,10 @@ async fn formal_approval_refuses_the_same_author_and_inaccessible_role() {
                 status.as_u16()
             );
             assert_eq!(record.response.as_deref(), Some(receipt.as_str()));
-            let cause = error.wait().1;
+            let (_, WaitDetail::Blocked(cause)) = error.wait() else {
+                panic!("expected owner action detail")
+            };
+            assert_eq!(error.to_string(), cause);
             assert!(
                 cause.contains(&receipt)
                     && cause.contains(&record.intent.pull_url)
@@ -596,7 +599,7 @@ async fn aged_marker_free_resubmission_gets_one_final_bound_attempt() {
         // to observe exactly what the persisted final claim permits.
         assert!(matches!(
             result,
-            Err(ServiceError::Forge(ForgeError::Deferred { .. }))
+            Err(ServiceError::ReviewTransitionDeferred { .. })
         ));
         service = restart_service(service, &remote);
         let result = advance(&service).await;
@@ -607,7 +610,9 @@ async fn aged_marker_free_resubmission_gets_one_final_bound_attempt() {
             let ServiceError::ReviewPublication(blocked) = error else {
                 panic!("expected owner action")
             };
-            let (wait, cause) = blocked.wait();
+            let (wait, WaitDetail::Blocked(cause)) = blocked.wait() else {
+                panic!("expected owner action detail")
+            };
             assert!(cause.contains("GitHub HTTP 502") && cause.contains(&intent.pull_url));
             assert_eq!(wait, WaitReason::ReviewPublicationBlocked);
             assert!(cause.contains("Move to review"));
@@ -692,14 +697,145 @@ async fn throttled_resubmission_waits_for_the_server_deadline_after_restart() {
     let instance = record_report(&service, Review::Approve).await;
     aged_claim(&service, &instance).await;
     let before = SystemTime::now();
-    let Err(ServiceError::Forge(ForgeError::Deferred { until })) = advance(&service).await else {
+    let result = advance(&service).await;
+    let Err(ServiceError::ReviewTransitionDeferred { until }) = &result else {
         panic!("expected a definite throttle");
     };
+    let until = *until;
     assert!(until >= before + std::time::Duration::from_hours(1));
+    let row = service.task(TASK).await.unwrap();
+    {
+        let mut state = service.state.lock().await;
+        assert!(
+            state
+                .take_ready(
+                    tokio::time::Instant::now(),
+                    &std::collections::BTreeSet::new()
+                )
+                .is_some()
+        );
+    }
+    service
+        .schedule_result(&row, &result, crate::schedule::Priority::Effect)
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::task_wait(&row, &result).0,
+        Some(WaitReason::ForgeUnknown)
+    );
+    let deadline = {
+        let mut state = service.state.lock().await;
+        let deadline = state.schedule.due(TASK).unwrap();
+        assert!(deadline >= tokio::time::Instant::now() + std::time::Duration::from_mins(59));
+        state
+            .observe_wait_detail(
+                &row.task,
+                Some(WaitReason::ForgeUnknown),
+                Some(WaitDetail::Observation("Updated wording.")),
+            )
+            .unwrap();
+        assert_eq!(state.schedule.due(TASK), Some(deadline));
+        assert_eq!(state.wait_reason(TASK), Some(WaitReason::ForgeUnknown));
+        deadline
+    };
+    assert_eq!(
+        service.state.lock().await.schedule.due(TASK),
+        Some(deadline)
+    );
     let service = restart_service(service, &remote);
     assert!(matches!(advance(&service).await,
-        Err(ServiceError::Forge(ForgeError::Deferred { until: retained })) if retained == until));
+        Err(ServiceError::ReviewTransitionDeferred { until: retained }) if retained == until));
     assert_eq!(remote.posts.lock().unwrap().len(), 1);
+    server.abort();
+}
+
+#[tokio::test]
+async fn changed_review_authority_invalidates_publication_wait_with_same_label() {
+    let remote = ForgeFixture::new(42, Delivery::Saved);
+    let (_home, service, server) = create_service(&remote).await;
+    select_reviewer(&service, 42, "selected-reviewer");
+    let head = service.fixture().start.clone();
+    let (seed, credential, _) = reservation(TASK, Entry::ReviewEntry, &head);
+    let instance = seed.run().unwrap().launch().instance.clone();
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&seed, &event("fixture"))
+        .unwrap();
+    let (_other_home, other) = fixture(GitHub::new("fixture").unwrap());
+    other
+        .state
+        .lock()
+        .await
+        .store
+        .create(&seed, &event("fixture"))
+        .unwrap();
+    for (target, decision) in [(&service, Review::Approve), (&other, Review::Changes)] {
+        target
+            .report(
+                TASK,
+                &instance,
+                credential.as_bytes(),
+                Report::Review {
+                    head: head.clone(),
+                    decision,
+                    summary: "Synthetic summary".into(),
+                    finding_titles: Vec::new(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let result = advance(&service).await;
+    assert!(matches!(
+        result,
+        Err(ServiceError::ReviewPublication(
+            PublicationError::SameAuthor
+        ))
+    ));
+    let operator = nucleus_core::Authority::Operator {
+        actor: "fixture".into(),
+    };
+    for target in [&service, &other] {
+        target
+            .command(
+                TASK,
+                &operator,
+                nucleus_core::Command::Hold("fixture".into()),
+            )
+            .await
+            .unwrap();
+    }
+    let changed = other.task(TASK).await.unwrap();
+    let row = service.task(TASK).await.unwrap();
+    assert_ne!(
+        row.task.run().unwrap().report(),
+        changed.task.run().unwrap().report()
+    );
+    let (wait, detail) = crate::task_wait(&row, &result);
+    assert_eq!(wait, Some(WaitReason::ReviewPublicationBlocked));
+    let mut state = service.state.lock().await;
+    state.observe_wait_detail(&row.task, wait, detail).unwrap();
+    let before = crate::titles::task_state_label(
+        &row.task,
+        state.wait_reason(TASK),
+        state.wait_detail(TASK),
+    );
+    let (after_wait, changed_label) = state
+        .task_wait_transition(&row.task, &changed.task)
+        .unwrap();
+    assert_eq!(after_wait, None);
+    assert!(!changed_label);
+    assert_eq!(
+        before,
+        crate::titles::task_state_label(&changed.task, after_wait, state.wait_detail(TASK))
+    );
+    service
+        .commit(&mut state, &row, &changed.task, &event("fixture"), None)
+        .unwrap();
+    assert_eq!(state.wait_reason(TASK), None);
     server.abort();
 }
 
@@ -721,8 +857,7 @@ async fn assert_throttled_publication(resubmission: bool) {
         aged_claim(&service, &instance).await;
     }
     for attempt in 1..=2 {
-        let Err(ServiceError::Forge(ForgeError::Deferred { until })) = advance(&service).await
-        else {
+        let Err(ServiceError::ReviewTransitionDeferred { until }) = advance(&service).await else {
             panic!("expected GitHub to defer attempt {attempt}");
         };
         service = restart_service(service, &remote);
