@@ -646,9 +646,12 @@ mod tests {
             panic!("expected planning command")
         };
         let (method, path, body) = action.request().unwrap();
-        assert_eq!(method, Method::POST);
+        assert_eq!(method, reqwest::Method::POST);
         assert_eq!(path, "/v1/planning/product/items/item-id/reopen");
-        assert_eq!(body.unwrap(), json!({"note":"Again", "version":7}));
+        assert_eq!(
+            body.unwrap(),
+            serde_json::json!({"note":"Again", "version":7})
+        );
     }
 
     #[test]
