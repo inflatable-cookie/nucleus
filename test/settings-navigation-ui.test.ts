@@ -541,3 +541,54 @@ test("Profiles holds the Subscriptions list beneath the profiles, with its empty
   loading.update(h("View"));
 });
 
+test("long subscription group names stay in their row with accessible controls", async () => {
+  const group =
+    "a-very-long-subscription-group-name-that-would-overrun-a-narrow-settings-column";
+  const state = {
+    ...board,
+    canEditSettings: true,
+    profiles: [
+      {
+        id: "p",
+        name: "P",
+        provider: "openai",
+        model: "gpt-5",
+        notes: "",
+        available: true,
+        problem: "",
+        supportedThinking: [],
+      },
+    ],
+    pool: [
+      { profileId: "p", group, enabled: true, weight: "default" },
+    ],
+    availability: [
+      { group, unavailable: true, reason: "weekly limit", retryAt: null },
+    ],
+  };
+  const ui = await screen(
+    390,
+    async (method) =>
+      method === "rust.profile-usage"
+        ? usageOf(state)
+        : method === "queue.ui-snapshot"
+          ? state
+        : method === "queue.capacity-state"
+          ? capacity
+          : missing(),
+    true,
+  );
+  await settle(() => ui.text().includes("Usage level"));
+  ui.press("Profiles");
+  await settle(() => Boolean(ui.query(`Edit ${group}`)));
+  assert.ok(ui.get(`Reset ${group}`));
+  const name = ui
+    .ofType("Text")
+    .find((node) => node.children.join("") === group)!;
+  assert.equal(
+    name.props.style.flex,
+    1,
+    "the name takes the free space and wraps inside the row",
+  );
+  ui.update(h("View"));
+});

@@ -146,7 +146,17 @@ const imported = (): NucleusProfile =>
     featureValues: undefined,
   }) as NucleusProfile;
 
-const profileUsage = { availability: [], assignments: {}, recentAssignments: {}, recentAssignmentSample: 0, recentAssignmentRoles: [] };
+const profileUsage = {
+  availability: [],
+  assignments: {},
+  recentAssignments: {},
+  recentAssignmentSample: 0,
+  recentAssignmentRoles: {
+    worker: { counts: {}, sample: 0 },
+    reviewer: { counts: {}, sample: 0 },
+    coordinator: { counts: {}, sample: 0 },
+  },
+};
 const board = () => ({
   revision: 1,
   connected: true,
@@ -1762,3 +1772,25 @@ test("nucleus#1502: an empty role view says so and keeps every row editable", as
   }
 });
 
+test("nucleus#998: Subscriptions ending in group rows is the last section, with no divider", async () => {
+  await load();
+  const state = fixture();
+  const ui = mount(screenTree(state));
+  try {
+    await settle(() => ui.text().includes("Profiles"));
+    ui.press("Profiles");
+    await settle(() => ui.text().includes("anthropic"));
+    assert.equal(
+      ui.get("Subscriptions").props.style.borderBottomWidth ?? 0,
+      0,
+      "the last section has no divider",
+    );
+    assert.equal(
+      ui.query("Provider map"),
+      undefined,
+      "the provider map is retired (task 1158)",
+    );
+  } finally {
+    ui.update(h("View", null));
+  }
+});

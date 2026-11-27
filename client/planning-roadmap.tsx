@@ -478,7 +478,7 @@ export function ProjectRow({
   );
 }
 
-/** The list pane's group header: Active, Idle on purpose, Dormant. */
+/** The list pane's group header: Active or Dormant. */
 export function GroupHeader({ title, c }: { title: string; c: Colors }) {
   return (
     <Text
@@ -495,7 +495,7 @@ export function GroupHeader({ title, c }: { title: string; c: Colors }) {
   );
 }
 
-/** The banner under the roadmap header: the focus, the idle reason or the dormant note. */
+/** The banner under the roadmap header: the focus or the dormant note. */
 function Banner({
   plan,
   lanes,
@@ -1088,7 +1088,6 @@ export function ProjectRoadmapView({
       )}
       {latest &&
         !latest.entries.length &&
-        !latest.idle &&
         group !== "dormant" && (
           <Text style={{ ...body(c), color: r.muted }}>
             {unplanned.length

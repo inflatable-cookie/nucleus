@@ -170,7 +170,7 @@ export function MainSurface({
     selectPapercut,
     clearSelection,
   } = useBoardSelection();
-  // Unsaved plan drafts, one per project section: entries, idle mark and the version they were based on.
+  // Unsaved plan drafts, one per project section: entries and the version they were based on.
   const [planEdits, setPlanEdits] = useState<Record<string, PlanEdit>>({});
   // The last failed save per project. The draft stays; the section says why it was not saved.
   const [planSaveErrors, setPlanSaveErrors] = useState<Record<string, string>>(

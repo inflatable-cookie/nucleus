@@ -98,7 +98,7 @@ const day = (value: string | null) => value?.slice(0, 10) ?? "No activity";
 
 /**
  * The plan editor (nucleus#1531 keeps it unchanged until its own redesign): the roadmap's
- * "Edit plan" opens a draft here with move controls, Save and Cancel, the idle mark and the
+ * "Edit plan" opens a draft here with move controls, Save and Cancel, and the
  * unplanned lanes. The draft is kept when the plan changes underneath it; Reapply or Reload
  * settles it. Reading is the roadmap (`planning-roadmap.tsx`).
  */
