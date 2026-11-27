@@ -376,7 +376,10 @@ async fn task_prompt(
                 stream.next().await?;
                 let detail = client.detail().await?;
                 let hold = !detail.phase.is_terminal()
-                    && (detail.parent_hold.as_deref() == Some(prompt) || detail.active_child);
+                    && detail
+                        .parent_hold
+                        .as_deref()
+                        .map_or(detail.active_child, |current| current == prompt);
                 for update in view.lock().await.update(&detail, structured, false) {
                     notify(output, session, update);
                 }
@@ -454,6 +457,34 @@ fn error(output: &Output, id: &Value, code: i32, message: &str) {
 
 fn stop(output: &Output, id: &Value, reason: &str) {
     result(output, id, json!({"stopReason":reason}));
+}
+
+/// Run the task prompt handler against an authenticated loopback service.
+///
+/// # Errors
+/// Returns an error if the fixture client cannot attach or follow its task.
+#[cfg(feature = "loopback-fixture")]
+#[doc(hidden)]
+pub async fn fixture_task_prompt(
+    binding: nucleus_core::acp::Binding,
+    cwd: &std::path::Path,
+    prompt: &str,
+    output: &mpsc::UnboundedSender<Value>,
+) -> io::Result<()> {
+    let session = binding.session_id.clone();
+    let mut client = ServiceClient::new(&nucleus_core::acp::SessionBinding::Task(binding), None)
+        .map_err(io::Error::other)?;
+    task_prompt(
+        &mut client,
+        &Mutex::new(Presentation::default()),
+        output,
+        &session,
+        true,
+        prompt,
+        cwd,
+    )
+    .await
+    .map_err(io::Error::other)
 }
 
 #[cfg(test)]
