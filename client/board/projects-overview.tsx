@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type {
   BoardLead,
@@ -13,16 +13,11 @@ import {
 } from "../../shared/project-scope";
 import {
   projectColumnWidth,
-  projectTriageCounts,
+  projectTriageCards,
 } from "../../shared/inbox-board";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
-import {
-  HelpPopover,
-  HelpTip,
-  muted,
-  noOutline,
-  type Colors,
-} from "../controls";
+import { muted, noOutline, type Colors } from "../controls";
+import { localStore, type ScopeStorage } from "../project-scope-controls";
 import { useFocusVisible } from "../focus-modality";
 import {
   cardTitleColor,
@@ -34,15 +29,23 @@ import {
 } from "../design";
 import {
   compareRustTasks,
+  groupRustTasks,
   rustTaskColumn,
   type RustBoardView,
   type RustTask,
 } from "../web/rust-board";
 import { CardProject } from "./cards";
 import { RustListRows, type InboxListProps } from "./inbox-list";
+import { TriageLeadCard } from "./triage-lead-card";
 
-/** The lists a header count opens, filtered to its project. */
-export type ProjectListView = "leads" | "papercuts" | "queue";
+/** A column's tabs (nucleus#1667), in header order. Active is the default. */
+export const projectColumnTabs = [
+  "active",
+  "leads",
+  "papercuts",
+  "queue",
+] as const;
+export type ProjectColumnTab = (typeof projectColumnTabs)[number];
 
 /** Active stages, in the order a column lists them: queued and finished tasks stay out. */
 const activeStages: readonly RustBoardView[] = [
@@ -63,19 +66,19 @@ export type ProjectSelectorInputs = {
 
 export type ProjectOverviewColumn = {
   project: Project;
-  /** Open leads, open papercuts and queued tasks; null until the read loads. */
-  leads: number | null;
-  papercuts: number | null;
-  queue: number | null;
   /** Active tasks in stage order; undefined until the task list loads. */
   active: RustTask[] | undefined;
+  /** Open leads and open papercuts in each list's default order; undefined until the lead read loads. */
+  leads: BoardLead[] | undefined;
+  papercuts: BoardLead[] | undefined;
+  /** Queued tasks in queue order; undefined until the task list loads. */
+  queue: RustTask[] | undefined;
 };
 
 /**
  * One column per project (nucleus#1666), in the header project select's order.
- * The board state holds only non-archived projects. Lead and papercut counts are
- * each list's default set with the filter on this project, so a count matches the
- * list its link opens.
+ * The board state holds only non-archived projects. Each tab's cards are the
+ * same set and order as the board list it mirrors, filtered to this project.
  */
 export function projectOverviewColumns({
   projects,
@@ -104,21 +107,19 @@ export function projectOverviewColumns({
   return order.flatMap(({ key }) => {
     const project = byKey.get(key);
     if (!project) return [];
-    const triage = leads && projectTriageCounts(projects, leads, key);
+    const triage = leads && projectTriageCards(projects, leads, key);
     const own = tasks?.filter(({ identity }) =>
       projectHasRepository(project, identity.repository, identity.repository),
     );
     return [
       {
         project,
-        leads: triage ? triage.leads : null,
-        papercuts: triage ? triage.papercuts : null,
-        queue: own
-          ? own.filter((task) => task.phase === "queued").length
-          : null,
         active: own
           ?.filter((task) => activeStages.includes(rustTaskColumn(task)))
           .sort(compareRustTasks),
+        leads: triage?.leads,
+        papercuts: triage?.papercuts,
+        queue: own && groupRustTasks(own).queue,
       },
     ];
   });
@@ -126,10 +127,49 @@ export function projectOverviewColumns({
 
 type RustRows = Omit<NonNullable<InboxListProps["rust"]>, "tasks">;
 
+/** How lead and papercut cards open their detail and show the open one. */
+export type ProjectItemRows = {
+  /** The open lead or papercut and its project, to mark its card. */
+  selected: { id: string; project?: string } | null;
+  repositoryBadges?: Readonly<Record<string, ProjectBadge>>;
+  onSelectLead: (id: string, project: string) => void;
+  onSelectPapercut: (id: string, project: string) => void;
+};
+
+const tabStorageKey = (project: string) =>
+  `nucleus.projects-overview.tab.${project}`;
+
+/** A column's stored tab; Active when storage is missing, unreadable or holds something else. */
+export function readColumnTab(
+  storage: () => ScopeStorage | undefined,
+  project: string,
+): ProjectColumnTab {
+  try {
+    const value = storage()?.getItem(tabStorageKey(project));
+    return projectColumnTabs.find((tab) => tab === value) ?? "active";
+  } catch {
+    return "active";
+  }
+}
+
+function writeColumnTab(
+  storage: () => ScopeStorage | undefined,
+  project: string,
+  tab: ProjectColumnTab,
+) {
+  try {
+    storage()?.setItem(tabStorageKey(project), tab);
+  } catch {
+    // The tab still works for this visit; it is not remembered.
+  }
+}
+
 /**
  * The Projects overview (nucleus#1666): a horizontally scrolling board with a
  * fixed-width column per project. Each column pins its header card and scrolls
- * its active task cards on its own. A narrow board shows one column at a time.
+ * its cards on its own. The header's four counts are the column's tabs
+ * (nucleus#1667): Active, Leads, Papercuts and Queue, each remembered per
+ * project in browser storage. A narrow board shows one column at a time.
  */
 export function ProjectsOverview({
   c,
@@ -137,7 +177,8 @@ export function ProjectsOverview({
   narrowWidth,
   badge,
   rust,
-  onOpenList,
+  items,
+  storage = localStore,
 }: {
   c: Colors;
   columns: ProjectOverviewColumn[] | undefined;
@@ -145,7 +186,8 @@ export function ProjectsOverview({
   narrowWidth: number | null;
   badge: (projectKey: string) => ProjectBadge | null;
   rust: RustRows;
-  onOpenList: (projectKey: string, view: ProjectListView) => void;
+  items: ProjectItemRows;
+  storage?: () => ScopeStorage | undefined;
 }) {
   const narrow = Boolean(narrowWidth);
   const columnWidth = narrowWidth || projectColumnWidth;
@@ -186,7 +228,8 @@ export function ProjectsOverview({
               inset={narrow ? space.sm : 0}
               badge={badge(column.project.key)}
               rust={rust}
-              onOpenList={onOpenList}
+              items={items}
+              storage={storage}
             />
           ))}
         </ScrollView>
@@ -195,6 +238,20 @@ export function ProjectsOverview({
   );
 }
 
+const tabLabels: Record<ProjectColumnTab, string> = {
+  active: "Active",
+  leads: "Leads",
+  papercuts: "Papercuts",
+  queue: "Queue",
+};
+
+const emptyText: Record<ProjectColumnTab, string> = {
+  active: "No active tasks",
+  leads: "No open leads",
+  papercuts: "No open papercuts",
+  queue: "Nothing queued",
+};
+
 function ProjectColumn({
   c,
   column,
@@ -202,7 +259,8 @@ function ProjectColumn({
   inset,
   badge,
   rust,
-  onOpenList,
+  items,
+  storage,
 }: {
   c: Colors;
   column: ProjectOverviewColumn;
@@ -210,10 +268,22 @@ function ProjectColumn({
   inset: number;
   badge: ProjectBadge | null;
   rust: RustRows;
-  onOpenList: (projectKey: string, view: ProjectListView) => void;
+  items: ProjectItemRows;
+  storage: () => ScopeStorage | undefined;
 }) {
-  const { project, active } = column;
-  const rows = { ...rust, tasks: active };
+  const { project } = column;
+  const [tab, setTab] = useState<ProjectColumnTab>(() =>
+    readColumnTab(storage, project.key),
+  );
+  useEffect(
+    () => writeColumnTab(storage, project.key, tab),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [project.key, tab],
+  );
+  const tasks = tab === "active" || tab === "queue" ? column[tab] : null;
+  const triage = tab === "leads" || tab === "papercuts" ? column[tab] : null;
+  const cards = tasks ?? triage;
+  const empty = cards !== undefined && cards?.length === 0;
   return (
     <View
       accessibilityLabel={`${project.name} column`}
@@ -223,42 +293,68 @@ function ProjectColumn({
         c={c}
         column={column}
         badge={badge}
-        onOpenList={onOpenList}
+        tab={tab}
+        onTab={setTab}
       />
       <ScrollView
-        accessibilityLabel={`${project.name} active tasks`}
+        accessibilityLabel={`${project.name} ${tabLabels[tab].toLowerCase()}`}
         style={{ flex: 1, minHeight: 0 }}
         contentContainerStyle={{ gap: space.xs, paddingBottom: space.sm }}
       >
-        {active && active.length === 0 ? (
+        {empty ? (
           <Text style={{ ...muted(c), textAlign: "center", padding: space.md }}>
-            Nothing active
+            {emptyText[tab]}
           </Text>
+        ) : tasks !== null ? (
+          <RustListRows
+            key={tab}
+            c={c}
+            view={tab === "queue" ? "queue" : "working"}
+            column={tab === "queue" ? "queue" : undefined}
+            rust={{ ...rust, tasks }}
+            hideProject
+          />
+        ) : triage ? (
+          triage.map((lead) => (
+            <TriageLeadCard
+              key={lead.id}
+              lead={lead}
+              c={c}
+              repositoryBadges={items.repositoryBadges}
+              selected={
+                items.selected?.id === lead.id &&
+                items.selected.project === project.key
+              }
+              onSelectLead={(id) => items.onSelectLead(id, project.key)}
+              onSelectPapercut={(id) => items.onSelectPapercut(id, project.key)}
+              showKindWord={false}
+              hideProject
+            />
+          ))
         ) : (
-          <RustListRows c={c} view="working" rust={rows} hideProject />
+          <Text style={{ ...muted(c), textAlign: "center", padding: space.md }}>
+            Loading…
+          </Text>
         )}
       </ScrollView>
     </View>
   );
 }
 
-const countHelp =
-  "Open leads, open papercuts and queued tasks. Each opens its list for this project.";
-
 function ProjectHeaderCard({
   c,
   column,
   badge,
-  onOpenList,
+  tab,
+  onTab,
 }: {
   c: Colors;
   column: ProjectOverviewColumn;
   badge: ProjectBadge | null;
-  onOpenList: (projectKey: string, view: ProjectListView) => void;
+  tab: ProjectColumnTab;
+  onTab: (tab: ProjectColumnTab) => void;
 }) {
   const { project } = column;
-  const [help, setHelp] = useState(false);
-  const anchor = useRef<View | null>(null);
   const r = roles(c);
   return (
     <View
@@ -286,82 +382,56 @@ function ProjectHeaderCard({
         />
       </View>
       <View
-        ref={anchor}
-        style={{ flexDirection: "row", alignItems: "center", gap: space.xxs }}
+        accessibilityRole="tablist"
+        accessibilityLabel={`${project.name} tabs`}
+        style={{ flexDirection: "row", alignItems: "stretch", gap: space.xxs }}
       >
-        <CountLink
-          c={c}
-          project={project}
-          view="leads"
-          label="Leads"
-          value={column.leads}
-          onOpenList={onOpenList}
-        />
-        <CountLink
-          c={c}
-          project={project}
-          view="papercuts"
-          label="Papercuts"
-          value={column.papercuts}
-          onOpenList={onOpenList}
-        />
-        <CountLink
-          c={c}
-          project={project}
-          view="queue"
-          label="Queue"
-          value={column.queue}
-          onOpenList={onOpenList}
-        />
-        <HelpTip
-          c={c}
-          label={`${project.name} counts`}
-          text={countHelp}
-          open={help}
-          onOpenChange={setHelp}
-        />
+        {projectColumnTabs.map((id) => (
+          <CountTab
+            key={id}
+            c={c}
+            project={project}
+            label={tabLabels[id]}
+            value={column[id]?.length ?? null}
+            selected={tab === id}
+            onPress={() => onTab(id)}
+          />
+        ))}
       </View>
-      {help && (
-        <HelpPopover
-          c={c}
-          anchor={anchor}
-          label={`${project.name} counts`}
-          text={countHelp}
-        />
-      )}
     </View>
   );
 }
 
-/** A count and its label, one link to that list filtered to the project. */
-function CountLink({
+/** A count and its label: one tab that shows that type's cards in the column. */
+function CountTab({
   c,
   project,
-  view,
   label,
   value,
-  onOpenList,
+  selected,
+  onPress,
 }: {
   c: Colors;
   project: Project;
-  view: ProjectListView;
   label: string;
   value: number | null;
-  onOpenList: (projectKey: string, view: ProjectListView) => void;
+  selected: boolean;
+  onPress: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const focus = useFocusVisible();
   const highlighted = hovered || focus.visible;
-  const color = cardTitleColor(c, highlighted);
+  const color = cardTitleColor(c, selected || highlighted);
   return (
     <Pressable
-      accessibilityRole="link"
+      accessibilityRole="tab"
+      accessibilityState={{ selected }}
       accessibilityLabel={
         value === null
           ? `${label} in ${project.name}`
           : `${value} ${label} in ${project.name}`
       }
-      onPress={() => onOpenList(project.key, view)}
+      onPress={onPress}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       onFocus={focus.onFocus}
@@ -369,9 +439,13 @@ function CountLink({
       style={{
         flex: 1,
         minWidth: 0,
-        paddingVertical: space.xxs,
-        paddingHorizontal: space.xs,
-        borderRadius: radius.control,
+        paddingTop: space.xxs,
+        paddingBottom: space.xxs - 2,
+        paddingHorizontal: space.xxs,
+        borderTopLeftRadius: radius.control,
+        borderTopRightRadius: radius.control,
+        borderBottomWidth: 2,
+        borderBottomColor: selected ? c.accent : "transparent",
         backgroundColor: highlighted ? hoverSurface(c) : "transparent",
         ...noOutline(),
       }}
@@ -389,10 +463,10 @@ function CountLink({
       <Text
         numberOfLines={1}
         style={{
-          color: highlighted ? c.foreground : c.foregroundMuted,
+          color: selected || highlighted ? c.foreground : c.foregroundMuted,
           fontSize: typeScale.metadata.fontSize,
           lineHeight: typeScale.metadata.lineHeight,
-          textDecorationLine: highlighted ? "underline" : "none",
+          fontWeight: selected ? "600" : "400",
         }}
       >
         {label}

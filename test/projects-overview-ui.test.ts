@@ -174,39 +174,75 @@ async function boardInputs() {
   };
 }
 
-async function mountOverview(inputs: Awaited<ReturnType<typeof boardInputs>>) {
+type Storage = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+};
+/** A synthetic browser store: a map behind the Storage calls the overview makes. */
+const memoryStorage = (initial: Record<string, string> = {}) => {
+  const values = new Map(Object.entries(initial));
+  return {
+    values,
+    storage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+    } satisfies Storage,
+  };
+};
+
+async function mountOverview(
+  inputs: Awaited<ReturnType<typeof boardInputs>>,
+  storage: () => Storage | undefined = () => memoryStorage().storage,
+) {
   const { ProjectsOverview, projectOverviewColumns } = await import(
     "../client/board/projects-overview"
   );
   const { PopoverHost } = await import("../client/popover");
   const columns = projectOverviewColumns(inputs);
-  const opened: Array<[string, string]> = [];
   const selected: string[] = [];
-  const ui = mount(
-    h(PopoverHost, {
-      children: h(ProjectsOverview, {
-        c: colors,
-        columns,
-        narrowWidth: null,
-        badge: () => null,
-        rust: {
-          error: null,
-          retry: () => {},
-          selected: null,
-          onSelect: (id: string) => selected.push(id),
-          project: (task: RustTask) => ({
-            name: task.identity.repository,
-            badge: null,
-          }),
-        },
-        onOpenList: (project: string, view: string) =>
-          opened.push([project, view]),
+  const openedItems: Array<[string, string, string]> = [];
+  const props = {
+    c: colors,
+    columns,
+    narrowWidth: null,
+    badge: () => null,
+    storage,
+    rust: {
+      error: null,
+      retry: () => {},
+      selected: null,
+      onSelect: (id: string) => selected.push(id),
+      project: (task: RustTask) => ({
+        name: task.identity.repository,
+        badge: null,
       }),
-    }),
-  );
+    },
+    items: {
+      selected: null,
+      onSelectLead: (id: string, project: string) =>
+        openedItems.push(["lead", id, project]),
+      onSelectPapercut: (id: string, project: string) =>
+        openedItems.push(["papercut", id, project]),
+    },
+  };
+  const render = (extra: Record<string, unknown> = {}) =>
+    h(PopoverHost, { children: h(ProjectsOverview, { ...props, ...extra }) });
+  const ui = mount(render());
   mounted.push(() => ui.update(h(React.Fragment)));
-  return { ui, columns, opened, selected };
+  return { ui, columns, selected, openedItems, render };
 }
+
+/** The titles in one column's card list, in order. */
+const cardTitles = (
+  ui: Awaited<ReturnType<typeof mountOverview>>["ui"],
+  label: string,
+  titles: readonly string[],
+) => {
+  const text = textOf(ui.get(label));
+  return titles
+    .filter((title) => text.includes(title))
+    .sort((a, b) => text.indexOf(a) - text.indexOf(b));
+};
 
 test("columns follow the project select's order and leave archived projects out", async () => {
   const inputs = await boardInputs();
@@ -242,79 +278,219 @@ test("columns follow the project select's order and leave archived projects out"
   );
 });
 
-test("header counts link to the project's Leads, Papercuts and Queue lists", async () => {
+test("the header has no help tip and shows Active, Leads, Papercuts and Queue as tabs", async () => {
   const inputs = await boardInputs();
-  const { ui, opened } = await mountOverview(inputs);
-  // Open leads and papercuts only: the dropped lead is not counted.
+  const { ui } = await mountOverview(inputs);
+  // Active counts the five active stages; open leads and papercuts only (the dropped lead is not counted); all three queued tasks.
   assert.match(
     textOf(ui.get("Orchard overview")),
-    /Orchard 2 Leads 1 Papercuts 3 Queue/,
+    /Orchard 5 Active 2 Leads 1 Papercuts 3 Queue/,
   );
   assert.match(
     textOf(ui.get("Nucleus overview")),
-    /Nucleus 0 Leads 1 Papercuts 1 Queue/,
+    /Nucleus 0 Active 0 Leads 1 Papercuts 1 Queue/,
   );
-  for (const [label, view] of [
-    ["2 Leads in Orchard", "leads"],
-    ["1 Papercuts in Orchard", "papercuts"],
-    ["3 Queue in Orchard", "queue"],
-    ["1 Papercuts in Nucleus", "papercuts"],
-  ] as const) {
-    const link = ui.get(label);
-    assert.equal(link.props.accessibilityRole, "link");
-    ui.press(label);
-    const project = inputs.projects.find(({ name }) =>
-      label.endsWith(name),
-    )!.key;
-    assert.deepEqual(
-      opened.at(-1),
-      [project, view],
-      `${label} opens ${view} for its project`,
+  assert.equal(ui.query(/counts help$/), undefined, "no (?) tip");
+  assert.equal(ui.query(/counts$/), undefined, "no help popover");
+  const tabs = ui.get("Orchard tabs");
+  assert.equal(tabs.props.accessibilityRole, "tablist");
+  for (const label of [
+    "5 Active in Orchard",
+    "2 Leads in Orchard",
+    "1 Papercuts in Orchard",
+    "3 Queue in Orchard",
+  ]) {
+    const tab = ui.get(label);
+    assert.equal(tab.props.accessibilityRole, "tab");
+    assert.equal(
+      tab.props.accessibilityState.selected,
+      label.includes("Active"),
+      `${label}: Active is selected by default`,
     );
   }
-  assert.ok(
-    ui.query("Orchard counts help"),
-    "the counts explain themselves in a (?) popover",
-  );
 });
 
-test("only active tasks appear, in stage order, and a card opens its task", async () => {
+test("each tab shows its type's cards in its list's order and marks the selection", async () => {
   const inputs = await boardInputs();
   const { ui, selected } = await mountOverview(inputs);
-  const cards = textOf(ui.get("Orchard active tasks"));
-  const order = [
+  const taskTitles = [
+    "Needs task",
+    "Queued task",
+    "Held queued task",
+    "Working task",
+    "Review task",
+    "Merging task",
+    "Closing task",
+    "History task",
+  ];
+  // Active: today's cards, in stage order.
+  assert.deepEqual(cardTitles(ui, "Orchard active", taskTitles), [
     "Needs task",
     "Working task",
     "Review task",
     "Merging task",
     "Closing task",
-  ];
-  let last = -1;
-  for (const title of order) {
-    const at = cards.indexOf(title);
-    assert.ok(at > last, `${title} follows the previous stage`);
-    last = at;
-  }
-  for (const title of ["Queued task", "Held queued task", "History task"])
-    assert.doesNotMatch(cards, new RegExp(title), `${title} is not active`);
-  ui.press(/Working task$/);
-  assert.deepEqual(selected, ["orchard-api-working"]);
-});
-
-test("a project with nothing active keeps its header card", async () => {
-  const inputs = await boardInputs();
-  const { ui } = await mountOverview(inputs);
-  for (const name of ["Nucleus", "Acowtancy"]) {
-    assert.ok(ui.query(`${name} overview`), `${name} keeps its header card`);
-    assert.equal(textOf(ui.get(`${name} active tasks`)), "Nothing active");
-  }
-  assert.match(
-    textOf(ui.get("Acowtancy overview")),
-    /0 Leads 0 Papercuts 0 Queue/,
+  ]);
+  // Leads: the Leads list's default order for this project.
+  const { pipelineBoard } = await import("../shared/pipeline-board");
+  const { leadsCards } = await import("../shared/inbox-board");
+  const leadOrder = leadsCards(
+    pipelineBoard({
+      projects: inputs.projects,
+      selection: ["orchard"],
+      leads: inputs.leads,
+      tasks: [],
+    }),
+  ).map((card) => (card.value as api.BoardLead).title);
+  assert.equal(leadOrder.length, 2);
+  ui.press("2 Leads in Orchard");
+  assert.equal(
+    ui.get("2 Leads in Orchard").props.accessibilityState.selected,
+    true,
+  );
+  assert.equal(
+    ui.get("5 Active in Orchard").props.accessibilityState.selected,
+    false,
+  );
+  assert.deepEqual(
+    cardTitles(ui, "Orchard leads", [
+      "Orchard lead one",
+      "Orchard lead two",
+      "Orchard papercut",
+      "Dropped lead",
+    ]),
+    leadOrder,
+  );
+  ui.press("1 Papercuts in Orchard");
+  assert.equal(
+    textOf(ui.get("Orchard papercuts")).includes("Orchard papercut"),
+    true,
+  );
+  assert.doesNotMatch(textOf(ui.get("Orchard papercuts")), /Orchard lead/);
+  // Queue: every queued task, in the Queue list's order.
+  const { groupRustTasks } = await import("../client/web/rust-board");
+  const queueOrder = groupRustTasks(
+    inputs.tasks.filter(({ identity }) =>
+      identity.repository.endsWith("orchard-api"),
+    ),
+  ).queue.map((task) => task.title);
+  assert.equal(queueOrder.length, 3);
+  ui.press("3 Queue in Orchard");
+  assert.deepEqual(cardTitles(ui, "Orchard queue", taskTitles), queueOrder);
+  ui.press(/Queued task$/);
+  assert.deepEqual(selected, ["orchard-api-queue"]);
+  // Another column keeps its own tab.
+  assert.equal(
+    ui.get("0 Active in Nucleus").props.accessibilityState.selected,
+    true,
   );
 });
 
-test("the Projects entry opens the overview and a count lands on its list with the filter set", async () => {
+test("a stored tab is restored, and missing or unreadable storage falls back to Active", async () => {
+  const inputs = await boardInputs();
+  const store = memoryStorage({
+    "nucleus.projects-overview.tab.orchard": "papercuts",
+    "nucleus.projects-overview.tab.nucleus": "nonsense",
+  });
+  const { ui } = await mountOverview(inputs, () => store.storage);
+  assert.equal(
+    ui.get("1 Papercuts in Orchard").props.accessibilityState.selected,
+    true,
+  );
+  assert.ok(ui.query("Orchard papercuts"));
+  assert.equal(
+    ui.get("0 Active in Nucleus").props.accessibilityState.selected,
+    true,
+    "an unknown stored value falls back to Active",
+  );
+  ui.press("3 Queue in Orchard");
+  assert.equal(
+    store.values.get("nucleus.projects-overview.tab.orchard"),
+    "queue",
+  );
+
+  for (const storage of [
+    () => undefined,
+    () => ({
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+    }),
+    () => {
+      throw new Error("no storage");
+    },
+  ]) {
+    for (const unmount of mounted.splice(0)) unmount();
+    const { ui: fallback } = await mountOverview(inputs, storage as never);
+    assert.equal(
+      fallback.get("5 Active in Orchard").props.accessibilityState.selected,
+      true,
+    );
+    fallback.press("2 Leads in Orchard");
+    assert.equal(
+      fallback.get("2 Leads in Orchard").props.accessibilityState.selected,
+      true,
+      "the tab still switches without storage",
+    );
+  }
+});
+
+test("each card type opens its detail and the column keeps its tab", async () => {
+  const inputs = await boardInputs();
+  const { ui, selected, openedItems, render } = await mountOverview(inputs);
+  ui.press(/Working task$/);
+  assert.deepEqual(selected, ["orchard-api-working"]);
+  ui.press("2 Leads in Orchard");
+  ui.press(/^Lead: Orchard lead one/);
+  assert.deepEqual(openedItems.at(-1), ["lead", "o-lead-1", "orchard"]);
+  // The board marks the open lead, then the detail closes.
+  ui.update(
+    render({
+      items: {
+        selected: { id: "o-lead-1", project: "orchard" },
+        onSelectLead() {},
+        onSelectPapercut() {},
+      },
+    }),
+  );
+  ui.update(render());
+  assert.equal(
+    ui.get("2 Leads in Orchard").props.accessibilityState.selected,
+    true,
+    "closing the detail keeps the Leads tab",
+  );
+  ui.press("1 Papercuts in Nucleus");
+  ui.press(/^Papercut: Nucleus papercut/);
+  assert.deepEqual(openedItems.at(-1), ["papercut", "n-cut-1", "nucleus"]);
+  ui.update(render());
+  assert.equal(
+    ui.get("1 Papercuts in Nucleus").props.accessibilityState.selected,
+    true,
+  );
+  assert.equal(
+    ui.get("2 Leads in Orchard").props.accessibilityState.selected,
+    true,
+  );
+});
+
+test("each empty tab says so quietly", async () => {
+  const inputs = await boardInputs();
+  const { ui } = await mountOverview(inputs);
+  for (const name of ["Nucleus", "Acowtancy"])
+    assert.ok(ui.query(`${name} overview`), `${name} keeps its header card`);
+  assert.equal(textOf(ui.get("Acowtancy active")), "No active tasks");
+  ui.press("0 Leads in Acowtancy");
+  assert.equal(textOf(ui.get("Acowtancy leads")), "No open leads");
+  ui.press("0 Papercuts in Acowtancy");
+  assert.equal(textOf(ui.get("Acowtancy papercuts")), "No open papercuts");
+  ui.press("0 Queue in Acowtancy");
+  assert.equal(textOf(ui.get("Acowtancy queue")), "Nothing queued");
+});
+
+test("the Projects entry opens the overview, a tab stays on the board, and a lead opens and closes its detail", async () => {
   const fixture = planningFixture();
   const { MainSurface } = await import("../client/queue");
   const client = new QueryClient({
@@ -382,18 +558,33 @@ test("the Projects entry opens the overview and a count lands on its list with t
     ["roadmap column", "dormant column", "idle column"],
     "the active project first, then the rest by name, as the select lists them",
   );
-  const leads = await waitFor(/^\d+ Leads in roadmap$/);
+  const leads = await waitFor(/^2 Leads in roadmap$/);
   ui.press(leads.props.accessibilityLabel);
-  const entry = await waitFor(/^Leads(, \d+)?$/);
   assert.equal(
-    entry.props.accessibilityState?.selected,
+    ui.get("2 Leads in roadmap").props.accessibilityState.selected,
     true,
-    "the Leads list is open",
   );
-  assert.ok(
-    ui.query("Projects, roadmap"),
-    "the project filter is set to roadmap",
+  assert.equal(
+    ui.get("Projects").props.accessibilityState.selected,
+    true,
+    "the tab never leaves the Projects board",
   );
-  // Leave the session filter as other tests found it.
-  ui.press("Projects");
+  assert.match(
+    textOf(ui.get("roadmap leads")),
+    /Name the host on the lane page.*Show the stuck cause on every card|Show the stuck cause on every card.*Name the host on the lane page/,
+  );
+  ui.press(/^Lead: Name the host on the lane page/);
+  for (let i = 0; i < 400 && ui.all("Close lead").length === 0; i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  // The close button and the backdrop share the label; either closes the detail.
+  ui.all("Close lead")[0]!.props.onPress();
+  for (let i = 0; i < 400 && ui.all("Close lead").length > 0; i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(ui.all("Close lead").length, 0, "the detail closed");
+  assert.equal(
+    ui.get("2 Leads in roadmap").props.accessibilityState.selected,
+    true,
+    "closing the detail keeps the Leads tab",
+  );
+  assert.ok(ui.query("roadmap overview"), "the board is still open");
 });

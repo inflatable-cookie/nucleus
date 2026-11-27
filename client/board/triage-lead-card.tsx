@@ -147,6 +147,7 @@ export function TriageLeadCard({
   onSelectLead,
   onSelectPapercut,
   showKindWord = true,
+  hideProject = false,
 }: {
   lead: BoardLead;
   projectForRepository?: (
@@ -163,6 +164,8 @@ export function TriageLeadCard({
    * with the project; lists that mix kinds keep it. Task references stay either way.
    */
   showKindWord?: boolean;
+  /** A project's own column (Projects overview) already names the project. */
+  hideProject?: boolean;
 }) {
   const kind = triageKind(lead);
   const status = triageStatus(lead);
@@ -175,12 +178,14 @@ export function TriageLeadCard({
       kind={kind}
       meta={showKindWord ? kindWord : null}
       project={
-        <LeadProjectEyebrow
-          repositories={lead.repositories}
-          projectForRepository={projectForRepository ?? (() => undefined)}
-          repositoryBadges={repositoryBadges}
-          c={c}
-        />
+        hideProject ? undefined : (
+          <LeadProjectEyebrow
+            repositories={lead.repositories}
+            projectForRepository={projectForRepository ?? (() => undefined)}
+            repositoryBadges={repositoryBadges}
+            c={c}
+          />
+        )
       }
       age={ageAt ? decisionAge(ageAt) : null}
       title={lead.title}
