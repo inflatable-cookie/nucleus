@@ -174,18 +174,8 @@ async fn inbox_reconnects_after_engine_error() {
     inbox_forms(true).await;
 }
 
-async fn inbox_forms(fail_first_stream: bool) {
-    let fixture = Arc::new(Fixture {
-        state: AtomicU8::new(0),
-        commands: AtomicUsize::new(0),
-        detail_calls: AtomicUsize::new(0),
-        detail_failures: AtomicUsize::new(0),
-        stream_calls: AtomicUsize::new(0),
-        stream_failures: AtomicUsize::new(usize::from(fail_first_stream)),
-        stream_ready: Notify::new(),
-        changes: broadcast::channel(8).0,
-    });
-    let api = Router::new()
+fn inbox_router(fixture: Arc<Fixture>) -> Router {
+    Router::new()
         .route(
             "/v1/acp/inbox",
             get(async |State(fixture): State<Arc<Fixture>>| {
@@ -236,7 +226,21 @@ async fn inbox_forms(fail_first_stream: bool) {
                 },
             ),
         )
-        .with_state(Arc::clone(&fixture));
+        .with_state(fixture)
+}
+
+async fn inbox_forms(fail_first_stream: bool) {
+    let fixture = Arc::new(Fixture {
+        state: AtomicU8::new(0),
+        commands: AtomicUsize::new(0),
+        detail_calls: AtomicUsize::new(0),
+        detail_failures: AtomicUsize::new(0),
+        stream_calls: AtomicUsize::new(0),
+        stream_failures: AtomicUsize::new(usize::from(fail_first_stream)),
+        stream_ready: Notify::new(),
+        changes: broadcast::channel(8).0,
+    });
+    let api = inbox_router(Arc::clone(&fixture));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
