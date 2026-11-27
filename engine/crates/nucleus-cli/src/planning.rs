@@ -294,7 +294,7 @@ impl Action {
                 ));
             }
             A::Reply { handle, text } => {
-                let text = if text == "-" { stdin_text()? } else { text };
+                let text = reply_text(text, io::stdin().lock())?;
                 return Ok((
                     Method::POST,
                     "/v1/planning/tell".into(),
@@ -485,11 +485,21 @@ fn planning_path(project: Option<&str>, path: &str) -> Result<String> {
 }
 
 fn stdin_text() -> Result<String> {
+    stdin_text_from(io::stdin().lock())
+}
+
+fn stdin_text_from(source: impl io::Read) -> Result<String> {
     let limit = u64::try_from(MAX_TEXT_BYTES)?;
-    Ok(String::from_utf8(read_with_limit(
-        io::stdin().lock(),
-        limit,
-    )?)?)
+    Ok(String::from_utf8(read_with_limit(source, limit)?)?)
+}
+
+/// A reply's text is typed on the command line, or read from stdin when it is `-`.
+fn reply_text(text: String, stdin: impl io::Read) -> Result<String> {
+    if text == "-" {
+        stdin_text_from(stdin)
+    } else {
+        Ok(text)
+    }
 }
 
 fn segment(value: &str) -> Result<&str> {
@@ -620,6 +630,18 @@ mod tests {
                 serde_json::json!({"to":{"reply":handle}, "text":"Answer"})
             );
         }
+    }
+
+    #[test]
+    fn reply_text_reads_stdin_only_for_a_dash() {
+        assert_eq!(
+            super::reply_text("-".into(), std::io::Cursor::new("From stdin")).unwrap(),
+            "From stdin"
+        );
+        assert_eq!(
+            super::reply_text("Typed".into(), std::io::Cursor::new("ignored")).unwrap(),
+            "Typed"
+        );
     }
 
     #[test]

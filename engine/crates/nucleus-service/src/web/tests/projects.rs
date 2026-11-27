@@ -3782,3 +3782,155 @@ async fn promoted_capacity_waiters_serve_oldest_promoted_with_room_and_keep_orde
     verify_promoted_wakeup_skips_full_project(&registry, &head).await;
     verify_released_and_unparked_keep_original_order(&registry).await;
 }
+
+const REPLY_DAY_MS: i64 = 24 * 3_600_000;
+
+/// Project IDs for the alpha and beta planner threads.
+async fn planner_projects(registry: &Registry) -> (String, String) {
+    let state = registry.service.state.lock().await;
+    (
+        state
+            .live_planner_project("alpha-planner")
+            .unwrap()
+            .to_owned(),
+        state
+            .live_planner_project("beta-planner")
+            .unwrap()
+            .to_owned(),
+    )
+}
+
+/// Record a delivered message from beta's project to alpha, carrying `handle`
+/// as its reply route issued at `issued_at`.
+async fn record_delivered_reply_route(registry: &Registry, handle: &str, issued_at: i64) {
+    use nucleus_core::QuestionDelivery;
+    use nucleus_store::{TellDispatch, TellRows, TellState, TellSubmission};
+    let (alpha, beta) = planner_projects(registry).await;
+    let id = format!("message-{handle}");
+    let mut state = registry.service.state.lock().await;
+    state
+        .store
+        .record_tell(
+            &TellSubmission {
+                key: &id,
+                sender: "beta-planner",
+                direct: None,
+                from_project: &beta,
+                text: "Earlier question",
+                recorded_at: issued_at,
+                no_live_planners: &[],
+            },
+            &[(alpha, id.clone())],
+        )
+        .unwrap();
+    state
+        .store
+        .settle_tells(
+            TellRows::Receipt(&id),
+            TellDispatch::Send {
+                notice: QuestionDelivery {
+                    thread: "alpha-planner".into(),
+                    command: id.clone(),
+                    payload: String::new(),
+                    last_send_at_ms: None,
+                },
+                handle: handle.into(),
+            },
+            issued_at,
+        )
+        .unwrap();
+    state
+        .store
+        .settle_tells(
+            TellRows::Receipt(&id),
+            TellDispatch::Advance(TellState::Delivered {
+                at_ms: issued_at,
+                thread: "alpha-planner".into(),
+            }),
+            issued_at,
+        )
+        .unwrap();
+}
+
+#[tokio::test]
+async fn nucleus_reply_with_a_short_handle_reaches_the_original_sender() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    claim(&registry, "alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    assert_eq!(
+        registry
+            .tell("beta-planner", json!("Exact T3 Alpha"), "A question")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    registry.advance_tell().await.unwrap();
+    let (thread, text, handle) = received_notice(&registry);
+    assert_eq!(thread, "alpha-planner");
+    assert!(handle.starts_with('r') && handle.len() == 9, "{handle}");
+    assert!(text.starts_with("From "), "{text}");
+    assert!(text.ends_with(&format!("Reply: nucleus reply {handle} 'your message'")));
+    assert!(!text.contains("Information only"));
+    registry.notices.lock().unwrap().started = true;
+    registry.advance_tell().await.unwrap();
+
+    // `nucleus reply <handle> "Answer"` posts this exact body.
+    let reply = registry
+        .tell("alpha-planner", json!({"reply": handle}), "Answer")
+        .await;
+    assert_eq!(reply.status(), StatusCode::OK);
+    registry.advance_tell().await.unwrap();
+    let (thread, text, _) = received_notice(&registry);
+    assert_eq!(thread, "beta-planner");
+    assert!(text.contains("\n\nAnswer\n\n"), "{text}");
+
+    // Another thread holding the same handle is refused plainly.
+    let foreign = registry
+        .tell("beta-planner", json!({"reply": handle}), "Intruder")
+        .await;
+    assert_eq!(foreign.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(foreign).await["error"],
+        "This reply route is unavailable. Nothing was sent."
+    );
+}
+
+#[tokio::test]
+async fn reply_handles_issued_before_the_change_answer_until_they_expire() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    let now = i64::try_from(crate::now_ms()).unwrap();
+    record_delivered_reply_route(&registry, "nreply_6e3950151761ff6799b6ffb4af25869b", now).await;
+    record_delivered_reply_route(&registry, "r6e39f1a0", now - 8 * REPLY_DAY_MS).await;
+    record_delivered_reply_route(&registry, "nreply_stale_legacy", now - 8 * REPLY_DAY_MS).await;
+
+    // The JSON `tell` form from an earlier notice still reaches the sender.
+    let legacy = registry
+        .tell(
+            "alpha-planner",
+            json!({"reply": "nreply_6e3950151761ff6799b6ffb4af25869b"}),
+            "Answer to the old notice",
+        )
+        .await;
+    assert_eq!(legacy.status(), StatusCode::OK);
+    registry.advance_tell().await.unwrap();
+    let (thread, text, _) = received_notice(&registry);
+    assert_eq!(thread, "beta-planner");
+    assert!(text.contains("\n\nAnswer to the old notice\n\n"), "{text}");
+
+    // Expired handles, of either form, are refused plainly and send nothing.
+    for expired in ["r6e39f1a0", "nreply_stale_legacy"] {
+        let refused = registry
+            .tell("alpha-planner", json!({"reply": expired}), "Too late")
+            .await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{expired}");
+        assert_eq!(
+            json_body(refused).await["error"],
+            "This reply route is unavailable. Nothing was sent."
+        );
+    }
+    // Only the one legacy answer was sent; refusals never reach a planner.
+    assert_eq!(registry.notices.lock().unwrap().sends.len(), 1);
+}
