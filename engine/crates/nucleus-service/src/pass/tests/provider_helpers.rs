@@ -102,7 +102,8 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     };
     shell(&service, json!([]));
     service.fixture_mut().acp_provider = Some("fixture".into());
-    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings::default());
+    // Helper cleanup runs on a profile whose Dispatch was never configured.
+    assert!(service.state.lock().await.settings.dispatch.is_none());
     let terminal = cancelled_cleanup_task(&service).await;
     let id = terminal.task.identity().id.clone();
     let work = service.worktrees();

@@ -368,6 +368,13 @@ Waits schedule another check. Unknown host reads back off from 15 seconds to
 takes precedence over a shorter check interval. The decision table owns questions
 about the work.
 
+A step which fails with no more specific wait shows `engine_blocked` with its
+cause, for example a registered checkout on the wrong branch. It retries after
+3 seconds, doubling to 10 minutes while it keeps failing, and offers Recheck.
+A finished task's retained or occupied checkout backs off the same way. A task
+commit, Recheck, resumed Dispatch or an answered process decision starts it
+again. Dispatch which was never configured is running.
+
 Read adapters outside the store lock. Every pass write compares the task row's
 version and run instance with what it read. A stale result drops out and wakes
 the current task. Effects and commands acquire a per-task fence only after

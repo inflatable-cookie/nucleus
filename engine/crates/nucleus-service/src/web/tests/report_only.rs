@@ -616,14 +616,14 @@ async fn cancelled_checkout_only_retires_clean_published_work() {
     std::fs::write(&draft, "unpublished").unwrap();
     assert!(matches!(
         fixture.service.archive_done(&cancelled).await,
-        Err(ServiceError::ArchiveEvidence(_))
+        Err(ServiceError::CheckoutRetained(_))
     ));
     assert_eq!(std::fs::read_to_string(&draft).unwrap(), "unpublished");
     std::fs::remove_file(draft).unwrap();
     *fixture.published.lock().unwrap() = None;
     assert!(matches!(
         fixture.service.archive_done(&cancelled).await,
-        Err(ServiceError::ArchiveEvidence(_))
+        Err(ServiceError::CheckoutRetained(_))
     ));
     assert!(fixture.checkout.is_dir());
     *fixture.published.lock().unwrap() = Some(fixture.head.clone());

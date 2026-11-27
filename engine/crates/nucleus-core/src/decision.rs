@@ -165,6 +165,8 @@ pub enum WaitReason {
     Prerequisite,
     Capacity,
     AssignmentTooLarge,
+    /// A step failed for a cause with no more specific wait. It retries with backoff.
+    EngineBlocked,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

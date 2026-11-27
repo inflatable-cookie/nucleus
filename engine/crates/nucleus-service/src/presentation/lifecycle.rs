@@ -599,9 +599,14 @@ const fn current_tone(phase: Phase, wait: Option<WaitReason>) -> StepTone {
     match (phase, wait) {
         (Phase::Cancelled, _) => StepTone::Muted,
         (Phase::Blocked | Phase::Error, _)
-        | (_, Some(WaitReason::HostObservationBlocked | WaitReason::AssignmentTooLarge)) => {
-            StepTone::Danger
-        }
+        | (
+            _,
+            Some(
+                WaitReason::HostObservationBlocked
+                | WaitReason::AssignmentTooLarge
+                | WaitReason::EngineBlocked,
+            ),
+        ) => StepTone::Danger,
         (
             _,
             Some(

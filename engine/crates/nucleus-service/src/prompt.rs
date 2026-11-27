@@ -63,8 +63,8 @@ pub(super) fn report_reminder(
         );
     } else {
         text.push_str(
-        "Use your findings and evidence from this thread. Do not redo the assignment, repeat checks, or claim work you did not perform. If the work was incomplete, report what was actually done and what prevented completion.\n",
-    );
+            "Use your findings and evidence from this thread. Do not redo the assignment, repeat checks, or claim work you did not perform. If the work was incomplete, report what was actually done and what prevented completion.\n",
+        );
     }
     let _ = writeln!(
         text,
@@ -72,10 +72,10 @@ pub(super) fn report_reminder(
     );
     if !continue_work {
         text.push_str(if task.report_task().is_some() {
-        " If you cannot report an existing delivery, report blocked or error with the concrete reason.\n"
-    } else {
-        " If you cannot report a completed result, use a planner question with the concrete reason and next step.\n"
-    });
+            "If you cannot report an existing delivery, report blocked or error with the concrete reason.\n"
+        } else {
+            "If you cannot report a completed result, use a planner question with the concrete reason and next step.\n"
+        });
     }
     let total = text.encode_utf16().count();
     Assignment {
@@ -208,7 +208,7 @@ impl Prompt<'_> {
             (Role::Worker, ..) => "Implementation",
         };
         let mut text = format!(
-            "Nucleus {section} assignment\n\n{reference}: {title}\n             Assignment: {assignment}\nTask ID: {}\nRun ID: {}\nRepository: {}\n             Checkout: {}\nBranch: {}\nBase: {}\nRun scratch: {}\n",
+            "Nucleus {section} assignment\n\n{reference}: {title}\nAssignment: {assignment}\nTask ID: {}\nRun ID: {}\nRepository: {}\nCheckout: {}\nBranch: {}\nBase: {}\nRun scratch: {}\n",
             identity.id,
             self.instance,
             identity.repository,
@@ -412,7 +412,7 @@ impl Prompt<'_> {
             }
         }
         text.push_str(
-            "Planner question: {\"question\":{\"prompt\":\"CONTEXT AND RECOMMENDATION\",             \"options\":[\"FIRST CHOICE AND CONSEQUENCE\",\"SECOND CHOICE AND CONSEQUENCE\"]}}\n",
+            "Planner question: {\"question\":{\"prompt\":\"CONTEXT AND RECOMMENDATION\",\"options\":[\"FIRST CHOICE AND CONSEQUENCE\",\"SECOND CHOICE AND CONSEQUENCE\"]}}\n",
         );
     }
 
@@ -429,10 +429,10 @@ impl Prompt<'_> {
         }});
         let _ = writeln!(
             text,
-            "Read the delivery lane with `{read}`. Feed updated Markdown on stdin to `{write}`, +             using the version you last read.\n+             Report ready: {example} (replace the example version with the returned version)."
+            "Read the delivery lane with `{read}`. Feed updated Markdown on stdin to `{write}`, using the version you last read.\nReport ready: {example} (replace the example version with the returned version)."
         );
         text.push_str(
-            "Blocked: {\"blocked\":{\"summary\":\"REASON\"}}\n+             Error: {\"error\":{\"summary\":\"REASON\"}}\n",
+            "Blocked: {\"blocked\":{\"summary\":\"REASON\"}}\nError: {\"error\":{\"summary\":\"REASON\"}}\n",
         );
     }
 
@@ -621,6 +621,50 @@ mod tests {
                 serde_json::from_str::<Report>(payload).unwrap(),
                 Report::Review { head, decision, .. } if head == pr.head && decision == expected,
             ));
+        }
+    }
+
+    #[test]
+    fn every_role_prompt_is_free_of_diff_markers_and_stray_indentation() {
+        let ordinary = fixture();
+        let mut report = fixture();
+        report.task = Task::new_report_only(
+            report.task.identity().clone(),
+            report.task.brief().text.clone(),
+            "fixture".into(),
+            "qa".into(),
+            HEAD.parse().unwrap(),
+        );
+        let pr = PullRequest {
+            url: PR.into(),
+            head: HEAD.parse().unwrap(),
+        };
+        let mut prompts = Vec::new();
+        for row in [&ordinary, &report] {
+            for role in [Role::Worker, Role::Reviewer] {
+                let prompt = Prompt {
+                    pr: (role == Role::Reviewer).then_some(&pr),
+                    checkout_head: Some(&pr.head),
+                    replaced_thread: Some("fixture-thread"),
+                    ..assignment(row, role)
+                };
+                prompts.push(prompt.render().text);
+                let (reserved, _, _) =
+                    crate::tests::reserved_reviewer("reminder", &HEAD.parse().unwrap());
+                let command = Path::new("/bin/nucleus");
+                prompts.push(
+                    report_reminder(&row.task, reserved.run().unwrap(), command, command).text,
+                );
+            }
+        }
+        assert!(prompts.iter().any(|text| text.contains("\nReport ready: ")));
+        for text in prompts {
+            for line in text.lines() {
+                assert!(
+                    !line.starts_with(['+', ' ', '\t']) && !line.contains("  "),
+                    "{line:?} in\n{text}"
+                );
+            }
         }
     }
 
