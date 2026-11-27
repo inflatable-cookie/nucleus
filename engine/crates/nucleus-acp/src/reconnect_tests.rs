@@ -54,7 +54,7 @@ async fn events(
     ))
 }
 
-async fn server(
+fn server(
     listener: TcpListener,
     state: usize,
 ) -> (mpsc::UnboundedSender<()>, Arc<Notify>, JoinHandle<()>) {
@@ -82,11 +82,8 @@ async fn server(
     (send, attached, handle)
 }
 
-async fn run_reconnect(inbox_session: bool) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = listener.local_addr().unwrap();
-    let (stream, attached, server_task) = server(listener, 1).await;
-    let binding = if inbox_session {
+fn binding(endpoint: std::net::SocketAddr, inbox_session: bool) -> SessionBinding {
+    if inbox_session {
         SessionBinding::Inbox(InboxBinding {
             session_id: "fixture".into(),
             endpoint,
@@ -101,7 +98,14 @@ async fn run_reconnect(inbox_session: bool) {
             command_credential: None,
             scratch_dir: None,
         })
-    };
+    }
+}
+
+async fn run_reconnect(inbox_session: bool) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (stream, attached, server_task) = server(listener, 1);
+    let binding = binding(endpoint, inbox_session);
     let mut client = ServiceClient::new(&binding).unwrap();
     let (output, mut frames) = mpsc::unbounded_channel();
     let polls = Arc::new(AtomicUsize::new(0));
@@ -137,7 +141,7 @@ async fn run_reconnect(inbox_session: bool) {
             count.fetch_add(1, Ordering::SeqCst);
             future.as_mut().poll(cx)
         })
-        .await
+        .await;
     });
     // Wait until the first snapshot was presented, then close the stream and listener.
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -169,7 +173,7 @@ async fn run_reconnect(inbox_session: bool) {
         "turn spun during reconnect delay"
     );
     let listener = TcpListener::bind(endpoint).await.unwrap();
-    let (_stream, _attached, server_task) = server(listener, 2).await;
+    let (_stream, _attached, server_task) = server(listener, 2);
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let frame = frames.recv().await.unwrap();
