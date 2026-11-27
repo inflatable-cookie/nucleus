@@ -4850,12 +4850,14 @@ async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
     settle_phase(&registry.service, "alpha-task", "done", Some(PR)).await;
     let row = registry.service.task("alpha-task").await.unwrap();
     registry.service.notify_completion(&row).await.unwrap();
-    let sends = &registry.notices.lock().unwrap().sends;
-    let recipients: Vec<_> = sends
-        .iter()
-        .map(|s| s["threadId"].as_str().unwrap().to_owned())
-        .collect();
-    assert_eq!(recipients, vec!["alpha-planner", "standalone-agent"]);
+    {
+        let sends = &registry.notices.lock().unwrap().sends;
+        let recipients: Vec<_> = sends
+            .iter()
+            .map(|s| s["threadId"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(recipients, vec!["alpha-planner", "standalone-agent"]);
+    }
 
     // Cached shell threads do not trigger an extra T3 subscribeThread call.
     registry.service.host.fixture_project_shell(
