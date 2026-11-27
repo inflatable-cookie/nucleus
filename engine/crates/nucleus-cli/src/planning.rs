@@ -295,11 +295,7 @@ impl Action {
             }
             A::Reply { handle, text } => {
                 let text = reply_text(text, io::stdin().lock())?;
-                return Ok((
-                    Method::POST,
-                    "/v1/planning/tell".into(),
-                    Some(json!({"to": {"reply": handle}, "text": text})),
-                ));
+                return Ok(reply_request(&handle, &text));
             }
             A::PlannerClaim => return Ok((Method::POST, "/v1/planning/claim".into(), None)),
             A::LaneGet { .. } => return Err("use an authenticated report ticket".into()),
@@ -493,6 +489,15 @@ fn stdin_text_from(source: impl io::Read) -> Result<String> {
     Ok(String::from_utf8(read_with_limit(source, limit)?)?)
 }
 
+/// The tell request that answers a delivered message's reply handle.
+fn reply_request(handle: &str, text: &str) -> (Method, String, Option<Value>) {
+    (
+        Method::POST,
+        "/v1/planning/tell".into(),
+        Some(json!({"to": {"reply": handle}, "text": text})),
+    )
+}
+
 /// A reply's text is typed on the command line, or read from stdin when it is `-`.
 fn reply_text(text: String, stdin: impl io::Read) -> Result<String> {
     if text == "-" {
@@ -614,22 +619,62 @@ mod tests {
         );
     }
 
+    /// Request cases shared with the service tests, so both sides name the same bodies.
+    fn shared_reply_fixtures() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../nucleus-service/tests/fixtures/tell-replies.json"
+        ))
+        .expect("shared reply fixtures")
+    }
+
+    fn fixture_argv(case: &serde_json::Value) -> Vec<&str> {
+        case["argv"]
+            .as_array()
+            .expect("argv")
+            .iter()
+            .map(|arg| arg.as_str().expect("argv string"))
+            .collect()
+    }
+
     #[test]
-    fn reply_cli_sends_short_and_issued_long_handles_as_reply_routes() {
-        for handle in ["r6e39f1a", "nreply_6e3950151761ff6799b6ffb4af25869b"] {
-            let parsed = Cli::try_parse_from(["nucleus", "reply", handle, "Answer"]).unwrap();
+    fn reply_and_legacy_tell_commands_build_the_shared_fixture_bodies() {
+        let fixtures = shared_reply_fixtures();
+        for name in [
+            "shortReply",
+            "legacyReply",
+            "legacyJsonTell",
+            "expiredReply",
+        ] {
+            let case = &fixtures[name];
+            let parsed = Cli::try_parse_from(std::iter::once("nucleus").chain(fixture_argv(case)))
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
             let Action::Planning(action) = parsed.action else {
-                panic!("expected reply");
+                panic!("{name}: expected a planning command");
             };
-            assert!(!action.uses_ticket());
+            assert!(!action.uses_ticket(), "{name}");
             let (method, path, body) = action.request().unwrap();
-            assert_eq!(method, reqwest::Method::POST);
-            assert_eq!(path, "/v1/planning/tell");
-            assert_eq!(
-                body.unwrap(),
-                serde_json::json!({"to":{"reply":handle}, "text":"Answer"})
-            );
+            assert_eq!(method, reqwest::Method::POST, "{name}");
+            assert_eq!(path, "/v1/planning/tell", "{name}");
+            assert_eq!(body.unwrap(), case["body"], "{name}");
         }
+    }
+
+    #[test]
+    fn reply_reads_its_text_from_stdin_in_the_shared_fixture() {
+        let case = &shared_reply_fixtures()["stdinReply"];
+        let parsed = Cli::try_parse_from(std::iter::once("nucleus").chain(fixture_argv(case)))
+            .expect("stdin reply");
+        let Action::Planning(Planning::Reply { handle, text }) = parsed.action else {
+            panic!("expected a reply");
+        };
+        assert_eq!(text, "-");
+        let text = super::reply_text(
+            text,
+            std::io::Cursor::new(case["stdin"].as_str().expect("stdin text")),
+        )
+        .unwrap();
+        let (_, _, body) = super::reply_request(&handle, &text);
+        assert_eq!(body.unwrap(), case["body"]);
     }
 
     #[test]

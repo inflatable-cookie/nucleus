@@ -3807,6 +3807,8 @@ async fn record_delivered_reply_route(registry: &Registry, handle: &str, issued_
     use nucleus_store::{TellDispatch, TellRows, TellState, TellSubmission};
     let (alpha, beta) = planner_projects(registry).await;
     let id = format!("message-{handle}");
+    // Distinct text per handle: identical recent copies are reused as one delivery.
+    let text = format!("Earlier question {handle}");
     let mut state = registry.service.state.lock().await;
     state
         .store
@@ -3816,7 +3818,7 @@ async fn record_delivered_reply_route(registry: &Registry, handle: &str, issued_
                 sender: "beta-planner",
                 direct: None,
                 from_project: &beta,
-                text: "Earlier question",
+                text: &text,
                 recorded_at: issued_at,
                 no_live_planners: &[],
             },
@@ -3896,41 +3898,79 @@ async fn nucleus_reply_with_a_short_handle_reaches_the_original_sender() {
     );
 }
 
+/// Request bodies shared with the CLI tests, so both sides name the same requests.
+fn shared_reply_fixtures() -> Value {
+    serde_json::from_str(include_str!("../../../tests/fixtures/tell-replies.json"))
+        .expect("shared reply fixtures")
+}
+
+fn fixture_body(fixtures: &Value, name: &str) -> Value {
+    fixtures[name]["body"].clone()
+}
+
+fn fixture_handle(body: &Value) -> String {
+    body["to"]["reply"].as_str().expect("handle").to_owned()
+}
+
+/// Post a tell body exactly as the CLI sends it.
+async fn post_tell(registry: &Registry, actor: &str, body: Value) -> Response {
+    caller_request(&registry.api, Method::POST, TELL, actor, body).await
+}
+
 #[tokio::test]
-async fn reply_handles_issued_before_the_change_answer_until_they_expire() {
+async fn shared_reply_fixtures_reach_the_sender_and_refuse_foreign_and_expired_handles() {
+    const REFUSAL: &str = "This reply route is unavailable. Nothing was sent.";
+    let fixtures = shared_reply_fixtures();
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
     registry.enroll("beta-planner").await;
     let now = i64::try_from(crate::now_ms()).unwrap();
-    record_delivered_reply_route(&registry, "nreply_6e3950151761ff6799b6ffb4af25869b", now).await;
-    record_delivered_reply_route(&registry, "r6e39f1a0", now - 8 * REPLY_DAY_MS).await;
-    record_delivered_reply_route(&registry, "nreply_stale_legacy", now - 8 * REPLY_DAY_MS).await;
-
-    // The JSON `tell` form from an earlier notice still reaches the sender.
-    let legacy = registry
-        .tell(
-            "alpha-planner",
-            json!({"reply": "nreply_6e3950151761ff6799b6ffb4af25869b"}),
-            "Answer to the old notice",
-        )
-        .await;
-    assert_eq!(legacy.status(), StatusCode::OK);
-    registry.advance_tell().await.unwrap();
-    let (thread, text, _) = received_notice(&registry);
-    assert_eq!(thread, "beta-planner");
-    assert!(text.contains("\n\nAnswer to the old notice\n\n"), "{text}");
-
-    // Expired handles, of either form, are refused plainly and send nothing.
-    for expired in ["r6e39f1a0", "nreply_stale_legacy"] {
-        let refused = registry
-            .tell("alpha-planner", json!({"reply": expired}), "Too late")
-            .await;
-        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{expired}");
-        assert_eq!(
-            json_body(refused).await["error"],
-            "This reply route is unavailable. Nothing was sent."
-        );
+    // Alpha received three messages earlier; each carried the fixture's handle.
+    for (name, issued_at) in [
+        ("shortReply", now),
+        ("legacyReply", now),
+        ("expiredReply", now - 8 * REPLY_DAY_MS),
+    ] {
+        let handle = fixture_handle(&fixture_body(&fixtures, name));
+        record_delivered_reply_route(&registry, &handle, issued_at).await;
     }
-    // Only the one legacy answer was sent; refusals never reach a planner.
-    assert_eq!(registry.notices.lock().unwrap().sends.len(), 1);
+
+    for name in ["shortReply", "legacyReply", "legacyJsonTell", "stdinReply"] {
+        let body = fixture_body(&fixtures, name);
+        let sent = post_tell(&registry, "alpha-planner", body.clone()).await;
+        assert_eq!(sent.status(), StatusCode::OK, "{name}");
+        registry.advance_tell().await.unwrap();
+        let (thread, text, _) = received_notice(&registry);
+        assert_eq!(thread, "beta-planner", "{name}");
+        let expected = body["text"].as_str().expect("fixture text");
+        assert!(
+            text.contains(&format!("\n\n{expected}\n\n")),
+            "{name}: {text}"
+        );
+        // Settle the delivered notice before the next one is scheduled.
+        registry.notices.lock().unwrap().started = true;
+        registry.advance_tell().await.unwrap();
+    }
+
+    // Beta sent the original message, so it cannot answer with alpha's handle.
+    let foreign = post_tell(
+        &registry,
+        "beta-planner",
+        fixture_body(&fixtures, "shortReply"),
+    )
+    .await;
+    assert_eq!(foreign.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(foreign).await["error"], REFUSAL);
+
+    // An expired handle is refused plainly and sends nothing.
+    let sends = registry.notices.lock().unwrap().sends.len();
+    let stale = post_tell(
+        &registry,
+        "alpha-planner",
+        fixture_body(&fixtures, "expiredReply"),
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(stale).await["error"], REFUSAL);
+    assert_eq!(registry.notices.lock().unwrap().sends.len(), sends);
 }
