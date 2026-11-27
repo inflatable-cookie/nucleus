@@ -1,3 +1,5 @@
+use std::collections::{HashMap, VecDeque, hash_map::Entry};
+
 use nucleus_core::ReportArtifact;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
@@ -243,6 +245,7 @@ impl Store {
                 replace_edges(&tx, id, ids, false)?;
             }
             DependencyEdit::Wait { ids, reason } => {
+                preflight_edges(&tx, id, ids)?;
                 if ids.is_empty() {
                     tx.execute(
                         "DELETE FROM task_prerequisite_waits WHERE task_id = ?1",
@@ -379,19 +382,38 @@ fn preflight_edges(tx: &Transaction<'_>, id: &str, ids: &[String]) -> Result<(),
     if ids.is_empty() {
         return Ok(());
     }
-    let cycles: bool = tx.query_row(
-        "WITH RECURSIVE reachable(id) AS (
-            SELECT value FROM json_each(?2)
-            UNION
-            SELECT d.prerequisite_id FROM reachable r JOIN task_dependencies d ON d.task_id = r.id
-            WHERE d.after_dispatch = 0
-         )
-         SELECT EXISTS (SELECT 1 FROM reachable WHERE id = ?1)",
-        params![id, serde_json::to_string(ids)?],
-        |row| row.get(0),
+    let mut edges = tx.prepare_cached(
+        "SELECT DISTINCT d.prerequisite_id FROM task_dependencies d
+         LEFT JOIN task_prerequisite_waits w
+             ON d.task_id = w.task_id AND w.released_at_ms IS NULL
+         WHERE d.task_id = ?1 AND (d.after_dispatch = 0 OR w.task_id IS NOT NULL)
+         ORDER BY d.prerequisite_id",
     )?;
-    if cycles {
-        return Err(StoreError::DependencyCycle);
+    let mut pending = VecDeque::from(ids.to_vec());
+    let mut predecessor: HashMap<_, _> = ids
+        .iter()
+        .map(|next| (next.clone(), id.to_owned()))
+        .collect();
+    while let Some(current) = pending.pop_front() {
+        if current == id {
+            let mut path = vec![id.to_owned()];
+            let mut step = id;
+            while let Some(previous) = predecessor.get(step) {
+                path.push(previous.clone());
+                if previous == id {
+                    break;
+                }
+                step = previous;
+            }
+            path.reverse();
+            return Err(StoreError::DependencyCycle { path });
+        }
+        for next in edges.query_map([&current], |row| row.get::<_, String>(0))? {
+            if let Entry::Vacant(slot) = predecessor.entry(next?) {
+                pending.push_back(slot.key().clone());
+                slot.insert(current.clone());
+            }
+        }
     }
     Ok(())
 }

@@ -18,8 +18,8 @@ use super::*;
 use crate::{
     event,
     tests::{
-        REPOSITORY, archived_checkout_rows, code_task_at_merge, fixture, forge_pull, reservation,
-        serve_forge,
+        REPOSITORY, archived_checkout_rows, code_task_at_merge, empty_archive_fixture, fixture,
+        forge_pull, reservation, serve_forge,
     },
 };
 
@@ -3024,7 +3024,8 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
         nucleus_store::TaskRow { task, .. } if task.hold().is_none()
     ));
     let done = service.task(&done.task.identity().id).await.unwrap();
-    service.host = service.host.with_quiet_fixture_processes();
+    let (native, _archive) = empty_archive_fixture(1).await;
+    service.host = native.with_quiet_fixture_processes();
     service.host.use_held_shell();
     let (forge, readable, _, _, server) = serve_merged_forge(&service.fixture().start).await;
     readable.store(true, Ordering::Relaxed);
@@ -5057,7 +5058,8 @@ async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_task
             )
             .await
             .unwrap();
-        service.host = service.host.with_quiet_fixture_processes();
+        let (native, _archive) = empty_archive_fixture(1).await;
+        service.host = native.with_quiet_fixture_processes();
         service.host.use_held_shell();
         let (forge, readable, _, _, server) = serve_merged_forge(&service.fixture().start).await;
         readable.store(true, Ordering::Relaxed);

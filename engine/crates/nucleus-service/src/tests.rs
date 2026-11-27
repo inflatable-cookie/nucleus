@@ -1097,6 +1097,17 @@ pub(super) async fn native_fixture(
     native_fixture_with_traffic(response, None).await
 }
 
+pub(super) fn archive_snapshot_reply(request: &Value, sequence: u64, threads: &[Value]) -> Value {
+    assert_eq!(request["tag"], "orchestration.getArchivedShellSnapshot");
+    json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{
+        "schemaVersion":2,"snapshotSequence":sequence,"projects":[],"threads":threads
+    }}})
+}
+
+pub(super) async fn empty_archive_fixture(sequence: u64) -> (T3, tokio::task::JoinHandle<()>) {
+    native_fixture(move |request| archive_snapshot_reply(request, sequence, &[])).await
+}
+
 pub(super) fn archived_checkout_rows(binding: &Binding, task: &Task) -> Vec<Value> {
     let parent = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
     [Role::Reviewer, Role::Worker]

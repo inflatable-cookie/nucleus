@@ -16,7 +16,7 @@ use crate::{
     launch::Method,
     message_id,
     projection::Projection,
-    rpc::{Read, Reply, Rpc, ThreadFence, closed_row},
+    rpc::{Read, Reply, Rpc, ShellRevision, ThreadFence, closed_row},
     task_row::ThreadVisibility,
     thread_snapshots::{ShellCustody, ThreadRead, ThreadSnapshots, belongs_to, row_activity},
 };
@@ -386,7 +386,8 @@ pub struct QuietCheckout {
     binding: Binding,
     parent: String,
     threads: Vec<String>,
-    missing: Vec<(String, ThreadFence)>,
+    missing: Vec<String>,
+    revision: ShellRevision,
 }
 
 impl QuietCheckout {
@@ -398,14 +399,11 @@ impl QuietCheckout {
         self.rpc.with_shell(|shell| {
             let shell = shell.ok_or(HostError::Uncertain)?;
             check_live_threads(shell, &self.binding, &self.parent, &self.threads)?;
-            if self
-                .missing
-                .iter()
-                .any(|(id, fence)| !fence.matches(&self.rpc.fence_at(id, Some(shell))))
-                || self.threads.iter().any(|id| {
-                    shell.marker(id).is_none()
-                        && !self.missing.iter().any(|(before, _)| before == id)
-                })
+            if self.rpc.shell_revision(Some(shell)) != self.revision
+                || self
+                    .threads
+                    .iter()
+                    .any(|id| shell.marker(id).is_none() && !self.missing.contains(id))
             {
                 return Err(HostError::Uncertain);
             }
@@ -443,7 +441,7 @@ fn check_live_threads(
 }
 
 impl T3 {
-    /// Resolve bound threads omitted by the live shell before checkout closeout.
+    /// Check both shell inventories and resolve omitted bound threads before checkout closeout.
     ///
     /// # Errors
     /// Returns an error if any task thread is active, its binding differs, or the evidence is incomplete.
@@ -459,42 +457,38 @@ impl T3 {
             .chain(std::iter::once(parent.as_str()))
             .map(str::to_owned)
             .collect();
-        let missing = self.rpc.with_shell(|shell| {
+        let (revision, missing) = self.rpc.with_shell(|shell| {
             let shell = shell.ok_or(HostError::Uncertain)?;
             check_live_threads(shell, binding, &parent, &threads)?;
-            Ok::<_, HostError>(
-                threads
-                    .iter()
-                    .filter_map(|id| {
-                        let fence = self.rpc.fence_at(id, Some(shell));
-                        fence.row.is_none().then(|| (id.clone(), fence))
-                    })
-                    .collect::<Vec<_>>(),
-            )
+            let missing = threads
+                .iter()
+                .filter(|id| shell.marker(id).is_none())
+                .cloned()
+                .collect::<Vec<_>>();
+            Ok::<_, HostError>((self.rpc.shell_revision(Some(shell)), missing))
         })?;
-        if let Some((_, first)) = missing.first() {
-            let archive = self.archived_shell().await?;
-            let seq = archive["snapshotSequence"]
-                .as_u64()
-                .ok_or(HostError::Protocol)?;
-            let rows = archive["threads"].as_array().ok_or(HostError::Protocol)?;
-            if first.snapshot_sequence().is_none_or(|live| seq < live) {
-                return Err(HostError::Uncertain);
+        // The live subscription omits archived descendants even when every bound role is visible.
+        let archive = self.archived_shell().await?;
+        let seq = archive["snapshotSequence"]
+            .as_u64()
+            .ok_or(HostError::Protocol)?;
+        let rows = archive["threads"].as_array().ok_or(HostError::Protocol)?;
+        if revision.1.is_none_or(|live| seq < live) {
+            return Err(HostError::Uncertain);
+        }
+        for row in rows.iter().filter(|row| {
+            belongs_to(row, &parent) || threads.iter().any(|id| row["id"] == id.as_str())
+        }) {
+            if row["archivedAt"].is_null() && row["deletedAt"].is_null() {
+                return Err(HostError::Protocol);
             }
-            for row in rows.iter().filter(|row| belongs_to(row, &parent)) {
-                check_quiet_thread(binding, row)?;
-            }
-            for (id, _) in &missing {
-                if let Some(row) = rows.iter().find(|row| row["id"] == id.as_str()) {
-                    if row["archivedAt"].is_null() && row["deletedAt"].is_null() {
-                        return Err(HostError::Protocol);
-                    }
-                    check_quiet_thread(binding, row)?;
-                } else {
-                    let (thread, _) = self.observe_thread(binding, id, ThreadRead::Exact).await?;
-                    if thread.is_some_and(|thread| !thread.deleted()) {
-                        return Err(HostError::Uncertain);
-                    }
+            check_quiet_thread(binding, row)?;
+        }
+        for id in &missing {
+            if !rows.iter().any(|row| row["id"] == id.as_str()) {
+                let (thread, _) = self.observe_thread(binding, id, ThreadRead::Exact).await?;
+                if thread.is_some_and(|thread| !thread.deleted()) {
+                    return Err(HostError::Uncertain);
                 }
             }
         }
@@ -504,6 +498,7 @@ impl T3 {
             parent,
             threads,
             missing,
+            revision,
         };
         guard.with_quiet_shell(|| ())?;
         Ok(guard)

@@ -2702,8 +2702,8 @@ mod tests {
 
     use super::*;
     use crate::tests::{
-        Due, REPOSITORY, archived_checkout_rows, code_task_at_merge, fixture, forge_checks,
-        forge_fixture, forge_pull, native_fixture, reservation, serve_forge,
+        Due, REPOSITORY, archived_checkout_rows, code_task_at_merge, empty_archive_fixture,
+        fixture, forge_checks, forge_fixture, forge_pull, native_fixture, reservation, serve_forge,
     };
 
     async fn cancelled_cleanup_task(service: &Service) -> TaskRow {
@@ -3022,7 +3022,7 @@ mod tests {
         } else {
             None
         };
-        let native = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+        let (native, _archive) = empty_archive_fixture(1).await;
         service.host = match &protected {
             Some(tree) => crate::tests::described_native_fixture(native, home.path(), tree.0[1]),
             None => crate::tests::verified_native_fixture(native, home.path()),
@@ -3224,10 +3224,8 @@ mod tests {
         let head = service.fixture().start.clone();
         let (forge, _server) = publish_checkout_forge(head).await;
         service.forge = forge;
-        service.host = crate::tests::verified_native_fixture(
-            T3::new("http://127.0.0.1:9", "fixture").unwrap(),
-            home.path(),
-        );
+        let (native, _archive) = empty_archive_fixture(1).await;
+        service.host = crate::tests::verified_native_fixture(native, home.path());
         service.fixture_mut().acp_provider = Some("fixture".into());
         let terminal = cancelled_cleanup_task(&service).await;
         let id = &terminal.task.identity().id;
@@ -3315,6 +3313,8 @@ mod tests {
     #[tokio::test]
     async fn retirement_requires_running_dispatch_quiet_shell_and_published_git_head() {
         let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let (native, _archive) = empty_archive_fixture(1).await;
+        service.host = native.with_quiet_fixture_processes();
         let head = service.fixture().start.clone();
         let (forge, _server) = publish_checkout_forge(head.clone()).await;
         service.forge = forge;
@@ -3390,7 +3390,13 @@ mod tests {
 
         assert_eq!(service.archive_done(&row).await.unwrap(), Action::Nothing);
         assert!(!base.exists());
-        assert!(service.host.host_calls().is_empty());
+        assert_eq!(
+            service
+                .host
+                .host_calls()
+                .get("orchestration.getArchivedShellSnapshot"),
+            Some(&4)
+        );
     }
 
     #[tokio::test]

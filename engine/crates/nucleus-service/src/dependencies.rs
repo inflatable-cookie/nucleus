@@ -298,6 +298,26 @@ fn require_visible_dependencies(
     Ok(())
 }
 
+pub(super) fn describe_dependency_error(
+    state: &State,
+    scope: &ControllerScope,
+    error: StoreError,
+) -> ServiceError {
+    let StoreError::DependencyCycle { path } = error else {
+        return error.into();
+    };
+    let path = path
+        .into_iter()
+        .map(|id| match state.store.row(&id) {
+            Ok(Some(row)) if scope.task(state, row.task.identity()).is_ok() => {
+                row.reference().into_owned()
+            }
+            _ => "[unavailable task]".into(),
+        })
+        .collect();
+    StoreError::DependencyCycle { path }.into()
+}
+
 fn check_authority(state: &State, task: &Task, authority: &Authority) -> Result<(), ServiceError> {
     match authority {
         Authority::Planner { actor } => state.check_planner_authority(task, actor),
@@ -500,9 +520,11 @@ impl Service {
             "prerequisites": ids,
             "reason": reason,
         }).to_string();
-        row.version = state.edit_board_dependency(task, |store, clock| {
-            store.edit_dependencies(id, version, edit, &audit, clock)
-        })?;
+        row.version = state
+            .edit_board_dependency(task, |store, clock| {
+                store.edit_dependencies(id, version, edit, &audit, clock)
+            })
+            .map_err(|error| describe_dependency_error(&state, scope, error))?;
         self.desire_title(&mut state, task, row.number);
         self.wake_task(&mut state, id, row.version, Priority::Wake);
         Ok(row)

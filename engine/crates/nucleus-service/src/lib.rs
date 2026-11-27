@@ -2011,9 +2011,11 @@ impl Service {
             return self.commit(state, prior, task, &audit, None);
         };
         audit.detail = serde_json::json!({ "prerequisites": ids }).to_string();
-        let version = state.edit_board_dependency(task, |store, clock| {
-            store.save_brief_with_dependencies(prior, task, &audit, &ids, Some(clock))
-        })?;
+        let version = state
+            .edit_board_dependency(task, |store, clock| {
+                store.save_brief_with_dependencies(prior, task, &audit, &ids, Some(clock))
+            })
+            .map_err(|error| dependencies::describe_dependency_error(state, scope, error))?;
         self.task_committed(state, prior, task, &audit, version);
         Ok(version)
     }

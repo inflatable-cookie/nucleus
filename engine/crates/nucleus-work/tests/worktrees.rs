@@ -9,7 +9,7 @@ use longhorn_git_workspace::{GitCredential, GitFailure, GitPolicy};
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Workspace};
 use nucleus_store::{EngineSettings, SettingsFile};
-use nucleus_work::{Custody, Retirement, WorkError, Worktrees};
+use nucleus_work::{Custody, Landing, Retirement, WorkError, Worktrees};
 
 struct LocalGit;
 
@@ -813,6 +813,44 @@ fn retire_stages_same_volume_trash_removes_git_registration_and_prunes_only_owne
 }
 
 #[test]
+fn trash_pruning_reports_each_failed_entry_and_retries_it_later() {
+    let home = tempfile::tempdir().unwrap();
+    let repo = home.path().join("repository");
+    let head = repository(&repo);
+    let worktrees = worktrees(home.path());
+    let storage = SettingsFile::open(home.path()).unwrap().storage().unwrap();
+    let trash = storage.work().path().join(".trash");
+    for task in ["one", "two", "three"] {
+        let checkout = worktrees.checkout(&repo, "example/fixture", task).unwrap();
+        checkout.allocate(&head).unwrap();
+        assert_eq!(checkout.retire(&head).unwrap(), Retirement::Removed);
+    }
+    let mut entries: Vec<_> = fs::read_dir(&trash)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(entries.len(), 3);
+    let healthy = entries.pop().unwrap();
+    for failed in &entries {
+        fs::write(failed.join("unexpected"), "keep").unwrap();
+    }
+
+    let error = nucleus_work::prune_trash(storage.work(), u64::MAX, |_| true).unwrap_err();
+    assert!(!healthy.exists());
+    for failed in &entries {
+        assert!(error.to_string().contains(failed.to_str().unwrap()));
+        assert!(failed.join(".nucleus-trash").is_file());
+        assert_eq!(
+            fs::read_to_string(failed.join("unexpected")).unwrap(),
+            "keep"
+        );
+        fs::remove_file(failed.join("unexpected")).unwrap();
+    }
+    nucleus_work::prune_trash(storage.work(), u64::MAX, |_| true).unwrap();
+    assert_eq!(fs::read_dir(trash).unwrap().count(), 0);
+}
+
+#[test]
 fn retire_recovers_interrupted_cleanup_without_dot_git_file_and_preserves_unpublished_work() {
     for delete_gitignore in [false, true] {
         let root = tempfile::tempdir().unwrap();
@@ -1036,6 +1074,83 @@ impl GitPolicy for Fetches {
     fn refresh_credential(&self, _: &GitCredential) -> Option<GitCredential> {
         None
     }
+}
+
+struct UnavailableCommitLookup;
+
+impl GitPolicy for UnavailableCommitLookup {
+    fn isolate(&self, command: &mut Command) {
+        LocalGit.isolate(command);
+        if command
+            .get_args()
+            .any(|argument| argument == "nucleus-commit-info")
+        {
+            command.current_dir("/dev/null");
+        }
+    }
+
+    fn credential(&self, _: &str) -> Result<Option<GitCredential>, GitFailure> {
+        Ok(None)
+    }
+
+    fn refresh_credential(&self, _: &GitCredential) -> Option<GitCredential> {
+        None
+    }
+}
+
+#[test]
+fn published_start_distinguishes_absent_prerequisites_from_git_failures() {
+    let home = tempfile::tempdir().unwrap();
+    let repo = home.path().join("repository");
+    let head = repository(&repo);
+    git(&repo, &["remote", "add", "origin", "."]);
+    let worktrees = worktrees(home.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "start")
+        .unwrap();
+    let landings = [Landing {
+        prerequisite: "fixture#1".into(),
+        commit: head,
+    }];
+    assert_eq!(
+        checkout.published_start("main", &landings).unwrap(),
+        landings[0].commit
+    );
+
+    let missing = "b".repeat(40);
+    let landings = [Landing {
+        prerequisite: "fixture#1".into(),
+        commit: missing.parse().unwrap(),
+    }];
+    assert!(matches!(
+        checkout.published_start("main", &landings),
+        Err(WorkError::UnlandedPrerequisite { prerequisite, .. }) if prerequisite == "fixture#1"
+    ));
+    let unreadable = landings.clone();
+    let job = checkout.job(
+        UnavailableCommitLookup,
+        Redactor::new([], RedactionRules::common()),
+        move |checkout| checkout.published_start("main", &unreadable),
+    );
+    assert!(matches!(
+        job(Arc::default()),
+        Err(WorkError::Git {
+            source: GitFailure::Unavailable { .. },
+            ..
+        })
+    ));
+
+    let loose_objects = repo.join(".git/objects/bb");
+    fs::create_dir_all(&loose_objects).unwrap();
+    fs::write(loose_objects.join(&missing[2..]), "damaged object").unwrap();
+    let error = checkout
+        .published_start("main", &landings)
+        .expect_err("Git must report the corrupt object");
+    assert!(
+        matches!(&error, WorkError::Git { source: GitFailure::Refused { detail, .. }, .. }
+            if detail.contains("is corrupt")),
+        "{error}"
+    );
 }
 
 #[test]

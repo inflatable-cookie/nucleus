@@ -103,8 +103,9 @@ far behind. A task branch left by an earlier allocation keeps its head when the
 published base already holds it and it contains the prerequisite merges below.
 
 The start must contain the recorded merge commit of every prerequisite that
-landed on the same repository and base. A failed fetch or a missing landing is a
-workspace wait that names its cause. Nucleus never falls back to the local head.
+landed on the same repository and base. A failed fetch or commit lookup
+reports the Git failure. A missing landing names the prerequisite.
+Nucleus never falls back to the local head.
 
 Review-entry tasks start at their recorded head, and report-only tasks at their
 pinned planning commit.
@@ -112,9 +113,11 @@ pinned planning commit.
 ### Wait states and prerequisites
 
 Record first-dispatch prerequisites and deliberate post-dispatch waits as
-separate task facts. Missing or cancelled prerequisite work needs an owner
-edit. A hold and a dependency wait are independent. On release, the scheduler
-observes current capacity and preserves the task's identity and order. The
+separate task facts. Dependency edits reject and name cycles across
+first-dispatch prerequisites and unreleased waits. Missing or cancelled
+prerequisite work needs an owner edit. A hold and a dependency wait are
+independent. On release, the scheduler observes current capacity and preserves
+the task's identity and order. The
 [dependency owner](../../../engine/crates/nucleus-service/src/dependencies.rs)
 and [Spec 070 commands](../specs/070-small-engine.md#commands) own the precise
 updates and exits.
@@ -269,9 +272,10 @@ when to ask the planner.
 Archive a terminal task’s exact idle thread from its synchronized T3 project, worktree and branch binding. Recheck Dispatch and the idle thread at the write. The registered directory may have moved.
 The board and Next retain the workspace outcome. Before removing a checkout,
 verify the Git registration and published head. Hold Dispatch admission and
-quiet shell evidence through the rename. For bound threads omitted by the
-live shell, require quiet archive rows or exact deletion or absence evidence
-fenced by the held shell. One best-effort sweep while all task threads are quiet
+quiet shell evidence through the rename. Check descendants in both the live
+and archived shell, and fence the archive inventory against the live shell
+revision. Bound threads omitted by both views need exact deletion or absence
+evidence. One best-effort sweep while all task threads are quiet
 stops orphaned process trees rooted in the verified checkout or recorded run
 scratch when an executable or absolute argument names the task's own code
 there. Nucleus records signal outcomes and leaves shared services running.
@@ -296,9 +300,12 @@ with only unstaged deletions of files at that exact published head retire by
 atomically renaming the directory into same-volume trash under the work root,
 then removing the Git worktree registration. The trash is recoverable for at
 least 24 hours. The background prune keeps entries with a process working
-directory or unresolved cwd evidence. An incomplete process sweep or census
-does not delay task closeout. At startup, Nucleus closes open process-census
-decisions from older engines as superseded and records why in their history.
+directory or unresolved cwd evidence. Pruning reports each failure and continues
+with the other entries. It preserves ownership markers for retry and reports any
+failure to restore one.
+An incomplete process sweep or census does not delay task closeout. At startup,
+Nucleus closes open process-census decisions from older engines as superseded
+and records why in their history.
 An interrupted cleanup whose `.git` file was already unlinked still proves
 custody through its matching prunable Git registration. Git-ignored output goes
 with the checkout. Modified, added, non-ignored untracked or uncertain contents

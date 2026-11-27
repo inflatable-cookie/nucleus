@@ -32,6 +32,9 @@ const TRASH_CHECKOUT: &str = "checkout";
 const TRASH_MARKER: &str = ".nucleus-trash";
 const TRASH_RETENTION_MS: u64 = 24 * 60 * 60 * 1000;
 static TRASH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+// Git's bounded runner closes stdin. Batch lookup reports absence on stdout
+// while a failed Git invocation still carries its own error.
+const COMMIT_INFO: &str = r#"alias.nucleus-commit-info=!f() { printf '%s\n' "$1" | git cat-file '--batch-check=%(objecttype)'; }; f"#;
 // Keep Git's bounded command runner without collecting one filename per entry.
 // `ls-files` quotes embedded newlines. Its records cannot look like the marker
 // which confirms that the whole scan completed successfully.
@@ -90,6 +93,8 @@ pub enum WorkError {
     InvalidPath,
     #[error("worktree filesystem operation failed")]
     Filesystem(#[from] std::io::Error),
+    #[error("could not prune checkout trash ({0})")]
+    TrashPrune(String),
     #[error("the work volume or layout cannot be verified")]
     Storage(#[from] StorageError),
     #[error("{command} failed in {directory:?} for repository {repository:?}: {source}")]
@@ -249,38 +254,32 @@ fn owns_quarantine(marker: &Path, expected: &str) -> bool {
         .is_some_and(|stamp| stamp == expected.as_bytes())
 }
 
-fn owns_trash(
+fn verified_trash_stamp(
     marker: &Path,
     name: &str,
     entry: &fs::Metadata,
     checkout: Option<&fs::Metadata>,
-) -> bool {
+) -> Option<Vec<u8>> {
     if let Some(checkout) = checkout {
         let expected = trash_stamp(name, entry, checkout);
         return read_verified_stamp(marker, expected.len() as u64)
-            .is_some_and(|stamp| stamp == expected.as_bytes());
+            .filter(|stamp| stamp == expected.as_bytes());
     }
     let prefix = format!(
         "nucleus checkout trash {name} {}:{} ",
         entry.dev(),
         entry.ino()
     );
-    let Some(bytes) = read_verified_stamp(marker, 256) else {
-        return false;
-    };
-    let Ok(text) = std::str::from_utf8(&bytes) else {
-        return false;
-    };
-    let Some(rest) = text
+    // Two decimal u64 values, a colon, and a newline.
+    let bytes = read_verified_stamp(marker, prefix.len() as u64 + 42)?;
+    let text = std::str::from_utf8(&bytes).ok()?;
+    let rest = text
         .strip_prefix(&prefix)
-        .and_then(|s| s.strip_suffix('\n'))
-    else {
-        return false;
-    };
-    let Some((dev, ino)) = rest.split_once(':') else {
-        return false;
-    };
-    dev.parse::<u64>().is_ok() && ino.parse::<u64>().is_ok()
+        .and_then(|s| s.strip_suffix('\n'))?;
+    let (dev, ino) = rest.split_once(':')?;
+    dev.parse::<u64>().ok()?;
+    ino.parse::<u64>().ok()?;
+    Some(bytes)
 }
 
 fn trash_timestamp_ms(name: &str) -> Option<u64> {
@@ -338,7 +337,8 @@ pub fn prune_quarantines(scratch: &StorageDirectory, now_ms: u64) -> Result<(), 
 /// Remove owned trash entries at least 24 hours old when the caller clears their custody.
 ///
 /// # Errors
-/// Returns an error if the work root or a verified trash removal cannot be completed.
+/// Returns an error if the work root cannot be read, or reports all entry
+/// failures after attempting the entire scan.
 pub fn prune_trash(
     work: &StorageDirectory,
     now_ms: u64,
@@ -354,40 +354,87 @@ pub fn prune_trash(
     if !root_info.is_dir() || root_info.dev() != device {
         return Err(WorkError::WrongCheckout);
     }
+    let mut failures = Vec::new();
     for entry in fs::read_dir(&root)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
+        let result = match entry {
+            Ok(entry) => prune_trash_entry(&entry, device, now_ms, &mut can_remove)
+                .map_err(|error| format!("{}: {error}", entry.path().display())),
+            Err(error) => Err(format!(
+                "could not read an entry in {}: {error}",
+                root.display()
+            )),
         };
-        if trash_timestamp_ms(name).is_none_or(|at| now_ms.saturating_sub(at) < TRASH_RETENTION_MS)
+        if let Err(detail) = result {
+            failures.push(detail);
+        }
+    }
+    if !failures.is_empty() {
+        return Err(WorkError::TrashPrune(failures.join(", ")));
+    }
+    Ok(())
+}
+
+fn prune_trash_entry(
+    entry: &fs::DirEntry,
+    device: u64,
+    now_ms: u64,
+    can_remove: &mut impl FnMut(&Path) -> bool,
+) -> std::io::Result<()> {
+    let name = entry.file_name();
+    let Some(name) = name.to_str() else {
+        return Ok(());
+    };
+    let Some(at) = trash_timestamp_ms(name) else {
+        return Ok(());
+    };
+    if now_ms.saturating_sub(at) < TRASH_RETENTION_MS {
+        return Ok(());
+    }
+    let entry_path = entry.path();
+    let entry_info = match entry_path.symlink_metadata() {
+        Ok(info) if info.is_dir() && info.dev() == device => info,
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let checkout = entry_path.join(TRASH_CHECKOUT);
+    let checkout_info = match checkout.symlink_metadata() {
+        Ok(info) if info.is_dir() && info.dev() == device => Some(info),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Ok(_) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let marker = entry_path.join(TRASH_MARKER);
+    let Some(stamp) = verified_trash_stamp(&marker, name, &entry_info, checkout_info.as_ref())
+    else {
+        return Ok(());
+    };
+    if !can_remove(&entry_path) {
+        return Ok(());
+    }
+    if checkout_info.is_some() {
+        fs::remove_dir_all(&checkout)?;
+    }
+    for child in fs::read_dir(&entry_path)? {
+        if child?.file_name() != TRASH_MARKER {
+            return Err(ErrorKind::DirectoryNotEmpty.into());
+        }
+    }
+    fs::remove_file(&marker)?;
+    if let Err(error) = fs::remove_dir(&entry_path)
+        && error.kind() != ErrorKind::NotFound
+    {
+        // Preserve proof for the next pass if the final rmdir fails.
+        if entry_path.symlink_metadata().is_ok_and(|info| {
+            info.is_dir() && info.dev() == entry_info.dev() && info.ino() == entry_info.ino()
+        }) && let Err(restore) =
+            fs::File::create_new(&marker).and_then(|mut file| file.write_all(&stamp))
         {
-            continue;
+            return Err(std::io::Error::other(format!(
+                "{error}. Could not restore the trash marker: {restore}"
+            )));
         }
-        let entry_path = entry.path();
-        let Ok(entry_info) = entry_path.symlink_metadata() else {
-            continue;
-        };
-        if !entry_info.is_dir() || entry_info.dev() != device {
-            continue;
-        }
-        let checkout = entry_path.join(TRASH_CHECKOUT);
-        let checkout_info = match checkout.symlink_metadata() {
-            Ok(info) if info.is_dir() && info.dev() == device => Some(info),
-            Err(error) if error.kind() == ErrorKind::NotFound => None,
-            Ok(_) | Err(_) => continue,
-        };
-        let marker = entry_path.join(TRASH_MARKER);
-        if !owns_trash(&marker, name, &entry_info, checkout_info.as_ref())
-            || !can_remove(&entry_path)
-        {
-            continue;
-        }
-        if checkout_info.is_some() {
-            fs::remove_dir_all(&checkout)?;
-        }
-        fs::remove_file(&marker)?;
-        fs::remove_dir(&entry_path)?;
+        return Err(error);
     }
     Ok(())
 }
@@ -573,14 +620,34 @@ impl Checkout<'_> {
         start: &Head,
     ) -> Result<Option<&'l Landing>, WorkError> {
         for landing in landings {
-            // A commit absent from the object store cannot be in the fetched history.
-            if self.require_commit(&landing.commit).is_err()
-                || !self.contains(&landing.commit, start)?
-            {
+            if !self.has_commit(&landing.commit)? || !self.contains(&landing.commit, start)? {
                 return Ok(Some(landing));
             }
         }
         Ok(None)
+    }
+
+    fn has_commit(&self, head: &Head) -> Result<bool, WorkError> {
+        let revision = format!("{head}^{{commit}}");
+        let command = format!("git cat-file --batch-check for {head}");
+        let kind = self.git_named(
+            &self.repository,
+            &["-c", COMMIT_INFO, "nucleus-commit-info", &revision],
+            command.clone(),
+        )?;
+        match kind.as_str() {
+            "commit" => Ok(true),
+            missing if missing.ends_with(" missing") => Ok(false),
+            _ => Err(self.git_failure(
+                &self.repository,
+                GitOperation::Other,
+                command,
+                GitFailure::Unavailable {
+                    code: GitFailureCode::CommandUnavailable,
+                    detail: "Git returned an unexpected object lookup result".into(),
+                },
+            )),
+        }
     }
 
     fn branch_head(&self) -> Result<Option<Head>, WorkError> {

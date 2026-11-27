@@ -91,10 +91,8 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     let head = service.fixture().start.clone();
     let (forge, _server) = publish_checkout_forge(head).await;
     service.forge = forge;
-    service.host = crate::tests::verified_native_fixture(
-        T3::new("http://127.0.0.1:9", "fixture").unwrap(),
-        home.path(),
-    );
+    let (native, _archive) = empty_archive_fixture(1).await;
+    service.host = crate::tests::verified_native_fixture(native, home.path());
     service.fixture_mut().acp_provider = Some("fixture".into());
     // Helper cleanup runs on a profile whose Dispatch was never configured.
     assert!(service.state.lock().await.settings.dispatch.is_none());

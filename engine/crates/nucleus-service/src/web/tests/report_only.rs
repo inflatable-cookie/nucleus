@@ -8,7 +8,7 @@ use super::{
     projects::{NoticeFixture, NoticeReply},
     *,
 };
-use crate::tests::{archived_checkout_rows, git, native_fixture};
+use crate::tests::{archive_snapshot_reply, archived_checkout_rows, git, native_fixture};
 
 const TASK: &str = "report-cutover";
 const PROJECT: &str = "local-fixture";
@@ -491,7 +491,8 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
             [TASK]
         );
     }
-    let before = host.host_calls();
+    let archive_read = "orchestration.getArchivedShellSnapshot";
+    let before = host.host_calls().get(archive_read).copied().unwrap_or(0);
     assert!(matches!(
         fixture.service.archive_done(&done).await,
         Err(ServiceError::CheckoutRetained(cause)) if cause.contains("idle or gone")
@@ -519,9 +520,9 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
     );
     assert!(!fixture.checkout.exists());
     assert_eq!(
-        host.host_calls(),
-        before,
-        "held quiet rows need no extra reads"
+        host.host_calls().get(archive_read),
+        Some(&(before + 2)),
+        "sweeping and retiring each verify their own archive evidence"
     );
 }
 
@@ -823,6 +824,7 @@ impl ReportFixture {
                     }})
                 }
                 Some("orchestration.dispatchCommand") => return deliveries.lock().unwrap().dispatch(request),
+                Some("orchestration.getArchivedShellSnapshot") => return archive_snapshot_reply(request, 2, &[]),
                 _ => panic!("unexpected fixture request {request}"),
             };
             json!({"_tag":"Chunk","requestId":request["id"],"values":[snapshot,{"kind":"synchronized"}]})
