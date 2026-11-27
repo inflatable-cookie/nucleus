@@ -1219,11 +1219,6 @@ test("the card drops the repository and phase chips and moves lanes to the task 
   assert.doesNotMatch(call, /phaseChip|repoChip|laneChips/);
   assert.match(card, /return\s*\(?\s*<BoardCard/);
   assert.match(card, /holdReasonPreview\(dispatchWait\.reason\)/);
-  assert.match(ui, /Stop category · \{taskSummaryStop\.reason\}/);
-  assert.match(
-    ui,
-    /Suggested owner verbs ·\{" "\}\s*\{taskSummaryStop\.suggestedVerbs\.join\(", "\)\}/,
-  );
 });
 
 // Triage (Tom, 2026-11-07): a lead card is a title, a kind, the project and one state line. The
@@ -2521,11 +2516,10 @@ test("a drained lane asks before it is marked done, and cancel writes nothing", 
   assert.deepEqual(calls, ["done"]);
 });
 
-test("a task row keeps one status line and no host identity, while the detail keeps the routing", async () => {
+test("a task row keeps one status line and no host identity", async () => {
   await load();
   const makeTask = boardTasks();
   let mounted: ReturnType<typeof mountBoard> | undefined;
-  let detail: ReturnType<typeof mount> | undefined;
   try {
     const routing =
       "Profile Worker runs on online host t3code:task; not ruled out on srv_1, which is not ready";
@@ -2580,31 +2574,7 @@ test("a task row keeps one status line and no host identity, while the detail ke
       "no routing sentence in the label",
     );
 
-    // The task detail keeps the host selection and the reason behind it.
-    const { taskDetailView } = await import("../shared/task-view");
-    const detailView = taskDetailView(task, {}, [], []);
-    detail = mount(
-      h(queue.TaskSummaryBlock as never, {
-        // The detail's host selection is the summary's routing reason, shown in full.
-        task: {
-          ...detailView,
-          hostSelection: {
-            basis: "worker_profile" as const,
-            hostId: "t3code:32be2844",
-            reason: routing,
-          },
-        },
-        next: null,
-        runs: [],
-        c,
-      }),
-    );
-    assert.ok(
-      detail.text().includes("not ruled out"),
-      "the detail keeps the routing explanation",
-    );
   } finally {
-    detail?.update(h("View", null));
     mounted?.update(h("View", null));
   }
 });
@@ -3336,78 +3306,3 @@ test("rows keep holds behind another status, a failed recheck, named projects wi
 
 // nucleus#1515 review: the engine keeps an owner-facing stop and records the task's
 // own host outage beside it; the row reads "on the host", so the detail names both.
-test("task detail shows an owner-facing stop and the independent host wait together", async () => {
-  await load();
-  const makeTask = boardTasks();
-  let detail: ReturnType<typeof mount> | undefined;
-  try {
-    const { taskDetailView } = await import("../shared/task-view");
-    const { taskNextSchema } = await import("../shared/contracts");
-    const task = makeTask("budget-and-away", { phase: "blocked" });
-    const view = taskDetailView(task, {}, [], []);
-    const next = taskNextSchema.parse({
-      taskId: task.id,
-      title: "budget-and-away",
-      phase: "blocked",
-      version: 1,
-      repository: null,
-      number: null,
-      reference: null,
-      attention: true,
-      reason: "Budget reached",
-      activeRun: null,
-      prHead: null,
-      prUrl: null,
-      branch: "ns-task",
-      stop: {
-        kind: "attention",
-        reason: "operator_needed",
-        detail: "Budget reached; raise it or stop the task",
-        since: at,
-        suggestedVerbs: [],
-        owner: "operator",
-        evidence: null,
-      },
-      outcome: {
-        accepted: null,
-        reported: null,
-        impediment: null,
-        impediments: [],
-        reader: null,
-        authorResult: null,
-        decision: "Nothing outstanding",
-        revision: { runs: 0, budget: 3, exhausted: false },
-      },
-      holds: {},
-      verbs: [],
-    });
-    detail = mount(
-      h(queue.TaskSummaryBlock as never, {
-        task: {
-          ...view,
-          resolution: {
-            ...view.resolution,
-            hostWait: { hostId: "t3code:32be2844", since: at },
-          },
-        },
-        next,
-        runs: [],
-        c,
-      }),
-    );
-    assert.match(
-      detail.text(),
-      /Budget reached; raise it or stop the task/,
-      "the stop keeps its detail",
-    );
-    const hostWait = detail.query(/^Host wait: waiting on .+ since /);
-    assert.ok(hostWait, "the independent host wait is in the detail too");
-    assert.match(
-      String(hostWait!.props.accessibilityLabel),
-      new RegExp(`since ${at}$`),
-    );
-    assert.match(detail.text(), /Waiting on .+ · \d+d ago/);
-  } finally {
-    detail?.update(h("View", null));
-  }
-});

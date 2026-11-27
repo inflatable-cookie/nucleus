@@ -96,18 +96,14 @@ export {
 } from "./schema/resolution-merge";
 export { resolutionWorkspaceFields } from "./schema/resolution-workspace";
 export * from "./rpc/task-control";
-export * from "./schema/bulk-disposition";
-export * from "./rpc/bulk-disposition";
 export * from "./schema/project-management";
 export * from "./rpc/project-management";
 export * from "./schema/capacity";
 export * from "./schema/operations";
 export * from "./rpc/operations";
 export * from "./rpc/review";
-export * from "./rpc/outcomes";
 export * from "./rpc/lanes";
 export * from "./rpc/projects";
-export * from "./rpc/project-agents";
 export * from "./schema/questions";
 export * from "./rpc/questions";
 export * from "./schema/project-settings";

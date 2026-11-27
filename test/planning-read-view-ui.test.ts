@@ -202,22 +202,17 @@ test("1531 wide: the columns sit side by side, and See all pages through the lan
     for (
       let i = 0;
       i < 400 &&
-      !/Sibling and callback parity/.test(textOf(ui.get("Recently finished")));
+      !/The last 10 of 13 finished\./.test(textOf(ui.get("Recently finished")));
       i++
     )
       await new Promise((resolve) => setTimeout(resolve, 5));
     const all = textOf(ui.get("Recently finished"));
     assert.equal(
-      (all.match(/✓/g) ?? []).length,
-      12,
-      "every finished task, past the lane view's ten",
+      (all.match(/[✓✕]/g) ?? []).length,
+      10,
+      "See all shows the lane view's own ten rows; the engine keeps no paged finished history",
     );
-    assert.match(all, /Sibling and callback parity for BB/);
-    assert.match(
-      all,
-      /✕ Abandoned host probe Cancelled ·/,
-      "cancelled work counts in the total, so See all lists it too",
-    );
+    assert.match(all, /The last 10 of 13 finished\./);
     assert.equal(
       ui.query("Show more finished work in BB as a host"),
       undefined,

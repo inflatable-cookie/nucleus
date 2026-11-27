@@ -47,38 +47,19 @@ import {
   useBoardAct,
   usePlanningData,
   useRecordQueries,
-  useTaskDetail,
   type BoardTab,
 } from "./board/use-board-data";
-import { TaskDialog } from "./task/task-dialog";
 import { RustTaskDialog } from "./task/rust-task";
 import { groupRustTasks, postRustCommand, rustProjectActivity, useRustTasks, type RustCommand, type RustTask, type RustInvalidation } from "./web/rust-board";
-import { useTaskDraftStore } from "./task/drafts";
 import { LeadDialog } from "./records/lead-dialog";
 import { PapercutDialog } from "./records/papercut-dialog";
 import { RustItemDialog } from "./records/rust-item";
 import { DecisionDialog } from "./records/decision-dialog";
 import type { RecordNoticeValue } from "./task/parts";
 import { overlay, roles, space, type as typeScale } from "./design";
+
 export { TaskCard, DecisionCard } from "./board/cards";
 export { TriageLeadCard } from "./board/triage-lead-card";
-export {
-  taskIdentityFields,
-  EventRow,
-  type TaskDetailTab,
-  TaskDetailTabs,
-  TechnicalActivityEvents,
-  RunRow,
-  MessageRow,
-  RawRecords,
-  DetailField,
-} from "./task/parts";
-export { TaskSummaryBlock } from "./task/summary";
-export { NextSection } from "./task/next-section";
-export {
-  ProjectValidationSection,
-  CompactTelemetrySummary,
-} from "./telemetry-parts";
 
 export type WorkspaceBoardScope = { key: string; name: string };
 
@@ -129,7 +110,6 @@ function useSavedScope(projects: api.Project[] | undefined, rust: boolean) {
 export function MainSurface({
   theme,
   layout,
-  navigation,
   workspaceBoard,
   rustBoard,
   planningIssues,
@@ -149,7 +129,6 @@ export function MainSurface({
   const saveLaneDocument = useRpc(api.laneDocumentEdit);
   const changeLaneStatus = useRpc(api.laneStatus);
   const readPlan = useRpc(api.planGet);
-  const searchOutcomes = useRpc(api.outcomeSearch);
   const queryClient = useQueryClient();
   const [view, setView] = useState<BoardView>("needs");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -169,7 +148,6 @@ export function MainSurface({
   const {
     recordProject,
     selected,
-    setSelected,
     rustTaskId,
     setRustTaskId,
     selectedLeadId,
@@ -230,7 +208,6 @@ export function MainSurface({
   const [removingProject, setRemovingProject] = useState<api.Project | null>(
     null,
   );
-  const { detailQuery, nextQuery } = useTaskDetail(selected);
   const records = useRecordQueries({ stateQuery, state, tab, scopeOpen });
   const {
     leadsQuery,
@@ -278,19 +255,14 @@ export function MainSurface({
   const pipeline = usePipelineState();
   const { act, leadAct, busy, error, setError } = useBoardAct({
     recordProject,
-    selected,
     selectedLeadId,
     openPapercutId,
     openDecisionId,
     setRecordNotice,
   });
-  // Record dialogs own their drafts and remount per record, so they clear when it closes or
-  // moves on. Task-detail drafts live in the draft store: the dispose, escalation, replacement,
-  // work-disposition and note drafts clear when the task or view changes; the rest persist.
   useEffect(() => {
     setError("");
   }, [selected, view]);
-  const taskDrafts = useTaskDraftStore(`${selected ?? ""}|${view}`);
   useEffect(() => {
     setRecordNotice(null);
   }, [recordProject, selectedLeadId, openPapercutId, openDecisionId]);
@@ -351,14 +323,6 @@ export function MainSurface({
     hiddenQueued,
     triageTag: pipeline.triageTag,
   });
-  const projectForTask = (task: {
-    repoPath: string;
-    repository?: string | null;
-  }) => projectForRepository(task.repoPath, task.repository);
-  const multiRepository = (task: {
-    repoPath: string;
-    repository?: string | null;
-  }) => (projectForTask(task)?.repositories.length ?? 1) > 1;
   /** A read or save failure's message; undefined when there was no failure. */
   const planMessage = (error: unknown) =>
     error == null ? undefined : errorText(error);
@@ -409,14 +373,12 @@ export function MainSurface({
     const path = project?.repositories.find((repo) => repo.path && state?.repositoryBadges?.[repo.path])?.path;
     return (path && state?.repositoryBadges?.[path]) || null;
   };
-  const task = detailQuery.data?.task;
   const inset = space.md;
   // The first failed board read, in plain words: which read failed and why.
   // A raw schema dump never reaches the header (nucleus#1141).
   const failedRead = (
     [
       ["Board state", stateQuery.error],
-      ["Task detail", detailQuery.error],
       ["Leads", leadsQuery.error],
       ["Decisions", decisionsQuery.error],
       ["Plans", planQuery.error],
@@ -432,7 +394,7 @@ export function MainSurface({
   // holds the lane, so a record opened from it is a modal, as on a narrower board.
   const inlineDetail = wide && view !== "planning";
   const anyRecord = Boolean(
-    selected || rustTaskId || selectedLeadId || openPapercutId || openDecisionId,
+    rustTaskId || selectedLeadId || openPapercutId || openDecisionId,
   );
   const detail = rustTaskId && rustBoard ? (
     <RustTaskDialog key={`rust:${rustTaskId}`} id={rustTaskId}
@@ -441,25 +403,6 @@ export function MainSurface({
       onOpenTask={selectRustTask}
       inline={inlineDetail} compact={compact} c={c}
       onClose={() => setRustTaskId(null)} invalidate={rustBoard} />
-  ) : task ? (
-    <TaskDialog
-      key={`task:${task.id}`}
-      task={task}
-      detailQuery={detailQuery}
-      nextQuery={nextQuery}
-      state={state}
-      decisions={decisionsQuery.data}
-      spansRepositories={multiRepository(task)}
-      compact={compact}
-      busy={busy}
-      act={act}
-      drafts={taskDrafts}
-      navigation={navigation}
-      inline={inlineDetail}
-      onClose={() => setSelected(null)}
-      onSelectTask={setSelected}
-      c={c}
-    />
   ) : (selectedLeadId || openPapercutId) && features.engine === "rust" ? (
     // The Rust engine keeps leads and papercuts as one item (Spec 071).
     <RustItemDialog
@@ -536,7 +479,7 @@ export function MainSurface({
       }}
       onOpenTask={(id) => {
         setOpenDecisionId(null);
-        setSelected(id);
+        selectRustTask(id);
       }}
       inline={inlineDetail}
       onClose={() => setOpenDecisionId(null)}
@@ -695,7 +638,7 @@ export function MainSurface({
                   void stateQuery.refetch();
                   void planQuery.refetch();
                 }}
-                onOpenTask={selectTask}
+                onOpenTask={selectRustTask}
                 sections={planningProjects.map((project) => {
                   const latest = planQuery.data?.find(
                     (plan) => plan.project === project.key,
@@ -811,7 +754,7 @@ export function MainSurface({
                           : undefined,
                       }}
                       onRetryLeads={() => void leadsQuery.refetch()}
-                      onOpenTask={selectTask}
+                      onOpenTask={selectRustTask}
                       onOpenLead={(lead) => {
                         if (isPapercut(lead)) selectPapercut(lead.id, lead.projectKey);
                         else
@@ -820,14 +763,6 @@ export function MainSurface({
                             title: planningLaneRecord.title,
                           }, lead.projectKey);
                       }}
-                      readFinished={rustBoard ? undefined : (cursor) =>
-                        searchOutcomes({
-                          lane: planningLaneRecord.key,
-                          outcome: "any",
-                          limit: 25,
-                          ...(cursor ? { cursor } : {}),
-                        })
-                      }
                       onSelectProject={(project) => {
                         if (!laneContext.showProject(project))
                           showLanePlan(project);

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { projectRemovalBlockerKindSchema, projectRemovalBlockerSchema, projectSchema, projectTombstoneSchema } from "./projects";
-import { bulkDispositionSchema } from "./bulk-disposition";
 import { taskPhaseSchema } from "./task-primitives";
 
 /**
@@ -68,7 +67,7 @@ export const projectManagementItemSchema = z.object({
 
 export const projectManagementPreviewSchema = z.object({
   project: projectSchema, target: projectSchema.nullable(), digest: z.string(),
-  items: z.array(projectManagementItemSchema), cancellation: bulkDispositionSchema.nullable(),
+  items: z.array(projectManagementItemSchema),
   tasks: z.array(z.object({ taskId: z.string(), version: z.number().int().positive() }).strict()),
 }).strict();
 

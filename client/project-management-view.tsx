@@ -1,48 +1,19 @@
-import { z } from 'zod';
-import { readMigratedValue, type KeyValueStorage } from '../shared/storage-migration';
-import { errorText } from "./error-text";
 import React, { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import * as api from '../shared/contracts';
+import { errorText } from './error-text';
 import { ActionButton, Button, Dialog, Field, InlineConfirm, muted, row, type Colors } from './controls';
 import { roles, space, touchTarget, type } from './design';
-import { localStore } from './project-scope-controls';
 import { withoutHostPaths } from './project-helpers';
 
-const cancellationSchema = z.object({ operationId: z.string(), reason: z.string(), digest: z.string(), version: z.number(), tasks: z.array(z.object({ taskId: z.string(), version: z.number() })) });
-type Cancellation = z.infer<typeof cancellationSchema>;
-const sessionCancellations = new Map<string, Cancellation | null>();
-const savedKey=(key:string)=>`nucleus:project-removal:${key}`;
-const legacySavedKey=(key:string)=>`northstar-queue:project-removal:${key}`;
-export function readMigratedCancellation(storage:KeyValueStorage|undefined,key:string):Cancellation|null {
-  return readMigratedValue(storage, savedKey(key), legacySavedKey(key), raw => cancellationSchema.nullable().parse(JSON.parse(raw)));
-}
-const readCancellation=(key:string):{value:Cancellation|null;error:string}=>{
-  try { return {value:readMigratedCancellation(localStore(),key)??sessionCancellations.get(key)??null,error:''}; }
-  catch { return {value:sessionCancellations.get(key)??null,error:'Could not read the saved cancellation receipt.'}; }
-};
-const saveCancellation=(key:string,value:Cancellation|null):string=>{
-  sessionCancellations.set(key,value);
-  try { localStore()?.setItem(savedKey(key),JSON.stringify(value)); return ''; }
-  catch { return 'Could not save the cancellation receipt. It is available only in this session.'; }
-};
 const message=(error:unknown)=>withoutHostPaths(errorText(error));
 
-/** The one danger button's words: the effect it has. */
-export function removalEffect(tasks:number):string {
-  return tasks?`Cancel ${tasks} ${tasks===1?'task':'tasks'}`:'Delete project';
-}
-
+/** Remove's preview and delete calls. The engine refuses removal while tasks are open (Spec 070). */
 export type ProjectManagementApi = {
   previewRpc:(input:{key:string;target?:string})=>Promise<api.ProjectManagementPreview>;
   removeRpc:(input:api.ProjectManageInput)=>Promise<api.ProjectTombstone>;
-} & (CancellationApi | Record<never, never>);
-
-type CancellationApi = {
-  cancelRpc:(input:api.BulkDispositionRequest)=>Promise<api.BulkDisposition>;
-  resetRpc:(input:{key:string;operationId:string;tasks:Array<{taskId:string;version:number}>})=>Promise<{reset:true}>;
-  cancellationRpc:(input:{operationId:string})=>Promise<api.BulkDisposition>;
 };
+
 export type ProjectManagementProps = {
   /** The project being removed; the dialog is scoped to it. */
   project:api.Project;
@@ -57,66 +28,40 @@ const metadata=(c:Colors)=>({...muted(c),fontSize:type.metadata.fontSize,lineHei
  * Remove (Spec 027; lane `nucleus-ui`, "Projects in Settings", build task 4): a
  * dialog behind the opened project's trash icon. It only removes; moving lives in
  * Move into (nucleus#969, #982). Every destructive choice is made from a fresh
- * server preview; the danger button names its effect and asks once more, and a
- * new preview withdraws that confirmation. A cancellation's identity is saved
- * before it is sent, so an interrupted request is reconciled, never repeated.
+ * server preview; the danger button asks once more, and a new preview withdraws
+ * that confirmation. A project with open tasks is refused until they finish or
+ * are cancelled through Nucleus.
  */
 export function ProjectManagementView({project,c,onClose,onRemoved,rpc}:{rpc:ProjectManagementApi}&ProjectManagementProps) {
   const {previewRpc,removeRpc}=rpc;
-  const cancellationApi = "cancelRpc" in rpc ? rpc : undefined;
   const r=roles(c);
   const key=project.key;
-  const [saved] = useState(()=>cancellationApi ? readCancellation(key) : {value:null,error:''});
-  const [storageError,setStorageError] = useState(saved.error);
-  const save = (value:Cancellation|null) => setStorageError(saveCancellation(key,value));
   const [preview,setPreview]=useState<api.ProjectManagementPreview|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
-  const [reason,setReason]=useState(()=>saved.value?.reason??''),[confirming,setConfirming]=useState(false),[cancellation,setCancellation]=useState<Cancellation|null>(()=>saved.value);
-  const [batch,setBatch]=useState<api.BulkDisposition|null>(null),[loading,setLoading]=useState(false),[refresh,setRefresh]=useState(0);
+  const [reason,setReason]=useState(''),[confirming,setConfirming]=useState(false);
+  const [loading,setLoading]=useState(false),[refresh,setRefresh]=useState(0);
   useEffect(()=>{
     let alive=true;setPreview(null);setError('');setConfirming(false);setLoading(true);
-    void previewRpc({key}).then(value=>{if(alive){setPreview(value);if(value.cancellation && cancellationApi){
-      const batch=value.cancellation;setBatch(batch);
-      const request={operationId:batch.operationId,reason:batch.reason,digest:value.digest,version:value.project.version,tasks:batch.items.map(item=>({taskId:item.taskId,version:item.initialVersion}))};
-      setCancellation(current=>current??request);setReason(current=>current||batch.reason);save(request);
-    }}}).catch(err=>{if(alive)setError(message(err))}).finally(()=>{if(alive)setLoading(false)});
+    void previewRpc({key}).then(value=>{if(alive)setPreview(value)}).catch(err=>{if(alive)setError(message(err))}).finally(()=>{if(alive)setLoading(false)});
     return ()=>{alive=false};
   },[key,refresh]);
-  useEffect(()=>{
-    if (!cancellation || !cancellationApi) {setBatch(null);return}
-    let alive=true;
-    const poll=()=>void cancellationApi.cancellationRpc({operationId:cancellation.operationId}).then(value=>{if(alive)setBatch(value)}).catch(err=>{if(alive)setError(`Cancellation receipt: ${message(err)}. No request was repeated.`)});
-    poll();const timer=setInterval(poll,3000);return ()=>{alive=false;clearInterval(timer)};
-  },[cancellation?.operationId]);
   const run=async()=>{
     setConfirming(false);
     if (!preview||!reason.trim()) return;
     setBusy(true);setError('');
     try {
-      if (preview.tasks.length) {
-        if (!cancellationApi) return;
-        if (cancellation) throw new Error('A cancellation is still being reconciled. Refresh its receipt first.');
-        const request:Cancellation={operationId:`project-removal-${key.slice(0,64)}-${Date.now()}-${Math.random().toString(36).slice(2)}`,reason:reason.trim(),digest:preview.digest,version:preview.project.version,tasks:preview.tasks};
-        save(request);setCancellation(request);
-        // Save the identity before delivery so an interrupted request is never silently replayed.
-        const result=await cancellationApi.cancelRpc({operationId:request.operationId,tasks:request.tasks,action:'cancel',workDisposition:'preserve',reason:request.reason});
-        setBatch(result);return;
-      }
-      if (cancellation && batch?.status!=='complete') throw new Error('Wait for the cancellation to finish.');
-      await removeRpc({key,version:preview.project.version,digest:preview.digest,reason:reason.trim(),...(cancellation?{cancellationOperationId:cancellation.operationId}:{})});
-      if (cancellationApi) save(null);
+      if (preview.tasks.length) return;
+      await removeRpc({key,version:preview.project.version,digest:preview.digest,reason:reason.trim()});
       onRemoved();
     }catch(err){setError(message(err))}finally{setBusy(false)}
   };
   const blocked=Boolean(preview?.items.some(item=>['qa','submission','operation'].includes(item.kind)));
   const overLimit=Boolean(preview&&preview.tasks.length>256);
-  const waiting=Boolean(cancellation&&batch?.status!=='complete');
   const openTasks = preview?.tasks.length ?? 0;
-  const refusingOpenTasks = !cancellationApi && openTasks > 0;
-  const effect=removalEffect(cancellationApi ? openTasks : 0);
+  const refusingOpenTasks = openTasks > 0;
+  const effect='Delete project';
   const name=preview?.project.name??project.name;
-  const unavailable=busy||loading||!preview||!reason.trim()||blocked||overLimit||waiting||refusingOpenTasks;
-  const question=preview?.tasks.length?`Cancel ${preview.tasks.length===1?'its task':`its ${preview.tasks.length} tasks`}? Work is preserved.`
-    :`Delete ${name}? Repository files and task history stay.`;
+  const unavailable=busy||loading||!preview||!reason.trim()||blocked||overLimit||refusingOpenTasks;
+  const question=`Delete ${name}? Repository files and task history stay.`;
   const alert={fontSize:type.body.fontSize,lineHeight:type.body.lineHeight};
   return <Dialog c={c} title={`Remove ${name}`} label={`Remove ${project.name} dialog`} closeLabel={`Close Remove ${project.name}`} closeDisabled={busy} onClose={onClose} bodyLabel="Remove project fields"
     footer={confirming
@@ -124,7 +69,6 @@ export function ProjectManagementView({project,c,onClose,onRemoved,rpc}:{rpc:Pro
       : <View style={{...row,justifyContent:'flex-end',minHeight:touchTarget}}>
         <Button danger c={c} text={busy?'Working…':effect} label={effect} disabled={unavailable} onPress={()=>setConfirming(true)}/>
       </View>}>
-    {storageError?<Text accessibilityRole="alert" style={{color:r.danger,...alert}}>{storageError}</Text>:null}
     {error?<Text accessibilityRole="alert" style={{color:r.danger,...alert}}>{error}</Text>:null}
     {loading&&<Text accessibilityLiveRegion="polite" style={muted(c)}>Checking open work…</Text>}
     {preview&&<View style={{gap:space.xs}}>
@@ -134,22 +78,11 @@ export function ProjectManagementView({project,c,onClose,onRemoved,rpc}:{rpc:Pro
         <ActionButton c={c} action="refresh" label="Refresh open work" disabled={busy||loading} onPress={()=>setRefresh(value=>value+1)}/>
       </View>
       {preview.items.map(item=><Text key={`${item.kind}:${item.id}`} numberOfLines={2} style={metadata(c)}>{item.kind} · {item.label}{item.shared?' · shared':''}</Text>)}
-      {cancellationApi
-        ? <Text style={metadata(c)}>Open tasks are cancelled with work preserved; shared planning records listed here close too.</Text>
-        : <Text style={metadata(c)}>{refusingOpenTasks
-            ? 'Finish or cancel the open tasks before deleting this project.'
-            : 'Deleting this project also deletes its planning records.'}</Text>}
+      <Text style={metadata(c)}>{refusingOpenTasks
+        ? 'Finish or cancel the open tasks before deleting this project.'
+        : 'Deleting this project also deletes its planning records.'}</Text>
       {blocked&&<Text accessibilityRole="alert" style={{color:r.warning,...alert}}>Pending operations or QA must settle first. Nothing was removed.</Text>}
       {overLimit&&<Text accessibilityRole="alert" style={{color:r.warning,...alert}}>Over the 256-task cancellation limit. Cancel tasks through Nucleus first.</Text>}
-    </View>}
-    {cancellation&&cancellationApi&&<View style={{gap:space.xs}}>
-      <Text accessibilityLiveRegion="polite" style={metadata(c)}>Cancellation {batch?.status??'checking receipt'}. Closing this dialog doesn't stop it.</Text>
-      {!batch&&<View style={row}>
-        <Button small c={c} text="Reconcile" label="Reconcile original cancellation" disabled={busy} onPress={()=>void cancellationApi.cancelRpc({operationId:cancellation.operationId,tasks:cancellation.tasks,action:'cancel',workDisposition:'preserve',reason:cancellation.reason}).then(setBatch).catch(err=>setError(message(err)))}/>
-        <Button small c={c} text="Reset" label="Reset a refused stale cancellation" disabled={busy} onPress={()=>void cancellationApi.resetRpc({key,operationId:cancellation.operationId,tasks:cancellation.tasks}).then(()=>{save(null);setCancellation(null);setRefresh(value=>value+1)}).catch(err=>setError(message(err)))}/>
-      </View>}
-      {batch?.items.filter(item=>item.error).map(item=><Text key={item.taskId} style={{color:r.danger,fontSize:type.metadata.fontSize,lineHeight:type.metadata.lineHeight}}>{item.taskId}: {withoutHostPaths(item.error!)}</Text>)}
-      {batch?.status==='complete'&&<View style={row}><ActionButton c={c} action="refresh" label="Refresh final deletion preview" onPress={()=>setRefresh(value=>value+1)}/></View>}
     </View>}
     <Field c={c} label="Reason" value={reason} disabled={busy} onChange={setReason}/>
   </Dialog>;

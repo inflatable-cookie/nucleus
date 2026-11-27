@@ -30,7 +30,6 @@ import {
 } from "../shared/contracts";
 import {
   AddRepository,
-  AgentsSection,
   MoveIntoPanel,
   MoveRepositoryConfirm,
   Pair,
@@ -572,14 +571,6 @@ function OpenedProject({
           />
         </View>
       </View>}
-      {features.projectAgents && <AgentsSection
-        c={c}
-        project={project}
-        agents={entry.agents ?? []}
-        disabled={disabled}
-        actions={actions}
-        r={r}
-      />}
       <View
         style={{
           gap: space.xs,

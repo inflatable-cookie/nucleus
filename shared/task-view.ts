@@ -545,18 +545,8 @@ export function taskStopKind(
   )
     return "wait";
   if (task.phase === "needs_attention") return "attention";
-  // A checkpointed reviewer or a reported block is the stop even before any
-  // incident bookkeeping exists; the runs are the evidence, never a flag pair.
-  if (
-    runs.some(
-      (run) =>
-        run.role === "reviewer" &&
-        !run.released &&
-        !run.completion &&
-        (run.reviewCheckpoints?.length ?? 0) > 0,
-    )
-  )
-    return "run";
+  // A reported block is the stop even before any incident bookkeeping exists;
+  // the task record is the evidence, never a flag pair.
   if (["blocked", "error"].includes(task.phase) && task.completion)
     return "run";
   if (task.phase === "queued") return "wait";

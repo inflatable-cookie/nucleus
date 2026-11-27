@@ -19,8 +19,7 @@ import { MAX_REVIEW_VERDICTS } from "./evidence";
  * `.reviewPassGate` and `.reviewContinuationIds` are declared as fields in
  * `./submission.ts` from the shapes below; `completion.recoveryAction` and
  * `completion.reviewedInputs` stay in `./completion.ts` for old reports;
- * a proof record's `refusedBeforeSelector` and `selectorStart` stay historical
- * in `./proof.ts`; `externalOwnerRevisionReceipt.reconciliation` stays inert in
+ * `externalOwnerRevisionReceipt.reconciliation` stays inert in
  * `./acceptance.ts`; and `reviewEntryInput.workspaceMode` is retained in
  * `./entry.ts` so an old request receives a typed refusal.
  */

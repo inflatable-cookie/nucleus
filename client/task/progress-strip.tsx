@@ -2,9 +2,24 @@ import { useRef, useState, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { popover, type Colors } from "../controls";
 import { Popover } from "../popover";
-import type { ProgressStep } from "../../shared/task-detail-view";
-import { detailToneColor } from "./task-header";
+import type { DetailTone, ProgressStep } from "../../shared/task-detail-view";
 import { roles, space, taskDetail, radius, type as typeScale } from "../design";
+
+function detailToneColor(tone: DetailTone, c: Colors): string {
+  const r = roles(c);
+  switch (tone) {
+    case "danger":
+      return r.danger;
+    case "warning":
+      return r.warning;
+    case "success":
+      return r.success;
+    case "accent":
+      return r.accent;
+    case "muted":
+      return r.muted;
+  }
+}
 
 /**
  * The task lifecycle as a strip of steps.

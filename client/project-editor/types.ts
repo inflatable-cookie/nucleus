@@ -25,17 +25,6 @@ export type ProjectEditActions = {
     key: string;
     agentId: string | null;
   }) => Promise<Project>;
-  /** Task 1110: register a chosen live thread, or remove one named agent. */
-  registerAgent: (input: {
-    project: string;
-    name: string;
-    purpose: string;
-    agentId: string;
-  }) => Promise<Project>;
-  unregisterAgent: (input: {
-    project: string;
-    name: string;
-  }) => Promise<Project>;
   /** Null clears the override: the project inherits Per project again. */
   setSlots: (input: {
     projectKey: string;

@@ -30,26 +30,6 @@ import type { RecordNoticeValue } from "../task/parts";
 export type BoardTab = "queue" | "planning";
 type BoardStateQuery = ReturnType<typeof useBoardState>["stateQuery"];
 
-/** The open task's detail and next reads, polled while it is selected. */
-export function useTaskDetail(selected: string | null) {
-  const fetchDetail = useRpc(api.detail);
-  const fetchNext = useRpc(api.taskNext);
-  const detailQuery = useQuery({
-    queryKey: ["nucleus", "detail", selected],
-    queryFn: () => fetchDetail({ taskId: selected! }),
-    enabled: Boolean(selected),
-    refetchInterval: 4000,
-  });
-  // Spec 050 step 6: task.next feeds the Next section beside queue.detail, so
-  // the verbs re-derive from the task's recorded facts after every control.
-  const nextQuery = useQuery({
-    queryKey: ["nucleus", "next", selected],
-    queryFn: () => fetchNext({ taskId: selected!, caller: "operator (board)" }),
-    enabled: Boolean(selected),
-    refetchInterval: 4000,
-  });
-  return { detailQuery, nextQuery };
-}
 
 /**
  * The paired board reads its menu counts on entry and refreshes the collections
@@ -312,7 +292,6 @@ export function usePlanningData({
 
 /** The open records an action refreshes once it lands. */
 type OpenRecords = {
-  selected: string | null;
   recordProject?: string;
   selectedLeadId: string | null;
   openPapercutId: string | null;
@@ -326,7 +305,6 @@ type OpenRecords = {
  */
 export function useBoardAct({
   recordProject,
-  selected,
   selectedLeadId,
   openPapercutId,
   openDecisionId,
@@ -354,11 +332,6 @@ export function useBoardAct({
       void queryClient.invalidateQueries({
         queryKey: ["nucleus", "telemetry"],
       });
-      if (selected)
-        void queryClient.invalidateQueries({
-          queryKey: ["nucleus", "detail", selected],
-          exact: true,
-        });
       if (selectedLeadId)
         void queryClient.invalidateQueries({
           queryKey: ["nucleus", "lead", selectedLeadId, recordProject],

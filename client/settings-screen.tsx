@@ -77,8 +77,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     upsertProject = useRpc(api.projectUpsert);
   const fetchOwnerCandidates = useRpc(api.projectOwnerCandidates),
     setProjectPlanner = useRpc(api.projectSetPlanner);
-  const registerProjectAgent = useRpc(api.agentRegister),
-    unregisterProjectAgent = useRpc(api.agentUnregister);
   const setProfile = useRpc(api.configureProfile),
     setPool = useRpc(api.configurePool),
     setAvailability = useRpc(api.availabilityControl),
@@ -95,10 +93,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     mergeProject = useRpc(api.projectMerge),
     mergeCheck = useRpc(api.projectMergeCheck);
   const previewRemoval = useRpc(api.projectManagementPreview),
-    removeProject = useRpc(api.projectManage),
-    resetRemoval = useRpc(api.projectResetCancellation);
-  const cancelTasks = useRpc(api.bulkDisposition),
-    cancellationReceipt = useRpc(api.bulkDispositionDetail);
+    removeProject = useRpc(api.projectManage);
   const queryClient = useQueryClient();
   const [settingsTab, setSettingsTab] = useSettingsSection("capacity");
   const fetchProfileUsage = useRpc(rustProfileUsage);
@@ -521,8 +516,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                 saveProject: (input) => upsertProject(input),
                 setPlanner: (input) =>
                   setProjectPlanner({ ...input, setBy: "operator" }),
-                registerAgent: (input) => registerProjectAgent(input),
-                unregisterAgent: (input) => unregisterProjectAgent(input),
                 setSlots: (input) => setProjectLimit(input),
                 setRepository: (input) => setRepository(input),
                 repositoryBlockers: (input) => repositoryBlockers(input),
@@ -532,9 +525,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                 removal: {
                   previewRpc: previewRemoval,
                   removeRpc: removeProject,
-                  cancelRpc: cancelTasks,
-                  cancellationRpc: cancellationReceipt,
-                  resetRpc: resetRemoval,
                 },
                 refresh: () =>
                   Promise.all([
