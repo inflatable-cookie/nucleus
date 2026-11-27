@@ -9,6 +9,9 @@ import {
 } from "@tanstack/react-query";
 import { z } from "zod";
 import { readLiveFrames, type LiveFrame } from "./live-channel";
+import { compareRustTasksForColumn, rustCardAgeAt, rustColumns, type RustBoardView } from "./rust-task-order";
+export { compareRustTasks, compareRustTasksForColumn, rustCardAgeAt, rustColumns, rustTaskColumn } from "./rust-task-order";
+export type { RustBoardView } from "./rust-task-order";
 
 const api = "/api/engine";
 const root = ["rust-board"];
@@ -653,24 +656,7 @@ export async function listenForRustChanges(
   }
 }
 
-export const rustColumns = {
-  queued: "queue",
-  working: "working",
-  report_ready: "review",
-  blocked: "needs",
-  error: "needs",
-  reviewing: "review",
-  merging: "merging",
-  closing: "closing",
-  done: "history",
-  cancelled: "history",
-} as const satisfies Record<RustPhase, string>;
-
-export type RustBoardView = (typeof rustColumns)[RustPhase] | "needs";
 export type RustExtraView = Extract<RustBoardView, "merging" | "history">;
-
-export const rustCardAgeAt = (task: RustTask) =>
-  task.stateSinceMs ?? task.latestEventAtMs ?? task.lifecycle.admittedAtMs;
 
 export function groupRustTasks(
   tasks: readonly RustTask[],
@@ -690,12 +676,8 @@ export function groupRustTasks(
     if (column !== "needs") columns[column].push(task);
     else if (task.attention !== "attention") columns.working.push(task);
   }
-  columns.history.sort((a, b) => {
-    const aTime = rustCardAgeAt(a) ?? -Infinity;
-    const bTime = rustCardAgeAt(b) ?? -Infinity;
-    if (aTime !== bTime) return bTime - aTime;
-    return a.identity.id < b.identity.id ? 1 : a.identity.id > b.identity.id ? -1 : 0;
-  });
+  for (const column of ["needs", "queue", "working", "review", "merging", "closing", "history"] as const)
+    columns[column].sort((a, b) => compareRustTasksForColumn(a, b, column));
   return columns;
 }
 
