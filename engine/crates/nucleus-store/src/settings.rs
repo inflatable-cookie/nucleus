@@ -1062,6 +1062,18 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
     }
 }
 
+/// A durable store under a fresh portable root, for store-level tests.
+#[cfg(test)]
+pub(crate) fn test_store(home: &Path) -> crate::Store {
+    let settings = EngineSettings {
+        enabled: true,
+        ..EngineSettings::default()
+    };
+    let storage = EngineStorage::resolve(&portable_layout(home).expect("layout"), home, &settings)
+        .expect("storage");
+    crate::Store::open(&storage).expect("open store")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

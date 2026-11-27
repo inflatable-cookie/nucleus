@@ -74,7 +74,12 @@ fn server(
         .route("/v1/tasks/fixture", get(async |State(f): State<Fixture>| ([(axum::http::header::CONNECTION, "close")], Json(json!({
             "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
             "phase":"working", "lifecycle":{"steps":[{"key":"working","label":"Working","state":"current","tone":"accent"}],"admittedAtMs":0,"transcript":{"cards":[],"completedReviews":0,"merged":false,"externalAcceptances":[]}},
-            "parentHold":"hold", "activeChild":false,
+            "parentHold":match f.state.load(Ordering::Relaxed) {
+                4 => None,
+                5 => Some("successor"),
+                _ => Some("hold"),
+            },
+            "activeChild":f.state.load(Ordering::Relaxed) >= 4,
             "reference":format!("fixture#{}", f.state.load(Ordering::Relaxed))
         })))))
         .route("/v1/acp/inbox", get(async |State(f): State<Fixture>| ([(axum::http::header::CONNECTION, "close")], Json(json!({"pending":[{"field":format!("field{}", f.state.load(Ordering::Relaxed)),"question":"Continue?","choices":[{"id":"yes","label":"Yes"}],"offer":true}]})))))
@@ -195,6 +200,45 @@ async fn run_reconnect(inbox_session: bool) {
 #[tokio::test]
 async fn held_turn_reconnects_without_spinning() {
     run_reconnect(false).await;
+}
+
+#[tokio::test]
+async fn a_successor_releases_a_carried_turn_even_during_child_activity() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let state = Arc::new(AtomicUsize::new(1));
+    let (stream, _attached, server_task) = server(listener, Arc::clone(&state));
+    let mut client = ServiceClient::new(&binding(endpoint, false), None).unwrap();
+    let (output, mut frames) = mpsc::unbounded_channel();
+    let turn = tokio::spawn(async move {
+        task_prompt(
+            &mut client,
+            &Mutex::new(Presentation::default()),
+            &output,
+            "fixture",
+            true,
+            "hold",
+            std::path::Path::new("/"),
+        )
+        .await
+    });
+    shown(&mut frames, false, 1).await;
+    state.store(4, Ordering::Relaxed);
+    stream.send(()).unwrap();
+    shown(&mut frames, false, 4).await;
+    assert!(
+        !turn.is_finished(),
+        "child activity carries the authenticated hold"
+    );
+    state.store(5, Ordering::Relaxed);
+    stream.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), turn)
+        .await
+        .expect("a newer parent prompt releases the old turn")
+        .unwrap()
+        .unwrap();
+    server_task.abort();
+    assert!(server_task.await.unwrap_err().is_cancelled());
 }
 
 #[tokio::test]

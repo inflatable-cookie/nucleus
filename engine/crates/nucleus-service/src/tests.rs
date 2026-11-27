@@ -154,7 +154,7 @@ pub(super) fn reservation_at(
             entry,
             origin_thread: None,
         },
-        "---\ncomplexity: normal\n---\n\nFixture introduction.\n\n# Synthetic change\n\nFixture details.".into(),
+        "---\ncomplexity: normal\nqueue:\n  notifyOriginOnCloseout: false\n---\n\nFixture introduction.\n\n# Synthetic change\n\nFixture details.".into(),
         (entry == Entry::ReviewEntry).then(|| pr.clone()),
     );
     let observation = Observation {
@@ -186,6 +186,19 @@ pub(super) fn reservation_at(
 }
 
 pub(super) fn reserved_reviewer(id: &str, head: &Head) -> (Task, CallbackCredential, Observation) {
+    reserved_reviewer_with(id, head, |_| LaunchInputs {
+        scratch: None,
+        thread: "thread:reviewer".into(),
+        started_at: 2,
+        input: "fixture review".into(),
+    })
+}
+
+pub(super) fn reserved_reviewer_with(
+    id: &str,
+    head: &Head,
+    inputs: impl FnOnce(&Task) -> LaunchInputs,
+) -> (Task, CallbackCredential, Observation) {
     let (mut task, credential, mut observation) = reservation(id, Entry::Brief, head);
     let pr = PullRequest {
         url: PR.into(),
@@ -210,18 +223,8 @@ pub(super) fn reserved_reviewer(id: &str, head: &Head) -> (Task, CallbackCredent
         task.reconcile(&observation),
         Action::Advance(Phase::Reviewing)
     );
-    let credential = task
-        .reserve_launch(
-            &observation,
-            LaunchInputs {
-                scratch: None,
-                thread: "thread:reviewer".into(),
-                started_at: 2,
-                input: "fixture review".into(),
-            },
-            &[4; 32],
-        )
-        .unwrap();
+    let launch = inputs(&task);
+    let credential = task.reserve_launch(&observation, launch, &[4; 32]).unwrap();
     (task, credential, observation)
 }
 
@@ -256,7 +259,7 @@ pub(super) async fn forge_fixture(
     forge_fixture_for_branch(head, "ns-reviewer").await
 }
 
-async fn forge_fixture_for_branch(
+pub(super) async fn forge_fixture_for_branch(
     head: &Head,
     branch: &str,
 ) -> (GitHub, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
