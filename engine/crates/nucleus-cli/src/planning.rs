@@ -20,6 +20,13 @@ pub(super) enum Action {
         #[arg(long = "project")]
         additional_projects: Vec<String>,
     },
+    /// Reply to a delivered message with the handle from its Reply line.
+    Reply {
+        /// The handle from the message, such as r6e39f1a.
+        handle: String,
+        /// The reply, quoted if it contains spaces. Use - to read it from stdin.
+        text: String,
+    },
     /// Receive new project messages in this verified planner thread.
     #[command(name = "planner.claim")]
     PlannerClaim,
@@ -284,6 +291,14 @@ impl Action {
                     Method::POST,
                     "/v1/planning/tell".into(),
                     Some(json!({"to": to, "text": text})),
+                ));
+            }
+            A::Reply { handle, text } => {
+                let text = if text == "-" { stdin_text()? } else { text };
+                return Ok((
+                    Method::POST,
+                    "/v1/planning/tell".into(),
+                    Some(json!({"to": {"reply": handle}, "text": text})),
                 ));
             }
             A::PlannerClaim => return Ok((Method::POST, "/v1/planning/claim".into(), None)),
@@ -587,6 +602,30 @@ mod tests {
             body.unwrap(),
             serde_json::json!({"to":{"reply":"nreply_example"}, "text":"Answer"})
         );
+    }
+
+    #[test]
+    fn reply_cli_sends_short_and_issued_long_handles_as_reply_routes() {
+        for handle in ["r6e39f1a", "nreply_6e3950151761ff6799b6ffb4af25869b"] {
+            let parsed = Cli::try_parse_from(["nucleus", "reply", handle, "Answer"]).unwrap();
+            let Action::Planning(action) = parsed.action else {
+                panic!("expected reply");
+            };
+            assert!(!action.uses_ticket());
+            let (method, path, body) = action.request().unwrap();
+            assert_eq!(method, reqwest::Method::POST);
+            assert_eq!(path, "/v1/planning/tell");
+            assert_eq!(
+                body.unwrap(),
+                serde_json::json!({"to":{"reply":handle}, "text":"Answer"})
+            );
+        }
+    }
+
+    #[test]
+    fn reply_cli_needs_a_handle_and_text() {
+        assert!(Cli::try_parse_from(["nucleus", "reply", "r6e39f1a"]).is_err());
+        assert!(Cli::try_parse_from(["nucleus", "reply"]).is_err());
     }
 
     #[test]

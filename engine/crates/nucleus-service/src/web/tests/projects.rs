@@ -1985,6 +1985,10 @@ async fn a_work_question_remains_unbound_until_its_planner_notice_can_be_sent() 
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one routing scenario keeps its sends and receipts together"
+)]
 async fn project_tell_routes_to_verified_same_and_cross_project_planners() {
     let registry = registry().await;
     registry.enroll("next-planner").await;
@@ -2002,6 +2006,12 @@ async fn project_tell_routes_to_verified_same_and_cross_project_planners() {
                 .expect("beta")
                 .to_owned(),
         )
+    };
+    let alpha_name = {
+        let state = registry.service.state.lock().await;
+        state.settings.projects.as_ref().unwrap().projects[&alpha]
+            .name
+            .clone()
     };
     let reads = registry.reads.load(Ordering::Relaxed);
     let broadcast = || {
@@ -2049,7 +2059,7 @@ async fn project_tell_routes_to_verified_same_and_cross_project_planners() {
         for send in &fixture.sends {
             assert_eq!(send["dispatchMode"]["type"], "queue_after_active");
             let text = send["text"].as_str().expect("message text");
-            assert!(text.contains(&alpha));
+            assert!(text.starts_with(&format!("From {alpha_name}")));
             assert!(text.contains("Synthetic cross-project note"));
         }
     }
@@ -3146,16 +3156,17 @@ fn received_notice(registry: &Registry) -> (String, String, String) {
     let notices = registry.notices.lock().unwrap();
     let sent = notices.sends.last().unwrap();
     let text = sent["text"].as_str().unwrap();
-    let route = text
-        .split_once("Reply: nucleus tell '")
+    let handle = text
+        .split_once("Reply: nucleus reply ")
         .unwrap()
         .1
-        .split_once('\'')
+        .split_once(" 'your message'")
         .unwrap()
         .0;
-    let value: Value = serde_json::from_str(route).unwrap();
-    let handle = value["to"]["reply"].as_str().unwrap();
-    assert!(handle.starts_with("nreply_"));
+    assert!(
+        handle.starts_with('r') && handle.len() == 9,
+        "short handle: {handle}"
+    );
     (
         sent["threadId"].as_str().unwrap().into(),
         text.into(),
@@ -3177,7 +3188,15 @@ async fn project_tell_claim_and_reply_keep_distinct_addresses_across_restart() {
     registry.advance_tell().await.unwrap();
     let (thread, text, handle) = received_notice(&registry);
     assert_eq!(thread, "alpha-planner");
-    assert!(!text.contains("Fallback delivery"));
+    assert!(!text.contains("Fallback"));
+    let sender_project = {
+        let state = registry.service.state.lock().await;
+        let project = state.live_planner_project("beta-planner").unwrap();
+        state.settings.projects.as_ref().unwrap().projects[project]
+            .name
+            .clone()
+    };
+    assert!(text.starts_with(&format!("From {sender_project}\n\n")));
     registry.notices.lock().unwrap().started = true;
     registry.advance_tell().await.unwrap();
 
@@ -3295,8 +3314,7 @@ async fn project_tell_reply_to_gone_sender_falls_back_after_restart() {
     registry.advance_tell().await.unwrap();
     let (thread, text, new_handle) = received_notice(&registry);
     assert_eq!(thread, "next-planner");
-    assert!(text.contains("Fallback delivery"));
-    assert!(text.contains("a planner of project Exact T3 Alpha, is gone"));
+    assert!(text.contains("Fallback: the sender (a planner of Exact T3 Alpha) is gone."));
     assert!(!text.contains("alpha-planner"));
     assert!(text.contains("After closure"));
     assert_ne!(handle, new_handle);
@@ -3319,7 +3337,7 @@ async fn project_tell_reply_to_gone_sender_falls_back_after_restart() {
     registry.advance_tell().await.unwrap();
     let (thread, text, _) = received_notice(&registry);
     assert_eq!(thread, "next-planner");
-    assert!(text.contains("Fallback delivery"));
+    assert!(text.contains("Fallback: Exact T3 Alpha has no claimed planner;"));
 }
 
 #[tokio::test]

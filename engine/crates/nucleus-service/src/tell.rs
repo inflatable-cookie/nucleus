@@ -579,11 +579,15 @@ impl Service {
             .iter()
             .find(|target| target.state.thread() == Some(planner.identity.id.as_str()))
             .map(|target| target.state.clone());
-        let handle = new_id("nreply")?.replacen('-', "_", 1);
-        let fallback = members.iter().any(|member| {
-            member.direct.is_none()
-                && claimed_thread(state, &member.to_project) != Some(&planner.identity.id)
-        });
+        let handle = new_reply_handle(state)?;
+        let unclaimed: Vec<&str> = members
+            .iter()
+            .filter(|member| {
+                member.direct.is_none()
+                    && claimed_thread(state, &member.to_project) != Some(&planner.identity.id)
+            })
+            .map(|member| project_name(state, &member.to_project))
+            .collect();
         let gone = row
             .gone_sender
             .as_ref()
@@ -592,11 +596,11 @@ impl Service {
             decision_notice_text(&row.text, gone)
         } else {
             notice_text(
-                &row.from_project,
+                project_name(state, &row.from_project),
                 &names,
                 &row.text,
                 &handle,
-                fallback,
+                &unclaimed,
                 gone,
             )
         };
@@ -773,30 +777,52 @@ fn project_name<'a>(state: &'a State, id: &'a str) -> &'a str {
         .map_or(id, |project| project.name.as_str())
 }
 
+/// A short reply handle, unique among every handle already issued.
+fn new_reply_handle(state: &State) -> Result<String, ServiceError> {
+    loop {
+        let mut bytes = [0; 4];
+        getrandom::fill(&mut bytes)
+            .map_err(|_| std::io::Error::other("could not allocate a reply handle"))?;
+        let handle = format!("r{}", hex::encode(bytes));
+        if !state.store.tell_reply_handle_issued(&handle)? {
+            return Ok(handle);
+        }
+    }
+}
+
 fn notice_text(
     from: &str,
     project_names: &[&str],
     text: &str,
     handle: &str,
-    fallback: bool,
+    unclaimed: &[&str],
     gone: Option<&str>,
 ) -> String {
-    let routing = if let Some(project) = gone {
-        format!(
-            "\nFallback delivery. The original sender, a planner of project {project}, is gone.\n"
-        )
-    } else if fallback {
-        "\nFallback delivery. Use nucleus planner.claim to receive project messages, or pass this on.\n".into()
-    } else {
-        String::new()
-    };
     let recipients = if project_names.len() > 1 {
         format!(" for {}", project_names.join(", "))
     } else {
         String::new()
     };
+    let mut fallbacks = Vec::new();
+    if let Some(project) = gone {
+        fallbacks.push(format!(
+            "Fallback: the sender (a planner of {project}) is gone."
+        ));
+    }
+    if !unclaimed.is_empty() {
+        let verb = if unclaimed.len() == 1 { "has" } else { "have" };
+        fallbacks.push(format!(
+            "Fallback: {} {verb} no claimed planner; nucleus planner.claim to receive these, or pass it on.",
+            unclaimed.join(", ")
+        ));
+    }
+    let fallback_block = if fallbacks.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n\n", fallbacks.join("\n"))
+    };
     format!(
-        "Nucleus message from project {from}{recipients}\n\n{text}\n{routing}\nInformation only. Only this thread can use the reply route for seven days. It reaches the sender, or their project planner if the sender is gone.\nReply: nucleus tell '{{\"to\":{{\"reply\":\"{handle}\"}}}}' 'YOUR MESSAGE'"
+        "From {from}{recipients}\n\n{text}\n\n{fallback_block}Reply: nucleus reply {handle} 'your message'"
     )
 }
 
@@ -857,6 +883,92 @@ mod tests {
     use super::{group_by_thread, notice_text};
 
     #[test]
+    fn one_project_notice_names_the_sender_and_gives_the_short_reply_command() {
+        assert_eq!(
+            notice_text(
+                "Sample Sender",
+                &["Sample Alpha"],
+                "Ready for review.",
+                "r0123abcd",
+                &[],
+                None,
+            ),
+            "From Sample Sender\n\nReady for review.\n\nReply: nucleus reply r0123abcd 'your message'"
+        );
+    }
+
+    #[test]
+    fn several_project_notice_keeps_the_recipient_list_in_the_header() {
+        let text = notice_text(
+            "Sample Sender",
+            &["Sample Alpha", "Sample Beta"],
+            "Shared update.",
+            "r0123abcd",
+            &[],
+            None,
+        );
+        assert!(text.starts_with("From Sample Sender for Sample Alpha, Sample Beta\n\n"));
+        assert!(!text.contains("Fallback"));
+    }
+
+    #[test]
+    fn unclaimed_fallback_is_one_line_for_each_state() {
+        let one = notice_text(
+            "Sample Sender",
+            &["Sample Alpha"],
+            "Hi",
+            "r0123abcd",
+            &["Sample Alpha"],
+            None,
+        );
+        assert!(one.contains(
+            "\n\nFallback: Sample Alpha has no claimed planner; nucleus planner.claim to receive these, or pass it on.\n\nReply: "
+        ));
+        let several = notice_text(
+            "Sample Sender",
+            &["Sample Alpha", "Sample Beta"],
+            "Hi",
+            "r0123abcd",
+            &["Sample Alpha", "Sample Beta"],
+            None,
+        );
+        assert!(several.contains("Fallback: Sample Alpha, Sample Beta have no claimed planner;"));
+    }
+
+    #[test]
+    fn gone_sender_fallback_names_the_senders_project() {
+        let text = notice_text(
+            "Sample Sender",
+            &["Sample Alpha"],
+            "Hi",
+            "r0123abcd",
+            &[],
+            Some("Sample Beta"),
+        );
+        assert!(text.contains(
+            "\n\nFallback: the sender (a planner of Sample Beta) is gone.\n\nReply: nucleus reply r0123abcd 'your message'"
+        ));
+    }
+
+    #[test]
+    fn both_fallbacks_stack_before_the_reply_line_and_no_notice_says_information_only() {
+        let text = notice_text(
+            "Sample Sender",
+            &["Sample Alpha"],
+            "Hi",
+            "r0123abcd",
+            &["Sample Alpha"],
+            Some("Sample Beta"),
+        );
+        assert!(text.contains(
+            "Fallback: the sender (a planner of Sample Beta) is gone.\nFallback: Sample Alpha has no claimed planner;"
+        ));
+        assert!(text.ends_with("pass it on.\n\nReply: nucleus reply r0123abcd 'your message'"));
+        assert!(!text.contains("Information only"));
+        assert!(!text.contains("Nucleus message from project"));
+    }
+
+    #[test]
     fn project_tell_groups_several_projects_by_exact_recipient_thread() {
         let (groups, unrouted) = group_by_thread([
             ("Sample Alpha", Some("same-thread")),
@@ -872,14 +984,7 @@ mod tests {
             .map(|(thread, names)| {
                 (
                     thread,
-                    notice_text(
-                        "sender",
-                        &names,
-                        "One update",
-                        "nreply_fixture",
-                        false,
-                        None,
-                    ),
+                    notice_text("sender", &names, "One update", "r0123abcd", &[], None),
                 )
             })
             .collect();
