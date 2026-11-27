@@ -1,0 +1,1 @@
+Completion notices are on by default: the planner that dispatched a task is told when it reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` in a brief to turn them off.

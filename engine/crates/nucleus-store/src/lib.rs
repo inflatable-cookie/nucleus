@@ -1063,6 +1063,20 @@ impl Store {
         Ok(usage::active_pause(&self.connection, group, now_ms)?)
     }
 
+    /// Whether this closeout owes the dispatching planner a completion notice
+    /// (rulings 55 and 42). A report-only task that already sent its report
+    /// notice is not owed a second one.
+    fn completion_notice_owed(task: &Task) -> bool {
+        if task
+            .report_task()
+            .is_some_and(|report| report.notice_attempted)
+        {
+            return false;
+        }
+        nucleus_core::profiles::BriefPolicy::parse(&task.brief().text)
+            .is_ok_and(|policy| policy.notifies_origin_on_closeout())
+    }
+
     fn save(
         &mut self,
         expected: &TaskRow,
@@ -1085,10 +1099,7 @@ impl Store {
         persist(&tx, task, true)?;
         if task.phase().is_terminal() {
             task_rows::forget(&tx, &task.identity().id)?;
-            if !row.task.phase().is_terminal()
-                && nucleus_core::profiles::BriefPolicy::parse(&task.brief().text)
-                    .is_ok_and(|policy| policy.notify_origin_on_closeout)
-            {
+            if !row.task.phase().is_terminal() && Self::completion_notice_owed(task) {
                 tx.execute(
                     "INSERT OR IGNORE INTO completion_notices (task_id, retry) VALUES (?1, 0)",
                     [&task.identity().id],
@@ -1434,4 +1445,119 @@ fn append(tx: &Transaction<'_>, id: &str, event: &EventDraft) -> rusqlite::Resul
         params![id, event.at, event.kind, event.detail],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod completion_notice_tests {
+    use nucleus_core::{Entry, Head, Identity, Task};
+    use serde_json::{Value, json};
+
+    use crate::{EventDraft, Store, settings::test_store};
+
+    const PLAIN: &str = "---\nqueue:\n  complexity: low\n---\n# Fix rounding";
+    const ON: &str = "---\nqueue:\n  notifyOriginOnCloseout: true\n---\n# Fix rounding";
+    const OFF: &str = "---\nqueue:\n  notifyOriginOnCloseout: false\n---\n# Fix rounding";
+
+    fn identity(id: &str) -> Identity {
+        Identity {
+            id: id.into(),
+            reference: id.into(),
+            repository: "fixture/repo".into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        }
+    }
+
+    fn event(kind: &str) -> EventDraft {
+        EventDraft {
+            at: 1,
+            kind: kind.into(),
+            detail: String::new(),
+        }
+    }
+
+    fn fixture() -> (tempfile::TempDir, Store) {
+        let temporary = tempfile::tempdir().expect("fixture home");
+        let root = temporary.path().canonicalize().expect("canonical home");
+        let store = test_store(&root.join("engine"));
+        (temporary, store)
+    }
+
+    /// Move the stored task to `phase` through the same save path closeout uses.
+    fn settle(store: &mut Store, id: &str, phase: &str) {
+        let row = store.row(id).unwrap().unwrap();
+        let mut value = serde_json::to_value(&row.task).unwrap();
+        value["phase"] = json!(phase);
+        let settled: Task = serde_json::from_value(value).unwrap();
+        store.save_row(&row, &settled, &event("settled")).unwrap();
+    }
+
+    #[test]
+    fn a_closeout_owes_a_notice_unless_its_brief_opts_out() {
+        let (_home, mut store) = fixture();
+        for (id, brief) in [
+            ("plain-done", PLAIN),
+            ("plain-cancelled", PLAIN),
+            ("off-done", OFF),
+            ("on-done", ON),
+        ] {
+            store
+                .create(
+                    &Task::new(identity(id), brief.into(), None),
+                    &event("admitted"),
+                )
+                .unwrap();
+        }
+        settle(&mut store, "plain-done", "done");
+        settle(&mut store, "plain-cancelled", "cancelled");
+        settle(&mut store, "off-done", "done");
+        settle(&mut store, "on-done", "done");
+
+        assert_eq!(store.completion_notice("plain-done").unwrap(), Some(false));
+        assert_eq!(
+            store.completion_notice("plain-cancelled").unwrap(),
+            Some(false)
+        );
+        assert_eq!(store.completion_notice("off-done").unwrap(), None);
+        assert_eq!(store.completion_notice("on-done").unwrap(), Some(false));
+    }
+
+    #[test]
+    fn a_report_only_task_sends_no_second_notice_after_its_report_notice() {
+        let (_home, mut store) = fixture();
+        let head: Head = serde_json::from_value(json!("a".repeat(40))).unwrap();
+        for id in ["unreported", "reported"] {
+            store
+                .create(
+                    &Task::new_report_only(
+                        identity(id),
+                        PLAIN.into(),
+                        "fixture".into(),
+                        "qa".into(),
+                        head.clone(),
+                    ),
+                    &event("admitted"),
+                )
+                .unwrap();
+        }
+
+        // The worker reported, and the report notice went to the planner.
+        let row = store.row("reported").unwrap().unwrap();
+        let mut value: Value = serde_json::to_value(&row.task).unwrap();
+        value["phase"] = json!("report_ready");
+        value["report_task"]["delivery"] = json!({
+            "artifact": {"key": "qa/fix", "version": 1, "digest": "fixture"},
+            "summary": "Synthetic report"
+        });
+        let mut reported: Task = serde_json::from_value(value).unwrap();
+        reported.mark_report_notice_attempted();
+        store.save_row(&row, &reported, &event("reported")).unwrap();
+
+        settle(&mut store, "unreported", "cancelled");
+        settle(&mut store, "reported", "cancelled");
+
+        assert_eq!(store.completion_notice("unreported").unwrap(), Some(false));
+        assert_eq!(store.completion_notice("reported").unwrap(), None);
+    }
 }

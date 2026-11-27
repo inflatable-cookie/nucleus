@@ -2110,7 +2110,7 @@ fn seed_cancelled_notice(service: &Service, state: &mut EngineState, done: &Task
             origin_thread: Some("terminal-planner".into()),
             ..done.identity().clone()
         },
-        "Synthetic cancelled task".into(),
+        "---\nqueue:\n  notifyOriginOnCloseout: false\n---\n# Synthetic cancelled task".into(),
         None,
     );
     state.store.create(&cancelled, &event("fixture")).unwrap();

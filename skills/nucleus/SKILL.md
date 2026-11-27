@@ -36,7 +36,7 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   State the change and its acceptance checks.
   ```
 
-  Set `queue.notifyOriginOnCloseout: true` on admission or amend for a completion notice.
+  Completion notices arrive by default: the dispatching planner gets one queued notice when the task reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` on admission or amend to turn them off.
   Set `queue.priority: promoted` under `queue` at admission only to dispatch ahead of normal tasks when slots free (brief amendments cannot change `queue.priority`; use `promote` or `demote` instead).
   Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
   `task.add` resolves those references before dispatch can start.
