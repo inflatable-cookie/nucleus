@@ -246,7 +246,7 @@ pub struct Service {
     board: std::sync::OnceLock<web::Board>,
     callback: SocketAddr,
     report_command: PathBuf,
-    state: StateMutex,
+    state: Arc<StateMutex>,
     project_writes: RwLock<()>,
     pass_lock: Mutex<()>,
     watch_lock: Mutex<()>,
@@ -491,7 +491,7 @@ impl Service {
             board: std::sync::OnceLock::new(),
             callback,
             report_command,
-            state: StateMutex::new(State {
+            state: Arc::new(StateMutex::new(State {
                 store,
                 allowance_clock,
                 settings: runtime_settings,
@@ -519,7 +519,7 @@ impl Service {
                 thread_tasks: BTreeMap::new(),
                 title_candidates: BTreeMap::new(),
                 held_calls: BTreeMap::new(),
-            }),
+            })),
             project,
             project_writes: RwLock::new(()),
             pass_lock: Mutex::new(()),

@@ -258,11 +258,7 @@ impl ThreadSnapshots {
 
     pub(crate) fn children(&self, parent: &str) -> impl Iterator<Item = &str> {
         self.rows.iter().filter_map(move |(id, row)| {
-            (row["deletedAt"].is_null()
-                && (row["parentThreadId"] == parent
-                    || row["lineage"]["parentThreadId"] == parent
-                    || (id != parent && row["lineage"]["rootThreadId"] == parent)))
-                .then_some(id.as_str())
+            (row["deletedAt"].is_null() && belongs_to(row, parent)).then_some(id.as_str())
         })
     }
 
@@ -387,4 +383,10 @@ impl ThreadSnapshots {
             },
         );
     }
+}
+
+pub(crate) fn belongs_to(row: &Value, parent: &str) -> bool {
+    row["parentThreadId"] == parent
+        || row["lineage"]["parentThreadId"] == parent
+        || (row["id"] != parent && row["lineage"]["rootThreadId"] == parent)
 }

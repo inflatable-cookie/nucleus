@@ -95,12 +95,6 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
         T3::new("http://127.0.0.1:9", "fixture").unwrap(),
         home.path(),
     );
-    let shell = |service: &Service, threads: serde_json::Value| {
-        service.host.fixture_held_shell(&json!({
-            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":threads}
-        }));
-    };
-    shell(&service, json!([]));
     service.fixture_mut().acp_provider = Some("fixture".into());
     service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings::default());
     let terminal = cancelled_cleanup_task(&service).await;
@@ -110,6 +104,14 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
         .checkout(&service.fixture().checkout, REPOSITORY, &id)
         .unwrap();
     let base = checkout.path().to_owned();
+    let route = service.project_for(terminal.task.identity()).await.unwrap();
+    let binding = route.binding(&checkout).unwrap();
+    let shell = |service: &Service, threads: serde_json::Value| {
+        service.host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":threads,
+                "archivedThreads":archived_checkout_rows(&binding, &terminal.task)}
+        }));
+    };
 
     let server_home = tempfile::tempdir().unwrap();
     let at = server_home.path();

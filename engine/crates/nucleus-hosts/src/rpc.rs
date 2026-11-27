@@ -64,6 +64,10 @@ pub(crate) struct ThreadFence {
 }
 
 impl ThreadFence {
+    pub(crate) const fn snapshot_sequence(&self) -> Option<u64> {
+        self.revision.1
+    }
+
     pub(crate) fn at_or_after(&self, sequence: u64) -> bool {
         self.row_revision
             .is_some_and(|(revision, _)| revision >= sequence)

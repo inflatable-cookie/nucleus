@@ -14,8 +14,8 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
     ActiveChild, Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest,
-    NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
-    StopProgress, T3, TaskHost, launch_diagnostic,
+    NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, QuietCheckout,
+    SendOutcome, StopProgress, T3, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{
     CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, StoreError, TaskRow,
@@ -219,10 +219,8 @@ impl Service {
         let workspace = self.observe_checkout_for_retirement(&checkout).await?;
         if workspace == Workspace::Absent {
             if self.has_prunable_registration(&checkout).await?
-                && self
-                    .retire_if_idle(task, &binding, &checkout, None)
-                    .await?
-                    .is_none()
+                && self.retire_if_idle(task, &binding, &checkout, None).await?
+                    == Retirement::Deferred
             {
                 return Err(ServiceError::ArchiveEvidence(
                     "Waiting for the checkout to be idle before removal.".into(),
@@ -264,14 +262,14 @@ impl Service {
             .retire_if_idle(task, &binding, &checkout, Some(&head))
             .await?
         {
-            Some(Retirement::Retained) if task.report_task().is_some() => Err(
+            Retirement::Retained if task.report_task().is_some() => Err(
                 ServiceError::ReportCheckout("the checkout changed after publication was proved"),
             ),
-            Some(Retirement::Retained) => Err(retained()),
-            None => Err(ServiceError::ArchiveEvidence(
+            Retirement::Retained => Err(retained()),
+            Retirement::Deferred => Err(ServiceError::ArchiveEvidence(
                 "Waiting for the checkout to be idle before removal.".into(),
             )),
-            Some(Retirement::Removed | Retirement::Absent) => Ok(Action::Nothing),
+            Retirement::Removed | Retirement::Absent => Ok(Action::Nothing),
         }
     }
 
@@ -2220,15 +2218,16 @@ impl Service {
         binding: &Binding,
         checkout: &Checkout<'_>,
     ) {
-        let parent = nucleus_hosts::parent_thread(checkout.path());
-        let threads = retirement_threads(task, &parent);
         let id = &task.identity().id;
         let sweep = async {
+            if !dispatch_running(&*self.state.lock().await) {
+                return Ok(());
+            }
+            let Ok(quiet) = self.host.prepare_quiet_checkout(binding, task).await else {
+                return Ok(());
+            };
             let mut state = self.state.lock().await;
-            if !self
-                .checkout_cleanup_allowed(&state, binding, &parent, &threads)
-                .unwrap_or(false)
-            {
+            if !dispatch_running(&state) || quiet.with_quiet_shell(|| ()).is_err() {
                 return Ok(());
             }
             let mut claim = event("checkout_process_sweep");
@@ -2239,7 +2238,7 @@ impl Service {
                 return Ok(());
             }
             drop(state);
-            self.stop_checkout_processes(host, task, binding, checkout, &parent, &threads)
+            self.stop_checkout_processes(host, task, checkout, &quiet)
                 .await
         };
         let error = match tokio::time::timeout(Duration::from_secs(20), sweep).await {
@@ -2255,10 +2254,8 @@ impl Service {
         &self,
         host: &impl TaskHost,
         task: &Task,
-        binding: &Binding,
         checkout: &Checkout<'_>,
-        parent: &str,
-        threads: &[&str],
+        quiet: &QuietCheckout,
     ) -> Result<(), ServiceError> {
         let scratch = self.storage.scratch().path();
         let roots = self.retirement_roots(task, checkout).await?;
@@ -2308,9 +2305,10 @@ impl Service {
             intent.detail = serde_json::json!({"signal":signal,"processes":targets}).to_string();
             {
                 let mut state = self.state.lock().await;
-                if !self.checkout_cleanup_allowed(&state, binding, parent, threads)? {
+                if !dispatch_running(&state) {
                     break;
                 }
+                quiet.with_quiet_shell(|| ())?;
                 state.store.claim_task_effect(id, &intent, false)?;
             }
             targets = nucleus_hosts::verify_orphans(&targets, &roots, scratch, force).await?;
@@ -2322,22 +2320,20 @@ impl Service {
             if !dispatch_running(&state) {
                 break;
             }
-            let results = self
-                .host
-                .retire_with_quiet_shell(binding, parent, threads, || {
-                    let mut results = Vec::new();
-                    targets.retain(|process| {
-                        let result = process.signal(force);
-                        let outcome = match &result {
-                            Ok(true) => "sent".to_owned(),
-                            Ok(false) => "exited".to_owned(),
-                            Err(error) => error.to_string(),
-                        };
-                        results.push(serde_json::json!({"process":process,"outcome":outcome}));
-                        matches!(result, Ok(true))
-                    });
-                    results
-                })?;
+            let results = quiet.with_quiet_shell(|| {
+                let mut results = Vec::new();
+                targets.retain(|process| {
+                    let result = process.signal(force);
+                    let outcome = match &result {
+                        Ok(true) => "sent".to_owned(),
+                        Ok(false) => "exited".to_owned(),
+                        Err(error) => error.to_string(),
+                    };
+                    results.push(serde_json::json!({"process":process,"outcome":outcome}));
+                    matches!(result, Ok(true))
+                });
+                results
+            })?;
             let mut outcome = event("checkout_process_result");
             outcome.detail = serde_json::json!({"signal":signal,"results":results}).to_string();
             state.store.claim_task_effect(id, &outcome, false)?;
@@ -2359,20 +2355,6 @@ impl Service {
         }
     }
 
-    fn checkout_cleanup_allowed(
-        &self,
-        state: &crate::State,
-        binding: &Binding,
-        parent: &str,
-        threads: &[&str],
-    ) -> Result<bool, HostError> {
-        if !dispatch_running(state) {
-            return Ok(false);
-        }
-        self.host
-            .retire_with_quiet_shell(binding, parent, threads, || true)
-    }
-
     // Both callers hold the current task and project fences through Git retirement.
     async fn retire_if_idle(
         &self,
@@ -2380,37 +2362,53 @@ impl Service {
         binding: &Binding,
         checkout: &Checkout<'_>,
         head: Option<&Head>,
-    ) -> Result<Option<Retirement>, ServiceError> {
-        let parent = nucleus_hosts::parent_thread(checkout.path());
-        let threads = retirement_threads(task, &parent);
-        let observed = match head {
-            Some(head) => Some((
-                self.observe_checkout_for_retirement(checkout).await?,
-                head.clone(),
-            )),
-            None => None,
+    ) -> Result<Retirement, ServiceError> {
+        let initial = if head.is_some() {
+            self.observe_checkout_for_retirement(checkout).await?
+        } else {
+            Workspace::Absent
         };
-        let state = self.state.lock().await;
-        if !self.checkout_cleanup_allowed(&state, binding, &parent, &threads)? {
-            return Ok(None);
+        if !dispatch_running(&*self.state.lock().await) {
+            return Ok(Retirement::Deferred);
         }
-        drop(state);
-        // Recheck Git custody after final admission from Dispatch and the held shell.
-        let outcome = self
+        let quiet = self.host.prepare_quiet_checkout(binding, task).await?;
+        let state = self.state.clone();
+        let head = head.cloned();
+        let (outcome, host_error) = self
             .checkout_job(
                 checkout,
                 "removing the task checkout",
                 Limit::Change,
-                move |checkout| match observed {
-                    Some((initial, head)) => checkout.finish_retirement(initial, &head),
-                    None => checkout.retire_prunable_registration(),
+                move |checkout| {
+                    let mut host_error = None;
+                    let outcome =
+                        checkout.finish_retirement_guarded(initial, head.as_ref(), |step| {
+                            let Ok(state) = state.try_lock() else {
+                                host_error = Some(HostError::Uncertain);
+                                return Ok(false);
+                            };
+                            if !dispatch_running(&state) {
+                                return Ok(false);
+                            }
+                            match quiet.with_quiet_shell(step) {
+                                Ok(result) => result.map(|()| true),
+                                Err(error) => {
+                                    host_error = Some(error);
+                                    Ok(false)
+                                }
+                            }
+                        })?;
+                    Ok((outcome, host_error))
                 },
             )
             .await?;
         if outcome == Retirement::Removed {
             self.trash_wake.notify_one();
         }
-        Ok(Some(outcome))
+        if let Some(error) = host_error {
+            return Err(error.into());
+        }
+        Ok(outcome)
     }
 
     async fn close(
@@ -2447,7 +2445,7 @@ impl Service {
             if self
                 .retire_if_idle(task, binding, checkout, Some(head))
                 .await?
-                .is_none()
+                == Retirement::Deferred
             {
                 return Ok(Action::Wait(WaitReason::Stopping));
             }
@@ -2466,11 +2464,7 @@ impl Service {
             if self.checkout_binding(task.identity(), &route, checkout)? != *binding {
                 return Err(HostError::Binding.into());
             }
-            if self
-                .retire_if_idle(task, binding, checkout, None)
-                .await?
-                .is_none()
-            {
+            if self.retire_if_idle(task, binding, checkout, None).await? == Retirement::Deferred {
                 return Ok(Action::Wait(WaitReason::Stopping));
             }
         }
@@ -2672,23 +2666,13 @@ fn dispatch_running(state: &crate::State) -> bool {
         .is_none_or(|dispatch| dispatch.mode == DispatchMode::Running)
 }
 
-fn retirement_threads<'a>(task: &'a Task, parent: &'a str) -> Vec<&'a str> {
-    [
-        task.threads().get(Role::Reviewer),
-        task.threads().get(Role::Worker),
-        Some(parent),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
-}
-
 #[cfg(test)]
 mod start_tests;
 
 #[cfg(test)]
 mod tests {
     mod provider_helpers;
+    mod retirement;
 
     use std::sync::{
         Arc,
@@ -2708,8 +2692,8 @@ mod tests {
 
     use super::*;
     use crate::tests::{
-        Due, REPOSITORY, code_task_at_merge, fixture, forge_checks, forge_fixture, forge_pull,
-        native_fixture, reservation, serve_forge,
+        Due, REPOSITORY, archived_checkout_rows, code_task_at_merge, fixture, forge_checks,
+        forge_fixture, forge_pull, native_fixture, reservation, serve_forge,
     };
 
     async fn cancelled_cleanup_task(service: &Service) -> TaskRow {
@@ -3006,7 +2990,15 @@ mod tests {
             Some(tree) => crate::tests::described_native_fixture(native, home.path(), tree.0[1]),
             None => crate::tests::verified_native_fixture(native, home.path()),
         };
-        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
+        let route = service.project_for(terminal.task.identity()).await.unwrap();
+        let branch = base.file_name().unwrap().to_str().unwrap();
+        let binding = route.thread_binding(&base, branch).unwrap();
+        service
+            .host
+            .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+                "snapshotSequence":1,"projects":[],"threads":[],
+                "archivedThreads":archived_checkout_rows(&binding, &terminal.task)
+            }}));
         let mut host_child = spawn(orphan_dir);
         let mut outside = spawn(home.path());
         // The orphan runs a script from its root directory, so its argv names the task's own code.
@@ -3199,7 +3191,6 @@ mod tests {
             T3::new("http://127.0.0.1:9", "fixture").unwrap(),
             home.path(),
         );
-        service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
         service.fixture_mut().acp_provider = Some("fixture".into());
         let terminal = cancelled_cleanup_task(&service).await;
         let id = &terminal.task.identity().id;
@@ -3208,6 +3199,14 @@ mod tests {
             .checkout(&service.fixture().checkout, REPOSITORY, id)
             .unwrap();
         checkout.allocate(&service.fixture().start).unwrap();
+        let route = service.project_for(terminal.task.identity()).await.unwrap();
+        let binding = route.binding(&checkout).unwrap();
+        service
+            .host
+            .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+                "snapshotSequence":1,"projects":[],"threads":[],
+                "archivedThreads":archived_checkout_rows(&binding, &terminal.task)
+            }}));
         let base = checkout.path();
         // The launching shell exits, so sleep is orphaned with its cwd in the checkout. Its argv names no path.
         let output = tokio::process::Command::new("/bin/sh")
@@ -3305,7 +3304,8 @@ mod tests {
         });
         let shell = |child: &serde_json::Value| {
             service.host.fixture_held_shell(&json!({
-                "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[child]}
+                "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[child],
+                    "archivedThreads":archived_checkout_rows(&binding, &row.task)}
             }));
         };
         shell(&child);

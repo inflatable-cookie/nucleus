@@ -128,8 +128,11 @@ pub struct Landing {
 pub enum Retirement {
     Absent,
     Retained,
+    Deferred,
     Removed,
 }
+
+type RetirementStep<'a> = &'a dyn Fn() -> Result<(), WorkError>;
 
 /// Shared by a blocking call and the caller awaiting it. A caller which stops
 /// waiting refuses every later mutation and can tell whether one is running.
@@ -674,11 +677,10 @@ impl Checkout<'_> {
         Ok(self.prunable_identity()?.is_some())
     }
 
-    /// Remove an owned prunable Git registration after verifying the checkout directory is absent.
-    ///
-    /// # Errors
-    /// Returns an error if the registration cannot be verified, is locked, or cannot be removed.
-    pub fn retire_prunable_registration(&self) -> Result<Retirement, WorkError> {
+    fn retire_prunable_registration(
+        &self,
+        admit: impl FnOnce(RetirementStep<'_>) -> Result<bool, WorkError>,
+    ) -> Result<Retirement, WorkError> {
         self.worktrees.root.verify()?;
         if !missing(&self.path)? {
             return Err(WorkError::WrongCheckout);
@@ -687,9 +689,17 @@ impl Checkout<'_> {
             return Ok(Retirement::Absent);
         };
         self.require_unlocked(&admin)?;
-        let _step = self.admit()?;
-        self.remove(&[])?;
-        Ok(Retirement::Removed)
+        self.worktrees.root.verify()?;
+        Ok(
+            if admit(&|| {
+                let _step = self.worktrees.custody.mutate()?;
+                self.remove(&[])
+            })? {
+                Retirement::Removed
+            } else {
+                Retirement::Deferred
+            },
+        )
     }
 
     /// Allocate the task branch at a known commit. An existing owned checkout
@@ -1003,8 +1013,7 @@ impl Checkout<'_> {
         self.finish_retirement(self.observe_for_retirement()?, published)
     }
 
-    /// Finish a retirement after the caller's final admission, rechecking
-    /// ownership and the exact head observed by `observe_for_retirement`.
+    /// Recheck ownership and the exact published head before finishing retirement.
     ///
     /// # Errors
     /// Returns an error if the recheck fails or Git refuses removal.
@@ -1013,29 +1022,50 @@ impl Checkout<'_> {
         initial: Workspace,
         published: &Head,
     ) -> Result<Retirement, WorkError> {
-        match initial {
-            Workspace::Absent => self.retire_prunable_registration(),
-            Workspace::Clean(head) if head == *published => match self.observe_for_retirement()? {
-                Workspace::Absent => self.retire_prunable_registration(),
-                Workspace::Clean(current) if current == *published => {
-                    self.retire_to_trash(published)
+        self.finish_retirement_guarded(initial, Some(published), |step| step().map(|()| true))
+    }
+
+    /// Recheck Git custody, then ask the caller to run the retirement mutation
+    /// under its admission guard. A false result leaves the checkout in place.
+    /// An already absent checkout only needs its owned registration removed.
+    ///
+    /// # Errors
+    /// Returns an error if the recheck, guarded mutation or Git removal fails.
+    pub fn finish_retirement_guarded(
+        &self,
+        initial: Workspace,
+        published: Option<&Head>,
+        admit: impl FnOnce(RetirementStep<'_>) -> Result<bool, WorkError>,
+    ) -> Result<Retirement, WorkError> {
+        match (initial, published) {
+            (Workspace::Absent, _) => self.retire_prunable_registration(admit),
+            (Workspace::Clean(head), Some(published)) if head == *published => {
+                match self.observe_for_retirement()? {
+                    Workspace::Absent => self.retire_prunable_registration(admit),
+                    Workspace::Clean(current) if current == *published => {
+                        self.retire_to_trash(published, admit)
+                    }
+                    Workspace::Clean(_) | Workspace::Dirty => Ok(Retirement::Retained),
                 }
-                Workspace::Clean(_) | Workspace::Dirty => Ok(Retirement::Retained),
-            },
-            Workspace::Dirty => {
+            }
+            (Workspace::Dirty, Some(published)) => {
                 if missing(&self.path)? {
-                    return self.retire_prunable_registration();
+                    return self.retire_prunable_registration(admit);
                 }
                 if self.deletion_only_head()?.as_ref() != Some(published) {
                     return Ok(Retirement::Retained);
                 }
-                self.retire_to_trash(published)
+                self.retire_to_trash(published, admit)
             }
-            Workspace::Clean(_) => Ok(Retirement::Retained),
+            _ => Ok(Retirement::Retained),
         }
     }
 
-    fn retire_to_trash(&self, published: &Head) -> Result<Retirement, WorkError> {
+    fn retire_to_trash(
+        &self,
+        published: &Head,
+        admit: impl FnOnce(RetirementStep<'_>) -> Result<bool, WorkError>,
+    ) -> Result<Retirement, WorkError> {
         let (admin, head) = self.verified_admin_for_retirement()?;
         if head != *published {
             return Ok(Retirement::Retained);
@@ -1073,27 +1103,30 @@ impl Checkout<'_> {
                 Err(error) => return Err(error.into()),
             }
         }
-        let result = (|| -> Result<(), WorkError> {
+        let result = (|| -> Result<bool, WorkError> {
             let entry_info = entry.symlink_metadata()?;
             let mut marker = fs::File::create_new(entry.join(TRASH_MARKER))?;
             marker.write_all(trash_stamp(&name, &entry_info, &checkout_info).as_bytes())?;
             marker.sync_all()?;
             drop(staging);
-            let _step = self.admit()?;
-            renameat_with(
-                CWD,
-                &self.path,
-                CWD,
-                entry.join(TRASH_CHECKOUT),
-                RenameFlags::NOREPLACE,
-            )
-            .map_err(std::io::Error::from)?;
-            Ok(())
+            self.worktrees.root.verify()?;
+            admit(&|| {
+                let _step = self.worktrees.custody.mutate()?;
+                renameat_with(
+                    CWD,
+                    &self.path,
+                    CWD,
+                    entry.join(TRASH_CHECKOUT),
+                    RenameFlags::NOREPLACE,
+                )
+                .map_err(std::io::Error::from)?;
+                Ok(())
+            })
         })();
-        if let Err(error) = result {
+        if !matches!(result, Ok(true)) {
             let _ = fs::remove_file(entry.join(TRASH_MARKER));
             let _ = fs::remove_dir(&entry);
-            return Err(error);
+            return result.map(|_| Retirement::Deferred);
         }
         if !missing(&self.path)? {
             return Err(WorkError::WrongCheckout);

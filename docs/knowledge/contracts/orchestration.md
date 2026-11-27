@@ -268,8 +268,10 @@ when to ask the planner.
 
 Archive a terminal task’s exact idle thread from its synchronized T3 project, worktree and branch binding. Recheck Dispatch and the idle thread at the write. The registered directory may have moved.
 The board and Next retain the workspace outcome. Before removing a checkout,
-verify Dispatch, quiet participants in the held shell, the Git registration
-and the published head. One best-effort sweep while all task threads are quiet
+verify the Git registration and published head. Hold Dispatch admission and
+quiet shell evidence through the rename. For bound threads omitted by the
+live shell, require quiet archive rows or exact deletion or absence evidence
+fenced by the held shell. One best-effort sweep while all task threads are quiet
 stops orphaned process trees rooted in the verified checkout or recorded run
 scratch when an executable or absolute argument names the task's own code
 there. Nucleus records signal outcomes and leaves shared services running.

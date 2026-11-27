@@ -1,14 +1,14 @@
 use std::sync::Mutex;
 
 use nucleus_core::{CallbackCredential, Head, Observation, Role, Workspace};
-use nucleus_hosts::HostError;
+use nucleus_hosts::{Binding, HostError};
 
 use super::{
     planning::put_as,
     projects::{NoticeFixture, NoticeReply},
     *,
 };
-use crate::tests::{git, native_fixture};
+use crate::tests::{archived_checkout_rows, git, native_fixture};
 
 const TASK: &str = "report-cutover";
 const PROJECT: &str = "local-fixture";
@@ -501,7 +501,7 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
         host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
             "snapshotSequence":1,"projects":[],"threads":[
                 {"id":"delegated-child","parentThreadId":parent,"status":status}
-            ]
+            ],"archivedThreads":fixture.archived_threads(&done.task)
         }}));
         let outcome = fixture.service.archive_done(&done).await;
         assert!(
@@ -521,7 +521,7 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
     assert_eq!(
         host.host_calls(),
         before,
-        "retirement must not read omitted rows"
+        "held quiet rows need no extra reads"
     );
 }
 
@@ -609,9 +609,13 @@ async fn cancelled_checkout_only_retires_clean_published_work() {
         .unwrap();
     let cancelled = fixture.service.task(TASK).await.unwrap();
     assert_eq!(cancelled.task.phase(), Phase::Cancelled);
-    fixture.service.host.fixture_held_shell(
-        &json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}),
-    );
+    fixture
+        .service
+        .host
+        .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1,"projects":[],"threads":[],
+            "archivedThreads":fixture.archived_threads(&cancelled.task)
+        }}));
     let draft = fixture.checkout.join("draft");
     std::fs::write(&draft, "unpublished").unwrap();
     assert!(matches!(
@@ -748,6 +752,17 @@ struct ReportFixture {
 }
 
 impl ReportFixture {
+    fn archived_threads(&self, task: &Task) -> Vec<Value> {
+        archived_checkout_rows(
+            &Binding {
+                project_id: PROJECT.into(),
+                worktree_path: self.checkout.to_str().unwrap().into(),
+                branch: format!("ns-{TASK}"),
+            },
+            task,
+        )
+    }
+
     fn idle_worker(&self) -> Value {
         json!({"id":WORKER,"projectId":PROJECT,"worktreePath":self.checkout,
             "branch":format!("ns-{TASK}"),"status":"completed","latestRunId":"native-run",

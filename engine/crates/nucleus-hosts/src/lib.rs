@@ -56,8 +56,8 @@ use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
     ActiveChild, ArchiveWrite, DoneArchive, FrozenParentWrite, ParentAttempt, ParentRun,
-    ParentSendError, ParentStep, ParentWrite, is_parent_reentry, is_pinned_parent_hold,
-    parent_thread,
+    ParentSendError, ParentStep, ParentWrite, QuietCheckout, is_parent_reentry,
+    is_pinned_parent_hold, parent_thread,
 };
 /// A link within the same T3 environment as the task thread.
 #[must_use]
@@ -409,7 +409,7 @@ impl RegisteredProject {
 pub struct T3 {
     #[cfg(any(test, feature = "loopback-fixture"))]
     fixture_quiet_processes: bool,
-    rpc: Rpc,
+    rpc: Arc<Rpc>,
     runtime_descriptor: Option<PathBuf>,
 }
 
@@ -512,7 +512,7 @@ impl T3 {
         Ok(Self {
             #[cfg(any(test, feature = "loopback-fixture"))]
             fixture_quiet_processes: false,
-            rpc: Rpc::new(endpoint, bearer)?,
+            rpc: Arc::new(Rpc::new(endpoint, bearer)?),
             runtime_descriptor: None,
         })
     }

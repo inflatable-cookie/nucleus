@@ -6,6 +6,7 @@ use std::{
 };
 
 use nucleus_core::acp::{REFRESH_TASK_ROW, session_id};
+use nucleus_core::{Role, Task};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -15,9 +16,9 @@ use crate::{
     launch::Method,
     message_id,
     projection::Projection,
-    rpc::{Read, Reply, ThreadFence, closed_row},
+    rpc::{Read, Reply, Rpc, ThreadFence, closed_row},
     task_row::ThreadVisibility,
-    thread_snapshots::{ShellCustody, ThreadRead, row_activity},
+    thread_snapshots::{ShellCustody, ThreadRead, ThreadSnapshots, belongs_to, row_activity},
 };
 
 /// Evidence for the exact active turn and root node that can parent a child.
@@ -379,31 +380,143 @@ pub fn parent_thread(checkout: &Path) -> String {
     format!("thread:{}", session_id(checkout))
 }
 
-impl T3 {
-    /// Run checkout retirement while the synchronized shell lists no active or unknown writers.
+/// Closeout evidence that can be checked while a blocking checkout call mutates the disk.
+pub struct QuietCheckout {
+    rpc: Arc<Rpc>,
+    binding: Binding,
+    parent: String,
+    threads: Vec<String>,
+    missing: Vec<(String, ThreadFence)>,
+}
+
+impl QuietCheckout {
+    /// Run a mutation while the held shell still proves all task threads quiet.
     ///
     /// # Errors
-    /// Returns an error if the shell lost synchronization or a listed thread is not quiet.
-    pub fn retire_with_quiet_shell<T>(
-        &self,
-        binding: &Binding,
-        parent: &str,
-        roles: &[&str],
-        retire: impl FnOnce() -> T,
-    ) -> Result<T, HostError> {
+    /// Returns an error if the shell or its evidence changed or a task thread is active.
+    pub fn with_quiet_shell<T>(&self, mutate: impl FnOnce() -> T) -> Result<T, HostError> {
         self.rpc.with_shell(|shell| {
             let shell = shell.ok_or(HostError::Uncertain)?;
-            for id in roles.iter().copied().chain(shell.children(parent)) {
-                if let Some(row) = shell.marker(id).filter(|row| row["deletedAt"].is_null()) {
-                    if row_activity(&row) != RowChildren::Quiet {
-                        return Err(HostError::RowChildBusy);
+            check_live_threads(shell, &self.binding, &self.parent, &self.threads)?;
+            if self
+                .missing
+                .iter()
+                .any(|(id, fence)| !fence.matches(&self.rpc.fence_at(id, Some(shell))))
+                || self.threads.iter().any(|id| {
+                    shell.marker(id).is_none()
+                        && !self.missing.iter().any(|(before, _)| before == id)
+                })
+            {
+                return Err(HostError::Uncertain);
+            }
+            Ok(mutate())
+        })
+    }
+}
+
+fn check_quiet_thread(binding: &Binding, row: &Value) -> Result<(), HostError> {
+    if !row["deletedAt"].is_string() && row_activity(row) != RowChildren::Quiet {
+        return Err(HostError::RowChildBusy);
+    }
+    if !binding.matches_shell_row(row) {
+        return Err(HostError::Binding);
+    }
+    Ok(())
+}
+
+fn check_live_threads(
+    shell: &ThreadSnapshots,
+    binding: &Binding,
+    parent: &str,
+    threads: &[impl AsRef<str>],
+) -> Result<(), HostError> {
+    for id in threads
+        .iter()
+        .map(AsRef::as_ref)
+        .chain(shell.children(parent))
+    {
+        if let Some(row) = shell.marker(id) {
+            check_quiet_thread(binding, &row)?;
+        }
+    }
+    Ok(())
+}
+
+impl T3 {
+    /// Resolve bound threads omitted by the live shell before checkout closeout.
+    ///
+    /// # Errors
+    /// Returns an error if any task thread is active, its binding differs, or the evidence is incomplete.
+    pub async fn prepare_quiet_checkout(
+        &self,
+        binding: &Binding,
+        task: &Task,
+    ) -> Result<QuietCheckout, HostError> {
+        let parent = parent_thread(Path::new(&binding.worktree_path));
+        let threads: Vec<_> = [Role::Reviewer, Role::Worker]
+            .into_iter()
+            .filter_map(|role| task.threads().get(role))
+            .chain(std::iter::once(parent.as_str()))
+            .map(str::to_owned)
+            .collect();
+        let missing = self.rpc.with_shell(|shell| {
+            let shell = shell.ok_or(HostError::Uncertain)?;
+            check_live_threads(shell, binding, &parent, &threads)?;
+            Ok::<_, HostError>(
+                threads
+                    .iter()
+                    .filter_map(|id| {
+                        let fence = self.rpc.fence_at(id, Some(shell));
+                        fence.row.is_none().then(|| (id.clone(), fence))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })?;
+        if let Some((_, first)) = missing.first() {
+            let archive = self.archived_shell().await?;
+            let seq = archive["snapshotSequence"]
+                .as_u64()
+                .ok_or(HostError::Protocol)?;
+            let rows = archive["threads"].as_array().ok_or(HostError::Protocol)?;
+            if first.snapshot_sequence().is_none_or(|live| seq < live) {
+                return Err(HostError::Uncertain);
+            }
+            for row in rows.iter().filter(|row| belongs_to(row, &parent)) {
+                check_quiet_thread(binding, row)?;
+            }
+            for (id, _) in &missing {
+                if let Some(row) = rows.iter().find(|row| row["id"] == id.as_str()) {
+                    if row["archivedAt"].is_null() && row["deletedAt"].is_null() {
+                        return Err(HostError::Protocol);
                     }
-                    if !binding.matches_shell_row(&row) {
-                        return Err(HostError::Binding);
+                    check_quiet_thread(binding, row)?;
+                } else {
+                    let (thread, _) = self.observe_thread(binding, id, ThreadRead::Exact).await?;
+                    if thread.is_some_and(|thread| !thread.deleted()) {
+                        return Err(HostError::Uncertain);
                     }
                 }
             }
-            Ok(retire())
+        }
+        let guard = QuietCheckout {
+            rpc: self.rpc.clone(),
+            binding: binding.clone(),
+            parent,
+            threads,
+            missing,
+        };
+        guard.with_quiet_shell(|| ())?;
+        Ok(guard)
+    }
+
+    fn check_quiet_parent(&self, binding: &Binding, parent: &str) -> Result<(), HostError> {
+        self.rpc.with_shell(|shell| {
+            check_live_threads(
+                shell.ok_or(HostError::Uncertain)?,
+                binding,
+                parent,
+                &[parent],
+            )
         })
     }
 
@@ -432,7 +545,7 @@ impl T3 {
         }) else {
             return Ok(None);
         };
-        self.retire_with_quiet_shell(binding, &thread, &[&thread], || ())?;
+        self.check_quiet_parent(binding, &thread)?;
         let command = format!("{thread}-refresh-{}", row.sequence);
         let mut write = ParentWrite::new(
             binding,
@@ -1083,12 +1196,7 @@ impl T3 {
                     if let (Some(delivery), Some(thread)) = (&write.delivery, thread_id.as_deref())
                     {
                         self.check_delivery_shell(thread, delivery, &write.owned_snoozes)?;
-                        self.retire_with_quiet_shell(
-                            &write.wire.binding,
-                            thread,
-                            &[thread],
-                            || (),
-                        )?;
+                        self.check_quiet_parent(&write.wire.binding, thread)?;
                     }
                     if hold.is_some() && self.rpc.uses_held_shell() {
                         let thread = thread_id.as_deref().ok_or(HostError::Binding)?;
