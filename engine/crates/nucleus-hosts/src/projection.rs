@@ -216,6 +216,12 @@ enum Status {
     RolledBack,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum StrandedParentQueue<'a> {
+    Idle(&'a str),
+    BehindHold(&'a str),
+}
+
 impl Status {
     const fn in_flight(self) -> bool {
         matches!(
@@ -410,22 +416,35 @@ impl Projection {
         self.runs.iter().any(|run| run.status.in_flight())
     }
 
-    pub(crate) fn stranded_parent_queue(&self, message_id: &str) -> Option<&str> {
+    pub(crate) fn stranded_parent_queue(
+        &self,
+        message_id: &str,
+        owns_hold: impl Fn(&str) -> bool,
+    ) -> Option<StrandedParentQueue<'_>> {
         let run = self.delivery(message_id).1?;
-        (run.user_message_id.as_deref() == Some(message_id)
-            && run.status == Status::Queued
-            && run.started_at.is_none()
-            && !self.archived()
-            && !self.deleted()
-            && !self
-                .runs
-                .iter()
-                .any(|run| run.status != Status::Queued && run.status.in_flight())
-            && !self
+        if run.user_message_id.as_deref() != Some(message_id)
+            || run.status != Status::Queued
+            || run.started_at.is_some()
+            || self.archived()
+            || self.deleted()
+            || self
                 .runtime_requests
                 .iter()
-                .any(|request| request.status == "pending"))
-        .then_some(run.id.as_str())
+                .any(|request| request.status == "pending")
+        {
+            return None;
+        }
+        let mut active = self
+            .runs
+            .iter()
+            .filter(|run| run.status != Status::Queued && run.status.in_flight());
+        let Some(blocker) = active.next() else {
+            return Some(StrandedParentQueue::Idle(&run.id));
+        };
+        (active.next().is_none()
+            && matches!(blocker.status, Status::Running | Status::Waiting)
+            && blocker.user_message_id.as_deref().is_some_and(owns_hold))
+        .then_some(StrandedParentQueue::BehindHold(&blocker.id))
     }
 
     pub(crate) fn turn_failed(&self, message_id: &str) -> bool {

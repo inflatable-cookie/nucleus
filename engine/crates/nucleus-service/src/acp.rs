@@ -99,6 +99,27 @@ fn delivery_prompt(
     }
 }
 
+pub(super) fn current_parent_delivery(
+    state: &State,
+    row: &TaskRow,
+    earlier_prefix: Option<&str>,
+) -> Result<Option<ParentDelivery>, StoreError> {
+    Ok(state
+        .store
+        .parent_deliveries(&row.task.identity().id, row.version, earlier_prefix)?
+        .into_iter()
+        .find(|delivery| {
+            !delivery.refresh
+                && !delivery.command.is_empty()
+                && delivery.result != ParentResult::Refused
+                && (delivery.version == row.version
+                    || matches!(
+                        delivery.result,
+                        ParentResult::Pending | ParentResult::Accepted
+                    ))
+        }))
+}
+
 fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
     let task = &row.task;
     let Some(run) = task.run() else {
@@ -171,12 +192,13 @@ impl Service {
             return Ok((None, carry_row));
         }
         // A remembered child can acquire a new re-entry hold after settlement.
-        // Carrying the prior prompt requires a current role.
-        let mut delivery = state
-            .store
-            .parent_deliveries(id, row.version, None)?
-            .into_iter()
-            .find(|delivery| !delivery.refresh && !delivery.command.is_empty());
+        // A reservation advances the task version before the role enters T3.
+        // Its latest parent delivery still owns the hold across that version.
+        let reservation = task
+            .run()
+            .filter(|run| run.last_send_at_ms().is_none())
+            .map(|_| format!("{parent}-"));
+        let mut delivery = current_parent_delivery(state, row, reservation.as_deref())?;
         if active_in_shell
             && delivery.is_none()
             && let Some((_, instance)) =
@@ -187,7 +209,10 @@ impl Service {
                 .store
                 .parent_deliveries(id, row.version, Some(&prefix))?
                 .into_iter()
-                .find(|delivery| delivery.command.starts_with(&prefix));
+                .find(|delivery| {
+                    delivery.command.starts_with(&prefix)
+                        && delivery.result != ParentResult::Refused
+                });
         }
         let reentry = delivery
             .as_ref()
@@ -449,9 +474,8 @@ impl Service {
                 }
             }
         }
-        let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
         let thread = write.thread_id().ok_or(ServiceError::Input)?.to_owned();
-        if write.delivery_row().is_some() || nucleus_hosts::is_pinned_parent_hold(&command) {
+        if write.checks_parent_snooze() {
             write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
         }
         if let Some(parent) = write.delivery_row() {

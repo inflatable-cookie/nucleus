@@ -863,6 +863,80 @@ async fn stranded_parent_reentry_has_one_successor_until_the_shell_changes() {
 }
 
 #[tokio::test]
+async fn a_receipted_queue_releases_only_the_older_parent_hold() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let thread = crate::parent_thread(checkout.path());
+    let prior = format!("{thread}-hold-acp-20:fixture-acp");
+    let mut projection = parent_snapshot(&binding, "running", false);
+    let mut row = projection["projection"]["thread"].clone();
+    row["status"] = json!("running");
+    row["activeRunId"] = Value::Null;
+    projection["projection"]["runs"][0]["userMessageId"] =
+        json!(crate::message_id(&format!("{thread}-launch")));
+    projection["projection"]["runs"].as_array_mut().unwrap().push(json!({
+        "id":"queued-hold","status":"queued","startedAt":null,"userMessageId":crate::message_id(&prior)
+    }));
+    let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(projection.clone()),
+        ),
+        ("orchestration.dispatchCommand", Response::Success),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(projection),
+        ),
+    ])
+    .await;
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":20,"threads":[row],"projects":[]
+        }}));
+    let prepare = || {
+        host.prepare_parent(
+            &binding,
+            "fixture-acp",
+            "Fixture",
+            "Starting reviewer",
+            Some(crate::ParentAttempt {
+                command: &prior,
+                released: false,
+                replay_launch: false,
+                recorded_failure: false,
+            }),
+            std::future::pending(),
+        )
+    };
+    let ((), calls) = crate::T3::count_pass_calls(Box::pin(async {
+        let crate::ParentStep::AfterDelivery(write) = prepare().await.unwrap() else {
+            panic!("recover the verified queue by releasing the older hold");
+        };
+        assert!(
+            !write.starts_turn(),
+            "recovery must not enqueue another message"
+        );
+        host.write_parent(write).await.unwrap();
+    }))
+    .await;
+    assert_eq!(calls.get("orchestration.subscribeThread"), Some(&1));
+    assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
+    eprintln!("stranded queue recovery T3 calls: {calls:?}");
+    row["pendingRuntimeRequest"] = json!({"kind":"approval"});
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
+    assert!(matches!(
+        prepare().await.unwrap(),
+        crate::ParentStep::Delivered
+    ));
+    let requests = native.await.unwrap();
+    let interrupt: Value = serde_json::from_str(requests[1].payload.get()).unwrap();
+    assert_eq!(interrupt["type"], "run.interrupt");
+    assert_eq!(interrupt["runId"], NATIVE_RUN);
+}
+
+#[tokio::test]
 async fn parent_reentry_ignores_unrelated_completed_revisions_but_keeps_the_wire_vetoes() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());

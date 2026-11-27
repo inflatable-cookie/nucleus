@@ -17,7 +17,7 @@ use crate::{
     Binding, HostError, ProfileCatalog, RowChildren, RowObservation, RowVisibility, T3, clock_ms,
     launch::Method,
     message_id,
-    projection::Projection,
+    projection::{Projection, StrandedParentQueue},
     rpc::{Read, Reply, ThreadFence, closed_row},
     task_row::ThreadVisibility,
     thread_snapshots::{ShellCustody, ThreadRead, row_activity},
@@ -254,6 +254,14 @@ impl ParentWrite {
         self.delivery.as_ref().map(|delivery| delivery.row)
     }
 
+    /// Whether this write must respect the current parent thread's snooze.
+    #[must_use]
+    pub fn checks_parent_snooze(&self) -> bool {
+        self.delivery.is_some()
+            || self.stranded_at.is_some()
+            || self.command_id().is_some_and(is_pinned_parent_hold)
+    }
+
     #[must_use]
     pub fn starts_turn(&self) -> bool {
         self.wire.method == Method::Create || self.wire.payload["type"] == "message.dispatch"
@@ -288,6 +296,10 @@ fn parent_hold(
     command: &str,
     prompt: &str,
 ) -> ParentWrite {
+    // ACP supplies only the text. Two commands for the same role can have the
+    // same label, so put a stable command fingerprint on the frozen prompt.
+    let fingerprint = format!("{:x}", Sha256::digest(command));
+    let prompt = format!("{prompt} [{}]", &fingerprint[..16]);
     ParentWrite::new(
         binding,
         provider,
@@ -300,6 +312,86 @@ fn parent_hold(
             "dispatchMode":{"type":"queue_after_active"},
         }),
     )
+}
+
+fn parent_hold_message(message: &str, thread: &str, provider: &str) -> bool {
+    message.strip_suffix("-message").is_some_and(|command| {
+        command.strip_prefix(thread).is_some_and(|suffix| {
+            suffix == "-launch"
+                || suffix.starts_with("-hold-acp-")
+                    && parent_hold_provider(command) == Some(provider)
+        })
+    })
+}
+
+fn release_stranded_hold(
+    binding: &Binding,
+    thread: &str,
+    provider: &str,
+    run: &str,
+) -> ParentWrite {
+    ParentWrite::new(
+        binding,
+        provider,
+        Method::Continue,
+        json!({
+            "type":"run.interrupt", "commandId":format!("{thread}-release-hold-{run}"),
+            "threadId":thread, "runId":run,
+        }),
+    )
+}
+
+fn recover_stranded_parent(
+    binding: &Binding,
+    thread: &str,
+    provider: &str,
+    prompt: &str,
+    command: &str,
+    projection: &Projection,
+    row: Option<&Arc<Value>>,
+) -> Option<ParentWrite> {
+    if parent_hold_provider(command) != Some(provider)
+        || row.is_some_and(|row| !row["pendingRuntimeRequest"].is_null())
+    {
+        return None;
+    }
+    let queue = projection.stranded_parent_queue(&message_id(command), |blocker| {
+        parent_hold_message(blocker, thread, provider)
+    })?;
+    let mut write = match queue {
+        StrandedParentQueue::Idle(_) if row.is_none_or(|row| row["activeRunId"].is_null()) => {
+            parent_hold(
+                binding,
+                thread,
+                provider,
+                &format!("{thread}-hold-acp-{}:{provider}", projection.sequence()),
+                prompt,
+            )
+        }
+        StrandedParentQueue::BehindHold(run)
+            if row.is_some_and(|row| row["activeRunId"].is_null() || row["activeRunId"] == run) =>
+        {
+            // An older ACP client may still see the same label on both turns.
+            release_stranded_hold(binding, thread, provider, run)
+        }
+        _ => return None,
+    };
+    write.stranded_at = row.cloned();
+    Some(write)
+}
+
+fn stranded_reentry<'a>(
+    projection: &'a Projection,
+    prior: Option<&str>,
+    prefix: &str,
+    provider: &str,
+) -> Option<StrandedParentQueue<'a>> {
+    projection.stranded_parent_queue(&message_id(prior?), |blocker| {
+        blocker.strip_suffix("-message").is_some_and(|command| {
+            child_reentry_command(command, prefix)
+                && parent_hold_provider(command) == Some(provider)
+        })
+    })
 }
 
 fn parent_row_matches(row: &Value, binding: &Binding, provider: &str) -> bool {
@@ -708,7 +800,6 @@ impl T3 {
             projection.require_parent_provider(provider)?;
             let mut replay = None;
             let mut completed_prior = false;
-            let mut stranded = false;
             if let Some((run, node)) = prior_turn
                 .as_ref()
                 .filter(|attempt| !attempt.recorded_failure)
@@ -729,13 +820,18 @@ impl T3 {
                 if !recoverable && (attempt.recorded_failure || projection.turn_failed(&message)) {
                     return Ok(ParentStep::Failed);
                 }
-                stranded = parent_hold_provider(attempt.command) == Some(provider)
-                    && fence
-                        .row
-                        .as_ref()
-                        .is_none_or(|row| row["activeRunId"].is_null())
-                    && projection.stranded_parent_queue(&message).is_some();
-                completed_prior = recoverable || stranded || projection.turn_completed(&message);
+                if let Some(write) = recover_stranded_parent(
+                    binding,
+                    &thread,
+                    provider,
+                    start_line,
+                    attempt.command,
+                    &projection,
+                    fence.row.as_ref(),
+                ) {
+                    return Ok(ParentStep::AfterDelivery(write));
+                }
+                completed_prior = recoverable || projection.turn_completed(&message);
                 if !completed_prior {
                     if projection.has_delivery(&message) {
                         return Ok(ParentStep::Delivered);
@@ -773,10 +869,7 @@ impl T3 {
                 || format!("{thread}-hold-acp-{sequence}:{provider}"),
                 str::to_owned,
             );
-            let mut write = parent_hold(binding, &thread, provider, &command, start_line);
-            if stranded {
-                write.stranded_at = fence.row;
-            }
+            let write = parent_hold(binding, &thread, provider, &command, start_line);
             return Ok(if completed_prior {
                 ParentStep::AfterDelivery(write)
             } else {
@@ -929,8 +1022,13 @@ impl T3 {
             return Ok(None);
         };
         projection.require_parent_provider(provider)?;
-        let stranded =
-            prior.and_then(|command| projection.stranded_parent_queue(&message_id(command)));
+        let stranded = stranded_reentry(&projection, prior, &prefix, provider);
+        if let Some(StrandedParentQueue::BehindHold(run)) = stranded {
+            let mut write = release_stranded_hold(binding, &thread, provider, run);
+            write.stranded_at = Some(row);
+            write.reentry = Some(Box::new(child.clone()));
+            return Ok(Some(write));
+        }
         if (stranded.is_none() && projection.has_pending_turn())
             || latest.is_some_and(|run| !projection.terminal_run(run))
         {
@@ -940,7 +1038,7 @@ impl T3 {
         let evidence = activity_digest(&child_row);
         let mut ended_hold = None;
         let command = match (prior, ended_owned) {
-            (_, _) if let Some(native) = stranded => format!(
+            (_, _) if let Some(StrandedParentQueue::Idle(native)) = stranded => format!(
                 "{prefix}-after-{:x}-{evidence}-0:{provider}",
                 Sha256::digest(native)
             ),
@@ -1114,7 +1212,8 @@ impl T3 {
                     {
                         self.check_delivery_shell(thread, delivery, &write.owned_snoozes)?;
                     }
-                    if hold.is_some() && self.rpc.uses_held_shell() {
+                    if (hold.is_some() || write.stranded_at.is_some()) && self.rpc.uses_held_shell()
+                    {
                         let thread = thread_id.as_deref().ok_or(HostError::Binding)?;
                         let row = self.rpc.thread_row(thread).ok_or(HostError::Uncertain)?;
                         if !row["archivedAt"].is_null()

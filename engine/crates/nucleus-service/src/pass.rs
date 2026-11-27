@@ -1302,9 +1302,10 @@ impl Service {
                     .parent_deliveries(&identity.id, row.version, Some(&prefix))?
                     .into_iter()
                     .find(|value| {
-                        value.command.strip_prefix(&prefix).is_some_and(|tail| {
-                            tail.starts_with(':') || tail.starts_with("-after-")
-                        })
+                        value.result != ParentResult::Refused
+                            && value.command.strip_prefix(&prefix).is_some_and(|tail| {
+                                tail.starts_with(':') || tail.starts_with("-after-")
+                            })
                     }),
                 crate::presentation::role_start_line(task, &state.store),
             )
@@ -1331,10 +1332,7 @@ impl Service {
                 child,
                 provider,
                 &start_line,
-                prior
-                    .as_ref()
-                    .filter(|value| value.result != ParentResult::Refused)
-                    .map(|value| value.command.as_str()),
+                prior.as_ref().map(|value| value.command.as_str()),
             )
             .await?
         else {
@@ -1371,11 +1369,7 @@ impl Service {
         let (prior, released_at, start_line) = {
             let state = self.state.lock().await;
             (
-                state
-                    .store
-                    .parent_deliveries(&identity.id, row.version, None)?
-                    .into_iter()
-                    .find(|value| !value.refresh && !value.command.is_empty()),
+                crate::acp::current_parent_delivery(&state, row, None)?,
                 state.wait_reason(&identity.id).filter(|reason| {
                     !matches!(reason, WaitReason::Starting | WaitReason::HostUnknown)
                 }),
@@ -1388,9 +1382,7 @@ impl Service {
                 _ => crate::acp::parent_due(record)?,
             }
         }
-        let attempt = prior
-            .as_ref()
-            .filter(|value| value.result != ParentResult::Refused);
+        let attempt = prior.as_ref();
         let replay_launch = if let Some(record) = attempt.filter(|value| {
             value.result == ParentResult::Pending && value.command.ends_with("-launch")
         }) {

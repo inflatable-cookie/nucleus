@@ -38,6 +38,7 @@ security-framework = { version = "3.7", default-features = false }
 [dev-dependencies]
 longhorn-git-workspace = { workspace = true, features = ["fixture-server"] }
 axum = { version = "0.8.9", features = ["ws"] }
+nucleus-acp = { path = "../nucleus-acp", features = ["loopback-fixture"] }
 nucleus-forge = { path = "../nucleus-forge", features = ["loopback-fixture"] }
 nucleus-hosts = { path = "../nucleus-hosts", features = ["loopback-fixture"] }
 rusqlite = "0.41"
