@@ -39,6 +39,15 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   Completion notices arrive by default: the dispatching planner gets one queued notice when the task reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` on admission or amend to turn them off.
   Set `queue.priority: promoted` under `queue` at admission only to dispatch ahead of normal tasks when slots free (brief amendments cannot change `queue.priority`; use `promote` or `demote` instead).
   Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
+  To put a task on a specific or stronger model, add a profile request under
+  `queue` with the profile ID from Settings → Profiles and a reason:
+  `profileRequests: {worker: {profileId: ID, reason: "why", required: true}}`
+  (`reviewer` works the same way). `required: true` makes it the profile used,
+  never a hint. A Frontier profile is used only this way, with a reason, and
+  applies directly at the Low, Normal and High usage levels (Spec 052).
+  On a running task, `amend` the brief, then `move REF working` with no
+  `--instruction`. A retained worker keeps its first profile until a request
+  like this replaces it in a fresh worker thread with the work so far.
   `task.add` resolves those references before dispatch can start.
   Set `queue.mergeHold: true` with a nonblank `queue.mergeHoldReason` to wait
   for a named condition after work, review and required checks finish.
