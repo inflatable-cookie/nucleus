@@ -30,8 +30,8 @@ pub(crate) fn response_session(frame: &Value) -> Option<&str> {
 // A turn can queue one answer per form it actually offered. Keeping the
 // eligibility check at input also keeps stdin available for cancellation.
 pub(crate) struct Replies {
-    cards: Mutex<BTreeMap<String, Card>>,
-    answers: mpsc::UnboundedSender<(String, InboxAnswer)>,
+    pub(crate) cards: Mutex<BTreeMap<String, Card>>,
+    pub(crate) answers: mpsc::UnboundedSender<(String, InboxAnswer)>,
 }
 
 impl Replies {
@@ -79,7 +79,7 @@ pub(crate) fn prompt(
     }
 }
 
-async fn follow(
+pub(crate) async fn follow(
     client: &ServiceClient,
     output: &Output,
     session: &str,
@@ -172,7 +172,7 @@ async fn refresh_cards(
     Ok(has_pending || wait_for_ui.is_some())
 }
 
-struct Card {
+pub(crate) struct Card {
     request: String,
     options: Vec<String>,
     settled: bool,

@@ -23,6 +23,9 @@ use rustix::{
 use serde::{Deserialize, de::DeserializeOwned};
 
 const DEADLINE: Duration = Duration::from_secs(5);
+// Axum sends SSE keepalives every 15 seconds. Bound time to a complete frame,
+// including comments, so partial traffic cannot keep a broken stream alive.
+const STREAM_DEADLINE: Duration = Duration::from_secs(45);
 const MAX_REPLY: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
@@ -256,6 +259,7 @@ impl ServiceClient {
         Ok(Invalidations {
             response: accepted(response).await?,
             buffer: Vec::new(),
+            deadline: tokio::time::Instant::now() + STREAM_DEADLINE,
         })
     }
 }
@@ -307,6 +311,7 @@ async fn body(mut response: Response) -> Result<Vec<u8>, Failure> {
 pub(crate) struct Invalidations {
     response: Response,
     buffer: Vec<u8>,
+    deadline: tokio::time::Instant,
 }
 
 impl Invalidations {
@@ -317,18 +322,18 @@ impl Invalidations {
                 let changed = event.starts_with(b"event: refresh\n")
                     || event.starts_with(b"event: invalidate\n");
                 self.buffer.drain(..end + 2);
+                self.deadline = tokio::time::Instant::now() + STREAM_DEADLINE;
                 if changed {
                     return Ok(());
                 }
                 continue;
             }
-            let chunk = self
-                .response
-                .chunk()
+            let chunk = tokio::time::timeout_at(self.deadline, self.response.chunk())
                 .await
                 .map_err(|_| Failure::Unavailable)?
+                .map_err(|_| Failure::Unavailable)?
                 .ok_or(Failure::Unavailable)?;
-            if self.buffer.len() + chunk.len() > 64 * 1024 {
+            if chunk.is_empty() || self.buffer.len() + chunk.len() > 64 * 1024 {
                 return Err(Failure::Unavailable);
             }
             self.buffer.extend_from_slice(&chunk);

@@ -462,6 +462,7 @@ Later decisions carry their own attribution.
     - A parent turn that ends within one second imposes a three-second backoff from completion. Three consecutive instant turns stop re-entry and show an owner action until new role evidence arrives. Shell updates and startup drive re-entry. The existing three-second recheck for an unproven continuation remains bounded to its first 30 seconds.
     - After an authenticated report or an observed terminal role, the ACP hold releases when the bound role is quiet. The next engine change for that task rechecks the current hold even if the completion notification was missed. A queued successor owns its own prompt.
     - Parent delivery respects operator snoozes and can send across a Nucleus-owned snooze. Task-row visibility follows ruling 22.
+    - Held task and inbox ACP streams accept service keepalives as liveness. A missing complete frame or a closed stream triggers capped reconnect backoff; the initial refresh on reattachment restores the current view.
     - A failed parent turn with the Nucleus ACP provider’s own unavailable error on the exact command, run and root node gets a fresh journaled hold on the next pass. Other parent failures retain their owner action; already recorded failed deliveries stay blocked.
     - A report-ready or prerequisite-release notice can make one fresh attempt
       after T3 proves it rejected the exact command. See [Commands](#commands).
