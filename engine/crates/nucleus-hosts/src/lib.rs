@@ -346,6 +346,16 @@ pub trait TaskHost: Send + Sync {
         scratch: &Path,
     ) -> impl Future<Output = Result<OrphanScan, HostError>> + Send;
 
+    /// Identify helpers a provider app-server left in a terminal task's checkout
+    /// (the first root) or run scratch. The caller proves every role has ended.
+    /// # Errors
+    /// Missing process or checkout evidence prevents cleanup.
+    fn terminal_helpers(
+        &self,
+        roots: &[PathBuf],
+        scratch: &Path,
+    ) -> impl Future<Output = Result<Vec<OrphanProcess>, HostError>> + Send;
+
     fn observe_retained(
         &self,
         binding: &Binding,
@@ -966,6 +976,15 @@ impl TaskHost for T3Pass<'_> {
     ) -> Result<OrphanScan, HostError> {
         let inventory = self.process_inventory().await?;
         inventory.terminal_orphans(checkout, scratch).await
+    }
+
+    async fn terminal_helpers(
+        &self,
+        roots: &[PathBuf],
+        scratch: &Path,
+    ) -> Result<Vec<OrphanProcess>, HostError> {
+        let inventory = self.process_inventory().await?;
+        inventory.terminal_helpers(roots, scratch).await
     }
 
     async fn profile_catalog(&self) -> Result<&ProfileCatalog, HostError> {

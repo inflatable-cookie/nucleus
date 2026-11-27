@@ -183,6 +183,20 @@ fn candidate(line: &[u8], parents: &HashMap<u32, u32>) -> Option<(u32, RuntimePr
     Some((pid, RuntimeProcess::from_command(parent, command)?))
 }
 
+/// The identification rule for a host provider app-server, T3's `codex app-server`:
+/// the executable file is named `codex` and its first argument is `app-server`.
+/// The caller must also prove it is a direct child of the verified T3 server.
+pub(crate) fn is_provider_app_server(executable: &str, arguments: &str) -> bool {
+    Path::new(executable)
+        .file_name()
+        .is_some_and(|name| name == "codex")
+        && arguments
+            .strip_prefix(executable)
+            .and_then(|rest| rest.strip_prefix(' '))
+            .and_then(|rest| rest.split_ascii_whitespace().next())
+            == Some("app-server")
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeShape {
     AppServer,
@@ -321,6 +335,26 @@ mod tests {
             standing_runtime_pids(10, &processes, "fixture-thread"),
             HashSet::from([20, 21, 22, 23])
         );
+    }
+
+    #[test]
+    fn only_a_codex_app_server_is_a_provider_app_server() {
+        assert!(is_provider_app_server(
+            "codex",
+            "codex app-server -c thread_unload_delay_secs=0"
+        ));
+        assert!(is_provider_app_server(
+            "/opt/My Tools/codex",
+            "/opt/My Tools/codex app-server"
+        ));
+        for (executable, arguments) in [
+            ("codex", "codex exec app-server"),
+            ("codex", "codex app-server-proxy"),
+            ("node", "node app-server"),
+            ("codex-code-mode-host", "codex-code-mode-host app-server"),
+        ] {
+            assert!(!is_provider_app_server(executable, arguments));
+        }
     }
 
     #[test]
