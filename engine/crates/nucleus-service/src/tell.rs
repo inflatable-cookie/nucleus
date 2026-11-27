@@ -835,6 +835,28 @@ impl Service {
         Ok(true)
     }
 
+    pub(super) async fn resolve_assess_recipient(
+        &self,
+        project: &str,
+    ) -> Result<String, ServiceError> {
+        let candidates = {
+            let state = self.state.lock().await;
+            let mut choices = state.planner_candidates_for(project);
+            choices.sort_by_key(|thread| Some(thread.as_str()) != claimed_thread(&state, project));
+            choices
+        };
+        for actor in candidates {
+            if self.check_registered_planner(&actor).await? {
+                break;
+            }
+        }
+        let state = self.state.lock().await;
+        Ok(tell_planner(&state, project, "", None).map_or_else(
+            || "new planner thread".to_owned(),
+            |planner| planner.identity.id.clone(),
+        ))
+    }
+
     async fn save_tell(
         &self,
         rows: TellRows<'_>,
@@ -871,20 +893,6 @@ fn target_planner<'a>(state: &'a State, row: &TellDelivery) -> Option<&'a Enroll
         &row.sender,
         row.gone_sender.as_deref(),
     )
-}
-
-pub(super) fn assess_recipient(state: &State, project: &str) -> String {
-    if let Some(planner) = tell_planner(state, project, "", None) {
-        return planner.identity.id.clone();
-    }
-    if let Some(claimed) = claimed_thread(state, project) {
-        return claimed.to_owned();
-    }
-    state
-        .planner_candidates_for(project)
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| "new planner thread".to_owned())
 }
 
 fn claimed_thread<'a>(state: &'a State, project: &str) -> Option<&'a str> {

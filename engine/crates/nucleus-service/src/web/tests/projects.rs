@@ -4124,3 +4124,80 @@ async fn item_assess_starts_one_claimed_planner_thread_when_project_has_no_threa
         "queue_after_active"
     );
 }
+
+#[tokio::test]
+async fn item_assess_with_archived_claimed_planner_and_no_fallback_records_new_thread_and_launches()
+{
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/planning/claim",
+            "alpha-planner",
+            json!({}),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    let items = format!("/v1/planning/{alpha}/items");
+    let created = json_body(
+        post_as(
+            &registry.api,
+            &items,
+            &BOARD_KEY,
+            &json!({"kind": "lead", "title": "Orphaned claim", "body": "Claimed planner is archived."}),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().expect("item id").to_owned();
+    let (v1, _) = item_latest_version(&registry.api, &alpha, &id).await;
+
+    // Archive the only claimed planner; no fallback thread exists.
+    registry.archived.store(true, Ordering::Relaxed);
+    let sent = post_as(
+        &registry.api,
+        &format!("{items}/{id}/assess"),
+        &BOARD_KEY,
+        &json!({"version": v1}),
+    )
+    .await;
+    assert_eq!(sent.status(), StatusCode::OK);
+    let (_, entries) = item_latest_version(&registry.api, &alpha, &id).await;
+    let last = entries.last().unwrap();
+    assert_eq!(last["action"], "assess");
+    assert_eq!(last["snapshot"]["recipient"], "new planner thread");
+
+    registry.advance_tell().await.expect("launch replacement");
+    let launched_thread = {
+        let fixture = registry.notices.lock().expect("notices");
+        assert_eq!(fixture.sends.len(), 0);
+        assert_eq!(fixture.launches.len(), 1);
+        let prompt = fixture.launches[0]["initialMessage"]["text"]
+            .as_str()
+            .expect("prompt");
+        assert!(prompt.contains("--disposition completed|deprecated"));
+        fixture.launches[0]["threadId"]
+            .as_str()
+            .expect("thread id")
+            .to_owned()
+    };
+    let state = registry.service.state.lock().await;
+    let project = &state.settings.projects.as_ref().unwrap().projects[&alpha];
+    assert_eq!(
+        project.planner_claim.as_ref().map(|c| c.thread.as_str()),
+        Some(launched_thread.as_str())
+    );
+}

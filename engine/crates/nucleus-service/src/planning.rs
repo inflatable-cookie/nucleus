@@ -187,7 +187,19 @@ impl Service {
         caller: &Authority,
         scope: &ControllerScope,
     ) -> Result<ItemWithTimes, ServiceError> {
-        let (mut state, project) = self.planning_state_in_scope(project, scope).await?;
+        let project = {
+            let (state, project) = self.planning_state_in_scope(project, scope).await?;
+            let item = state
+                .store
+                .item(&project, id)?
+                .ok_or(StoreError::PlanningMissing)?;
+            if !matches!(item.state, ItemState::Open | ItemState::Parked { .. }) {
+                return Err(StoreError::PlanningConflict.into());
+            }
+            project
+        };
+        let recipient = self.resolve_assess_recipient(&project).await?;
+        let mut state = self.state.lock().await;
         let item = state
             .store
             .item(&project, id)?
@@ -195,7 +207,6 @@ impl Service {
         if !matches!(item.state, ItemState::Open | ItemState::Parked { .. }) {
             return Err(StoreError::PlanningConflict.into());
         }
-        let recipient = crate::tell::assess_recipient(&state, &project);
         let project_name = state
             .settings
             .projects
@@ -688,22 +699,15 @@ fn assess_item_text(project_id: &str, project_name: &str, item: &Item) -> String
     let id = &item.id;
     let title = item.content.title.trim();
     let body = item.content.body.trim();
-    let (drop_hint, promote_hint) = match item.kind {
-        ItemKind::Lead => (
-            format!(
-                "`nucleus item.drop {project_id} {id} --disposition deprecated --reason \"…\"`"
-            ),
-            format!(
-                "`nucleus item.edit {project_id} {id} \"<title>\"` (brief with `queue.complexity` on stdin) then `nucleus item.promote {project_id} {id}`"
-            ),
+    let drop_hint = format!(
+        "`nucleus item.drop {project_id} {id} --disposition completed|deprecated --reason \"…\"`"
+    );
+    let promote_hint = match item.kind {
+        ItemKind::Lead => format!(
+            "`nucleus item.edit {project_id} {id} \"<title>\"` (brief with `queue.complexity` on stdin) then `nucleus item.promote {project_id} {id}`"
         ),
-        ItemKind::Papercut => (
-            format!(
-                "`nucleus item.drop {project_id} {id} --disposition completed|deprecated --reason \"…\"`"
-            ),
-            format!(
-                "`nucleus item.edit {project_id} {id} \"<title>\"` (brief on stdin) then `nucleus item.promote {project_id} {id} --complexity <level>`"
-            ),
+        ItemKind::Papercut => format!(
+            "`nucleus item.edit {project_id} {id} \"<title>\"` (brief on stdin) then `nucleus item.promote {project_id} {id} --complexity <level>`"
         ),
     };
     format!(
