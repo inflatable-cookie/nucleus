@@ -48,6 +48,28 @@ test("Rust board settings retain imported profile fields across edits", () => {
 
 const head = "a".repeat(40);
 
+async function capturedTaskOrderRows(): Promise<RustTask[]> {
+  const raw: unknown = JSON.parse(await readFile(new URL("./fixtures/rust-task-order-rows.json", import.meta.url), "utf8"));
+  const transport = createRustBoardTransport(async () => Response.json(raw));
+  return transport.list(new AbortController().signal);
+}
+
+function capturedTask(rows: RustTask[], id: string): RustTask {
+  const row = rows.find(({ identity }) => identity.id === `captured-${id}`);
+  assert.ok(row, `missing captured ${id} /v1/tasks row`);
+  return row;
+}
+
+function taskCopy(row: RustTask, id: string, number: number): RustTask {
+  const reference = `example#${number}`;
+  return {
+    ...row,
+    identity: { ...row.identity, id: `test-${id}`, reference },
+    number,
+    reference,
+  };
+}
+
 function stepEntered(row: RustTask, key: string, at: number): RustTask {
   return {
     ...row,
@@ -60,52 +82,52 @@ function stepEntered(row: RustTask, key: string, at: number): RustTask {
   };
 }
 
-test("Rust task columns sort by their stable API lifecycle times", () => {
-  // rustTaskCard is typed as RustTask, inferred from the /v1/tasks summary schema. These
-  // minimal rows cover comparator-owned fields; the omitted optional wire fields do not
-  // affect ordering, so copying complete response bodies would add no behavior coverage.
-  const admittedAtMs = 1_790_000_000_000;
+test("Rust task columns sort captured /v1/tasks rows by stable lifecycle times", async () => {
+  // Each base row is captured from /v1/tasks in the service test harness, scrubbed and
+  // parsed through the same transport schema used by the board.
+  const rows = await capturedTaskOrderRows();
+  const needsBase = capturedTask(rows, "needs");
+  const admittedAtMs = needsBase.lifecycle.admittedAtMs!;
   const needs = [
-    { ...task("needs-new", "blocked"), attention: "attention" as const, stateSinceMs: admittedAtMs + 1_000, latestEventAtMs: 1_800_000_000_000, number: 3 },
-    { ...task("needs-old", "error"), attention: "attention" as const, stateSinceMs: null, latestEventAtMs: 1_800_000_000_000, number: 1 },
-    { ...task("needs-tie", "blocked"), attention: "attention" as const, stateSinceMs: admittedAtMs, number: 2 },
+    { ...taskCopy(needsBase, "needs-new", 3), stateSinceMs: admittedAtMs + 1_000, latestEventAtMs: admittedAtMs + 99_000 },
+    taskCopy(needsBase, "needs-old", 1),
+    { ...taskCopy(needsBase, "needs-tie", 2), stateSinceMs: admittedAtMs },
   ];
   const queue = [
-    { ...task("queue-normal", "queued"), queuePriority: "normal" as const, number: 2 },
-    { ...task("queue-promoted", "queued"), queuePriority: "promoted" as const, number: 3 },
-    { ...task("queue-held", "queued"), queuePriority: "promoted" as const, hold: { reason: "Held" }, number: 1 },
+    taskCopy(capturedTask(rows, "queue"), "queue-normal", 2),
+    taskCopy(capturedTask(rows, "heldQueue"), "queue-held", 1),
   ];
   const working = [
-    stepEntered({ ...task("working-new", "working"), number: 2 }, "working", 300),
-    stepEntered({ ...task("working-old", "working"), number: 1 }, "working", 100),
+    stepEntered(taskCopy(capturedTask(rows, "working"), "working-new", 2), "working", admittedAtMs + 300),
+    stepEntered(taskCopy(capturedTask(rows, "working"), "working-old", 1), "working", admittedAtMs + 100),
   ];
   const review = [
-    stepEntered({ ...task("review-new", "reviewing"), number: 2 }, "review", 300),
-    stepEntered({ ...task("review-old", "report_ready"), number: 1 }, "report_ready", 100),
+    stepEntered(taskCopy(capturedTask(rows, "review"), "review-new", 2), "review", admittedAtMs + 300),
+    stepEntered(taskCopy(capturedTask(rows, "review"), "review-old", 1), "review", admittedAtMs + 100),
   ];
   const merging = [
-    stepEntered({ ...task("merge-new", "merging"), number: 2 }, "merge", 300),
-    stepEntered({ ...task("merge-old", "merging"), number: 1 }, "merge", 100),
+    stepEntered(taskCopy(capturedTask(rows, "merging"), "merge-new", 2), "merge", admittedAtMs + 300),
+    stepEntered(taskCopy(capturedTask(rows, "merging"), "merge-old", 1), "merge", admittedAtMs + 100),
   ];
   const closing = [
-    stepEntered({ ...task("close-new", "closing"), number: 2 }, "close", 300),
-    stepEntered({ ...task("close-old", "closing"), number: 1 }, "close", 100),
+    stepEntered(taskCopy(capturedTask(rows, "closing"), "close-new", 2), "close", admittedAtMs + 300),
+    stepEntered(taskCopy(capturedTask(rows, "closing"), "close-old", 1), "close", admittedAtMs + 100),
   ];
   const history = [
-    { ...task("history-old", "done"), lifecycle: { ...task("history-old", "done").lifecycle, finishedAtMs: 100 }, number: 1 },
-    { ...task("history-new", "cancelled"), lifecycle: { ...task("history-new", "cancelled").lifecycle, finishedAtMs: 300 }, number: 2 },
+    { ...taskCopy(capturedTask(rows, "history"), "history-old", 1), lifecycle: { ...capturedTask(rows, "history").lifecycle, finishedAtMs: admittedAtMs + 100 } },
+    { ...taskCopy(capturedTask(rows, "history"), "history-new", 2), lifecycle: { ...capturedTask(rows, "history").lifecycle, finishedAtMs: admittedAtMs + 300 } },
   ];
-  const grouped = groupRustTasks([...needs, ...queue, ...working, ...review, ...merging, ...closing, ...history]);
 
-  assert.deepEqual(grouped.needs.map(({ identity }) => identity.id), ["needs-old", "needs-tie", "needs-new"]);
-  assert.deepEqual(grouped.queue.map(({ identity }) => identity.id), ["queue-promoted", "queue-normal", "queue-held"]);
-  assert.deepEqual(grouped.working.map(({ identity }) => identity.id), ["working-old", "working-new"]);
-  assert.deepEqual(grouped.review.map(({ identity }) => identity.id), ["review-old", "review-new"]);
-  assert.deepEqual(grouped.merging.map(({ identity }) => identity.id), ["merge-old", "merge-new"]);
-  assert.deepEqual(grouped.closing.map(({ identity }) => identity.id), ["close-old", "close-new"]);
-  assert.deepEqual(grouped.history.map(({ identity }) => identity.id), ["history-new", "history-old"]);
-  assert.equal(rustCardAgeAt(needs[1]!), needs[1]!.lifecycle.admittedAtMs);
-  assert.equal(rustCardAgeAt({ ...needs[0]!, latestEventAtMs: 1_900_000_000_000 }), admittedAtMs + 1_000);
+  assert.equal(needs[1]!.stateSinceMs, null);
+  assert.deepEqual(groupRustTasks(needs).needs.map(({ identity }) => identity.id), ["test-needs-old", "test-needs-tie", "test-needs-new"]);
+  assert.deepEqual(groupRustTasks(queue).queue.map(({ identity }) => identity.id), ["test-queue-normal", "test-queue-held"]);
+  assert.deepEqual(groupRustTasks(working).working.map(({ identity }) => identity.id), ["test-working-old", "test-working-new"]);
+  assert.deepEqual(groupRustTasks(review).review.map(({ identity }) => identity.id), ["test-review-old", "test-review-new"]);
+  assert.deepEqual(groupRustTasks(merging).merging.map(({ identity }) => identity.id), ["test-merge-old", "test-merge-new"]);
+  assert.deepEqual(groupRustTasks(closing).closing.map(({ identity }) => identity.id), ["test-close-old", "test-close-new"]);
+  assert.deepEqual(groupRustTasks(history).history.map(({ identity }) => identity.id), ["test-history-new", "test-history-old"]);
+  assert.equal(rustCardAgeAt(needs[1]!), admittedAtMs);
+  assert.equal(rustCardAgeAt({ ...needs[0]!, latestEventAtMs: admittedAtMs + 199_000 }), admittedAtMs + 1_000);
 });
 
 test("project activity counts distinct recent tasks and linked planning items", () => {
