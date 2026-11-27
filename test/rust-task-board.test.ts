@@ -61,7 +61,9 @@ function stepEntered(row: RustTask, key: string, at: number): RustTask {
 }
 
 test("Rust task columns sort by their stable API lifecycle times", () => {
-  // These rows use the /v1/tasks summary shape consumed by the board transport.
+  // rustTaskCard is typed as RustTask, inferred from the /v1/tasks summary schema. These
+  // minimal rows cover comparator-owned fields; the omitted optional wire fields do not
+  // affect ordering, so copying complete response bodies would add no behavior coverage.
   const admittedAtMs = 1_790_000_000_000;
   const needs = [
     { ...task("needs-new", "blocked"), attention: "attention" as const, stateSinceMs: admittedAtMs + 1_000, latestEventAtMs: 1_800_000_000_000, number: 3 },

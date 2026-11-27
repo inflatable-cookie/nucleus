@@ -58,7 +58,7 @@ import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
 import { RustTaskProgress } from "../task/rust-progress";
-import { compareRustTasks, rustCardAgeAt, rustColumns, rustQuestionText, rustTaskLabel, rustWaitDetail, type RustCommand, type RustTask } from "../web/rust-board";
+import { compareRustTasks, compareRustTasksForColumn, rustCardAgeAt, rustQuestionText, rustTaskColumn, rustTaskLabel, rustWaitDetail, type RustBoardView, type RustCommand, type RustTask } from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
 
@@ -331,6 +331,21 @@ export type InboxListProps = {
   /** The list's view state the shell keeps across views (`usePipelineState`). */
   pipeline: PipelineState;
 };
+
+function rustBoardColumn(view: InboxListProps["view"]): RustBoardView | undefined {
+  switch (view) {
+    case "needs":
+    case "queue":
+    case "working":
+    case "review":
+    case "closing":
+    case "merging":
+    case "history":
+      return view;
+    default:
+      return undefined;
+  }
+}
 
 const viewTitles: Record<Exclude<BoardView, "planning">, string> = {
   needs: "Needs you",
@@ -802,7 +817,7 @@ export function InboxList({
         contentContainerStyle={{ paddingVertical: space.xs }}
       >
         <BoardCardVariantContext.Provider value="row">
-          {rust && <RustListRows key={view} view={view} rust={rust} c={c} />}
+          {rust && <RustListRows key={view} view={view} column={rustBoardColumn(view)} rust={rust} c={c} />}
           {closedFilter && (
             // Closed has no board cards (triageCards returns none), so these rows are the list.
             <View style={{ gap: space.xxs }}>
@@ -931,15 +946,19 @@ export function InboxList({
 
 const rustPageSize = 25;
 
-export function RustListRows({ c, rust, view }: {
+export function RustListRows({ c, rust, view, column }: {
   c: Colors;
   rust: NonNullable<InboxListProps["rust"]>;
   view: InboxListProps["view"];
+  /** The Inbox passes one grouped board column; lane lists omit it and mix columns. */
+  column?: RustBoardView;
 }) {
   const [limit, setLimit] = useState(rustPageSize);
-  const tasks = [...(rust.tasks ?? [])].sort(compareRustTasks);
+  const tasks = [...(rust.tasks ?? [])].sort(column
+    ? (a, b) => compareRustTasksForColumn(a, b, column)
+    : compareRustTasks);
   const remaining = tasks.length - limit;
-  const ageAt = (task: RustTask) => rustCardAgeAt(task, rustColumns[task.phase] === view ? view : undefined);
+  const ageAt = (task: RustTask) => rustCardAgeAt(task, column ?? rustTaskColumn(task));
   // Ages read the clock, as TypeScript cards do; a list without one does not tick.
   useTick(tasks.some((task) => ageAt(task) !== null) ? 30_000 : null);
   return <>
