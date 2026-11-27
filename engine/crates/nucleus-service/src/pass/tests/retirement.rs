@@ -168,13 +168,13 @@ async fn retirement_requires_archive_or_deletion_evidence_for_omitted_roles() {
         }}));
     assert!(matches!(
         service.archive_done(&row).await,
-        Err(ServiceError::Host(HostError::RowChildBusy))
+        Err(ServiceError::CheckoutRetained(cause)) if cause.contains("every task thread is idle")
     ));
     assert!(checkout.path().is_dir());
     mode.store(1, Ordering::Relaxed);
     assert!(matches!(
         service.archive_done(&row).await,
-        Err(ServiceError::Host(HostError::Uncertain))
+        Err(ServiceError::CheckoutRetained(cause)) if cause.contains("idle or gone")
     ));
     assert!(checkout.path().is_dir());
     mode.store(2, Ordering::Relaxed);

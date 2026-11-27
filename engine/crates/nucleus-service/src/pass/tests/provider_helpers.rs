@@ -96,7 +96,8 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
         home.path(),
     );
     service.fixture_mut().acp_provider = Some("fixture".into());
-    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings::default());
+    // Helper cleanup runs on a profile whose Dispatch was never configured.
+    assert!(service.state.lock().await.settings.dispatch.is_none());
     let terminal = cancelled_cleanup_task(&service).await;
     let id = terminal.task.identity().id.clone();
     let work = service.worktrees();
@@ -148,22 +149,46 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     tokio::time::sleep(Duration::from_millis(2500)).await;
     let parents = [provider.id().unwrap(), lookalike.id().unwrap()];
 
-    // A live role keeps every helper, and the wait names them.
+    // A live role retains the checkout and keeps every helper running.
     let task_thread = nucleus_hosts::parent_thread(&base);
     shell(
         &service,
         json!([{"id":"active-child","parentThreadId":task_thread,"status":"running"}]),
     );
     let outcome = service.archive_done(&terminal).await;
-    assert!(
-        matches!(outcome, Err(ServiceError::Host(HostError::RowChildBusy))),
-        "{outcome:?}"
-    );
+    let Err(ServiceError::CheckoutRetained(cause)) = &outcome else {
+        panic!("{outcome:?}");
+    };
+    assert!(cause.contains("every task thread is idle"), "{cause}");
     for (name, pid) in &pids {
         assert!(alive(*pid), "{name}");
     }
     for kind in ["checkout_process_stop", "checkout_process_result"] {
         assert!(recorded(&service, &id, kind).await.is_empty());
+    }
+    // Rechecks of a task waiting for quiet shell evidence back off.
+    for expected in [3, 6, 12] {
+        let expected = Duration::from_secs(expected);
+        // A pass takes the task's deadlines before it records a result.
+        service.state.lock().await.schedule.park(&id);
+        let before = tokio::time::Instant::now();
+        service
+            .schedule_result(&terminal, &outcome, crate::schedule::Priority::Closeout)
+            .await
+            .unwrap();
+        let after = tokio::time::Instant::now();
+        let state = service.state.lock().await;
+        let due = state.schedule.due(&id).expect("retry");
+        assert!(
+            due - after <= expected && expected <= due - before,
+            "{:?} for {expected:?}",
+            due - before
+        );
+        assert!(matches!(
+            state.wait_detail(&id),
+            Some(crate::WaitDetail::Archive(shown))
+                if shown.contains("every task thread is idle")
+        ));
     }
 
     shell(&service, json!([]));

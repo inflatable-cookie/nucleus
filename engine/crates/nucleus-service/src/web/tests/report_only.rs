@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use nucleus_core::{CallbackCredential, Head, Observation, Role, Workspace};
-use nucleus_hosts::{Binding, HostError};
+use nucleus_hosts::Binding;
 
 use super::{
     planning::put_as,
@@ -494,7 +494,7 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
     let before = host.host_calls();
     assert!(matches!(
         fixture.service.archive_done(&done).await,
-        Err(ServiceError::Host(HostError::Uncertain))
+        Err(ServiceError::CheckoutRetained(cause)) if cause.contains("idle or gone")
     ));
     assert!(fixture.checkout.exists());
     for status in ["running", "unknown"] {
@@ -505,7 +505,7 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
         }}));
         let outcome = fixture.service.archive_done(&done).await;
         assert!(
-            matches!(outcome, Err(ServiceError::Host(HostError::RowChildBusy))),
+            matches!(outcome, Err(ServiceError::CheckoutRetained(ref cause)) if cause.contains("every task thread is idle")),
             "delegated child {status}: {outcome:?}"
         );
         assert!(fixture.checkout.exists());
@@ -620,14 +620,14 @@ async fn cancelled_checkout_only_retires_clean_published_work() {
     std::fs::write(&draft, "unpublished").unwrap();
     assert!(matches!(
         fixture.service.archive_done(&cancelled).await,
-        Err(ServiceError::ArchiveEvidence(_))
+        Err(ServiceError::CheckoutRetained(_))
     ));
     assert_eq!(std::fs::read_to_string(&draft).unwrap(), "unpublished");
     std::fs::remove_file(draft).unwrap();
     *fixture.published.lock().unwrap() = None;
     assert!(matches!(
         fixture.service.archive_done(&cancelled).await,
-        Err(ServiceError::ArchiveEvidence(_))
+        Err(ServiceError::CheckoutRetained(_))
     ));
     assert!(fixture.checkout.is_dir());
     *fixture.published.lock().unwrap() = Some(fixture.head.clone());

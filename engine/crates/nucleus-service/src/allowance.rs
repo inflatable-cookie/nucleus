@@ -116,7 +116,8 @@ impl State {
                 && task.hold().is_none()
                 && task.question().is_none()
                 && task.run().is_none_or(|run| !run.revoked())
-                && matches!(wait, None | Some(WaitReason::Running)),
+                // A failed engine step says nothing about the run, which keeps charging.
+                && matches!(wait, None | Some(WaitReason::Running | WaitReason::EngineBlocked)),
             extension,
         }
     }

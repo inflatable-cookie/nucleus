@@ -10,14 +10,17 @@ use nucleus_core::{
     RunState,
 };
 use nucleus_forge::{ForgeError, GitHub};
-use nucleus_hosts::{RunActivity, T3, TaskHost};
+use nucleus_hosts::{Binding, RunActivity, T3, TaskHost};
 use nucleus_store::EventDraft;
 use tower::ServiceExt;
 
 use super::*;
 use crate::{
     event,
-    tests::{REPOSITORY, code_task_at_merge, fixture, forge_pull, reservation, serve_forge},
+    tests::{
+        REPOSITORY, archived_checkout_rows, code_task_at_merge, fixture, forge_pull, reservation,
+        serve_forge,
+    },
 };
 
 #[path = "tests/briefs.rs"]
@@ -2941,7 +2944,7 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
     std::fs::rename(moved, registered).unwrap();
     publish(&service.host, None);
     assert!(
-        matches!(service.archive_done(&second).await,Err(ServiceError::ArchiveEvidence(cause)) if cause.contains("retained"))
+        matches!(service.archive_done(&second).await,Err(ServiceError::CheckoutRetained(cause)) if cause.contains("retained"))
     );
     assert_eq!(std::fs::read_to_string(&draft).unwrap(), "keep this draft");
     assert_eq!(
@@ -3023,14 +3026,6 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
     let done = service.task(&done.task.identity().id).await.unwrap();
     service.host = service.host.with_quiet_fixture_processes();
     service.host.use_held_shell();
-    service.host.fixture_project_shell(
-        &json!({
-            "snapshotSequence": 1,
-            "projects": [{"id": "local-fixture", "workspaceRoot": service.fixture().checkout}],
-            "threads": []
-        }),
-        "fixture-acp",
-    );
     let (forge, readable, _, _, server) = serve_merged_forge(&service.fixture().start).await;
     readable.store(true, Ordering::Relaxed);
     service.forge = forge;
@@ -3045,6 +3040,7 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
         checkout.allocate(&project.start).unwrap();
         checkout.path().to_owned()
     };
+    hold_archived_workspace(&service, &done.task, &checkout_path);
     let deps = checkout_path.join("node_modules/pkg");
     std::fs::create_dir_all(&deps).unwrap();
     std::fs::write(deps.join("index.js"), "ignored build artifact").unwrap();
@@ -3058,7 +3054,7 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
     assert!(
         matches!(
             &retained_outcome,
-            Err(ServiceError::ArchiveEvidence(cause)) if cause.contains("retained")
+            Err(ServiceError::CheckoutRetained(cause)) if cause.contains("retained")
         ),
         "{retained_outcome:?}"
     );
@@ -3073,6 +3069,23 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
     nucleus_work::prune_trash(service.storage.work(), u64::MAX, |_| true).unwrap();
     assert_eq!(std::fs::read_dir(&trash_root).unwrap().count(), 0);
     server.abort();
+}
+
+fn hold_archived_workspace(service: &Service, task: &Task, checkout: &std::path::Path) {
+    let binding = Binding {
+        project_id: service.fixture().host_project.clone(),
+        branch: checkout.file_name().unwrap().to_str().unwrap().into(),
+        worktree_path: checkout.to_str().unwrap().into(),
+    };
+    service.host.fixture_project_shell(
+        &json!({
+            "snapshotSequence":1,
+            "projects":[{"id":binding.project_id,"workspaceRoot":service.fixture().checkout}],
+            "threads":[],
+            "archivedThreads":archived_checkout_rows(&binding, task)
+        }),
+        "fixture-acp",
+    );
 }
 
 async fn reopen_and_finish_review(
@@ -3223,6 +3236,17 @@ async fn archive_shell_fixture(
         }
     };
     let (host, native) = crate::tests::native_fixture(move |request| {
+        if request["tag"] == "orchestration.getArchivedShellSnapshot" {
+            let writes = writes.lock().unwrap();
+            let rows: Vec<_> = writes.iter().map(|id| json!({
+                "id":id, "projectId":"local-fixture", "worktreePath":path, "branch":branch,
+                "archivedAt":"2026-11-23T15:02:00Z", "deletedAt":null, "status":"idle",
+                "activeRunId":null, "pendingRuntimeRequest":null, "pendingBackgroundTasks":[]
+            })).collect();
+            return json!({"_tag":"Exit","requestId":request["id"],"exit":{
+                "_tag":"Success","value":{"snapshotSequence":16 + writes.len(),"projects":[],"threads":rows}
+            }});
+        }
         if request["tag"] == "orchestration.dispatchCommand" {
             let payload = &request["payload"];
             assert_eq!(payload["type"], "thread.archive");
@@ -4976,4 +5000,195 @@ async fn acp_server_error_is_logged_with_timestamp() {
     assert!(line.contains("+00:00"));
     assert!(line.contains("route=/v1/acp/inbox status=503"));
     assert_eq!(line.lines().count(), 1);
+}
+
+/// Settle one pass result and return the delay before the task's next pass.
+async fn settle_pass(
+    service: &Service,
+    id: &str,
+    result: &Result<Action, ServiceError>,
+) -> (std::time::Duration, std::time::Duration) {
+    let row = service.task(id).await.unwrap();
+    // A pass takes the task's deadlines before it records a result.
+    service.state.lock().await.schedule.park(id);
+    let before = tokio::time::Instant::now();
+    service
+        .schedule_result(&row, result, crate::schedule::Priority::Closeout)
+        .await
+        .unwrap();
+    let after = tokio::time::Instant::now();
+    let due = service.state.lock().await.schedule.due(id).expect("retry");
+    (due - after, due - before)
+}
+
+fn assert_delay((low, high): (std::time::Duration, std::time::Duration), expected: u64) {
+    let expected = std::time::Duration::from_secs(expected);
+    assert!(
+        low <= expected && expected <= high,
+        "{low:?}..{high:?} for {expected:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_tasks() {
+    for phase in ["done", "cancelled"] {
+        let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        let (done, _) = fixture_at_done(&service).await;
+        let id = done.task.identity().id.clone();
+        service
+            .command(
+                &id,
+                &Authority::Operator {
+                    actor: "fixture".into(),
+                },
+                Command::Release,
+            )
+            .await
+            .expect("release hold");
+        let current = service.task(&id).await.unwrap();
+        let mut stored = serde_json::to_value(&current.task).unwrap();
+        stored["phase"] = json!(phase);
+        let row = service
+            .save(
+                &current,
+                serde_json::from_value(stored).unwrap(),
+                &event("fixture_finished"),
+            )
+            .await
+            .unwrap();
+        service.host = service.host.with_quiet_fixture_processes();
+        service.host.use_held_shell();
+        let (forge, readable, _, _, server) = serve_merged_forge(&service.fixture().start).await;
+        readable.store(true, Ordering::Relaxed);
+        service.forge = forge;
+        let draft = {
+            let work = service.worktrees();
+            let project = service.fixture();
+            let identity = row.task.identity();
+            let checkout = work
+                .checkout(&project.checkout, &identity.repository, &identity.id)
+                .unwrap();
+            checkout.allocate(&project.start).unwrap();
+            checkout.path().join("unfinished-draft")
+        };
+        hold_archived_workspace(&service, &row.task, draft.parent().unwrap());
+        std::fs::write(&draft, "keep this draft").unwrap();
+        let mut cause = String::new();
+
+        for expected in [3, 6, 12, 24, 48, 96, 192, 384, 600, 600] {
+            let result = service.archive_done(&row).await;
+            assert!(
+                matches!(result, Err(ServiceError::CheckoutRetained(_))),
+                "{phase}: {result:?}"
+            );
+            assert_delay(settle_pass(&service, &id, &result).await, expected);
+            cause = result.unwrap_err().to_string();
+        }
+        let service = Arc::new(service);
+        let api = settings_api(&service);
+        let view = json_body(get_as(&api, &format!("/v1/tasks/{id}"), &BOARD_KEY).await).await;
+        assert_eq!(view["phase"], phase);
+        assert_eq!(view["wait"], "stopping", "{phase}");
+        assert_eq!(view["waitDetail"], cause.as_str(), "{phase}");
+        assert!(cause.contains("Inspect its local changes"), "{cause}");
+        {
+            // The periodic scan finds the row and must keep the later deadline.
+            let mut state = service.state.lock().await;
+            let due = state.schedule.due(&id).unwrap();
+            let crate::State {
+                schedule,
+                store,
+                capacity_waiters,
+                ..
+            } = &mut *state;
+            schedule
+                .seed(store, tokio::time::Instant::now(), true, capacity_waiters)
+                .unwrap();
+            assert_eq!(schedule.due(&id), Some(due), "{phase}");
+        }
+        if phase == "done" {
+            // A retirement which succeeds forgets the earlier failures.
+            std::fs::remove_file(&draft).unwrap();
+            let result = service.archive_done(&row).await;
+            assert_eq!(result.as_ref().unwrap(), &Action::Nothing);
+            service
+                .schedule_result(&row, &result, crate::schedule::Priority::Closeout)
+                .await
+                .unwrap();
+            let mut state = service.state.lock().await;
+            assert_eq!(state.schedule.back_off(&id), crate::schedule::RETRY);
+        }
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn an_unmapped_error_shows_its_cause_backs_off_and_accepts_recheck() {
+    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let project = service.fixture().clone();
+    let (reserved, _, _) =
+        crate::tests::reservation("wrong-branch", nucleus_core::Entry::Brief, &project.start);
+    let task = Task::new(reserved.identity().clone(), "Fixture".into(), None);
+    {
+        let mut state = service.state.lock().await;
+        state.settings.profiles = Some(Arc::new(nucleus_store::Profiles::default()));
+        state.store.create(&task, &event("fixture")).unwrap();
+    }
+    let id = "wrong-branch";
+    crate::tests::git(&project.checkout, &["switch", "-c", "other"]);
+    let route = service.project_for(task.identity()).await.unwrap();
+    let operator = Authority::Operator {
+        actor: "fixture".into(),
+    };
+
+    for expected in [3, 6, 12] {
+        let error = service
+            .verify_route(task.identity(), &route)
+            .await
+            .expect_err("the registered checkout left its base branch");
+        let delay = settle_pass(&service, id, &Err(error)).await;
+        assert_delay(delay, expected);
+    }
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    let view = json_body(get_as(&api, &format!("/v1/tasks/{id}"), &BOARD_KEY).await).await;
+    assert_eq!(view["wait"], "engine_blocked");
+    assert_eq!(view["stateLabel"], "Queued · blocked");
+    let cause = view["waitDetail"].as_str().unwrap();
+    assert!(
+        cause.contains("base branch") && cause.ends_with("Use Recheck after the repair."),
+        "{cause}"
+    );
+
+    let version = service.task(id).await.unwrap().version;
+    service
+        .recheck(id, version, &operator, None, &ControllerScope::default())
+        .await
+        .unwrap();
+    assert!(service.state.lock().await.schedule.due(id).unwrap() <= tokio::time::Instant::now());
+    let error = service
+        .verify_route(task.identity(), &route)
+        .await
+        .unwrap_err();
+    assert_delay(settle_pass(&service, id, &Err(error)).await, 3);
+
+    // A cancelled task keeps the cause of a closeout which fails the same way.
+    service
+        .command(id, &operator, Command::Cancel)
+        .await
+        .unwrap();
+    for expected in [3, 6] {
+        let error = service
+            .verify_route(task.identity(), &route)
+            .await
+            .unwrap_err();
+        assert_delay(settle_pass(&service, id, &Err(error)).await, expected);
+    }
+    let view = json_body(get_as(&api, &format!("/v1/tasks/{id}"), &BOARD_KEY).await).await;
+    assert_eq!(view["phase"], "cancelled");
+    assert_eq!(view["wait"], "stopping");
+    let cause = view["waitDetail"].as_str().unwrap();
+    assert!(cause.contains("base branch"), "{cause}");
 }

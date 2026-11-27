@@ -202,7 +202,7 @@ impl Service {
                 let running = || {
                     self.state
                         .try_lock()
-                        .is_ok_and(|state| dispatch_running(&state))
+                        .is_ok_and(|state| state.dispatch_mode() == DispatchMode::Running)
                 };
                 if !self.host.write_archive(write, running).await? {
                     return Err(ServiceError::ArchiveEvidence(
@@ -219,11 +219,14 @@ impl Service {
         let workspace = self.observe_checkout_for_retirement(&checkout).await?;
         if workspace == Workspace::Absent {
             if self.has_prunable_registration(&checkout).await?
-                && self.retire_if_idle(task, &binding, &checkout, None).await?
+                && self
+                    .retire_if_idle(task, &binding, &checkout, None)
+                    .await
+                    .map_err(checkout_retirement_wait)?
                     == Retirement::Deferred
             {
-                return Err(ServiceError::ArchiveEvidence(
-                    "Waiting for the checkout to be idle before removal.".into(),
+                return Err(ServiceError::CheckoutRetained(
+                    "Waiting for running Dispatch before removing the checkout.".into(),
                 ));
             }
             return Ok(Action::Nothing);
@@ -234,7 +237,7 @@ impl Service {
             .archive_retirement_head(row, &route, &checkout, &workspace)
             .await?;
         let retained = || {
-            ServiceError::ArchiveEvidence(
+            ServiceError::CheckoutRetained(
                 "The task checkout was retained. Inspect its local changes.".into(),
             )
         };
@@ -253,21 +256,22 @@ impl Service {
             let (publication, _) = self.read_forge(task, &checkout).await?;
             if !matches!(publication, Forge::Merged { ref pr, .. } if Some(pr) == task.pull_request())
             {
-                return Err(ServiceError::ArchiveEvidence(
+                return Err(ServiceError::CheckoutRetained(
                     "The merged pull request does not confirm the retained checkout's recorded head.".into(),
                 ));
             }
         }
         match self
             .retire_if_idle(task, &binding, &checkout, Some(&head))
-            .await?
+            .await
+            .map_err(checkout_retirement_wait)?
         {
             Retirement::Retained if task.report_task().is_some() => Err(
                 ServiceError::ReportCheckout("the checkout changed after publication was proved"),
             ),
             Retirement::Retained => Err(retained()),
-            Retirement::Deferred => Err(ServiceError::ArchiveEvidence(
-                "Waiting for the checkout to be idle before removal.".into(),
+            Retirement::Deferred => Err(ServiceError::CheckoutRetained(
+                "Waiting for running Dispatch before removing the checkout.".into(),
             )),
             Retirement::Removed | Retirement::Absent => Ok(Action::Nothing),
         }
@@ -2220,14 +2224,16 @@ impl Service {
     ) {
         let id = &task.identity().id;
         let sweep = async {
-            if !dispatch_running(&*self.state.lock().await) {
+            if self.dispatch_mode().await != DispatchMode::Running {
                 return Ok(());
             }
             let Ok(quiet) = self.host.prepare_quiet_checkout(binding, task).await else {
                 return Ok(());
             };
             let mut state = self.state.lock().await;
-            if !dispatch_running(&state) || quiet.with_quiet_shell(|| ()).is_err() {
+            if state.dispatch_mode() != DispatchMode::Running
+                || quiet.with_quiet_shell(|| ()).is_err()
+            {
                 return Ok(());
             }
             let mut claim = event("checkout_process_sweep");
@@ -2305,7 +2311,7 @@ impl Service {
             intent.detail = serde_json::json!({"signal":signal,"processes":targets}).to_string();
             {
                 let mut state = self.state.lock().await;
-                if !dispatch_running(&state) {
+                if state.dispatch_mode() != DispatchMode::Running {
                     break;
                 }
                 quiet.with_quiet_shell(|| ())?;
@@ -2317,7 +2323,7 @@ impl Service {
             }
             // Skip a contended signal rather than age the process identity evidence.
             let mut state = self.state.try_lock().map_err(|_| HostError::Uncertain)?;
-            if !dispatch_running(&state) {
+            if state.dispatch_mode() != DispatchMode::Running {
                 break;
             }
             let results = quiet.with_quiet_shell(|| {
@@ -2368,7 +2374,7 @@ impl Service {
         } else {
             Workspace::Absent
         };
-        if !dispatch_running(&*self.state.lock().await) {
+        if self.dispatch_mode().await != DispatchMode::Running {
             return Ok(Retirement::Deferred);
         }
         let quiet = self.host.prepare_quiet_checkout(binding, task).await?;
@@ -2384,10 +2390,9 @@ impl Service {
                     let outcome =
                         checkout.finish_retirement_guarded(initial, head.as_ref(), |step| {
                             let Ok(state) = state.try_lock() else {
-                                host_error = Some(HostError::Uncertain);
                                 return Ok(false);
                             };
-                            if !dispatch_running(&state) {
+                            if state.dispatch_mode() != DispatchMode::Running {
                                 return Ok(false);
                             }
                             match quiet.with_quiet_shell(step) {
@@ -2658,12 +2663,17 @@ fn replay_policy(head: Option<&Head>, observation: &Observation) -> Option<bool>
     (open_at_head && clean_at_head).then_some(false)
 }
 
-fn dispatch_running(state: &crate::State) -> bool {
-    state
-        .settings
-        .dispatch
-        .as_ref()
-        .is_none_or(|dispatch| dispatch.mode == DispatchMode::Running)
+fn checkout_retirement_wait(error: ServiceError) -> ServiceError {
+    let cause = match error {
+        ServiceError::Host(HostError::RowChildBusy) => {
+            "Waiting for T3 to show every task thread is idle."
+        }
+        ServiceError::Host(HostError::Uncertain) => {
+            "Waiting for T3 to confirm the task threads are idle or gone."
+        }
+        error => return error,
+    };
+    ServiceError::CheckoutRetained(cause.into())
 }
 
 #[cfg(test)]
@@ -2936,24 +2946,51 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_cleanup_stops_only_the_checkout_orphan_tree() {
-        exercise_terminal_orphan_cleanup(false, false, true).await;
+        exercise_terminal_orphan_cleanup(
+            false,
+            false,
+            true,
+            Some(nucleus_store::DispatchSettings::default()),
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn terminal_cleanup_stops_only_the_settled_scratch_orphan_tree() {
-        exercise_terminal_orphan_cleanup(true, false, false).await;
+        exercise_terminal_orphan_cleanup(
+            true,
+            false,
+            false,
+            Some(nucleus_store::DispatchSettings::default()),
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn terminal_cleanup_handles_pre_upgrade_scratch() {
-        exercise_terminal_orphan_cleanup(true, true, false).await;
+        exercise_terminal_orphan_cleanup(
+            true,
+            true,
+            false,
+            Some(nucleus_store::DispatchSettings::default()),
+        )
+        .await;
     }
 
-    async fn exercise_terminal_orphan_cleanup(in_scratch: bool, legacy: bool, host_tree: bool) {
+    #[tokio::test]
+    async fn terminal_cleanup_runs_when_dispatch_was_never_configured() {
+        exercise_terminal_orphan_cleanup(false, false, false, None).await;
+    }
+
+    async fn exercise_terminal_orphan_cleanup(
+        in_scratch: bool,
+        legacy: bool,
+        host_tree: bool,
+        dispatch: Option<nucleus_store::DispatchSettings>,
+    ) {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         service.fixture_mut().acp_provider = Some("fixture".into());
-        service.state.lock().await.settings.dispatch =
-            Some(nucleus_store::DispatchSettings::default());
+        service.state.lock().await.settings.dispatch = dispatch;
         let (terminal, scratch) = if in_scratch {
             let (row, scratch) = settled_cleanup_task(&service, home.path(), legacy).await;
             (row, Some(scratch))
@@ -3028,7 +3065,7 @@ mod tests {
         for _ in 0..2 {
             let outcome = service.archive_done(&terminal).await;
             assert!(
-                matches!(&outcome, Err(ServiceError::ArchiveEvidence(s)) if s.contains("retained")),
+                matches!(&outcome, Err(ServiceError::CheckoutRetained(s)) if s.contains("retained")),
                 "{outcome:?}"
             );
         }
@@ -3311,7 +3348,7 @@ mod tests {
         shell(&child);
         assert!(matches!(
             service.archive_done(&row).await,
-            Err(ServiceError::Host(HostError::RowChildBusy))
+            Err(ServiceError::CheckoutRetained(cause)) if cause.contains("every task thread is idle")
         ));
         assert!(checkout.path().exists());
 
@@ -3324,7 +3361,7 @@ mod tests {
         });
         assert!(matches!(
             service.archive_done(&row).await,
-            Err(ServiceError::ArchiveEvidence(_))
+            Err(ServiceError::CheckoutRetained(_))
         ));
         assert!(checkout.path().exists());
         service.state.lock().await.settings.dispatch = None;
@@ -3333,7 +3370,7 @@ mod tests {
         std::fs::write(&draft, "keep this").unwrap();
         assert!(matches!(
             service.archive_done(&row).await,
-            Err(ServiceError::ArchiveEvidence(_))
+            Err(ServiceError::CheckoutRetained(_))
         ));
         assert_eq!(std::fs::read_to_string(&draft).unwrap(), "keep this");
         std::fs::remove_file(&draft).unwrap();
@@ -3341,7 +3378,7 @@ mod tests {
         crate::tests::create_fixture_commit(checkout.path(), "Local closeout commit");
         assert!(matches!(
             service.archive_done(&row).await,
-            Err(ServiceError::ArchiveEvidence(_))
+            Err(ServiceError::CheckoutRetained(_))
         ));
         assert!(checkout.path().exists());
         let Workspace::Clean(published) = checkout.observe().unwrap() else {

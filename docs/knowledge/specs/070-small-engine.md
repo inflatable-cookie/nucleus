@@ -101,7 +101,7 @@ Later decisions carry their own attribution.
      - Remove ports the TypeScript removal dialog. It previews blockers, refuses while tasks are open or offers to cancel them, then deletes the project and its planning records.
      - Finished task history stays readable by repository, but nothing new routes to the removed project.
      - Rust refuses removal while tasks are open or a bound role shows active work. A leftover run record alone does not block a finished task's project removal.
-     - A removal receipt blocks first-contact registration until an operator explicitly re-adds the repository through the Projects settings API. First contact verifies its T3 route again. A project ID can be reused after its old planning cleanup commits. Startup recovery and receipt replay preserve planning in the recreated project. Finished tasks from the removed project remain in history and cannot be reopened.
+     - A removal receipt blocks first-contact registration until an operator explicitly re-adds the repository through the Projects settings API. First contact verifies its T3 route again. A project ID can be reused after its old planning cleanup commits. Startup recovery and receipt replay preserve planning in the recreated project. Finished tasks from the removed project remain in history, cannot be reopened and are no longer scheduled.
 
    It drops agent registration and the preferred and responsible thread fields (rulings 2 and 23), QA settings (ruling 12), Paseo and BB fields (ruling 5) and the separate dormant-projects view. Repository routes come from first contact (ruling 23). Editing autosaves, one noun per control, with explanations only in help popovers.
 
@@ -482,6 +482,7 @@ Later decisions carry their own attribution.
       after T3 proves it rejected the exact command. See [Commands](#commands).
     - No step parks a task silently. Every wait has an observable condition that ends it, or a deadline after which it shows a plain cause and the owner action that clears it.
       T3 backoff delays native requests while local decisions continue. A retryable preflight or unavailable observation has a due time.
+      A failure with no more specific wait shows its cause and offers Recheck. It, and a finished task's retained checkout, retry from 3 seconds, doubling to 10 minutes (nucleus#1640).
       Only a non-queueable, possibly sent role uses the late-reply grace, after a successful read found no receipt.
       For a parent command that cannot replay, a deferral before the exact read stays pending. An inconclusive read once issued, or a successful read with no command match, sends one notice to the responsible planner. The notice asks them to check the earlier turn and use **Next** to review available actions. Next reads the task and leaves the held occurrence in place.
       An unavailable planner route stays due. Once the routing check confirms there is no responsible planner, the card asks the operator to review recovery. The held delivery opens no Inbox form.

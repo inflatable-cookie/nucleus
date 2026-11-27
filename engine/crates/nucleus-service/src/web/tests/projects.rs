@@ -2827,6 +2827,69 @@ async fn project_removal_deletes_planning_and_preserves_finished_repository_hist
     ));
 }
 
+#[tokio::test]
+async fn a_removed_projects_finished_tasks_are_no_longer_scheduled() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let head = "a".repeat(40).parse::<Head>().unwrap();
+    // One finished row, and one which still holds a leftover run record.
+    let ids = ["removed-done", "removed-reserved"];
+    for (id, leftover) in ids.into_iter().zip([None, Some(&head)]) {
+        registry.task("alpha-planner", id).await;
+        finish_removal_task(&registry, id, leftover).await;
+    }
+    let scheduled = |state: &crate::State| {
+        let mut due = state.store.archive_due_ids(None, 32, true).unwrap();
+        due.extend(
+            state
+                .store
+                .active_ids(None, 32)
+                .unwrap()
+                .into_iter()
+                .map(|seed| seed.id),
+        );
+        due.sort();
+        due
+    };
+    assert_eq!(scheduled(&*registry.service.state.lock().await), ids);
+    let id = removal_settings(&registry)
+        .value
+        .projects
+        .into_keys()
+        .next()
+        .unwrap();
+    let removal = format!("{PROJECTS}/{id}/removal");
+    let preview = json_body(get_as(&registry.api, &removal, &BOARD_KEY).await).await;
+    let confirmation = json!({"digest":preview["digest"], "reason":"Retired fixture"});
+    assert_eq!(
+        post_as(&registry.api, &removal, &BOARD_KEY, &confirmation)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    {
+        // A retry queued before the removal is still due.
+        let mut state = registry.service.state.lock().await;
+        assert!(scheduled(&state).is_empty());
+        for id in ids {
+            state.schedule.wake(
+                id,
+                tokio::time::Instant::now(),
+                crate::schedule::Priority::Closeout,
+            );
+        }
+    }
+    let outcomes = registry.service.pass().await.unwrap();
+    assert_eq!(outcomes.len(), ids.len());
+    for outcome in outcomes {
+        assert_eq!(outcome.result.unwrap(), Action::Nothing, "{}", outcome.task);
+    }
+    let state = registry.service.state.lock().await;
+    for id in ids {
+        assert_eq!(state.schedule.due(id), None, "{id}");
+    }
+}
+
 async fn assert_retirement_history(registry: &Registry, task_path: &str) {
     let response = get_as(&registry.api, &format!("{task_path}/history"), &BOARD_KEY).await;
     assert_eq!(response.status(), StatusCode::OK);
