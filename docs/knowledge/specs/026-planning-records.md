@@ -529,8 +529,16 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   **Working** (working tasks), **In review** (tasks awaiting or under review) and
   **Closing** (verifying, merging and closing tasks). The menu reads Needs you, a
   gap, Planning, Leads, Papercuts, Queue, a gap, Working, In review and
-  Closing; the gaps are spacing, never a drawn line (nucleus#1540). Each entry
-  shows its real total — Planning shows the number of open (active) lanes the
+  Closing; the gaps are spacing, never a drawn line (nucleus#1540). The Rust
+  board adds **Projects** (nucleus#1666; Tom, 2026-11-27) after the first gap and
+  above Planning, with no count: a horizontally scrolling board with a fixed-width
+  column per non-archived project, in the header project select's order. Each
+  column pins a header card with the project and its open Leads, open Papercuts
+  and queued Queue counts. Each count opens that list filtered to the project.
+  Under the header, the column scrolls the project's active task cards (Needs
+  you, Working, In review, Merging and Closing) in stage order. A project with
+  nothing active keeps its header card. A narrow board shows one column at a time.
+  Each other entry shows its real total — Planning shows the number of open (active) lanes the
   selected projects list, counting a lane two selected projects list once; only
   Needs you is highlighted.
   An entry whose count is 0 renders dimmed but stays selectable; the selected

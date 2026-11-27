@@ -1121,8 +1121,65 @@ mod tests {
         }
     }
 
+    async fn prime_then_503_host(
+        thread: &str,
+        checkout: &Path,
+    ) -> (T3, tokio::task::JoinHandle<()>) {
+        let reject = Arc::new(AtomicBool::new(false));
+        let thread_id = thread.to_owned();
+        let (host, server) =
+            crate::tests::native_fixture_with_ticket_gate(Arc::clone(&reject), move |req| {
+                assert_eq!(req["tag"], "orchestration.subscribeThread");
+                json!({
+                    "_tag":"Chunk","requestId":req["id"],"values":[
+                        {"kind":"snapshot","snapshotSequence":2,"projection":{
+                            "thread":{"id":thread_id,"projectId":"local-fixture","updatedAt":"2026-11-24T10:00:00Z"},
+                            "messages":[],"runs":[]
+                        }},
+                        {"kind":"synchronized"}
+                    ]
+                })
+            })
+            .await;
+        host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{
+                "snapshotSequence":2,
+                "projects":[{"id":"local-fixture","workspaceRoot":checkout}],
+                "threads":[{
+                    "id":thread,"projectId":"local-fixture",
+                    "updatedAt":"2026-11-24T10:00:00Z","archivedAt":null,"deletedAt":null
+                }]
+            }
+        }));
+        let probe = T3::prepare_notice(thread.into(), "probe".into(), "probe").unwrap();
+        let _ = host.observe_notice(&probe).await.unwrap();
+        reject.store(true, Ordering::Relaxed);
+        host.fixture_disconnect();
+        (host, server)
+    }
+
     #[tokio::test]
     async fn uncertain_drop_after_send_keeps_question_bound_while_not_sent_clears_it() {
+        // Part 1: pre-send 503 returns NotSent(Unavailable), clears question_delivery and audits it.
+        let (_home, mut service) = crate::tests::fixture(GitHub::new("unused-test-forge").unwrap());
+        let checkout = service.fixture().checkout.clone();
+        let (host, server) = prime_then_503_host("planner-a", &checkout).await;
+        service.host = host;
+
+        let row = seed_question(&service).await;
+        let err = service.notify_question(&row).await.unwrap_err();
+        assert!(matches!(err, ServiceError::Host(HostError::Unavailable)));
+        let cleared = service.task("notice").await.unwrap();
+        assert_eq!(cleared.task.question_delivery(), None);
+        let history = service.history("notice", None, 20).await.unwrap();
+        assert!(
+            history
+                .iter()
+                .any(|entry| entry.content.kind == "question_delivery_not_sent")
+        );
+        server.abort();
+
+        // Part 2: post-send drop after receiving dispatchCommand keeps question_delivery bound.
         let (_home, mut service) = crate::tests::fixture(GitHub::new("unused-test-forge").unwrap());
         let checkout = service.fixture().checkout.clone();
         let sent = Arc::new(Mutex::new(Vec::<Value>::new()));
@@ -1148,7 +1205,6 @@ mod tests {
             }),
             Some("orchestration.dispatchCommand") => {
                 sent_log.lock().unwrap().push(request["payload"].clone());
-                // Drop connection after receiving the write to simulate uncertain delivery.
                 Value::Null
             }
             other => panic!("unexpected request: {other:?}"),
@@ -1159,7 +1215,6 @@ mod tests {
         let row = seed_question(&service).await;
         let err = service.notify_question(&row).await.unwrap_err();
         assert!(matches!(err, ServiceError::Host(HostError::Unavailable)));
-        // Uncertain delivery after write keeps question_delivery bound with last_send_at_ms set.
         let after = service.task("notice").await.unwrap();
         let delivery = after
             .task

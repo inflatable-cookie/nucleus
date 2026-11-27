@@ -27,13 +27,7 @@ import {
 import { openScopeLanes } from "../../shared/project-scope";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { useRpc } from "../shell";
-import {
-  Button,
-  DropdownSelect,
-  muted,
-  row,
-  type Colors,
-} from "../controls";
+import { Button, DropdownSelect, muted, row, type Colors } from "../controls";
 import { projectName } from "./text";
 import { useTick } from "../use-tick";
 import { relativeAge } from "../../shared/pipeline-board";
@@ -52,7 +46,18 @@ import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
 import { RustTaskProgress } from "../task/rust-progress";
-import { compareRustTasks, compareRustTasksForColumn, rustCardAgeAt, rustQuestionText, rustTaskColumn, rustTaskLabel, rustWaitDetail, type RustBoardView, type RustCommand, type RustTask } from "../web/rust-board";
+import {
+  compareRustTasks,
+  compareRustTasksForColumn,
+  rustCardAgeAt,
+  rustQuestionText,
+  rustTaskColumn,
+  rustTaskLabel,
+  rustWaitDetail,
+  type RustBoardView,
+  type RustCommand,
+  type RustTask,
+} from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
 
@@ -260,9 +265,7 @@ export function useInboxBoard({
   // lists, counted once (nucleus#1546). The tag filter never narrows it,
   // like the rest of the menu counts.
   const planning = useMemo(
-    () =>
-      openScopeLanes(state?.projects ?? [], lanes ?? [], selection)
-        .length,
+    () => openScopeLanes(state?.projects ?? [], lanes ?? [], selection).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [state?.projects, lanes, selectionKey],
   );
@@ -286,14 +289,18 @@ export type InboxListProps = {
   inbox: InboxBoard;
   /** The selected project keys; empty shows every project. Closed rows follow it like the cards. */
   scope?: readonly string[];
-  view: Exclude<BoardView, "planning">;
+  view: Exclude<BoardView, "planning" | "projects">;
   rust?: {
     tasks: RustTask[] | undefined;
     error: unknown;
     retry: () => void;
     selected: string | null;
     onSelect: (id: string) => void;
-    project: (task: RustTask) => { name: string; key?: string; badge: ProjectBadge | null };
+    project: (task: RustTask) => {
+      name: string;
+      key?: string;
+      badge: ProjectBadge | null;
+    };
     busy?: boolean;
     onCommand?: (id: string, command: RustCommand) => void;
   };
@@ -323,7 +330,9 @@ export type InboxListProps = {
   pipeline: PipelineState;
 };
 
-function rustBoardColumn(view: InboxListProps["view"]): RustBoardView | undefined {
+function rustBoardColumn(
+  view: InboxListProps["view"],
+): RustBoardView | undefined {
   switch (view) {
     case "needs":
     case "queue":
@@ -338,7 +347,10 @@ function rustBoardColumn(view: InboxListProps["view"]): RustBoardView | undefine
   }
 }
 
-const viewTitles: Record<Exclude<BoardView, "planning">, string> = {
+const viewTitles: Record<
+  Exclude<BoardView, "planning" | "projects">,
+  string
+> = {
   needs: "Needs you",
   leads: "Leads",
   papercuts: "Papercuts",
@@ -396,13 +408,17 @@ export function InboxList({
   } = pipeline;
   const { board, listCounts: counts, triageTagOptions } = inbox;
   const legacyView = view === "merging" || view === "history" ? null : view;
-  const [triageFilters, setTriageFilters] = useState<Record<"leads" | "papercuts", TriageFilter>>({
-    leads: "All", papercuts: "All",
+  const [triageFilters, setTriageFilters] = useState<
+    Record<"leads" | "papercuts", TriageFilter>
+  >({
+    leads: "All",
+    papercuts: "All",
   });
   const triageView = view === "leads" || view === "papercuts" ? view : null;
   const stateOptions = rustTriageStates;
   // Closed: promoted and dropped items, read apart from the board's cards.
-  const closedFilter = triageView !== null && triageFilters[triageView] === "Closed";
+  const closedFilter =
+    triageView !== null && triageFilters[triageView] === "Closed";
   const readClosed = useRpc(api.itemClosed);
   const closedKind = view === "papercuts" ? "papercut" : "lead";
   const closedQuery = useQuery({
@@ -411,11 +427,18 @@ export function InboxList({
     enabled: closedFilter,
   });
   const closedItems = useMemo(
-    () => closedQuery.data?.filter((item) => scope.length === 0 || scope.includes(item.projectKey)),
+    () =>
+      closedQuery.data?.filter(
+        (item) => scope.length === 0 || scope.includes(item.projectKey),
+      ),
     [closedQuery.data, scope],
   );
   const sections = legacyView
-    ? inboxSections(board, legacyView, triageView ? triageFilters[triageView] : undefined)
+    ? inboxSections(
+        board,
+        legacyView,
+        triageView ? triageFilters[triageView] : undefined,
+      )
     : [];
   const loadedPage = useRef({ view, count: triagePageSize });
   const isTriageList = triageView !== null;
@@ -504,7 +527,10 @@ export function InboxList({
     return decision?.headline ?? decision?.question;
   };
   const renderCard = (card: PipelineCard) => {
-    const projectKey = card.kind === "decision" || card.kind === "lead" ? card.value.projectKey ?? undefined : undefined;
+    const projectKey =
+      card.kind === "decision" || card.kind === "lead"
+        ? (card.value.projectKey ?? undefined)
+        : undefined;
     const key = JSON.stringify([card.kind, projectKey, card.id]);
     const badgeFor = (task: TaskSummary) =>
       task.hostId
@@ -516,16 +542,21 @@ export function InboxList({
     switch (card.kind) {
       case "decision": {
         const asking = card.value.askedBy.project;
-        const project = asking && projectForRepository(asking.path, asking.origin);
+        const project =
+          asking && projectForRepository(asking.path, asking.origin);
         return (
           <DecisionCard
             key={key}
             decision={card.value}
-            projectBadge={asking ? (state?.repositoryBadges?.[asking.path] ?? null) : null}
+            projectBadge={
+              asking ? (state?.repositoryBadges?.[asking.path] ?? null) : null
+            }
             projectLabel={project?.name}
             projectKey={project?.key}
             c={c}
-            selected={openDecisionId === card.id && recordProject === projectKey}
+            selected={
+              openDecisionId === card.id && recordProject === projectKey
+            }
             onPress={() => onSelectDecision(card.id, projectKey)}
           />
         );
@@ -605,9 +636,12 @@ export function InboxList({
             c={c}
             projectForRepository={projectForRepository}
             repositoryBadges={state?.repositoryBadges}
-            selected={recordProject === projectKey && (selectedLeadId === card.id || openPapercutId === card.id)}
+            selected={
+              recordProject === projectKey &&
+              (selectedLeadId === card.id || openPapercutId === card.id)
+            }
             onSelectLead={(id) => onSelectLead(id, null, projectKey)}
-            onSelectPapercut={id => onSelectPapercut(id, projectKey)}
+            onSelectPapercut={(id) => onSelectPapercut(id, projectKey)}
             // The Leads and Papercuts views list one kind, so line 1 starts
             // with the project; mixed lists keep the kind word.
             showKindWord={view !== "leads" && view !== "papercuts"}
@@ -656,18 +690,27 @@ export function InboxList({
     for (const item of queuedHidden) placeHeld(item.repoPath);
     return rows;
   };
-  const viewCount = isTriageList ? totalInList : (legacyView ? counts[legacyView] : 0) + (rust?.tasks?.length ?? 0);
+  const viewCount = isTriageList
+    ? totalInList
+    : (legacyView ? counts[legacyView] : 0) + (rust?.tasks?.length ?? 0);
   const title = viewTitles[view];
   const total =
     sections.reduce((sum, section) => sum + section.cards.length, 0) +
     (view === "queue"
       ? queuedHidden.reduce((sum, item) => sum + item.hidden, 0)
       : 0);
-  const readState = rust && !rust.tasks
-    ? (rust.error ? "failed" : "loading")
-    : rust && view === "needs" && state && !decisions
-      ? (decisionsError ? "failed" : "loading")
-      : legacyView ? boardRead : "loaded";
+  const readState =
+    rust && !rust.tasks
+      ? rust.error
+        ? "failed"
+        : "loading"
+      : rust && view === "needs" && state && !decisions
+        ? decisionsError
+          ? "failed"
+          : "loading"
+        : legacyView
+          ? boardRead
+          : "loaded";
   const closedCount = closedItems?.length ?? 0;
   const countText = closedFilter
     ? closedItems
@@ -727,13 +770,23 @@ export function InboxList({
               <DropdownSelect
                 compact
                 c={c}
-                label={triageView === "leads" ? "Filter leads by state" : "Filter papercuts by state"}
+                label={
+                  triageView === "leads"
+                    ? "Filter leads by state"
+                    : "Filter papercuts by state"
+                }
                 value={triageFilters[triageView]}
-                options={stateOptions.map((state) => ({ value: state, label: state }))}
+                options={stateOptions.map((state) => ({
+                  value: state,
+                  label: state,
+                }))}
                 onChange={(value) => {
                   const filter = stateOptions.find((state) => state === value);
                   if (!filter) return;
-                  setTriageFilters((current) => ({ ...current, [triageView]: filter }));
+                  setTriageFilters((current) => ({
+                    ...current,
+                    [triageView]: filter,
+                  }));
                   setShown(triagePageSize);
                   loadedPage.current = { view, count: triagePageSize };
                 }}
@@ -763,7 +816,15 @@ export function InboxList({
         contentContainerStyle={{ paddingVertical: space.xs }}
       >
         <BoardCardVariantContext.Provider value="row">
-          {rust && <RustListRows key={view} view={view} column={rustBoardColumn(view)} rust={rust} c={c} />}
+          {rust && (
+            <RustListRows
+              key={view}
+              view={view}
+              column={rustBoardColumn(view)}
+              rust={rust}
+              c={c}
+            />
+          )}
           {closedFilter && (
             // Closed has no board cards (triageCards returns none), so these rows are the list.
             <View style={{ gap: space.xxs }}>
@@ -773,11 +834,19 @@ export function InboxList({
                   item.state === "promoted"
                     ? { tone: "success" as const, state: "Promoted" }
                     : item.disposition === "completed"
-                      ? { tone: "success" as const, state: "Dropped · completed" }
-                      : { tone: "muted" as const, state: "Dropped · deprecated" };
+                      ? {
+                          tone: "success" as const,
+                          state: "Dropped · completed",
+                        }
+                      : {
+                          tone: "muted" as const,
+                          state: "Dropped · deprecated",
+                        };
                 const selectedHere =
                   recordProject === item.projectKey &&
-                  (item.kind === "papercut" ? openPapercutId : selectedLeadId) === item.id;
+                  (item.kind === "papercut"
+                    ? openPapercutId
+                    : selectedLeadId) === item.id;
                 return (
                   <BoardCard
                     key={`${item.projectKey}/${item.id}`}
@@ -785,7 +854,13 @@ export function InboxList({
                     kind={item.kind}
                     label={`${word}: ${item.title}, Status: ${status.state}`}
                     title={item.title}
-                    project={<CardProject c={c} name={item.projectName} projectKey={item.projectKey} />}
+                    project={
+                      <CardProject
+                        c={c}
+                        name={item.projectName}
+                        projectKey={item.projectKey}
+                      />
+                    }
                     status={status}
                     age={item.atMs === null ? null : relativeAge(item.atMs)}
                     selected={selectedHere}
@@ -798,8 +873,14 @@ export function InboxList({
                 );
               })}
               {closedQuery.error ? (
-                <BoardCard c={c} selected={false} title="Could not load closed items" label="Retry loading closed items"
-                  onPress={() => void closedQuery.refetch()} status={{ state: "Retry", tone: "warning" }} />
+                <BoardCard
+                  c={c}
+                  selected={false}
+                  title="Could not load closed items"
+                  label="Retry loading closed items"
+                  onPress={() => void closedQuery.refetch()}
+                  status={{ state: "Retry", tone: "warning" }}
+                />
               ) : null}
             </View>
           )}
@@ -842,7 +923,10 @@ export function InboxList({
               c={c}
               more={queuedMore}
               page={heldShown}
-              label={pageLabel(Math.min(queuedPageSize, queuedLeft), "queued task")}
+              label={pageLabel(
+                Math.min(queuedPageSize, queuedLeft),
+                "queued task",
+              )}
               onMore={loadNextPage}
             />
           )}
@@ -867,23 +951,38 @@ export function InboxList({
         {/* A loading or failed read is never shown as empty (nucleus-ui finding 1). One list has one empty state. */}
         {closedFilter ? (
           closedItems && closedCount === 0 ? (
-            <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>Nothing here.</Text>
+            <Text
+              style={{ ...muted(c), textAlign: "center", padding: space.xl }}
+            >
+              Nothing here.
+            </Text>
           ) : !closedItems && !closedQuery.error ? (
-            <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>Loading…</Text>
+            <Text
+              style={{ ...muted(c), textAlign: "center", padding: space.xl }}
+            >
+              Loading…
+            </Text>
           ) : null
-        ) : ((!rust && boardRead !== "loaded") || (readState === "loaded" && total === 0 && !rust?.tasks?.length)) && (
-          <Text style={{ ...muted(c), textAlign: "center", padding: space.xl }}>
-            {boardRead === "failed"
-              ? "The board could not be read; see the error above."
-              : boardRead === "loading" ||
-                  ((view === "leads" || view === "papercuts") && leadsLoading)
-                ? "Loading…"
-                : view === "leads" &&
-                    triageTag &&
-                    triageCards(board, "leads", "All").length === 0
-                  ? "No records carry this tag."
-                  : "Nothing here."}
-          </Text>
+        ) : (
+          ((!rust && boardRead !== "loaded") ||
+            (readState === "loaded" &&
+              total === 0 &&
+              !rust?.tasks?.length)) && (
+            <Text
+              style={{ ...muted(c), textAlign: "center", padding: space.xl }}
+            >
+              {boardRead === "failed"
+                ? "The board could not be read; see the error above."
+                : boardRead === "loading" ||
+                    ((view === "leads" || view === "papercuts") && leadsLoading)
+                  ? "Loading…"
+                  : view === "leads" &&
+                      triageTag &&
+                      triageCards(board, "leads", "All").length === 0
+                    ? "No records carry this tag."
+                    : "Nothing here."}
+            </Text>
+          )
         )}
       </ScrollView>
     </View>
@@ -892,63 +991,131 @@ export function InboxList({
 
 const rustPageSize = 25;
 
-export function RustListRows({ c, rust, view, column }: {
+export function RustListRows({
+  c,
+  rust,
+  view,
+  column,
+  hideProject = false,
+}: {
   c: Colors;
   rust: NonNullable<InboxListProps["rust"]>;
   view: InboxListProps["view"];
   /** The Inbox passes one grouped board column; lane lists omit it and mix columns. */
   column?: RustBoardView;
+  /** A project's own column (Projects overview) already names the project. */
+  hideProject?: boolean;
 }) {
   const [limit, setLimit] = useState(rustPageSize);
-  const tasks = [...(rust.tasks ?? [])].sort(column
-    ? (a, b) => compareRustTasksForColumn(a, b, column)
-    : compareRustTasks);
+  const tasks = [...(rust.tasks ?? [])].sort(
+    column
+      ? (a, b) => compareRustTasksForColumn(a, b, column)
+      : compareRustTasks,
+  );
   const remaining = tasks.length - limit;
-  const ageAt = (task: RustTask) => rustCardAgeAt(task, column ?? rustTaskColumn(task));
+  const ageAt = (task: RustTask) =>
+    rustCardAgeAt(task, column ?? rustTaskColumn(task));
   // Ages read the clock, as TypeScript cards do; a list without one does not tick.
   useTick(tasks.some((task) => ageAt(task) !== null) ? 30_000 : null);
-  return <>
-    {tasks.slice(0, limit).map((task) => {
-      // The task number alone, as on TypeScript cards; the project shows beside it.
-      const reference = task.number == null ? rustTaskLabel(task) : `#${task.number}`;
-      const question = view === "needs" ? task.question : null;
-      const title = question ? rustQuestionText(question) : task.title || reference;
-      const detail = task.hold?.reason ?? rustWaitDetail(task);
-      const cardAgeAt = ageAt(task);
-      const project = rust.project(task);
-      const canPrioritize = task.phase === "queued" || task.wait === "capacity";
-      const promoted = task.queuePriority === "promoted";
-      return <BoardCard key={task.identity.id} c={c} kind={question ? "decision" : "task"}
-        title={title} label={title === reference ? title : `${reference}, ${title}`} meta={title === reference ? null : reference}
-        project={<CardProject c={c} name={project.name} projectKey={project.key} badge={project.badge} />}
-        status={{
-          tone: task.phase === "done" ? "success" : task.hold || task.attention === "attention" ? "warning" : "muted",
-          state: task.stateLabel, detail: question ? null : detail,
-        }}
-        age={cardAgeAt === null ? null : relativeAge(cardAgeAt)}
-        flags={canPrioritize && promoted ? <Badge label="Promoted" tone="accent" c={c} a11y="Promoted" /> : undefined}
-        actions={canPrioritize && rust.onCommand ? (
-          <View style={{ ...row, gap: space.xs }}>
-            <Button
-              small
-              c={c}
-              disabled={rust.busy}
-              text={promoted ? "Demote" : "Promote"}
-              label={`${promoted ? "Demote" : "Promote"} ${reference}`}
-              onPress={() => rust.onCommand?.(task.identity.id, promoted ? { demote: task.version } : { promote: task.version })}
-            />
-          </View>
-        ) : undefined}
-        progress={<RustTaskProgress task={task} c={c} />}
-        selected={rust.selected === task.identity.id} onPress={() => rust.onSelect(task.identity.id)} />;
-    })}
-    <PageSentinel c={c} more={remaining > 0} page={limit}
-      label={pageLabel(Math.min(rustPageSize, remaining), "task")}
-      onMore={() => setLimit((current) => current + rustPageSize)} />
-    {Boolean(rust.error) && <BoardCard c={c} selected={false} title="Could not load engine tasks"
-      label="Retry loading engine tasks" onPress={rust.retry}
-      status={{ state: "Retry", tone: "warning" }} />}
-    {!rust.tasks && !rust.error &&
-      <Text style={{ ...muted(c), textAlign: "center", padding: space.md }}>Loading engine tasks…</Text>}
-  </>;
+  return (
+    <>
+      {tasks.slice(0, limit).map((task) => {
+        // The task number alone, as on TypeScript cards; the project shows beside it.
+        const reference =
+          task.number == null ? rustTaskLabel(task) : `#${task.number}`;
+        const question = view === "needs" ? task.question : null;
+        const title = question
+          ? rustQuestionText(question)
+          : task.title || reference;
+        const detail = task.hold?.reason ?? rustWaitDetail(task);
+        const cardAgeAt = ageAt(task);
+        const project = rust.project(task);
+        const canPrioritize =
+          task.phase === "queued" || task.wait === "capacity";
+        const promoted = task.queuePriority === "promoted";
+        return (
+          <BoardCard
+            key={task.identity.id}
+            c={c}
+            kind={question ? "decision" : "task"}
+            title={title}
+            label={title === reference ? title : `${reference}, ${title}`}
+            meta={title === reference ? null : reference}
+            project={
+              hideProject ? undefined : (
+                <CardProject
+                  c={c}
+                  name={project.name}
+                  projectKey={project.key}
+                  badge={project.badge}
+                />
+              )
+            }
+            status={{
+              tone:
+                task.phase === "done"
+                  ? "success"
+                  : task.hold || task.attention === "attention"
+                    ? "warning"
+                    : "muted",
+              state: task.stateLabel,
+              detail: question ? null : detail,
+            }}
+            age={cardAgeAt === null ? null : relativeAge(cardAgeAt)}
+            flags={
+              canPrioritize && promoted ? (
+                <Badge label="Promoted" tone="accent" c={c} a11y="Promoted" />
+              ) : undefined
+            }
+            actions={
+              canPrioritize && rust.onCommand ? (
+                <View style={{ ...row, gap: space.xs }}>
+                  <Button
+                    small
+                    c={c}
+                    disabled={rust.busy}
+                    text={promoted ? "Demote" : "Promote"}
+                    label={`${promoted ? "Demote" : "Promote"} ${reference}`}
+                    onPress={() =>
+                      rust.onCommand?.(
+                        task.identity.id,
+                        promoted
+                          ? { demote: task.version }
+                          : { promote: task.version },
+                      )
+                    }
+                  />
+                </View>
+              ) : undefined
+            }
+            progress={<RustTaskProgress task={task} c={c} />}
+            selected={rust.selected === task.identity.id}
+            onPress={() => rust.onSelect(task.identity.id)}
+          />
+        );
+      })}
+      <PageSentinel
+        c={c}
+        more={remaining > 0}
+        page={limit}
+        label={pageLabel(Math.min(rustPageSize, remaining), "task")}
+        onMore={() => setLimit((current) => current + rustPageSize)}
+      />
+      {Boolean(rust.error) && (
+        <BoardCard
+          c={c}
+          selected={false}
+          title="Could not load engine tasks"
+          label="Retry loading engine tasks"
+          onPress={rust.retry}
+          status={{ state: "Retry", tone: "warning" }}
+        />
+      )}
+      {!rust.tasks && !rust.error && (
+        <Text style={{ ...muted(c), textAlign: "center", padding: space.md }}>
+          Loading engine tasks…
+        </Text>
+      )}
+    </>
+  );
 }

@@ -363,7 +363,7 @@ impl Rpc {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "loopback-fixture"))]
     pub(crate) fn socket_clear_for_test(&self) {
         *self.socket.lock().expect("request socket") = None;
     }

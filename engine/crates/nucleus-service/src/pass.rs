@@ -1978,7 +1978,7 @@ impl Service {
 
     // A report is accepted while an effect waits on the work volume. Such an
     // effect may not send for the row it saw before that wait.
-    async fn require_unchanged(&self, task: &Task) -> Result<(), ServiceError> {
+    pub(super) async fn require_unchanged(&self, task: &Task) -> Result<(), ServiceError> {
         let state = self.state.lock().await;
         let current = state.store.row(&task.identity().id)?;
         if current.is_some_and(|row| row.task != *task) {
@@ -2116,6 +2116,9 @@ impl Service {
             return Ok(Action::Wait(WaitReason::Prerequisite));
         }
         self.require_published_approval(row, target).await?;
+        if self.dispatch_mode().await == DispatchMode::Stopped {
+            return Err(ServiceError::MergeDispatchStopped);
+        }
         let attempt = self
             .forge
             .merge(task, target)
@@ -4229,6 +4232,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stopped_dispatch_waits_then_merges_the_approved_head() {
+        let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+        let head = service.fixture().start.clone();
+        let (task, _) = code_task_at_merge("worker", &head);
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .unwrap();
+        let merged = Arc::new(AtomicBool::new(false));
+        let puts = Arc::new(AtomicUsize::new(0));
+        let read_merged = Arc::clone(&merged);
+        let write_merged = Arc::clone(&merged);
+        let writes = Arc::clone(&puts);
+        let mut pull = forge_pull(&head);
+        pull["head"]["ref"] = json!("ns-worker");
+        let checks = forge_checks(&head);
+        let app = Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async move {
+                    let mut pull = pull;
+                    if read_merged.load(Ordering::Relaxed) {
+                        pull["merged"] = json!(true);
+                        pull["state"] = json!("closed");
+                        pull["merge_commit_sha"] = json!("f".repeat(40));
+                    }
+                    Json(pull)
+                }),
+            )
+            .route("/graphql", post(move || async move { Json(checks) }))
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1/merge"),
+                put(move || async move {
+                    writes.fetch_add(1, Ordering::Relaxed);
+                    write_merged.store(true, Ordering::Relaxed);
+                    Json(json!({"sha": "f".repeat(40), "merged": true, "message": "merged"}))
+                }),
+            );
+        let (forge, server) = serve_forge(app).await;
+        service.forge = forge;
+        service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+            mode: DispatchMode::Stopped,
+            ..Default::default()
+        });
+        let host = service.host.fixture_pass();
+        let row = service.task("worker").await.unwrap();
+        let result = Box::pin(service.advance(&row, &host)).await;
+        assert!(matches!(result, Err(ServiceError::MergeDispatchStopped)));
+        assert_eq!(puts.load(Ordering::Relaxed), 0);
+        let (wait, detail) = crate::task_wait(&row, &result);
+        assert_eq!(wait, Some(WaitReason::Capacity));
+        assert!(
+            matches!(detail, Some(crate::WaitDetail::Observation(cause)) if cause.contains("Dispatch"))
+        );
+        assert_eq!(
+            service.task("worker").await.unwrap().task.phase(),
+            Phase::Merging
+        );
+
+        service
+            .state
+            .lock()
+            .await
+            .settings
+            .dispatch
+            .as_mut()
+            .unwrap()
+            .mode = DispatchMode::Running;
+        let result = Box::pin(service.advance(&row, &host)).await.unwrap();
+        assert_eq!(result, Action::Advance(Phase::Closing));
+        assert_eq!(puts.load(Ordering::Relaxed), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn merge_writes_wait_until_the_forge_confirms_the_next_fact() {
         for status in [StatusCode::CONFLICT, StatusCode::METHOD_NOT_ALLOWED] {
             let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
@@ -4714,5 +4795,220 @@ mod tests {
             );
             server.abort();
         }
+    }
+
+    struct DisconnectingPass<'a> {
+        host: &'a T3,
+        pass: nucleus_hosts::T3Pass<'a>,
+        reject_tickets: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl TaskHost for DisconnectingPass<'_> {
+        async fn terminal_orphans(
+            &self,
+            root: &Path,
+            scratch: &Path,
+        ) -> Result<nucleus_hosts::OrphanScan, HostError> {
+            self.pass.terminal_orphans(root, scratch).await
+        }
+
+        async fn terminal_helpers(
+            &self,
+            roots: &[PathBuf],
+            scratch: &Path,
+        ) -> Result<Vec<nucleus_hosts::OrphanProcess>, HostError> {
+            self.pass.terminal_helpers(roots, scratch).await
+        }
+
+        async fn profile_catalog(&self) -> Result<&nucleus_hosts::ProfileCatalog, HostError> {
+            self.pass.profile_catalog().await
+        }
+
+        fn prepare_launch(
+            &self,
+            request: nucleus_hosts::LaunchRequest<'_>,
+        ) -> Result<nucleus_core::LaunchInputs, HostError> {
+            self.pass.prepare_launch(request)
+        }
+
+        async fn observe_retained_role(
+            &self,
+            binding: &Binding,
+            thread: &str,
+        ) -> Result<Host, HostError> {
+            self.pass.observe_retained_role(binding, thread).await
+        }
+
+        async fn observe_run(
+            &self,
+            run: &Run,
+            now_ms: u64,
+        ) -> Result<nucleus_hosts::RunObservation, HostError> {
+            self.pass.observe_run(run, now_ms).await
+        }
+
+        async fn authorize_send(
+            &self,
+            run: &Run,
+        ) -> Result<nucleus_hosts::ReplayAuthorization, HostError> {
+            self.pass.authorize_send(run).await
+        }
+
+        async fn send(
+            &self,
+            dispatch: nucleus_hosts::RunDispatch,
+        ) -> Result<SendOutcome, HostError> {
+            self.reject_tickets
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.host.fixture_disconnect();
+            self.pass.send(dispatch).await
+        }
+
+        async fn write_control(&self, dispatch: ControlDispatch) -> Result<(), HostError> {
+            self.pass.write_control(dispatch).await
+        }
+
+        async fn stop(
+            &self,
+            run: &Run,
+            expected: &Binding,
+            now_ms: u64,
+            archive: bool,
+        ) -> Result<StopProgress, HostError> {
+            self.pass.stop(run, expected, now_ms, archive).await
+        }
+    }
+
+    async fn seed_reserved_role_launch(
+        service: &Service,
+        id: &str,
+        checkout: &Checkout<'_>,
+    ) -> (TaskRow, String) {
+        let head = service.fixture().start.clone();
+        checkout.allocate(&head).unwrap();
+        let binding = Binding {
+            project_id: "local-fixture".into(),
+            worktree_path: checkout.path().to_str().unwrap().into(),
+            branch: checkout.branch().into(),
+        };
+        let mut task = Task::new(
+            nucleus_core::Identity {
+                id: id.into(),
+                reference: id.into(),
+                repository: service.fixture().repository.clone(),
+                base: service.fixture().base.clone(),
+                entry: Entry::Brief,
+                origin_thread: None,
+            },
+            "Role brief".into(),
+            None,
+        );
+        let observation = Observation {
+            host: Observed::Unknown,
+            forge: Observed::Known(Forge::Absent),
+            workspace: Observed::Known(Workspace::Clean(head)),
+        };
+        assert_eq!(
+            task.reconcile(&observation),
+            Action::Advance(Phase::Working)
+        );
+        let Action::Launch { via, .. } = task.reconcile(&observation) else {
+            panic!("expected launch");
+        };
+        let profile = nucleus_hosts::RoleProfile {
+            instance_id: "fixture-provider".into(),
+            model: "fixture-model".into(),
+            options: Vec::new(),
+            runtime_mode: "full-access".into(),
+        };
+        let instance = format!("task-{id}-run-1");
+        let inputs = service
+            .host
+            .fixture_pass()
+            .prepare_launch(LaunchRequest {
+                binding,
+                parent: None,
+                reuse_parent: false,
+                via: &via,
+                profile: &profile,
+                title: id.into(),
+                instance: &instance,
+                started_at: 1,
+                text: "Work".into(),
+            })
+            .unwrap();
+        let thread = inputs.thread.clone();
+        task.reserve_launch(&observation, inputs, &[4; 32]).unwrap();
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .unwrap();
+        (service.task(id).await.unwrap(), thread)
+    }
+
+    #[tokio::test]
+    async fn pre_send_unavailable_restores_reserved_run_and_records_host_send_not_sent() {
+        let (_home, mut service) = crate::tests::fixture(GitHub::new("unused-test-forge").unwrap());
+        let (row, thread) = {
+            let worktrees = service.worktrees();
+            let checkout = worktrees
+                .checkout(&service.fixture().checkout, REPOSITORY, "role-not-sent")
+                .unwrap();
+            seed_reserved_role_launch(&service, "role-not-sent", &checkout).await
+        };
+        let reject_tickets = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (host, server) = crate::tests::native_fixture_with_ticket_gate(
+            Arc::clone(&reject_tickets),
+            move |req| {
+                assert_eq!(req["tag"], "orchestration.subscribeThread");
+                json!({
+                    "_tag": "Exit",
+                    "requestId": req["id"],
+                    "exit": {
+                        "_tag": "Failure",
+                        "cause": [{"_tag": "Fail", "error": {
+                            "_tag": "OrchestrationV2GetThreadProjectionError",
+                            "threadId": thread,
+                            "cause": {
+                                "name": "ProjectionStoreThreadNotFoundError",
+                                "message": format!("No orchestration projection exists for thread {thread}.")
+                            }
+                        }}]
+                    }
+                })
+            },
+        )
+        .await;
+        host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{
+                "snapshotSequence":1,
+                "projects":[{"id":"local-fixture","workspaceRoot":service.fixture().checkout}],
+                "threads":[]
+            }
+        }));
+        service.host = host;
+        let worktrees = service.worktrees();
+        let checkout = worktrees
+            .checkout(&service.fixture().checkout, REPOSITORY, "role-not-sent")
+            .unwrap();
+        let host = DisconnectingPass {
+            host: &service.host,
+            pass: service.host.fixture_pass(),
+            reject_tickets,
+        };
+        let err = service.send(&row, &checkout, &host).await.err().unwrap();
+        assert!(matches!(err, ServiceError::Host(HostError::Unavailable)));
+        let restored = service.task("role-not-sent").await.unwrap();
+        assert_eq!(restored.task.run().unwrap().last_send_at_ms(), None);
+        let history = service.history("role-not-sent", None, 20).await.unwrap();
+        assert!(
+            history
+                .iter()
+                .any(|entry| entry.content.kind == "host_send_not_sent")
+        );
+        server.abort();
     }
 }

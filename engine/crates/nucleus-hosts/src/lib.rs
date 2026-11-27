@@ -598,6 +598,13 @@ impl T3 {
         self
     }
 
+    /// Drop the cached RPC socket so the next request opens a new connection.
+    #[cfg(any(test, feature = "loopback-fixture"))]
+    #[doc(hidden)]
+    pub fn fixture_disconnect(&self) {
+        self.rpc.socket_clear_for_test();
+    }
+
     /// Give a loopback RPC fixture a known process census.
     #[cfg(any(test, feature = "loopback-fixture"))]
     #[must_use]

@@ -2105,10 +2105,40 @@ pub(super) async fn native_fixture_with_traffic(
     response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
     traffic: Option<Arc<NativeTraffic>>,
 ) -> (T3, tokio::task::JoinHandle<()>) {
+    native_fixture_inner(response, traffic, None).await
+}
+
+pub(super) async fn native_fixture_with_ticket_gate(
+    reject_tickets: Arc<std::sync::atomic::AtomicBool>,
+    response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
+) -> (T3, tokio::task::JoinHandle<()>) {
+    native_fixture_inner(response, None, Some(reject_tickets)).await
+}
+
+async fn native_fixture_inner(
+    response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
+    traffic: Option<Arc<NativeTraffic>>,
+    reject_tickets: Option<Arc<std::sync::atomic::AtomicBool>>,
+) -> (T3, tokio::task::JoinHandle<()>) {
     let app = Router::new()
         .route(
             "/api/auth/websocket-ticket/rpc",
-            post(|| async { Json(json!({"ticket":"fixture"})) }),
+            post(move || {
+                let reject_tickets = reject_tickets.clone();
+                async move {
+                    if reject_tickets
+                        .as_ref()
+                        .is_some_and(|flag| flag.load(Ordering::Relaxed))
+                    {
+                        (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({})))
+                    } else {
+                        (
+                            axum::http::StatusCode::OK,
+                            Json(json!({"ticket":"fixture"})),
+                        )
+                    }
+                }
+            }),
         )
         .route(
             "/ws",
