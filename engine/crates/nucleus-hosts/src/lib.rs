@@ -463,6 +463,21 @@ impl T3Pass<'_> {
         });
         Ok(self)
     }
+
+    /// Read a captured Darwin file-table shape and check its live process lineage.
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub async fn with_fixture_detached_census(
+        mut self,
+        files: &[u8],
+        ps: &[u8],
+    ) -> Result<Self, HostError> {
+        self.evidence = Arc::new(PassEvidence {
+            processes: OnceCell::new_with(Some(Ok(Inventory::scoped_fixture(files, ps).await?))),
+            ..PassEvidence::default()
+        });
+        Ok(self)
+    }
 }
 
 impl T3 {

@@ -188,10 +188,15 @@ Later decisions carry their own attribution.
    The census discards PIDs confirmed absent or zombie at the cwd follow-up.
    On macOS, a path resolved from the working directory's device and inode can
    clear an unreadable listing for an unrelated checkout.
+   When Darwin reports a missing cwd or process root, a verified live birth
+   parent with the default root can establish that the error comes from the cwd
+   if the child still has its original program image and has used no superuser
+   privileges. The same PID's bounded file listing then holds only roots it
+   references. Missing lineage or file coverage keeps the custody fence in place.
    A task's retirement wait names the PID, command and reason. If the census
    cannot establish a process's cwd, it holds affected retirement and surfaces
-   one Inbox decision for that process across the engine profile. An answer
-   leaves the custody gate in force. Fresh evidence clears the decision.
+   one Inbox decision for that process across the engine profile. Answers go
+   into history and the decision stays open until fresh evidence clears it.
 
    The same synchronized row keys a decision and its final write fence. It
    confirms a presentation write when it shows the intended change. Planning

@@ -2945,7 +2945,7 @@ mod tests {
                 "-p",
                 &pids,
                 "-o",
-                "pid=,ppid=,uid=,stat=,lstart=,ucomm=",
+                "pid=,ppid=,uid=,stat=,lstart=,flags=,acflag=,ucomm=",
             ],
         )
         .await;
@@ -2965,6 +2965,33 @@ mod tests {
         .await;
         assert!(String::from_utf8_lossy(&lsof).contains("elsewhere^A"));
         (lsof, ps)
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn forked_shell(cwd: &Path) -> (tokio::process::Child, u32) {
+        use std::process::Stdio;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let mut parent = tokio::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                r#"exec 3<&0; (IFS= read -r ignored <&3) & printf '%s\n' "$!"; wait "$!""#,
+            ])
+            .current_dir(cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut pid = String::new();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            BufReader::new(parent.stdout.take().unwrap()).read_line(&mut pid),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        (parent, pid.trim().parse().unwrap())
     }
 
     #[cfg(target_os = "macos")]
@@ -3044,6 +3071,109 @@ mod tests {
         assert!(!checkout.path().exists());
         assert!(unrelated.try_wait().unwrap().is_none());
         unrelated.kill().await.unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn detached_cwd_file_evidence_holds_only_the_checkout_it_references() {
+        let (home, service) = fixture(GitHub::new("fixture").unwrap());
+        let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
+        let project = service.fixture();
+        let work = service.worktrees();
+        let checkout = work
+            .checkout(&project.checkout, REPOSITORY, &row.task.identity().id)
+            .unwrap();
+        checkout.allocate(&project.start).unwrap();
+        let route = service.project_for(row.task.identity()).await.unwrap();
+        let binding = route.binding(&checkout).unwrap();
+        service.host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
+        }));
+        let (mut parent, pid) = forked_shell(home.path()).await;
+        let selected = format!("{pid},{}", parent.id().unwrap());
+        let ps = process_listing(
+            "/bin/ps",
+            &[
+                "-ww",
+                "-p",
+                &selected,
+                "-o",
+                "pid=,ppid=,uid=,stat=,lstart=,flags=,acflag=,ucomm=",
+            ],
+        )
+        .await;
+        // Darwin's field output after force-detaching the child's cwd volume.
+        // There is no cwd pathname, device or inode. The real child and parent
+        // still supply the same default-root lineage the production probe uses.
+        let table = |path: &Path| {
+            format!(
+                "p{pid}\0\nfcwd\0ncwd|rtd info error: No such file or directory\0\nftxt\0tREG\0D0x100000f\0i1152921500312611982\0n/bin/bash\0\nf3\0tREG\0n{}\0\nf4\0tPIPE\0n->0xb38108b3ff47da0a\0\n",
+                path.display()
+            )
+        };
+        let scratch = service.storage.scratch().path();
+        let linked_files = table(&checkout.path().join(".git"));
+        let linked = service
+            .host
+            .pass(scratch)
+            .with_fixture_detached_census(linked_files.as_bytes(), &ps)
+            .await
+            .unwrap();
+        assert!(matches!(
+            service.retire_if_idle(&linked, &row.task, &binding, &checkout, Some(&project.start)).await,
+            Err(ServiceError::CheckoutProcess(blocker))
+                if blocker.pid == pid && blocker.detached && blocker.to_string().contains("open reference")
+        ));
+        assert!(checkout.path().exists());
+
+        let unrelated_files = table(&home.path().join("outside.log"));
+        let orphan = String::from_utf8(ps.clone())
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let mut columns = line.split_whitespace();
+                let value = columns.next().unwrap();
+                if value.parse() == Ok(pid) {
+                    let _ = columns.next();
+                    format!("{value} 1 {}", columns.collect::<Vec<_>>().join(" "))
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let opaque = service
+            .host
+            .pass(scratch)
+            .with_fixture_detached_census(unrelated_files.as_bytes(), orphan.as_bytes())
+            .await
+            .unwrap();
+        assert!(matches!(
+            service.retire_if_idle(&opaque, &row.task, &binding, &checkout, Some(&project.start)).await,
+            Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid && blocker.unverified
+        ));
+        let unrelated = service
+            .host
+            .pass(scratch)
+            .with_fixture_detached_census(unrelated_files.as_bytes(), &ps)
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .retire_if_idle(
+                    &unrelated,
+                    &row.task,
+                    &binding,
+                    &checkout,
+                    Some(&project.start)
+                )
+                .await
+                .unwrap(),
+            Some(Retirement::Removed)
+        );
+        assert!(parent.try_wait().unwrap().is_none());
+        drop(parent.stdin.take());
+        parent.wait().await.unwrap();
     }
 
     struct ProtectedTree(Vec<u32>);

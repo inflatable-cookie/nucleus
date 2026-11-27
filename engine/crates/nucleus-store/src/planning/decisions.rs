@@ -13,6 +13,21 @@ pub(crate) const USAGE_PERMISSION_INDEX: &str =
     ON planning_decisions(id) WHERE json_extract(snapshot, '$.task.kind') = 'usage_permission'";
 
 pub const USAGE_APPROVE: &str = "approve";
+const PROCESS_DECISION: &str = "closeout-process-";
+
+impl Decision {
+    /// The stable decision key for one observed process lifetime.
+    #[must_use]
+    pub fn process_id(pid: u32, started: i64) -> String {
+        format!("{PROCESS_DECISION}{pid}-{started}")
+    }
+
+    /// A process custody decision remains open until the census clears it.
+    #[must_use]
+    pub fn is_process_custody(&self) -> bool {
+        self.author == "Nucleus" && self.task.is_none() && self.id.starts_with(PROCESS_DECISION)
+    }
+}
 
 /// Data needed to bind a Low usage decision in the task admission transaction.
 pub struct UsagePermission<'a> {
@@ -155,7 +170,7 @@ impl Store {
         self.set_decision_withdrawn(project, id, true, stamp)
     }
 
-    /// Reopen an unanswered, standalone decision whose cause has returned.
+    /// Reopen a standalone decision whose cause has returned.
     ///
     /// # Errors
     /// Returns an error if the decision cannot be read or written.
@@ -179,8 +194,14 @@ impl Store {
         let Some(mut decision) = read::<Decision>(&tx, DecisionRecord, project, id)? else {
             return Ok(false);
         };
-        if decision.task.is_some() || decision.withdrawn == withdrawn || decision.answer.is_some() {
+        let rearm = !withdrawn && decision.is_process_custody() && decision.answer.is_some();
+        if decision.task.is_some()
+            || (!rearm && (decision.withdrawn == withdrawn || decision.answer.is_some()))
+        {
             return Ok(false);
+        }
+        if rearm {
+            decision.answer = None;
         }
         decision.withdrawn = withdrawn;
         save(
@@ -251,6 +272,20 @@ impl Store {
             answered_at_ms: stamp.at_ms,
         });
         save(&tx, DecisionRecord, project, id, "answer", &decision, stamp)?;
+        if decision.is_process_custody() {
+            // Keep the operator's answer in history and the same decision in
+            // the Inbox. Only a fresh process observation can settle custody.
+            decision.answer = None;
+            save(
+                &tx,
+                DecisionRecord,
+                project,
+                id,
+                "await_custody",
+                &decision,
+                stamp,
+            )?;
+        }
         let queued = if !same_answer && let Some((tell, tell_id)) = notice {
             insert_decision_tell(&tx, project, tell, tell_id)?;
             true

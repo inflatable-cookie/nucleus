@@ -1,1 +1,1 @@
-Closeout clears exited PIDs and recovers working-directory evidence when available. A process that still holds retirement is named on the task, and an unverifiable process raises one Inbox decision across affected tasks.
+Closeout clears exited PIDs and uses directory identity or verified process lineage and file references to scope custody. The task names the process holding retirement, and a shared Inbox decision stays actionable until the census clears unresolved custody.

@@ -28,6 +28,7 @@ async fn one_unresolved_process_creates_one_open_decision_until_cleared() {
         command: "fixture-worker".into(),
         started: Some(1),
         unverified: true,
+        detached: false,
     };
     for _ in 0..2 {
         service
@@ -46,6 +47,32 @@ async fn one_unresolved_process_creates_one_open_decision_until_cleared() {
             .question
             .contains("PID 91988 (fixture-worker)")
     );
+    let decision = &open[0];
+    let operator = Authority::Operator {
+        actor: "fixture operator".into(),
+    };
+    for option in ["wait", "checked"] {
+        service
+            .record_decision_answer(
+                &mut state,
+                &decision.project_id,
+                &decision.id,
+                DecisionAnswerInput {
+                    option_id: option.into(),
+                    note: None,
+                },
+                &operator,
+            )
+            .unwrap();
+        assert_eq!(pending(&state, &service).unwrap(), open);
+        service
+            .raise_process_decision(&mut state, &blocker)
+            .unwrap();
+        service
+            .clear_process_decisions(&mut state, vec![(91988, 1)])
+            .unwrap();
+        assert_eq!(pending(&state, &service).unwrap(), open);
+    }
     service.clear_process_decisions(&mut state, vec![]).unwrap();
     assert!(pending(&state, &service).unwrap().is_empty());
 }
