@@ -483,11 +483,6 @@ impl Projection {
             .any(|run| run.user_message_id.as_deref() == Some(message_id))
     }
 
-    pub(crate) fn has_delivery(&self, message_id: &str) -> bool {
-        let (message, run) = self.delivery(message_id);
-        message.is_some() || run.is_some()
-    }
-
     pub(crate) fn row_observation(&self) -> Result<Option<RowObservation>, HostError> {
         if self.archived() || self.thread.deleted_at.is_some() {
             return Ok(None);
