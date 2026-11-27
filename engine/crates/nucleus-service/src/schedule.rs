@@ -15,10 +15,6 @@ pub(crate) const PASS_BATCH: usize = 8;
 const SCAN_INTERVAL: Duration = Duration::from_mins(1);
 pub(crate) const LIVE_CHECK: Duration = Duration::from_secs(45);
 pub(crate) const RETRY: Duration = Duration::from_secs(3);
-/// Interval for re-observing a live role until its parent hold is proven.
-pub(crate) const REENTRY_CHECK: Duration = Duration::from_secs(3);
-/// Only this long after a role message is sent does the short interval apply.
-pub(crate) const REENTRY_WINDOW_MS: u64 = 30_000;
 pub(crate) const FORGE_RETRY: Duration = Duration::from_secs(30);
 pub(crate) const VOLUME_RETRY: Duration = Duration::from_mins(1);
 /// The longest delay between retries of a failure which keeps repeating.
@@ -133,13 +129,6 @@ impl Pending {
     }
 }
 
-/// Whether a continuation whose parent hold is not yet proven needs a short
-/// re-observation. The normal live check can come after a short run has ended,
-/// so the first observations after a send recheck sooner, for a bounded window.
-pub(crate) fn reentry_recheck_due(unproven: bool, sent_at_ms: Option<u64>, now_ms: u64) -> bool {
-    unproven && sent_at_ms.is_some_and(|sent| now_ms.saturating_sub(sent) < REENTRY_WINDOW_MS)
-}
-
 pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
     match wait {
         Some(
@@ -210,12 +199,6 @@ impl Schedule {
             at_ms: crate::now_ms(),
             served: BTreeSet::new(),
         });
-    }
-
-    /// The pending deadline for one priority slot of a task.
-    #[cfg(test)]
-    pub(crate) fn due_at(&self, id: &str, priority: Priority) -> Option<Instant> {
-        self.tasks.get(id)?.deadlines[priority as usize]
     }
 
     pub(crate) fn wake(&mut self, id: &str, due: Instant, priority: Priority) {
@@ -448,25 +431,6 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
-
-    #[test]
-    fn reentry_recheck_is_bounded_to_a_live_recent_send() {
-        const SENT: u64 = 1_000_000;
-        assert!(REENTRY_CHECK < LIVE_CHECK);
-        assert!(reentry_recheck_due(true, Some(SENT), SENT));
-        assert!(reentry_recheck_due(
-            true,
-            Some(SENT),
-            SENT + REENTRY_WINDOW_MS - 1
-        ));
-        assert!(!reentry_recheck_due(
-            true,
-            Some(SENT),
-            SENT + REENTRY_WINDOW_MS
-        ));
-        assert!(!reentry_recheck_due(false, Some(SENT), SENT));
-        assert!(!reentry_recheck_due(true, None, SENT));
-    }
 
     #[test]
     fn archive_read_failure_preserves_the_first_active_page_for_retry() {

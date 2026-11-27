@@ -101,10 +101,29 @@ async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
         state.task_attention(&row).unwrap(),
         crate::attention::TaskAttention::Active
     );
+    assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+    let identity = row.task.identity();
+    let checkout = nucleus_work::checkout_path(
+        service.storage.work().path(),
+        &identity.repository,
+        &identity.id,
+    );
+    service.host.fixture_project_shell(
+        &json!({"projects":[],"threads":[{
+            "id":row.task.run().unwrap().launch().thread, "worktreePath":checkout,
+            "status":"running","activeRunId":"native-worker", "pendingBackgroundTasks":[]
+        }]}),
+        "fixture-acp",
+    );
     assert_eq!(
-        service.acp_turn_view(&state, &row).expect("deferred view"),
+        service
+            .acp_turn_view(&state, &row)
+            .expect("held active role"),
         (None, true)
     );
+    service
+        .host
+        .fixture_project_shell(&json!({"projects":[],"threads":[]}), "fixture-acp");
     for wait in [
         WaitReason::HostObservationBlocked,
         WaitReason::Permission,

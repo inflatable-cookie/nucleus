@@ -195,22 +195,21 @@ impl T3 {
         thread: &str,
         command: &str,
         message: &str,
-        record: &mut impl FnMut(SnoozeUpdate) -> Result<(), HostError>,
-    ) -> Result<(), HostError> {
+    ) -> Result<Option<SnoozeUpdate>, HostError> {
         let (row, observed_sequence) = self.rpc.thread_row_with_revision(thread);
         let Some(row) = row.filter(|row| !closed_row(row)) else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(until) = row["snoozedUntil"].as_str() else {
-            return Ok(());
+            return Ok(None);
         };
         let Ok(until_ms) = timestamp_ms(until) else {
-            return Ok(());
+            return Ok(None);
         };
         if until_ms <= clock_ms()? {
-            return Ok(());
+            return Ok(None);
         }
-        record(SnoozeUpdate::Record(
+        Ok(Some(SnoozeUpdate::Record(
             command.into(),
             Box::new(DeliverySnooze {
                 binding: None,
@@ -225,7 +224,7 @@ impl T3 {
                 accepted_sequence: None,
                 restored_sequence: None,
             }),
-        ))
+        )))
     }
 
     /// Restore a cleared horizon from the held shell and the native send receipt.

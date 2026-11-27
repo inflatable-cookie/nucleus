@@ -467,12 +467,13 @@ impl T3 {
                         .map_err(|_| HostError::Deferred {
                             until: tokio::time::Instant::now(),
                         })?;
-                    self.capture_snooze(
+                    if let Some(update) = self.capture_snooze(
                         &authorization.target.thread,
                         &authorization.command,
                         &message_id(&authorization.command),
-                        &mut record_snooze,
-                    )?;
+                    )? {
+                        record_snooze(update)?;
+                    }
                     Ok(true)
                 },
             )

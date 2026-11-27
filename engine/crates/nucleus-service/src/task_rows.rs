@@ -141,15 +141,30 @@ pub(super) struct DeliverySnoozeJournal<'a> {
 
 impl DeliverySnoozeJournal<'_> {
     pub(super) fn record(&mut self, update: SnoozeUpdate) -> Result<(), HostError> {
-        let SnoozeUpdate::Record(command, intent) = update else {
-            self.settlement = Some(update);
+        self.authorize(Some(update), |_| Ok(()))
+    }
+
+    pub(super) fn authorize(
+        &mut self,
+        update: Option<SnoozeUpdate>,
+        check: impl FnOnce(&State) -> Result<(), HostError>,
+    ) -> Result<(), HostError> {
+        if matches!(
+            update,
+            Some(SnoozeUpdate::Accepted(..) | SnoozeUpdate::Discard(..))
+        ) {
+            self.settlement = update;
             return Ok(());
-        };
+        }
         let state = self
             .service
             .state
             .try_lock()
             .map_err(|_| HostError::Uncertain)?;
+        check(&state)?;
+        let Some(SnoozeUpdate::Record(command, intent)) = update else {
+            return Ok(());
+        };
         let save = || -> Result<(), nucleus_store::StoreError> {
             let store = &state.store;
             let owner = store.task_with_title_thread(&intent.thread)?;
