@@ -120,6 +120,7 @@ async fn retirement_requires_archive_or_deletion_evidence_for_omitted_roles() {
         .unwrap();
     checkout.allocate(&head).unwrap();
     let binding = route.binding(&checkout).unwrap();
+    let base = checkout.path().to_owned();
     let roles = archived_checkout_rows(&binding, &row.task);
     let mode = Arc::new(AtomicUsize::new(0));
     let (host, _host) = native_fixture({
@@ -170,14 +171,14 @@ async fn retirement_requires_archive_or_deletion_evidence_for_omitted_roles() {
         service.archive_done(&row).await,
         Err(ServiceError::CheckoutRetained(cause)) if cause.contains("every task thread is idle")
     ));
-    assert!(checkout.path().is_dir());
+    assert!(base.is_dir());
     mode.store(1, Ordering::Relaxed);
     assert!(matches!(
         service.archive_done(&row).await,
         Err(ServiceError::CheckoutRetained(cause)) if cause.contains("idle or gone")
     ));
-    assert!(checkout.path().is_dir());
+    assert!(base.is_dir());
     mode.store(2, Ordering::Relaxed);
     assert_eq!(service.archive_done(&row).await.unwrap(), Action::Nothing);
-    assert!(!checkout.path().exists());
+    assert!(!base.exists());
 }

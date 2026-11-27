@@ -679,7 +679,7 @@ impl Checkout<'_> {
 
     fn retire_prunable_registration(
         &self,
-        admit: impl FnOnce(RetirementStep<'_>) -> Result<bool, WorkError>,
+        guard: impl FnOnce(RetirementStep<'_>) -> Result<bool, WorkError>,
     ) -> Result<Retirement, WorkError> {
         self.worktrees.root.verify()?;
         if !missing(&self.path)? {
@@ -690,16 +690,13 @@ impl Checkout<'_> {
         };
         self.require_unlocked(&admin)?;
         self.worktrees.root.verify()?;
-        Ok(
-            if admit(&|| {
-                let _step = self.worktrees.custody.mutate()?;
-                self.remove(&[])
-            })? {
-                Retirement::Removed
-            } else {
-                Retirement::Deferred
-            },
-        )
+        if !guard(&|| {
+            let _step = self.worktrees.custody.mutate()?;
+            self.remove(&[])
+        })? {
+            return Ok(Retirement::Deferred);
+        }
+        Ok(Retirement::Removed)
     }
 
     /// Allocate the task branch at a known commit. An existing owned checkout
@@ -1035,27 +1032,27 @@ impl Checkout<'_> {
         &self,
         initial: Workspace,
         published: Option<&Head>,
-        admit: impl FnOnce(RetirementStep<'_>) -> Result<bool, WorkError>,
+        guard: impl FnOnce(RetirementStep<'_>) -> Result<bool, WorkError>,
     ) -> Result<Retirement, WorkError> {
         match (initial, published) {
-            (Workspace::Absent, _) => self.retire_prunable_registration(admit),
+            (Workspace::Absent, _) => self.retire_prunable_registration(guard),
             (Workspace::Clean(head), Some(published)) if head == *published => {
                 match self.observe_for_retirement()? {
-                    Workspace::Absent => self.retire_prunable_registration(admit),
+                    Workspace::Absent => self.retire_prunable_registration(guard),
                     Workspace::Clean(current) if current == *published => {
-                        self.retire_to_trash(published, admit)
+                        self.retire_to_trash(published, guard)
                     }
                     Workspace::Clean(_) | Workspace::Dirty => Ok(Retirement::Retained),
                 }
             }
             (Workspace::Dirty, Some(published)) => {
                 if missing(&self.path)? {
-                    return self.retire_prunable_registration(admit);
+                    return self.retire_prunable_registration(guard);
                 }
                 if self.deletion_only_head()?.as_ref() != Some(published) {
                     return Ok(Retirement::Retained);
                 }
-                self.retire_to_trash(published, admit)
+                self.retire_to_trash(published, guard)
             }
             _ => Ok(Retirement::Retained),
         }
@@ -1064,7 +1061,7 @@ impl Checkout<'_> {
     fn retire_to_trash(
         &self,
         published: &Head,
-        admit: impl FnOnce(RetirementStep<'_>) -> Result<bool, WorkError>,
+        guard: impl FnOnce(RetirementStep<'_>) -> Result<bool, WorkError>,
     ) -> Result<Retirement, WorkError> {
         let (admin, head) = self.verified_admin_for_retirement()?;
         if head != *published {
@@ -1110,7 +1107,7 @@ impl Checkout<'_> {
             marker.sync_all()?;
             drop(staging);
             self.worktrees.root.verify()?;
-            admit(&|| {
+            guard(&|| {
                 let _step = self.worktrees.custody.mutate()?;
                 renameat_with(
                     CWD,
