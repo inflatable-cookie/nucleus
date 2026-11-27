@@ -809,6 +809,60 @@ fn parent_snapshot(binding: &Binding, state: &str, archived: bool) -> Value {
 }
 
 #[tokio::test]
+async fn stranded_parent_reentry_has_one_successor_until_the_shell_changes() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let child = crate::ActiveChild {
+        binding: binding.clone(),
+        thread: THREAD.into(),
+        instance: "active-worker".into(),
+        native: Some("native-worker-run".into()),
+    };
+    let prior = format!("{}:fixture-acp", child.parent_command_prefix());
+    let mut projection = parent_snapshot(&binding, "failed", false);
+    let mut row = projection["projection"]["thread"].clone();
+    row["status"] = json!("failed");
+    row["latestRunId"] = projection["projection"]["runs"][0]["id"].clone();
+    row["activeRunId"] = Value::Null;
+    projection["projection"]["runs"].as_array_mut().unwrap().push(json!({
+        "id":"queued-hold","status":"queued","startedAt":null,"userMessageId":crate::message_id(&prior)
+    }));
+    let worker = json!({"id":THREAD, "status":"running", "activeRunId":"native-worker-run",
+        "projectId":binding.project_id,"branch":binding.branch,"worktreePath":binding.worktree_path});
+    let (host, native) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(projection),
+        ),
+        ("orchestration.dispatchCommand", Response::Success),
+    ])
+    .await;
+    host.rpc.use_held_shell();
+    host.rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":20,"threads":[row,worker],"projects":[]
+        }}));
+    let prepare =
+        || host.prepare_parent_reentry(&child, "fixture-acp", "Starting worker", Some(&prior));
+    let write = prepare().await.unwrap().unwrap();
+    let stale = prepare().await.unwrap().unwrap();
+    assert_ne!(write.command_id(), Some(prior.as_str()));
+    assert_eq!(write.command_id(), stale.command_id());
+    host.write_parent(write).await.unwrap();
+
+    row["status"] = json!("running");
+    row["activeRunId"] = json!("queued-hold");
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
+    assert!(matches!(
+        host.write_parent(stale).await,
+        Err(crate::ParentSendError::NotSent(_))
+    ));
+    assert!(prepare().await.unwrap().is_none());
+    native.await.unwrap();
+}
+
+#[tokio::test]
 async fn parent_reentry_ignores_unrelated_completed_revisions_but_keeps_the_wire_vetoes() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
@@ -892,6 +946,7 @@ async fn a_failed_parent_turn_is_observed_without_preparing_another_prompt() {
             command: "fixture-parent-command",
             released: false,
             replay_launch: false,
+            recorded_failure: false,
         }),
         quiet_pass(&client).profile_catalog(),
     ))
@@ -948,6 +1003,7 @@ async fn unavailable_parent_recovery_requires_exact_terminal_evidence() {
                 command: "fixture-parent-command",
                 released: false,
                 replay_launch: false,
+                recorded_failure: false,
             }),
             quiet_pass(&client).profile_catalog(),
         ))
@@ -985,6 +1041,7 @@ async fn a_parent_anchors_the_frozen_role_launch_to_its_exact_root_node() {
             command: "fixture-parent-command",
             released: true,
             replay_launch: false,
+            recorded_failure: false,
         }),
         quiet_pass(&client).profile_catalog(),
     ))
@@ -1040,6 +1097,7 @@ async fn an_unpinned_parent_intent_without_a_frozen_wire_is_not_replayed() {
             command: &command,
             released: false,
             replay_launch: false,
+            recorded_failure: false,
         }),
         quiet_pass(&host).profile_catalog(),
     ))
@@ -1071,6 +1129,7 @@ async fn an_unconfirmed_parent_intent_is_not_replayed_over_a_bounded_snapshot() 
             command: "ambiguous-command",
             released: false,
             replay_launch: false,
+            recorded_failure: false,
         }),
         quiet_pass(&host).profile_catalog(),
     ))
@@ -1143,6 +1202,7 @@ async fn parent_launch_replay_keeps_the_original_wire() {
             command: &command,
             released: false,
             replay_launch: true,
+            recorded_failure: false,
         }),
     )
     .await
@@ -1292,6 +1352,7 @@ async fn new_parent_hold_queues_from_the_bound_shell_and_replays_the_same_wire()
         command: &command,
         released: false,
         replay_launch: false,
+        recorded_failure: false,
     }))
     .await
     .unwrap() else {

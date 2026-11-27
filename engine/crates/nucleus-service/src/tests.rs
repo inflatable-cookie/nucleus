@@ -1681,10 +1681,18 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
 #[tokio::test]
 #[expect(
     clippy::too_many_lines,
-    reason = "exercise the parent, service restart and worker dispatch in one trace"
+    reason = "exercise the recorded parent, native queue and capacity together"
 )]
-async fn unavailable_parent_turn_recovers_after_service_restart() {
-    for recover in [true, false] {
+async fn lost_parent_turn_recovers_after_service_restart_and_capacity_wait() {
+    // Sanitized fields from the failed root error in the 2026-11-27 T3 projection.
+    let process_exit = "The provider process exited after signal SIGTERM. Check the server logs for the provider's output, then retry the turn.";
+    for (failure, recorded_failure, stranded) in [
+        ("Nucleus is unavailable.", false, false),
+        (process_exit, true, false),
+        (process_exit, false, true),
+        ("Provider turn failed.", false, false),
+        ("Another provider failed.", true, false),
+    ] {
         let (forge, forge_server) = serve_forge(Router::new().route(
             &format!("/repos/{REPOSITORY}/pulls"),
             get(|| async { Json(Vec::<Value>::new()) }),
@@ -1725,16 +1733,21 @@ async fn unavailable_parent_turn_recovers_after_service_restart() {
                     let mut runs = vec![json!({"id":"failed-run","status":"failed","rootNodeId":"failed-root",
                         "userMessageId":parent["initialMessage"]["messageId"], "providerInstanceId":"fixture-acp",
                         "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"}})];
-                    if let Some(hold) = holds.first() { runs.push(json!({"id":"continued-run","status":"running",
-                        "rootNodeId":"continued-root","userMessageId":hold["messageId"]})); }
+                    for (index, hold) in holds.iter().enumerate() {
+                        let queued = stranded && index == 0;
+                        runs.push(json!({"id":format!("continued-run-{index}"),
+                            "status":if queued {"queued"} else {"running"},
+                            "startedAt":if queued {None} else {Some("2026-11-27T02:08:21Z")},
+                            "rootNodeId":format!("continued-root-{index}"),"userMessageId":hold["messageId"]}));
+                    }
                     return json!({"_tag":"Chunk","requestId":id,"values":[{"kind":"snapshot","snapshotSequence":17 + holds.len(),"projection":{
                         "thread":{"id":parent["threadId"],"projectId":parent["projectId"],
                             "branch":parent["workspaceStrategy"]["branch"],"worktreePath":parent["workspaceStrategy"]["worktreePath"],
                             "modelSelection":parent["modelSelection"],"providerInstanceId":"fixture-acp"},
                         "runs":runs,"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[{
                             "id":"error","type":"error","status":"failed","runId":"failed-run","nodeId":"failed-root",
-                            "ordinal":1,"updatedAt":"2026-11-26T04:07:04Z","failure":{"class":"provider_error",
-                                "message":if recover {"Nucleus is unavailable."} else {"Another provider failed."}}}]
+                            "ordinal":1,"updatedAt":"2026-11-27T02:08:21Z","failure":{"class":"provider_error",
+                                "message":failure,"code":null,"retryable":null}}]
                     }},{"kind":"synchronized"}]});
                 }
                 Some("orchestration.launchThread") => { writes.lock().unwrap().push(payload.clone()); json!({"sequence":1}) }
@@ -1784,16 +1797,26 @@ async fn unavailable_parent_turn_recovers_after_service_restart() {
             let row = service.task("restart-parent").await.unwrap();
             Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await
         };
-        if recover {
-            assert!(matches!(
-                advance().await.unwrap(),
-                Action::Wait(WaitReason::Starting)
-            ));
-            assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
-            assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
-            assert_eq!(holds.lock().unwrap().len(), 1);
-            assert_eq!(children.lock().unwrap().len(), 1);
-        } else {
+        if recorded_failure {
+            let row = service.task("restart-parent").await.unwrap();
+            let state = service.state.lock().await;
+            let record = state
+                .store
+                .parent_deliveries("restart-parent", row.version, None)
+                .unwrap()
+                .remove(0);
+            state
+                .store
+                .finish_parent_delivery(
+                    "restart-parent",
+                    row.version,
+                    &record,
+                    nucleus_store::ParentResult::Failed,
+                    0,
+                )
+                .unwrap();
+        }
+        if failure == "Another provider failed." {
             let result = advance().await;
             let row = service.task("restart-parent").await.unwrap();
             assert!(matches!(
@@ -1807,7 +1830,95 @@ async fn unavailable_parent_turn_recovers_after_service_restart() {
             ));
             assert!(holds.lock().unwrap().is_empty());
             assert!(children.lock().unwrap().is_empty());
+            native.abort();
+            forge_server.abort();
+            continue;
         }
+        assert!(matches!(
+            advance().await.unwrap(),
+            Action::Wait(WaitReason::Starting)
+        ));
+        if stranded {
+            let row = service.task("restart-parent").await.unwrap();
+            let (mut holder, _, _) = reservation("holder", Entry::Brief, &service.fixture().start);
+            let instance = holder.run().unwrap().launch().instance.clone();
+            holder.record_send(&instance, 1).unwrap();
+            holder.revoke_run();
+            {
+                let mut state = service.state.lock().await;
+                state.settings.dispatch = Some(nucleus_store::DispatchSettings {
+                    global_slots: 1,
+                    project_default_slots: 1,
+                    ..Default::default()
+                });
+                state.store.create(&holder, &event("fixture")).unwrap();
+                let record = state
+                    .store
+                    .parent_deliveries("restart-parent", row.version, None)
+                    .unwrap()
+                    .remove(0);
+                // The native queue exists even when the wire acknowledgement was lost.
+                state
+                    .store
+                    .finish_parent_delivery(
+                        "restart-parent",
+                        row.version,
+                        &record,
+                        nucleus_store::ParentResult::Pending,
+                        0,
+                    )
+                    .unwrap();
+            }
+            let calls = service.host.host_calls();
+            let waiting = advance().await;
+            assert!(matches!(waiting, Ok(Action::Wait(WaitReason::Capacity))));
+            assert_eq!(service.host.host_calls(), calls);
+            service
+                .schedule_result(&row, &waiting, Priority::Effect)
+                .await
+                .unwrap();
+            assert_eq!(
+                service.task("restart-parent").await.unwrap().version,
+                row.version
+            );
+            assert_eq!(holds.lock().unwrap().len(), 1);
+            assert!(children.lock().unwrap().is_empty());
+
+            let holder = service.task("holder").await.unwrap();
+            let mut settled = holder.task.clone();
+            settled.reconcile(&Observation {
+                host: Observed::Known(Host::Current {
+                    instance,
+                    state: nucleus_core::RunState::Ended,
+                }),
+                forge: Observed::Unknown,
+                workspace: Observed::Unknown,
+            });
+            assert!(settled.run().is_none());
+            service
+                .save(&holder, settled, &event("phase_reconciled"))
+                .await
+                .unwrap();
+            assert!(
+                service
+                    .state
+                    .lock()
+                    .await
+                    .schedule
+                    .effect_ready("restart-parent", Instant::now())
+            );
+            assert!(matches!(
+                advance().await.unwrap(),
+                Action::Wait(WaitReason::Starting)
+            ));
+            let holds = holds.lock().unwrap();
+            assert_eq!(holds.len(), 2);
+            assert_ne!(holds[0]["commandId"], holds[1]["commandId"]);
+        }
+        assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
+        assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
+        assert_eq!(holds.lock().unwrap().len(), if stranded { 2 } else { 1 });
+        assert_eq!(children.lock().unwrap().len(), 1);
         native.abort();
         forge_server.abort();
     }

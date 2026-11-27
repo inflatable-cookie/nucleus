@@ -366,6 +366,7 @@ impl Fixture {
                     command,
                     released: false,
                     replay_launch: false,
+                    recorded_failure: false,
                 }),
                 std::future::pending(),
             )
@@ -657,6 +658,7 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
                 command: &command,
                 released: false,
                 replay_launch: false,
+                recorded_failure: false,
             }),
             std::future::pending(),
         )

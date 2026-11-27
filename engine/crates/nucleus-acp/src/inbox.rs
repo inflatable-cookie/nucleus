@@ -35,6 +35,17 @@ pub(crate) struct Replies {
 }
 
 impl Replies {
+    pub(crate) fn channel() -> (Self, mpsc::UnboundedReceiver<(String, InboxAnswer)>) {
+        let (answers, receive) = mpsc::unbounded_channel();
+        (
+            Self {
+                cards: Mutex::default(),
+                answers,
+            },
+            receive,
+        )
+    }
+
     pub(crate) async fn receive(&self, frame: &Value) {
         let mut cards = self.cards.lock().await;
         if let Some(answer) = take_answer(&mut cards, frame) {
@@ -51,11 +62,8 @@ pub(crate) fn prompt(
     id: &Value,
     wait_for_ui_reply: bool,
 ) -> Turn {
-    let (answers, receive) = mpsc::unbounded_channel();
-    let replies = Arc::new(Replies {
-        cards: Mutex::default(),
-        answers,
-    });
+    let (replies, receive) = Replies::channel();
+    let replies = Arc::new(replies);
     let turn_replies = Arc::clone(&replies);
     let output = output.clone();
     let session = session.to_owned();
@@ -79,7 +87,7 @@ pub(crate) fn prompt(
     }
 }
 
-async fn follow(
+pub(crate) async fn follow(
     client: &ServiceClient,
     output: &Output,
     session: &str,

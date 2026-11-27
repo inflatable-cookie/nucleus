@@ -444,3 +444,6 @@ fn error(output: &Output, id: &Value, code: i32, message: &str) {
 fn stop(output: &Output, id: &Value, reason: &str) {
     result(output, id, json!({"stopReason":reason}));
 }
+
+#[cfg(test)]
+mod reconnect_tests;

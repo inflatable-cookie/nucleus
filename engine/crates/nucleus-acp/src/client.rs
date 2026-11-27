@@ -25,6 +25,8 @@ use rustix::{
 use serde::{Deserialize, de::DeserializeOwned};
 
 const DEADLINE: Duration = Duration::from_secs(5);
+// Allow three of the service's 15-second SSE keepalive intervals.
+const STREAM_DEADLINE: Duration = Duration::from_secs(45);
 const MAX_REPLY: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
@@ -309,6 +311,7 @@ impl ServiceClient {
             Ok(Invalidations {
                 response,
                 buffer: Vec::new(),
+                deadline: tokio::time::Instant::now() + STREAM_DEADLINE,
             })
         })
         .await
@@ -363,6 +366,7 @@ async fn body(mut response: Response) -> Result<Vec<u8>, Failure> {
 pub(crate) struct Invalidations {
     response: Response,
     buffer: Vec<u8>,
+    deadline: tokio::time::Instant,
 }
 
 impl Invalidations {
@@ -372,18 +376,25 @@ impl Invalidations {
                 let event = &self.buffer[..end];
                 let changed = event.starts_with(b"event: refresh\n")
                     || event.starts_with(b"event: invalidate\n");
+                if changed || event.starts_with(b":") {
+                    self.deadline = tokio::time::Instant::now() + STREAM_DEADLINE;
+                }
                 self.buffer.drain(..end + 2);
                 if changed {
                     return Ok(());
                 }
                 continue;
             }
-            let chunk = self
-                .response
-                .chunk()
-                .await
-                .map_err(|_| Failure::Unavailable)?
-                .ok_or(Failure::Unavailable)?;
+            let chunk = tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(self.deadline) => return Err(Failure::Unavailable),
+                chunk = self.response.chunk() => chunk,
+            }
+            .map_err(|_| Failure::Unavailable)?
+            .ok_or(Failure::Unavailable)?;
+            if chunk.is_empty() {
+                return Err(Failure::Unavailable);
+            }
             if self.buffer.len() + chunk.len() > 64 * 1024 {
                 return Err(Failure::Engine("oversized event".into()));
             }
@@ -473,5 +484,35 @@ mod tests {
         check_log(&client, "timeout");
         server.abort();
         let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn partial_event_expires_after_last_keepalive() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            assert!(socket.read(&mut request).await.unwrap() > 0);
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n: keepalive\n\nevent: partial").await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let client = ServiceClient::new(&SessionBinding::Inbox(nucleus_core::acp::InboxBinding {
+            session_id: "fixture".into(),
+            endpoint,
+            inbox_credential: [0; 32],
+        }))
+        .unwrap();
+        let mut stream = client.stream().await.unwrap();
+        tokio::time::pause();
+        // A complete keepalive extends the existing deadline. An incomplete
+        // change after it must neither return an invalidation nor extend it again.
+        stream.deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let start = tokio::time::Instant::now();
+        assert!(matches!(stream.next().await, Err(Failure::Unavailable)));
+        assert!(start.elapsed() >= STREAM_DEADLINE);
+        assert_eq!(stream.buffer, b"event: partial");
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
     }
 }

@@ -159,6 +159,11 @@ impl Service {
         {
             return Ok((None, carry_row));
         }
+        if state.registry_mode && !self.host.projects_synchronized() {
+            // The first refresh after restart can precede the T3 shell snapshot.
+            // Carry a turn that already matched its prompt until custody is known.
+            return Ok((None, true));
+        }
         if !active_child
             && (task.run().is_some()
                 || !matches!(wait, Some(WaitReason::Starting | WaitReason::HostUnknown)))

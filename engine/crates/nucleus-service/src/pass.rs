@@ -1385,9 +1385,6 @@ impl Service {
         if let Some(record) = &prior {
             match record.result {
                 ParentResult::Held => return Err(ServiceError::ParentDeliveryHeld),
-                ParentResult::Failed => {
-                    return Ok(ControlFlow::Break(WaitReason::HostObservationBlocked));
-                }
                 _ => crate::acp::parent_due(record)?,
             }
         }
@@ -1412,6 +1409,7 @@ impl Service {
                     command: &value.command,
                     released: released_at.is_some(),
                     replay_launch,
+                    recorded_failure: value.result == ParentResult::Failed,
                 }),
                 host.profile_catalog(),
             )
@@ -1431,7 +1429,10 @@ impl Service {
                 released_at.unwrap_or(WaitReason::Starting),
             )),
             ParentStep::Failed => {
-                if let Some(record) = &prior {
+                if let Some(record) = prior
+                    .as_ref()
+                    .filter(|record| record.result != ParentResult::Failed)
+                {
                     self.finish_parent_delivery(row, record, ParentResult::Failed, 0)
                         .await?;
                 }
