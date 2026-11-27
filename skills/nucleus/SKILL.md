@@ -20,7 +20,13 @@ intent. Dispatch, scope changes and outward actions require their own authority.
 - List leads and papercuts with `item.list`. Use `item.add`, `item.edit`,
   `item.park`, `item.drop` or `item.reopen` to maintain them. Reopen a parked or dropped item with `item.reopen [PROJECT] ID [--note NOTE]`; a due revisit stays parked until reopened. Promote approved work with
   `item.promote [PROJECT] ID`. A lead carries its complexity in the brief.
-  Supply `--complexity` when promoting a papercut.
+  Supply `--complexity` when promoting a papercut. When you receive an item
+  assessment message from the board, assess the lead or papercut and record the
+  outcome on the item: drop it with the right disposition and reason
+  (`nucleus item.drop [PROJECT] ID --disposition completed|deprecated --reason "…"`)
+  if it is stale, already done or no longer wanted; otherwise write or update
+  the brief and dispatch it (`nucleus item.edit [PROJECT] ID TITLE` on stdin,
+  then `nucleus item.promote [PROJECT] ID [--complexity LEVEL]`).
 - Send an approved brief on stdin to `nucleus task.add [PROJECT]`. Direct
   admission through `task.add` or `admit` requires `queue.complexity` in the
   brief front matter. This example uses medium.
@@ -95,9 +101,14 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   decisions. Inbox requests and operator decisions belong to the operator.
   A verified planner can send an informational notice with `tell PROJECT TEXT`
   or `tell all TEXT`. Run `nucleus planner.claim` to receive project messages
-  here. Replacing a claim notifies the previous planner. If the sender is gone,
-  their project planner receives the reply. Copy the delivered `Reply:` command
-  and replace its message. The handle belongs to your thread for seven days.
+  here. Replacing a claim notifies the previous planner.
+  A delivered message starts `From <project>`, which names the sender's project,
+  so a reply needn't name itself. It ends with a `Reply:` line such as
+  `nucleus reply r6e39f1a 'your message'`. Run that command with your text, or
+  `nucleus reply r6e39f1a -` to read the text from stdin. Only the thread that
+  received the message can use its handle, and only for seven days. The reply
+  reaches the sender, or the sender's project planner if the sender is gone.
+  Older `nucleus tell '{"to":{"reply":"nreply_…"}}' TEXT` replies still work.
 
 ## Run protocol
 

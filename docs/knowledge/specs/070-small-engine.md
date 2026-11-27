@@ -604,12 +604,16 @@ Later decisions carry their own attribution.
     over". Today a reply goes to project `{from}`, which reaches that project's
     most recently verified planner, often not the sender. The TypeScript design
     (nucleus#1387, `core/questions/agent-messages.ts` at `737246d22`) carries over:
-    - Each delivered message gets an opaque reply handle (`nreply_` and random
-      bytes), never derived from a thread or agent ID. The handle is bound to
-      the sender's verified thread at send time.
-    - The delivered text ends with the exact reply command, for example
-      `Reply: nucleus tell {to:{reply:"nreply_…"}}`, and says the handle
-      reaches this sender, belongs to this recipient and expires after 7 days.
+    - Each delivered message gets an opaque reply handle, never derived from a
+      thread or agent ID. The handle is bound to the sender's verified thread at
+      send time. Handles issued before 2026-11-27 are `nreply_` plus random hex;
+      new ones are `r` plus 8 random hex digits, unique among every issued handle
+      (a collision is retried). Both forms resolve until they expire.
+    - The delivered text opens `From <sender's project name>` and ends with
+      `Reply: nucleus reply <handle> 'your message'`. The text does not restate
+      the reply rules: only the receiving thread can use the handle, it lasts
+      seven days and falls back to the sender's project planner. Those rules
+      live in the Nucleus skill. Old `nucleus tell {to:{reply}}` JSON still works.
     - Only that message's recipient thread can use the handle. An unknown,
       expired or foreign handle sends nothing and reveals nothing about the
       sender.
@@ -798,6 +802,8 @@ Later decisions carry their own attribution.
 61. **Nucleus keeps registered checkouts' default branch current.** Tom, 2026-11-27, confirming the planner's proposal: "Yeah confirm - the damage from not keeping up to date is generally worse, it's rare that anything would be working in the main checkout at the same time as Nucleus tasks landing". After Nucleus merges a PR, it fetches and fast-forwards that repository's registered checkout's local default branch to the merged commit. If that branch is checked out, this is a fast-forward-only merge in the working tree, which Git refuses if it would overwrite local changes. If another branch is checked out, only the local default-branch ref moves, also fast-forward only. A refusal, a diverged branch or a dirty conflict leaves the checkout untouched and is recorded in the task's history. It never resets, stashes, rebases or forces. Task starts still use the fetched published base (nucleus#1623), so a lagging checkout never blocks work. This changes #1623's rule that Nucleus never touches the registered checkout.
 
 62. **A snoozed task row is hidden, not paused.** Tom, 2026-11-27, after bovine-accelerator#7302 stopped for three hours because he had snoozed its row: "Nucleus shouldn't treat manually snoozed task rows any differently - I snoozed 7302 to get it out of my visible list, I don't want it to pause for that amount of time." An operator snooze on a task's parent row, or on one of its role threads, only affects visibility. Nucleus never withholds or delays a parent hold, role send, continuation or notice because of it. T3 clears a thread's snooze when a message is dispatched to it. When a Nucleus send clears an operator snooze, Nucleus puts the same snooze horizon back straight afterwards, so the row stays out of the operator's list until the time they chose. After that horizon the row follows ruling 22's visibility rule again. This replaces the operator-snooze exception in rulings 11, 22 and 35 (carried from #1445 and TypeScript's `wakeBeforeDelivery`).
+
+63. **Tasks declare a weight, and heavy work has its own slots.** Tom, 2026-11-27: "right now we have no concept of what a slot will do.. it might be just making changes to the readme, or it might run a 5 hour test suite building multiple rust binaries in a VM! Would it be possible to have an enum on tasks that defines the weight of a task, and then limit the number of heavy slots that can run concurrently?" He named the options `light`, `normal` and `heavy`, asked that it "doesn't block anything and keeps the queue moving", agreed the planner's shape ("yes, that matches"), and asked for the controls in Settings → Limits. A brief declares `queue.weight: light | normal | heavy`, separate from complexity, which picks the model. A missing weight means `normal`. The weight applies to every run of the task, reviews included. Dispatch keeps three slot counts, heavy H, normal M and light L, whose sum is the global slot count. They act as nested caps: heavy runs ≤ H, heavy plus normal runs ≤ H + M, all runs ≤ H + M + L. So light work can use any slot, normal work normal or heavy slots, and heavy work only heavy slots. When a slot frees, the heaviest waiting task that fits takes it. Within one weight, today's order holds (promoted, then admission), and project slot limits still apply. Nothing is preempted, a free slot is always used whenever any waiting task fits it, and a task waiting on its cap says so. The defaults for this machine are heavy 5, normal 8 and light 5.
 
 ## The model
 

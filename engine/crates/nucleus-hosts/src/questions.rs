@@ -46,6 +46,19 @@ struct PlannerLineage {
 
 impl PlannerIdentity {
     #[must_use]
+    pub fn top_level(id: String, project_id: String, provider_instance_id: Option<String>) -> Self {
+        Self {
+            id,
+            project_id,
+            archived_at: None,
+            deleted_at: None,
+            provider_instance_id,
+            parent_thread_id: None,
+            lineage: None,
+        }
+    }
+
+    #[must_use]
     pub fn is_child(&self) -> bool {
         self.parent_thread_id.is_some()
             || self
@@ -243,6 +256,76 @@ impl T3 {
         })
     }
 
+    /// Freeze a top-level planner thread launch with its initial assessment prompt.
+    /// # Errors
+    /// Returns an error when the request cannot be encoded.
+    pub fn prepare_planner_launch(
+        thread: String,
+        project_id: &str,
+        title: &str,
+        model_selection: &Value,
+        command: String,
+        text: &str,
+    ) -> Result<QuestionDelivery, HostError> {
+        let payload = serde_json::to_string(&json!({
+            "commandId": command,
+            "threadId": thread,
+            "projectId": project_id,
+            "title": title,
+            "modelSelection": model_selection,
+            "runtimeMode": "full-access",
+            "interactionMode": "default",
+            "workspaceStrategy": {"type": "root"},
+            "initialMessage": {"messageId": message_id(&command), "text": text, "attachments": []},
+        }))
+        .map_err(|_| HostError::Protocol)?;
+        Ok(QuestionDelivery {
+            thread,
+            command,
+            payload,
+            last_send_at_ms: Some(clock_ms()?),
+        })
+    }
+
+    /// Launch a frozen top-level planner thread under its command ID.
+    /// # Errors
+    /// Returns an error on deferral, changed project evidence, or an uncertain reply.
+    pub async fn launch_planner_thread(
+        &self,
+        delivery: &QuestionDelivery,
+        project_id: &str,
+        expected_root: &str,
+    ) -> Result<NoticeOutcome, HostError> {
+        let payload = frozen_payload(delivery)?;
+        match self
+            .rpc
+            .call_guarded(
+                "orchestration.launchThread",
+                payload.as_ref(),
+                Read::Background,
+                || {
+                    if self
+                        .cached_project(project_id)
+                        .is_ok_and(|project| project.root == expected_root)
+                    {
+                        Ok(true)
+                    } else {
+                        Err(HostError::Deferred {
+                            until: tokio::time::Instant::now(),
+                        })
+                    }
+                },
+            )
+            .await?
+        {
+            Reply::Value(_) => Ok(NoticeOutcome::Accepted),
+            Reply::Failure(cause) if dispatch_rejected(&cause, &delivery.command) => {
+                Ok(NoticeOutcome::Rejected)
+            }
+            Reply::Failure(_) => Err(HostError::Uncertain),
+        }
+    }
+
     /// Observe the exact message without treating queue acceptance as delivery.
     /// # Errors
     /// Returns an error if the thread or message cannot be read.
@@ -412,11 +495,16 @@ fn frozen_payload(delivery: &QuestionDelivery) -> Result<Box<RawValue>, HostErro
     let payload: Box<RawValue> =
         serde_json::from_str(&delivery.payload).map_err(|_| HostError::Binding)?;
     let fields: Value = serde_json::from_str(payload.get()).map_err(|_| HostError::Binding)?;
+    let msg = message_id(&delivery.command);
+    let is_dispatch = fields["type"] == "message.dispatch"
+        && fields["messageId"] == msg
+        && fields["dispatchMode"]["type"] == "queue_after_active";
+    let is_launch = fields.get("type").is_none()
+        && fields["workspaceStrategy"]["type"] == "root"
+        && fields["initialMessage"]["messageId"] == msg;
     if fields["threadId"] != delivery.thread
         || fields["commandId"] != delivery.command
-        || fields["messageId"] != message_id(&delivery.command)
-        || fields["type"] != "message.dispatch"
-        || fields["dispatchMode"]["type"] != "queue_after_active"
+        || (!is_dispatch && !is_launch)
     {
         return Err(HostError::Binding);
     }
