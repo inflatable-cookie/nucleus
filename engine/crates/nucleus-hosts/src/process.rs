@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod native_cwd;
 pub(crate) mod orphans;
 
 use std::{
@@ -31,6 +33,10 @@ use crate::{
 
 const DEADLINE: Duration = Duration::from_secs(5);
 const MAX_PROBE_OUTPUT: u64 = 8 * 1024 * 1024;
+#[cfg(target_os = "macos")]
+const PS_COLUMNS: &str = "pid=,ppid=,uid=,stat=,lstart=,ucomm=";
+#[cfg(not(target_os = "macos"))]
+const PS_COLUMNS: &str = "pid=,ppid=,uid=,stat=,lstart=,comm=";
 
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum ProcessEvidenceFailure {
@@ -44,6 +50,26 @@ pub enum ProcessEvidenceFailure {
     Incomplete,
     #[error("PID {pid} has no verified working directory after the cwd follow-up")]
     Cwd { pid: u32 },
+}
+
+/// A process that holds a retirement root or whose custody could not be verified.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RetirementBlocker {
+    pub pid: u32,
+    pub command: String,
+    pub started: Option<i64>,
+    pub unverified: bool,
+}
+
+impl std::fmt::Display for RetirementBlocker {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(out, "PID {} ({}) ", self.pid, self.command)?;
+        if self.unverified {
+            out.write_str("has an unreadable working directory. The local process check could not rule out this checkout or its run scratch.")
+        } else {
+            out.write_str("has its working directory in the task checkout or run scratch.")
+        }
+    }
 }
 
 pub(crate) const fn coverage_error(error: HostError) -> HostError {
@@ -62,8 +88,8 @@ pub(crate) enum Activity {
     Unknown(Option<u32>),
 }
 
-/// Snapshot of the local host user's processes. Missing lsof rows stay unknown
-/// until a separate process enumeration proves their PIDs have exited.
+/// Snapshot of the local host user's processes. Missing cwd evidence stays
+/// unknown until a follow-up verifies the directory or confirms exit.
 pub(crate) struct Inventory {
     processes: HashMap<u32, ProcessPaths>,
     runtime: Option<(u32, HashMap<u32, RuntimeProcess>)>,
@@ -74,6 +100,10 @@ struct ProcessPaths {
     parent: u32,
     cwd: Option<PathBuf>,
     ambiguous_path: bool,
+    cwd_device: Option<u32>,
+    cwd_inode: Option<u64>,
+    command: String,
+    started: Option<i64>,
 }
 
 impl Inventory {
@@ -85,7 +115,7 @@ impl Inventory {
                 ProcessPaths {
                     parent: 0,
                     cwd: Some(PathBuf::from("/")),
-                    ambiguous_path: false,
+                    ..ProcessPaths::default()
                 },
             )]),
             runtime: None,
@@ -105,7 +135,8 @@ impl Inventory {
             ProcessPaths {
                 parent: 1,
                 cwd: Some(path.into()),
-                ambiguous_path: false,
+                command: "fixture-process".into(),
+                ..ProcessPaths::default()
             },
         );
         inventory
@@ -119,7 +150,7 @@ impl Inventory {
             ProcessPaths {
                 parent: 3,
                 cwd: Some(checkout.to_path_buf()),
-                ambiguous_path: false,
+                ..ProcessPaths::default()
             },
         );
         if unrelated {
@@ -128,7 +159,7 @@ impl Inventory {
                 ProcessPaths {
                     parent: 4,
                     cwd: Some(checkout.to_path_buf()),
-                    ambiguous_path: false,
+                    ..ProcessPaths::default()
                 },
             );
         }
@@ -168,7 +199,7 @@ impl Inventory {
         // has already released its cwd and cannot access the checkout.
         let (processes, probe_pid) = read_listing(
             "/bin/ps",
-            &["-axo", "pid=,ppid=,uid=,stat="],
+            &["-axww", "-o", PS_COLUMNS],
             Some(scratch),
             u64::MAX,
         )
@@ -198,38 +229,92 @@ impl Inventory {
         Ok(inventory)
     }
 
-    async fn complete_missing(&mut self, scratch: &Path) {
+    pub(crate) async fn complete_missing(&mut self, scratch: &Path) {
         // Processes begun during lsof's walk need their own read. This is one
         // bounded follow-up for the captured census, independent of task count.
-        let missing = self
+        let missing: Vec<u32> = self
             .processes
             .iter()
-            .filter(|(_, paths)| paths.cwd.is_none())
-            .map(|(pid, _)| pid.to_string())
+            .filter_map(|(&pid, paths)| paths.unverified().then_some(pid))
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let selected = missing
+            .iter()
+            .map(u32::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        if !missing.is_empty()
-            && let Ok(listing) = read_listing(
-                "/usr/sbin/lsof",
-                &["-a", "-p", &missing, "-d", "cwd", "-n", "-P", "-F0pfn"],
-                Some(scratch),
-                u64::MAX,
-            )
-            .await
+        if let Ok(listing) = read_listing(
+            "/usr/sbin/lsof",
+            &["-a", "-p", &selected, "-d", "cwd", "-n", "-P", "-F0pfnDi"],
+            Some(scratch),
+            MAX_PROBE_OUTPUT,
+        )
+        .await
             && let Some(paths) = listing.cwd_followup()
         {
             for (pid, paths) in paths {
-                if let Some(existing) = self.processes.get_mut(&pid) {
+                if let Some(existing) = self.processes.get_mut(&pid)
+                    && existing.unverified()
+                {
                     existing.cwd = paths.cwd;
                     existing.ambiguous_path = paths.ambiguous_path;
+                    existing.cwd_device = paths.cwd_device;
+                    existing.cwd_inode = paths.cwd_inode;
                 }
             }
         }
-        self.processes
-            .retain(|&pid, paths| paths.cwd.is_some() || !gone(pid));
+        // Query again even if lsof returned a path. A reaped PID and a zombie
+        // are both gone for custody purposes. A reused PID starts unverified.
+        if let Ok(listing) = read_listing(
+            "/bin/ps",
+            &["-ww", "-p", &selected, "-o", PS_COLUMNS],
+            Some(scratch),
+            MAX_PROBE_OUTPUT,
+        )
+        .await
+            && let Ok((rows, _)) = listing.successful()
+            && let Ok(mut current) = Self::from_listings(&[], &rows, geteuid().as_raw(), 0)
+        {
+            for pid in missing {
+                match (self.processes.get_mut(&pid), current.processes.remove(&pid)) {
+                    (Some(previous), Some(latest)) if previous.started != latest.started => {
+                        *previous = latest;
+                    }
+                    (_, None) => {
+                        self.processes.remove(&pid);
+                    }
+                    _ => {}
+                }
+            }
+            #[cfg(target_os = "macos")]
+            self.recover_paths().await;
+        }
+        self.processes.retain(|&pid, _| !gone(pid));
     }
 
-    fn from_listings(
+    #[cfg(target_os = "macos")]
+    async fn recover_paths(&mut self) {
+        let unresolved = self
+            .processes
+            .iter()
+            .filter_map(|(&pid, paths)| {
+                paths.started?;
+                paths
+                    .unverified()
+                    .then_some((pid, paths.cwd_device?, paths.cwd_inode?))
+            })
+            .collect();
+        for (pid, path) in native_cwd::recover(unresolved).await {
+            if let Some(process) = self.processes.get_mut(&pid) {
+                process.cwd = Some(path);
+                process.ambiguous_path = false;
+            }
+        }
+    }
+
+    pub(crate) fn from_listings(
         listing: &[u8],
         processes: &[u8],
         user: u32,
@@ -256,6 +341,9 @@ impl Inventory {
             if pid != probe_pid && uid == user && !status.starts_with('Z') {
                 let mut process = by_pid.remove(&pid).unwrap_or_default();
                 process.parent = parent;
+                let started = columns.by_ref().take(5).collect::<Vec<_>>().join(" ");
+                process.started = orphans::start_epoch(&started);
+                process.command = columns.collect::<Vec<_>>().join(" ");
                 live.insert(pid, process);
             }
         }
@@ -281,7 +369,7 @@ impl Inventory {
             }) {
                 return Activity::Busy(pid);
             }
-            if process.cwd.is_none() || process.ambiguous_path {
+            if process.unverified() {
                 missing = Some(missing.map_or(pid, |prior| prior.min(pid)));
             }
         }
@@ -290,6 +378,44 @@ impl Inventory {
         } else {
             Activity::Quiet
         }
+    }
+
+    pub(crate) fn retirement_blocker(
+        &self,
+        root: &Path,
+    ) -> Result<Option<RetirementBlocker>, HostError> {
+        let (pid, unverified) = match self.activity(root, None, &HashSet::new()) {
+            Activity::Busy(pid) => (pid, false),
+            Activity::Unknown(Some(pid)) => (pid, true),
+            Activity::Unknown(None) => {
+                return Err(HostError::ProcessCoverage(
+                    ProcessEvidenceFailure::Incomplete,
+                ));
+            }
+            Activity::Quiet => return Ok(None),
+        };
+        let process = &self.processes[&pid];
+        Ok(Some(RetirementBlocker {
+            pid,
+            command: if process.command.is_empty() {
+                "command unavailable".into()
+            } else {
+                process.command.clone()
+            },
+            started: process.started,
+            unverified,
+        }))
+    }
+
+    pub(crate) fn unresolved(&self) -> Option<Vec<(u32, i64)>> {
+        if self.processes.is_empty() {
+            return None;
+        }
+        self.processes
+            .iter()
+            .filter(|(_, paths)| paths.unverified())
+            .map(|(&pid, paths)| Some((pid, paths.started?)))
+            .collect()
     }
 
     pub(crate) fn writer(
@@ -338,6 +464,12 @@ impl Inventory {
                 })
             })
             .collect()
+    }
+}
+
+impl ProcessPaths {
+    fn unverified(&self) -> bool {
+        self.cwd.is_none() || self.ambiguous_path
     }
 }
 
@@ -394,6 +526,19 @@ fn process_paths(stdout: &[u8]) -> Result<HashMap<u32, ProcessPaths>, HostError>
                 is_cwd = false;
             }
             [b'f', file @ ..] => is_cwd = file == b"cwd",
+            [b'D', device @ ..] if is_cwd => {
+                let process = rows.entry(pid.ok_or(HostError::Protocol)?).or_default();
+                process.cwd_device = std::str::from_utf8(device)
+                    .ok()
+                    .and_then(|value| value.strip_prefix("0x"))
+                    .and_then(|value| u32::from_str_radix(value, 16).ok());
+            }
+            [b'i', inode @ ..] if is_cwd => {
+                let process = rows.entry(pid.ok_or(HostError::Protocol)?).or_default();
+                process.cwd_inode = std::str::from_utf8(inode)
+                    .ok()
+                    .and_then(|value| value.parse().ok());
+            }
             [b'n', path @ ..] if is_cwd && path.starts_with(b"/") => {
                 let process = rows.entry(pid.ok_or(HostError::Protocol)?).or_default();
                 let Some(path) = decode_lsof_path(path) else {

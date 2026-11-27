@@ -129,7 +129,7 @@ fn observed_seconds() -> Result<i64, HostError> {
 }
 
 /// Seconds since the Unix epoch for a `ps` lstart value, which is UTC under TZ=UTC.
-fn start_epoch(started: &str) -> Option<i64> {
+pub(super) fn start_epoch(started: &str) -> Option<i64> {
     let words: Vec<&str> = started.split_ascii_whitespace().collect();
     let [_weekday, month, day, clock, year] = words.as_slice() else {
         return None;

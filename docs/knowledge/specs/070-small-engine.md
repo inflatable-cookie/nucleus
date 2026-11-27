@@ -185,6 +185,14 @@ Later decisions carry their own attribution.
    rechecks the target before dispatch. Closure follows when all three are
    archived, deleted or absent from the shell.
 
+   The census discards PIDs confirmed absent or zombie at the cwd follow-up.
+   On macOS, a path resolved from the working directory's device and inode can
+   clear an unreadable listing for an unrelated checkout.
+   A task's retirement wait names the PID, command and reason. If the census
+   cannot establish a process's cwd, it holds affected retirement and surfaces
+   one Inbox decision for that process across the engine profile. An answer
+   leaves the custody gate in force. Fresh evidence clears the decision.
+
    The same synchronized row keys a decision and its final write fence. It
    confirms a presentation write when it shows the intended change. Planning
    and wire both require held evidence that attached and retained children

@@ -66,8 +66,8 @@ pub fn thread_link(thread: &str) -> Option<String> {
 }
 
 use process::Inventory;
-pub use process::ProcessEvidenceFailure;
 pub use process::orphans::{OrphanProcess, OrphanScan, verify_orphans};
+pub use process::{ProcessEvidenceFailure, RetirementBlocker};
 pub use projection::RunActivity;
 use projection::{MissingReceipt, Projection};
 pub use provider_setup::{
@@ -328,13 +328,13 @@ pub trait TaskHost: Send + Sync {
     /// Returns an error when the launch is unsupported or cannot be encoded.
     fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError>;
 
-    /// Name a local process whose cwd prevents retirement of this task's checkout or scratch.
+    /// Name a local process whose custody prevents retirement of this task's checkout or scratch.
     /// # Errors
     /// Returns an error when the pass cannot establish workspace custody.
     fn retirement_writer(
         &self,
         root: &Path,
-    ) -> impl Future<Output = Result<Option<u32>, HostError>> + Send;
+    ) -> impl Future<Output = Result<Option<RetirementBlocker>, HostError>> + Send;
 
     /// Identify checkout-owned orphan trees for a terminal task, and the shared
     /// services that only inherited its cwd.
@@ -444,6 +444,24 @@ impl T3Pass<'_> {
             ..PassEvidence::default()
         });
         self
+    }
+
+    /// Run the production cwd follow-up on captured lsof and ps fixture rows.
+    #[doc(hidden)]
+    pub async fn with_fixture_census(
+        mut self,
+        lsof: &[u8],
+        ps: &[u8],
+        scratch: &Path,
+    ) -> Result<Self, HostError> {
+        let mut inventory =
+            Inventory::from_listings(lsof, ps, rustix::process::geteuid().as_raw(), 0)?;
+        inventory.complete_missing(scratch).await;
+        self.evidence = Arc::new(PassEvidence {
+            processes: OnceCell::new_with(Some(Ok(inventory))),
+            ..PassEvidence::default()
+        });
+        Ok(self)
     }
 }
 
@@ -948,15 +966,21 @@ impl T3Pass<'_> {
             .as_ref()
             .map_err(|&error| process::coverage_error(error))
     }
+
+    /// Return unresolved identities from this pass, if it has a complete census.
+    #[must_use]
+    pub fn unresolved_processes(&self) -> Option<Vec<(u32, i64)>> {
+        self.evidence.processes.get()?.as_ref().ok()?.unresolved()
+    }
 }
 
 impl TaskHost for T3Pass<'_> {
-    async fn retirement_writer(&self, root: &Path) -> Result<Option<u32>, HostError> {
+    async fn retirement_writer(&self, root: &Path) -> Result<Option<RetirementBlocker>, HostError> {
         let inventory = self.process_inventory().await?;
         process::verify_roots(&[Some(root)])
             .await
             .map_err(process::coverage_error)?;
-        inventory.writer(root, None, &std::collections::HashSet::new())
+        inventory.retirement_blocker(root)
     }
 
     async fn terminal_orphans(

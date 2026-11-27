@@ -2329,10 +2329,8 @@ impl Service {
         let threads: Vec<_> = threads.into_iter().flatten().collect();
         // Each lookup uses the pass's shared process census.
         for root in self.retirement_roots(task, checkout).await? {
-            if let Some(pid) = host.retirement_writer(&root).await? {
-                return Err(ServiceError::ArchiveEvidence(format!(
-                    "PID {pid} has its working directory in the task checkout or run scratch."
-                )));
+            if let Some(blocker) = host.retirement_writer(&root).await? {
+                return Err(ServiceError::CheckoutProcess(blocker));
             }
         }
         let observed = match head {
@@ -2871,12 +2869,7 @@ mod tests {
                 path
             });
             for root in [checkout.path(), current.as_path(), earlier.as_path()] {
-                let mut child = tokio::process::Command::new("/bin/sleep")
-                    .arg("60")
-                    .current_dir(root)
-                    .kill_on_drop(true)
-                    .spawn()
-                    .unwrap();
+                let mut child = sleep_in_cwd(root);
                 let pid = child.id().unwrap();
                 let host = service
                     .host
@@ -2891,12 +2884,165 @@ mod tests {
                     .await;
                 child.kill().await.unwrap();
                 assert!(
-                    matches!(&result, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
+                    matches!(&result, Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid),
                     "{result:?}"
                 );
                 assert!(checkout.path().exists());
             }
         }
+    }
+
+    fn sleep_in_cwd(cwd: &Path) -> tokio::process::Child {
+        tokio::process::Command::new("/bin/sleep")
+            .arg("60")
+            .current_dir(cwd)
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn process_listing(command: &str, args: &[&str]) -> Vec<u8> {
+        let listing = tokio::process::Command::new(command)
+            .env("LC_ALL", "C")
+            .env("TZ", "UTC")
+            .args(args)
+            .output()
+            .await
+            .unwrap();
+        assert!(listing.status.success(), "{listing:?}");
+        listing.stdout
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn exit_without_reaping(child: &mut tokio::process::Child) {
+        let pid = child.id().unwrap().to_string();
+        child.start_kill().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = process_listing("/bin/ps", &["-p", &pid, "-o", "stat="]).await;
+                if String::from_utf8_lossy(&state)
+                    .trim_start()
+                    .starts_with('Z')
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("fixture child exited");
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn before_cwd_followup(unrelated: u32, exited: u32, writer: u32) -> (Vec<u8>, Vec<u8>) {
+        let pids = format!("{unrelated},{exited},{writer}");
+        let ps = process_listing(
+            "/bin/ps",
+            &[
+                "-ww",
+                "-p",
+                &pids,
+                "-o",
+                "pid=,ppid=,uid=,stat=,lstart=,ucomm=",
+            ],
+        )
+        .await;
+        let lsof = process_listing(
+            "/usr/sbin/lsof",
+            &[
+                "-a",
+                "-p",
+                &unrelated.to_string(),
+                "-d",
+                "cwd",
+                "-n",
+                "-P",
+                "-F0pfn",
+            ],
+        )
+        .await;
+        assert!(String::from_utf8_lossy(&lsof).contains("elsewhere^A"));
+        (lsof, ps)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn real_census_rows_allow_unrelated_closeout_and_name_a_live_writer() {
+        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.fixture_mut().acp_provider = Some("fixture".into());
+        let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
+        let id = &row.task.identity().id;
+        let head = &service.fixture().start;
+        let route = service.project_for(row.task.identity()).await.unwrap();
+        let work = service.worktrees();
+        let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();
+        checkout.allocate(head).unwrap();
+        let binding = service
+            .checkout_binding(row.task.identity(), &route, &checkout)
+            .unwrap();
+        service.host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
+        }));
+        let scratch = service.storage.scratch().path();
+        let outside = home.path().join("elsewhere^A");
+        std::fs::create_dir(&outside).unwrap();
+        let mut unrelated = sleep_in_cwd(&outside);
+        let mut exited = sleep_in_cwd(checkout.path());
+        let inside = checkout.path().join("writer^A");
+        std::fs::create_dir(&inside).unwrap();
+        let mut writer = sleep_in_cwd(&inside);
+        let (lsof, ps) = before_cwd_followup(
+            unrelated.id().unwrap(),
+            exited.id().unwrap(),
+            writer.id().unwrap(),
+        )
+        .await;
+        let capture = || {
+            service
+                .host
+                .pass(scratch)
+                .with_fixture_census(&lsof, &ps, scratch)
+        };
+
+        // The ps rows still name the exited child, and kill(0) still sees its PID.
+        exit_without_reaping(&mut exited).await;
+        let fixture = capture().await.unwrap();
+        assert_eq!(fixture.unresolved_processes(), Some(vec![]));
+        exited.wait().await.unwrap();
+        let retirement = service
+            .retire_if_idle(&fixture, &row.task, &binding, &checkout, Some(head))
+            .await;
+        let pid = writer.id().unwrap();
+        assert!(
+            matches!(&retirement, Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid && !blocker.unverified)
+        );
+        let result = retirement.map(|_| Action::Nothing);
+        service
+            .schedule_result(&row, &result, crate::schedule::Priority::Closeout)
+            .await
+            .unwrap();
+        {
+            let state = service.state.lock().await;
+            assert!(matches!(
+                state.wait_detail(id),
+                Some(crate::WaitDetail::Archive(message)) if message.contains(&format!("PID {pid} (sleep)")) && message.contains("working directory")
+            ));
+        }
+        assert!(checkout.path().exists());
+
+        writer.kill().await.unwrap();
+        let cleared = capture().await.unwrap();
+        assert_eq!(
+            service
+                .retire_if_idle(&cleared, &row.task, &binding, &checkout, Some(head))
+                .await
+                .unwrap(),
+            Some(Retirement::Removed)
+        );
+        assert!(!checkout.path().exists());
+        assert!(unrelated.try_wait().unwrap().is_none());
+        unrelated.kill().await.unwrap();
     }
 
     struct ProtectedTree(Vec<u32>);
@@ -3188,7 +3334,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            matches!(&outcome, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
+            matches!(&outcome, Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid),
             "{outcome:?}"
         );
         assert!(
@@ -3254,19 +3400,14 @@ mod tests {
             }));
         };
         shell(json!([]));
-        let mut writer = tokio::process::Command::new("/bin/sleep")
-            .arg("60")
-            .current_dir(checkout.path())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+        let mut writer = sleep_in_cwd(checkout.path());
         let writer_host = service
             .host
             .pass(service.storage.scratch().path())
             .with_fixture_process_cwd(writer.id().unwrap(), checkout.path())
             .for_task(&task, None);
         assert!(
-            matches!(service.retire_if_idle(&writer_host, &task, &binding, &checkout, Some(head)).await, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {}", writer.id().unwrap())))
+            matches!(service.retire_if_idle(&writer_host, &task, &binding, &checkout, Some(head)).await, Err(ServiceError::CheckoutProcess(blocker)) if Some(blocker.pid) == writer.id())
         );
         assert!(checkout.path().exists());
         writer.kill().await.unwrap();

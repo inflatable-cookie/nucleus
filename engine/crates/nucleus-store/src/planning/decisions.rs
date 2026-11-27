@@ -142,6 +142,60 @@ impl Store {
         Ok(decision)
     }
 
+    /// Withdraw an open, standalone decision when its cause has cleared.
+    ///
+    /// # Errors
+    /// Returns an error if the decision cannot be read or written.
+    pub fn withdraw_decision(
+        &mut self,
+        project: &str,
+        id: &str,
+        stamp: WriteAt<'_>,
+    ) -> Result<bool, StoreError> {
+        self.set_decision_withdrawn(project, id, true, stamp)
+    }
+
+    /// Reopen an unanswered, standalone decision whose cause has returned.
+    ///
+    /// # Errors
+    /// Returns an error if the decision cannot be read or written.
+    pub fn reopen_decision(
+        &mut self,
+        project: &str,
+        id: &str,
+        stamp: WriteAt<'_>,
+    ) -> Result<bool, StoreError> {
+        self.set_decision_withdrawn(project, id, false, stamp)
+    }
+
+    fn set_decision_withdrawn(
+        &mut self,
+        project: &str,
+        id: &str,
+        withdrawn: bool,
+        stamp: WriteAt<'_>,
+    ) -> Result<bool, StoreError> {
+        let tx = self.planning_write()?;
+        let Some(mut decision) = read::<Decision>(&tx, DecisionRecord, project, id)? else {
+            return Ok(false);
+        };
+        if decision.task.is_some() || decision.withdrawn == withdrawn || decision.answer.is_some() {
+            return Ok(false);
+        }
+        decision.withdrawn = withdrawn;
+        save(
+            &tx,
+            DecisionRecord,
+            project,
+            id,
+            if withdrawn { "withdraw" } else { "reopen" },
+            &decision,
+            stamp,
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// Record the answer. Task-linked decisions require the exact question row to remain current.
     ///
     /// # Errors
