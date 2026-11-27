@@ -52,8 +52,7 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   never a hint. A Frontier profile is used only this way, with a reason, and
   applies directly at the Low, Normal and High usage levels (Spec 052).
   On a running task, `amend` the brief, then `move REF working` with no
-  `--instruction`. A retained worker keeps its first profile until a request
-  like this replaces it in a fresh worker thread with the work so far.
+  `--instruction`. Raising `queue.complexity` by amend moves a retained worker up a tier on its next run if its profile falls below the new start bracket. Use `profileRequests` to pick an exact profile.
   `task.add` resolves those references before dispatch can start.
   Set `queue.mergeHold: true` with a nonblank `queue.mergeHoldReason` to wait
   for a named condition after work, review and required checks finish.

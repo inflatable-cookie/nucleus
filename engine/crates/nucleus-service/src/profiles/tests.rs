@@ -14,6 +14,7 @@ use nucleus_core::{
     profiles::Profile,
 };
 use serde_json::{Value, json};
+use tower::ServiceExt;
 
 use super::*;
 use crate::{
@@ -27,6 +28,7 @@ use nucleus_store::DispatchSettings;
 
 const IDS: [&str; 3] = ["overlap-a", "overlap-b", "overlap-c"];
 const RESET_MS: u64 = 4_070_908_800_000;
+const LOW_BRIEF: &str = "---\nqueue: {complexity: low}\n---\nFix a typo.";
 
 #[tokio::test]
 async fn worker_launches_exclude_disabled_and_unavailable_profiles() {
@@ -742,7 +744,7 @@ fn retained_role_task(
     author: &Profile,
     reviewer: &Profile,
     role: Role,
-    required: bool,
+    brief: &str,
 ) -> (Task, nucleus_hosts::Binding) {
     let head = service.fixture().start.clone();
     let pr = PullRequest {
@@ -755,11 +757,6 @@ fn retained_role_task(
         .unwrap();
     checkout.allocate(&head).unwrap();
     let binding = service.binding(&checkout).unwrap();
-    let brief = if required {
-        "---\nqueue: {complexity: low, profileRequests: {reviewer: {profileId: review, reason: fixture, required: true}}}\n---\nFix a typo."
-    } else {
-        "---\nqueue: {complexity: low}\n---\nFix a typo."
-    };
     let mut task = Task::new(
         Identity {
             id: id.into(),
@@ -915,7 +912,12 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
             Role::Reviewer if required => ("thread:reviewer", &["review", "decoy"]),
             Role::Reviewer => ("thread:reviewer", &["review"]),
         };
-        let (task, binding) = retained_role_task(&service, id, author, reviewer, role, required);
+        let brief = if required {
+            "---\nqueue: {complexity: low, profileRequests: {reviewer: {profileId: review, reason: fixture, required: true}}}\n---\nFix a typo."
+        } else {
+            LOW_BRIEF
+        };
+        let (task, binding) = retained_role_task(&service, id, author, reviewer, role, brief);
         let (native_server, forge_server) =
             retained_role_endpoints(&mut service, task.pull_request(), binding, thread).await;
         {
@@ -980,6 +982,132 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
         native_server.abort();
         forge_server.abort();
     }
+}
+
+#[tokio::test]
+async fn complexity_amendments_route_a_stored_worker_and_explain_reselection_in_next() {
+    let profiles: Profiles = serde_json::from_value(json!({
+        "profiles": [
+            {"name":"Luna","group":"author","selection":{"id":"luna","provider":"codex","model":"first","capability":"mechanical"}},
+            {"name":"Reviewer","group":"review","selection":{"id":"review","provider":"codex","model":"second","capability":"mechanical"}},
+            {"name":"Sol","group":"heavy","selection":{"id":"sol","provider":"claude","model":"other","capability":"heavyweight"}}
+        ]
+    }))
+    .unwrap();
+    let luna = &profiles.profiles[0].selection;
+    let reviewer = &profiles.profiles[1].selection;
+    let sol = &profiles.profiles[2].selection;
+    let high = "---\nqueue: {complexity: very_high}\n---\nFix the typo.";
+    let required = "---\nqueue: {complexity: very_high, profileRequests: {worker: {profileId: luna, reason: fixture, required: true}}}\n---\nFix the typo.";
+    let authority = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let thread = "thread:worker";
+    for (brief, amended, author, expected, reselect) in [
+        (LOW_BRIEF, high, luna, sol, true),
+        (LOW_BRIEF, required, luna, luna, false),
+        (high, LOW_BRIEF, sol, sol, false),
+        (
+            LOW_BRIEF,
+            "---\nqueue: {complexity: low}\n---\nFix the typo.",
+            luna,
+            luna,
+            false,
+        ),
+    ] {
+        let (_home, mut service) = fixture(nucleus_forge::GitHub::new("fixture").unwrap());
+        let id = "retained-amend";
+        let (task, binding) =
+            retained_role_task(&service, id, author, reviewer, Role::Worker, brief);
+        let (native_server, forge_server) =
+            retained_role_endpoints(&mut service, task.pull_request(), binding, thread).await;
+        {
+            let mut state = service.state.lock().await;
+            state.settings.profiles = Some(Arc::new(profiles.clone()));
+            state.store.create(&task, &crate::event("fixture")).unwrap();
+        }
+        let service = Arc::new(service);
+        service
+            .command(id, &authority, Command::Amend(amended.into()))
+            .await
+            .unwrap();
+        if brief == high {
+            service
+                .command(id, &authority, Command::Move(Phase::Working))
+                .await
+                .unwrap();
+        }
+        let row = service.task(id).await.unwrap();
+        assert_eq!(row.task.threads().profile(Role::Worker), Some(author));
+        assert_eq!(row.task.brief().text, amended);
+        let next = read_next(&service, id, &authority).await;
+        if reselect {
+            assert_eq!(
+                next["profileReselections"],
+                json!([
+                    "The retained worker will be reselected on its next run because its Mechanical profile is below the Heavyweight bracket for the raised complexity."
+                ])
+            );
+        } else {
+            assert!(next.get("profileReselections").is_none());
+        }
+        let actual = service
+            .advance(&row, &service.host.fixture_pass())
+            .await
+            .unwrap();
+        let via = if reselect {
+            Launch::Create
+        } else {
+            Launch::Continue {
+                thread: thread.into(),
+            }
+        };
+        assert_eq!(
+            actual,
+            Action::Launch {
+                role: Role::Worker,
+                via
+            }
+        );
+        let next = service.task(id).await.unwrap();
+        let launch = next.task.run().unwrap().launch();
+        assert_eq!(launch.profile(), Some(expected));
+        assert_eq!(launch.thread != thread, reselect);
+        if reselect {
+            let wire: Value = serde_json::from_str(&launch.input).unwrap();
+            let prompt = wire["payload"]["initialMessage"]["text"].as_str().unwrap();
+            assert!(prompt.contains("Rebase before revising."));
+            assert!(prompt.contains("Fix the spelling."));
+        }
+        native_server.abort();
+        forge_server.abort();
+    }
+}
+
+async fn read_next(service: &Arc<Service>, id: &str, authority: &Authority) -> Value {
+    let key = [13; 32];
+    let api = crate::web::router(
+        Arc::clone(service),
+        [crate::web::Controller {
+            credential: key,
+            authority: authority.clone(),
+        }],
+    );
+    let response = api
+        .oneshot(
+            axum::http::Request::get(format!("/v1/tasks/{id}/next"))
+                .header("host", "127.0.0.1:9")
+                .header("authorization", format!("Bearer {}", hex::encode(key)))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
 }
 
 const REMINDER_TASK: &str = "reserved-reminder";

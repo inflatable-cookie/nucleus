@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf};
+use std::{fmt, num::NonZeroU64, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -617,6 +617,8 @@ pub struct Threads {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reviewer_profile: Option<BoundProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) complexity_raised_at: Option<NonZeroU64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) applied_review_sequence: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) settled_scratch: Option<PathBuf>,
@@ -637,11 +639,14 @@ impl Threads {
 
     #[must_use]
     pub fn profile(&self, role: Role) -> Option<&Profile> {
+        self.bound_profile(role).map(|bound| &bound.selected)
+    }
+
+    pub(crate) fn bound_profile(&self, role: Role) -> Option<&BoundProfile> {
         match role {
             Role::Worker => self.worker_profile.as_ref(),
             Role::Reviewer => self.reviewer_profile.as_ref(),
         }
-        .map(|bound| &bound.selected)
     }
 
     /// The ended run whose report a replacement assignment should recover.

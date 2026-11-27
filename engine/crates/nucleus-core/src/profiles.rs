@@ -11,6 +11,7 @@ pub use brief::{BriefPolicy, BriefPolicyError, ProfileRequest};
 pub(crate) use launch::{BoundProfile, applied_changes};
 pub use launch::{
     LaunchPolicy, ProfileLaunch, ProfileLaunchError, decide_profile_launch, decide_weighted_launch,
+    pending_complexity_reselection,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ pub enum UsageLevel {
     Maximum,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Complexity {
     VeryLow,

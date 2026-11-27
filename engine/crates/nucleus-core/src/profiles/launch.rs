@@ -1,10 +1,11 @@
-use std::fmt;
+use std::{fmt, num::NonZeroU64};
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BriefPolicy, BriefPolicyError, Candidate, Capability, Profile, UsageLevel, request_only,
-    requested_bracket, reviewer_bracket, rotation_order, tier_order, worker_climb, worker_start,
+    BriefPolicy, BriefPolicyError, Candidate, Capability, Complexity, Profile, UsageLevel,
+    request_only, requested_bracket, reviewer_bracket, rotation_order, tier_order, worker_climb,
+    worker_start,
 };
 use crate::{
     Action, Brief, Forge, Launch, Observation, Observed, Phase, PullRequest, Review, Role, Task,
@@ -26,6 +27,12 @@ pub struct LaunchPolicy<'a> {
 pub(crate) struct BoundProfile {
     pub(crate) selected: Profile,
     pub(crate) consumed_review: Option<u64>,
+    /// The worker's retained complexity keeps a later lowering from dropping its tier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) complexity: Option<Complexity>,
+    /// The version used to select this role, even if the brief changed during the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    brief_version: Option<NonZeroU64>,
 }
 
 /// Selected inputs for an ordinary new reservation. A host given `Create`
@@ -162,6 +169,52 @@ pub fn decide_weighted_launch(
     select_launch(task, observation, policy, Some(sample))
 }
 
+/// The saved tier and new start bracket when a raise calls for automatic
+/// reselection. Eligibility and subscription availability are checked at launch.
+#[must_use]
+pub fn pending_complexity_reselection(
+    task: &Task,
+    role: Role,
+    usage: UsageLevel,
+) -> Option<(Capability, Capability)> {
+    let brief = BriefPolicy::parse(&task.brief().text).ok()?;
+    if task.phase().is_terminal() || brief.request(role).is_some_and(|request| request.required) {
+        return None;
+    }
+    let retained = task.threads().bound_profile(role)?;
+    reselection_target(task, role, &brief, usage)
+        .map(|target| (retained.selected.capability, target))
+}
+
+fn reselection_target(
+    task: &Task,
+    role: Role,
+    brief: &BriefPolicy,
+    usage: UsageLevel,
+) -> Option<Capability> {
+    let raised_at = task.threads().complexity_raised_at?;
+    let retained = task.threads().bound_profile(role)?;
+    if retained
+        .brief_version
+        .is_some_and(|version| version >= raised_at)
+    {
+        return None;
+    }
+    let start = worker_start(usage, brief.complexity.unwrap_or_default());
+    let target = match role {
+        Role::Worker => start,
+        Role::Reviewer => {
+            let worker = task.threads().profile(Role::Worker);
+            reviewer_bracket(
+                usage,
+                worker.map_or(start, |profile| profile.capability),
+                brief.critical,
+            )
+        }
+    };
+    (retained.selected.capability < target).then_some(target)
+}
+
 fn select_launch(
     task: &Task,
     observation: &Observation,
@@ -178,7 +231,9 @@ fn select_launch(
 
     let brief = BriefPolicy::parse(&task.brief().text).map_err(ProfileLaunchError::Brief)?;
     let request = brief.request(role).filter(|_| policy.planner_brief);
-    let demand = demand(task, observation, role, &brief, policy.usage);
+    let complexity = brief.complexity.unwrap_or_default();
+    let reselect = reselection_target(task, role, &brief, policy.usage);
+    let demand = demand(task, observation, role, &brief, policy.usage, reselect);
     let exclusions = excluded_models(task, role, policy.author_models)?;
     let eligible = policy.candidates.iter().copied().filter(|candidate| {
         let model = model_key(&candidate.profile.model);
@@ -192,9 +247,10 @@ fn select_launch(
                 && candidate.usable(request.thinking_option_id)
         })
     });
-    let retained = task.threads().profile(role);
+    let binding = task.threads().bound_profile(role);
+    let retained = binding.map(|bound| &bound.selected);
     let required = request.filter(|request| request.required);
-    let instructed = if required.is_none() {
+    let instructed = if required.is_none() && reselect.is_none() {
         instructed_worker(task, role, policy)?
     } else {
         None
@@ -215,17 +271,12 @@ fn select_launch(
                 id: request.profile_id.clone(),
             });
         }
-        let automatic = eligible.filter(|candidate| {
-            candidate.usable_if_unpaused(None)
-                && !request_only(
-                    candidate.profile.capability,
-                    policy.usage,
-                    brief.complexity.unwrap_or_default(),
-                    demand.climb.or(demand.earned),
-                )
-        });
         let (best, step_up_from) = automatic_profile(
-            automatic, &previous, retained, &demand, sample,
+            eligible,
+            &previous,
+            binding.filter(|_| reselect.is_none()),
+            &demand,
+            sample,
         )
         .ok_or(ProfileLaunchError::NoEligibleProfile {
             role,
@@ -236,20 +287,20 @@ fn select_launch(
     };
     let via = match (&previous, retained) {
         _ if task.threads().missing_report_from().is_some() => Launch::Create,
+        _ if reselect.is_some() && reason.is_none() => Launch::Create,
         (Launch::Continue { .. }, Some(retained)) if retained.same_binding(&profile) => {
             previous.clone()
         }
         _ => Launch::Create,
     };
     let critical_fallback_worker =
-        if role == Role::Reviewer && brief.critical && via == Launch::Create && reason.is_none() {
-            task.threads()
-                .profile(Role::Worker)
-                .filter(|worker| profile.capability < worker.capability)
-                .map(|worker| worker.id.clone())
-        } else {
-            None
-        };
+        (role == Role::Reviewer && brief.critical && via == Launch::Create && reason.is_none())
+            .then(|| critical_fallback(task, &profile))
+            .flatten();
+    let binding_complexity = binding
+        .filter(|_| matches!(via, Launch::Continue { .. }))
+        .and_then(|bound| bound.complexity)
+        .map_or(complexity, |before| before.max(complexity));
     Ok(Some(ProfileLaunch {
         role,
         via,
@@ -260,6 +311,8 @@ fn select_launch(
         profile: BoundProfile {
             selected: profile,
             consumed_review: consumed_review(task, role, climbed),
+            complexity: (role == Role::Worker).then_some(binding_complexity),
+            brief_version: NonZeroU64::new(task.brief().version),
         },
         brief: task.brief().clone(),
         pr: task.pull_request().cloned(),
@@ -268,6 +321,13 @@ fn select_launch(
         step_up_from,
         critical_fallback_worker,
     }))
+}
+
+fn critical_fallback(task: &Task, selected: &Profile) -> Option<String> {
+    task.threads()
+        .profile(Role::Worker)
+        .filter(|worker| selected.capability < worker.capability)
+        .map(|worker| worker.id.clone())
 }
 
 fn instructed_worker(
@@ -313,6 +373,8 @@ fn consumed_review(task: &Task, role: Role, climbed: bool) -> Option<u64> {
 }
 
 struct Demand {
+    usage: UsageLevel,
+    complexity: Complexity,
     target: Capability,
     retained_floor: Capability,
     ceiling: Capability,
@@ -326,6 +388,7 @@ fn demand(
     role: Role,
     brief: &BriefPolicy,
     usage: UsageLevel,
+    reselect: Option<Capability>,
 ) -> Demand {
     let complexity = brief.complexity.unwrap_or_default();
     let start = worker_start(usage, complexity);
@@ -335,6 +398,8 @@ fn demand(
     let earned = consumed.map(|_| actual);
     match role {
         Role::Reviewer => Demand {
+            usage,
+            complexity,
             target: reviewer_bracket(usage, actual, brief.critical),
             // Criticality prefers a peer for fresh review. An independent
             // retained fallback can continue if it meets the ordinary bracket.
@@ -348,10 +413,11 @@ fn demand(
                 applied_changes(task, observation).and(task.threads.applied_review_sequence);
             let climb = if applied > consumed {
                 worker_climb(usage, complexity, actual)
+                    .map(|tier| tier.max(reselect.unwrap_or(tier)))
             } else {
                 None
             };
-            let same_review = applied.is_some() && applied == consumed;
+            let same_review = reselect.is_none() && applied.is_some() && applied == consumed;
             let ceiling = if usage == UsageLevel::Maximum {
                 Capability::Frontier
             } else {
@@ -363,6 +429,8 @@ fn demand(
                 start.max(actual)
             };
             Demand {
+                usage,
+                complexity,
                 target: climb.unwrap_or(target),
                 retained_floor: climb.unwrap_or(Capability::Mechanical),
                 ceiling: climb.unwrap_or(if same_review {
@@ -395,10 +463,41 @@ pub(crate) fn applied_changes<'a>(task: &'a Task, observation: &Observation) -> 
 fn automatic_profile<'a>(
     candidates: impl Iterator<Item = Candidate<'a>> + Clone,
     launch: &Launch,
-    retained: Option<&Profile>,
+    binding: Option<&BoundProfile>,
     demand: &Demand,
     sample: Option<u64>,
 ) -> Option<(Candidate<'a>, Option<Capability>)> {
+    // Lowering complexity can tighten the automatic bounds. Keep an eligible
+    // worker on the same binding without widening the pool for replacements.
+    if matches!(launch, Launch::Continue { .. })
+        && demand.climb.is_none()
+        && let Some(bound) = binding
+        && let Some(before) = bound
+            .complexity
+            .filter(|&before| before > demand.complexity)
+        && let Some(candidate) = candidates.clone().find(|candidate| {
+            bound.selected.same_binding(candidate.profile)
+                && candidate.usable(None)
+                && !request_only(
+                    candidate.profile.capability,
+                    demand.usage,
+                    before,
+                    demand.earned,
+                )
+        })
+    {
+        return Some((candidate, None));
+    }
+    let retained = binding.map(|bound| &bound.selected);
+    let candidates = candidates.filter(|candidate| {
+        candidate.usable_if_unpaused(None)
+            && !request_only(
+                candidate.profile.capability,
+                demand.usage,
+                demand.complexity,
+                demand.climb.or(demand.earned),
+            )
+    });
     let mut ordinary = candidates
         .clone()
         .filter(|candidate| candidate.profile.capability <= demand.ceiling);

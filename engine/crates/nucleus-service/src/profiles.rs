@@ -7,7 +7,7 @@ use nucleus_core::{
     Action, Observation, Role, Run, Task, WaitReason,
     profiles::{
         BriefPolicy, Candidate, LaunchPolicy, ProfileLaunch, ProfileLaunchError, RotationCounts,
-        UsageLevel, decide_profile_launch, decide_weighted_launch,
+        UsageLevel, decide_profile_launch, decide_weighted_launch, pending_complexity_reselection,
     },
 };
 use nucleus_hosts::{
@@ -507,4 +507,17 @@ pub(super) fn usage(state: &State) -> UsageLevel {
         .map_or(UsageLevel::default(), |dispatch| {
             dispatch.effective_usage(now_ms())
         })
+}
+
+pub(super) fn profile_reselections(task: &Task, state: &State) -> Vec<String> {
+    let usage = usage(state);
+    [(Role::Worker, "worker"), (Role::Reviewer, "reviewer")]
+        .into_iter()
+        .filter_map(|(role, label)| {
+            let (saved, target) = pending_complexity_reselection(task, role, usage)?;
+            Some(format!(
+                "The retained {label} will be reselected on its next run because its {saved:?} profile is below the {target:?} bracket for the raised complexity."
+            ))
+        })
+        .collect()
 }
