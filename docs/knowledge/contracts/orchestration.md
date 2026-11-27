@@ -139,8 +139,11 @@ each further hung call delays that task's next ones by five minutes. A mutation
 already started holds back its task until that mutation ends. Neither elapsed
 time nor a returned volume releases it, because neither proves it can no longer
 take effect. Git's own bounds end a Git mutation. A published-base fetch holds
-back its whole repository the same way. A quarantine stopped after its move
-stays pending for the owner to check.
+back its whole repository the same way. A task held this way waits with the held
+step and its age, and the log records it once the step is a minute old. Only a
+call which never returns needs a restart; other tasks, the pass, API reads and
+run reports carry on (planner ruling, 2026-11-27). A quarantine stopped after
+its move stays pending for the owner to check.
 
 A task whose work volume or layout, including its registered checkout, cannot be
 verified waits with that reason and retries with a delay that doubles to one

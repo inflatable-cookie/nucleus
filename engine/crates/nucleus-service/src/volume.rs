@@ -3,7 +3,7 @@
 //! A call past its deadline may never return, and it can start no further
 //! mutation. A hung read never holds back later calls. A mutation it had already
 //! started holds back its owner until that mutation ends: only its end proves it
-//! can no longer take effect.
+//! can no longer take effect. The owner's wait names that step and its age.
 
 use std::{
     cell::Cell,
@@ -42,6 +42,8 @@ pub(crate) struct WorkVolume {
     pub(crate) unreturned: usize,
     /// Past that limit, how long after a hung call an owner starts any other.
     pub(crate) spacing: Duration,
+    /// How old a held step is when the log records it against a task.
+    pub(crate) stuck: Duration,
     /// How many callers are waiting on a call, by owner.
     waiting: watch::Sender<BTreeMap<String, usize>>,
     /// Calls no caller waits for any more, by owner.
@@ -50,27 +52,43 @@ pub(crate) struct WorkVolume {
 
 #[derive(Default)]
 struct Hung {
-    /// Each is shared with its thread until it returns.
-    calls: Vec<Arc<Custody>>,
+    calls: Vec<Call>,
     /// When a call was last abandoned.
     latest: Option<Instant>,
+}
+
+struct Call {
+    /// Shared with the call's thread until it returns.
+    custody: Arc<Custody>,
+    step: &'static str,
+    since: Instant,
+}
+
+impl Call {
+    /// The refusal this call causes while a mutation of it is still running.
+    fn holding(&self) -> Option<StorageError> {
+        self.custody.mutating().then_some(StorageError::CallHeld {
+            step: self.step,
+            since: self.since,
+        })
+    }
 }
 
 /// Held by the awaiting caller. Dropping it unsettled abandons the call.
 struct Waiting<'a> {
     volume: &'a WorkVolume,
     owner: &'a str,
-    unsettled: Option<Arc<Custody>>,
+    unsettled: Option<Call>,
 }
 
 impl Drop for Waiting<'_> {
     fn drop(&mut self) {
-        if let Some(custody) = self.unsettled.take() {
-            custody.abandon();
+        if let Some(call) = self.unsettled.take() {
+            call.custody.abandon();
             let mut owners = self.volume.abandoned();
             let hung = owners.entry(self.owner.into()).or_default();
             hung.latest = Some(Instant::now());
-            hung.calls.push(custody);
+            hung.calls.push(call);
         }
         self.volume.waiting.send_modify(|waiting| {
             if let Some(count) = waiting.get_mut(self.owner) {
@@ -90,6 +108,7 @@ impl WorkVolume {
             change: Duration::from_mins(12),
             unreturned: 16,
             spacing: Duration::from_mins(5),
+            stuck: STUCK,
             waiting: watch::Sender::default(),
             abandoned: Mutex::default(),
         }
@@ -101,19 +120,20 @@ impl WorkVolume {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Whether earlier calls keep this owner from starting another. A running
-    /// mutation always does. Hung reads only slow it: past the limit each new
-    /// one makes the owner wait, and calls which return cost nothing.
-    fn held(&self, owner: &str) -> bool {
+    /// Why earlier calls keep this owner from starting another, if they do. A
+    /// running mutation always does. Hung reads only slow it: past the limit
+    /// each new one makes the owner wait, and calls which return cost nothing.
+    fn refusal(&self, owner: &str) -> Option<StorageError> {
         let mut owners = self.abandoned();
-        let Some(hung) = owners.get_mut(owner) else {
-            return false;
-        };
+        let hung = owners.get_mut(owner)?;
         // A call which has returned no longer shares its custody.
-        hung.calls.retain(|custody| Arc::strong_count(custody) > 1);
-        hung.calls.iter().any(|custody| custody.mutating())
-            || (hung.calls.len() >= self.unreturned
-                && hung.latest.is_some_and(|at| at.elapsed() < self.spacing))
+        hung.calls
+            .retain(|call| Arc::strong_count(&call.custody) > 1);
+        hung.calls.iter().find_map(Call::holding).or_else(|| {
+            let slowed = hung.calls.len() >= self.unreturned
+                && hung.latest.is_some_and(|at| at.elapsed() < self.spacing);
+            slowed.then_some(StorageError::VolumeUnavailable)
+        })
     }
 
     /// Run one work-volume call for an owner: a task, a repository or a kind of
@@ -126,8 +146,8 @@ impl WorkVolume {
         job: impl FnOnce(Arc<Custody>) -> T + Send + 'static,
     ) -> Pin<Box<impl Future<Output = Result<T, StorageError>>>> {
         Box::pin(async move {
-            if self.held(owner) {
-                return Err(StorageError::VolumeUnavailable);
+            if let Some(refusal) = self.refusal(owner) {
+                return Err(refusal);
             }
             let _step = Step::enter(step);
             let custody = Arc::new(Custody::default());
@@ -146,7 +166,11 @@ impl WorkVolume {
             let mut waiting = Waiting {
                 volume: self,
                 owner,
-                unsettled: Some(custody),
+                unsettled: Some(Call {
+                    custody,
+                    step,
+                    since: Instant::now(),
+                }),
             };
             let limit = match limit {
                 Limit::Check => self.check,
@@ -154,7 +178,12 @@ impl WorkVolume {
             };
             let Ok(done) = time::timeout(limit, answered).await else {
                 service_log!("{owner}: {step} did not return within {}s", limit.as_secs());
-                return Err(StorageError::VolumeUnavailable);
+                // Abandon first, so no further mutation can start after this look.
+                let held = waiting.unsettled.as_ref().and_then(|call| {
+                    call.custody.abandon();
+                    call.holding()
+                });
+                return Err(held.unwrap_or(StorageError::VolumeUnavailable));
             };
             waiting.unsettled = None;
             done.map_err(|_| std::io::Error::other("a work volume call panicked").into())
@@ -299,8 +328,18 @@ mod tests {
                 drop(step);
                 let _ = outcome.send(custody.mutate().is_ok());
             });
-        assert!(lost.await.is_err());
-        assert!(!quick(&service.volume, OWNER).await);
+        let held = |outcome: Result<(), StorageError>| {
+            matches!(
+                outcome,
+                Err(StorageError::CallHeld {
+                    step: "writing",
+                    ..
+                })
+            )
+        };
+        assert!(held(lost.await));
+        let refused = service.volume.run(OWNER, "reading", Limit::Check, |_| ());
+        assert!(held(refused.await), "the refusal names the held step");
         assert!(quick(&service.volume, "another").await);
 
         // The work root and the unrelated scratch root each go and come back,

@@ -325,6 +325,8 @@ struct State {
     planner_notice_waiters: BTreeSet<String>,
     thread_tasks: BTreeMap<String, BTreeMap<String, TrackedThread>>,
     title_candidates: BTreeMap<String, titles::TitleCandidate>,
+    /// The held call last logged for each task, by when that call began.
+    held_calls: BTreeMap<String, std::time::Instant>,
 }
 
 #[derive(Default)]
@@ -367,6 +369,17 @@ pub struct TaskChange {
     pub version: i64,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub detail_only: bool,
+}
+
+impl ServiceError {
+    /// A task held on a write or removal is logged once, not at every retry.
+    #[must_use]
+    pub const fn is_held_call(&self) -> bool {
+        matches!(
+            self,
+            Self::Workspace(WorkError::Storage(StorageError::CallHeld { .. }))
+        )
+    }
 }
 
 pub struct PassOutcome {
@@ -505,6 +518,7 @@ impl Service {
                 planner_notice_waiters: BTreeSet::new(),
                 thread_tasks: BTreeMap::new(),
                 title_candidates: BTreeMap::new(),
+                held_calls: BTreeMap::new(),
             }),
             project,
             project_writes: RwLock::new(()),
@@ -1079,8 +1093,10 @@ impl Service {
                 job(&root, now_ms())
             })
             .await;
-        if let Err(error) = result.map_err(WorkError::from).and_then(|done| done) {
-            service_log!("{kind} housekeeping: {error}");
+        match result.map_err(WorkError::from).and_then(|done| done) {
+            // The call logged its own deadline once and is still running.
+            Ok(()) | Err(WorkError::Storage(StorageError::CallHeld { .. })) => {}
+            Err(error) => service_log!("{kind} housekeeping: {error}"),
         }
     }
 
@@ -1226,7 +1242,15 @@ impl Service {
             && current.task.phase() == Phase::Done
             && current.task.run().is_none()
             && !matches!(result, Ok(Action::Nothing));
+        let held = held_call(result);
+        if let Some((cause, since)) = held
+            && since.elapsed() >= self.volume.stuck
+            && state.held_calls.insert(id.clone(), since) != Some(since)
+        {
+            service_log!("{id}: {cause}");
+        }
         if !archive_due
+            && held.is_none()
             && !active(&current.task)
             && !state.forge_requested.contains(id)
             && state.acp_refresh_requests.get(id) != Some(&current.version)
@@ -1299,6 +1323,15 @@ impl Service {
             && let Err(error) = result
         {
             detail = Some(WaitDetail::Archive(error.to_string()));
+        }
+        if let Some((cause, _)) = held {
+            // A terminal task shows only its archive cause.
+            let cause = cause.to_string();
+            detail = Some(if row.task.phase().is_terminal() {
+                WaitDetail::Archive(cause)
+            } else {
+                WaitDetail::Blocked(cause)
+            });
         }
         if state.observe_task_allowance(&row.task, wait)? {
             self.publish_detail(id, row.version);
@@ -2308,6 +2341,16 @@ const VOLUME_WAIT: &str = "The work volume or layout cannot be verified. Checkin
 
 fn volume_unavailable(result: &Result<Action, ServiceError>) -> bool {
     matches!(result, Err(ServiceError::Workspace(WorkError::Storage(_))))
+}
+
+/// The write or removal which keeps this task waiting, and when it began.
+fn held_call(result: &Result<Action, ServiceError>) -> Option<(&StorageError, std::time::Instant)> {
+    match result {
+        Err(ServiceError::Workspace(WorkError::Storage(
+            held @ StorageError::CallHeld { since, .. },
+        ))) => Some((held, *since)),
+        _ => None,
+    }
 }
 
 fn unsent(run: &nucleus_core::Run) -> bool {

@@ -313,7 +313,12 @@ async fn a_fetch_still_running_holds_back_every_start_in_its_repository() {
     for row in [&first, &second] {
         assert!(matches!(
             registered.allocate(row).await,
-            Err(ServiceError::Workspace(WorkError::Storage(_)))
+            Err(ServiceError::Workspace(WorkError::Storage(
+                nucleus_store::StorageError::CallHeld {
+                    step: "fetching the published base",
+                    ..
+                }
+            )))
         ));
     }
     // The second task started no fetch beside the abandoned one.

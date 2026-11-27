@@ -474,7 +474,9 @@ async fn serve(
             match service.pass().await {
                 Ok(outcomes) => {
                     for outcome in outcomes {
-                        if let Err(error) = outcome.result {
+                        if let Err(error) = outcome.result
+                            && !error.is_held_call()
+                        {
                             eprintln!(
                                 "{} {}: {error}",
                                 ::time::OffsetDateTime::now_utc(),

@@ -376,38 +376,143 @@ async fn reads_which_never_return_do_not_hold_back_their_task() {
     forge.abort();
 }
 
+/// The wait text the task view shows.
+async fn shown_wait(api: &Router, task: &str) -> String {
+    let request = Request::get(format!("/v1/tasks/{task}"))
+        .header("host", "127.0.0.1:9")
+        .header("authorization", format!("Bearer {}", hex::encode(KEY)))
+        .body(Body::empty())
+        .unwrap();
+    let response = api.clone().oneshot(request).await.unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let view: Value = serde_json::from_slice(&body).unwrap();
+    view["waitDetail"].as_str().unwrap_or_default().to_owned()
+}
+
+fn logged(task: &str, step: &str) -> usize {
+    let line = format!("{task}: The work volume or layout cannot be verified: {step}");
+    crate::diagnostics::TEST_LINES
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|logged| logged.contains(&line))
+        .count()
+}
+
+fn held_on_allocation(outcome: &PassOutcome) -> bool {
+    outcome.task == "reviewer"
+        && matches!(
+            outcome.result,
+            Err(ServiceError::Workspace(nucleus_work::WorkError::Storage(
+                StorageError::CallHeld {
+                    step: "allocating the task checkout",
+                    ..
+                }
+            )))
+        )
+}
+
 #[tokio::test]
 async fn a_stuck_allocation_holds_its_task_until_it_ends_and_then_resumes() {
     let Outage {
         home,
         mut service,
         head,
+        report,
         forge,
-        ..
     } = outage().await;
     let hung = Hung::install(&mut service, home.path());
     hung.0.only.set("add").unwrap();
     hung.0.holds.store(1, Ordering::SeqCst);
     service.volume.change = ANSWER;
+    service.volume.stuck = Duration::ZERO;
     let service = Arc::new(service);
     let api = api(&service);
     let root = service.storage.work().path().to_owned();
 
     // The worktree add outlasts its caller.
-    pass_until(&service, waits_for_volume).await;
-    assert_volume_wait(&service).await;
+    pass_until(&service, held_on_allocation).await;
+    let wait = shown_wait(&api, "reviewer").await;
+    assert!(
+        wait.contains("allocating the task checkout has not returned after"),
+        "{wait}"
+    );
+    assert!(wait.ends_with("restart the engine."), "{wait}");
     // The root goes and returns before anything reads it, with the add unfinished.
     let away = home.path().join("away");
     std::fs::rename(&root, &away).unwrap();
     std::fs::rename(&away, &root).unwrap();
-    pass_until(&service, waits_for_volume).await;
+    // Another task's report is accepted and applied while this one stays held.
+    report_is_accepted(&api, &report).await;
+    let (mut held, mut applied) = (false, false);
+    pass_until(&service, |outcome| {
+        held |= held_on_allocation(outcome);
+        applied |= outcome.task == "worker"
+            && matches!(outcome.result, Ok(Action::Advance(Phase::Reviewing)));
+        held && applied
+    })
+    .await;
     reads_answer(&api).await;
     assert_eq!(hung.0.entered.load(Ordering::SeqCst), 1);
+    assert_eq!(logged("reviewer", "allocating the task checkout"), 1);
 
     // The old add resumes and ends, and the pass carries on by itself.
     drop(hung);
     pass_until(&service, launches_review).await;
     let checkout = nucleus_work::checkout_path(&root, REPOSITORY, "reviewer");
     assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), head.as_str());
+    assert!(
+        !shown_wait(&api, "reviewer")
+            .await
+            .contains("has not returned")
+    );
+    forge.abort();
+}
+
+#[tokio::test]
+async fn a_held_removal_shows_on_a_cancelled_task_and_is_logged_once() {
+    let Outage {
+        home: _home,
+        mut service,
+        forge,
+        ..
+    } = outage().await;
+    service.volume.stuck = Duration::ZERO;
+    let owner = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let row = service
+        .command("reviewer", &owner, Command::Cancel)
+        .await
+        .unwrap();
+    assert!(row.task.phase().is_terminal() && row.task.run().is_none());
+    let held = Err(ServiceError::Workspace(
+        StorageError::CallHeld {
+            step: "removing the task checkout",
+            since: std::time::Instant::now(),
+        }
+        .into(),
+    ));
+    for _ in 0..2 {
+        service
+            .schedule_result(&row, &held, crate::Priority::Closeout)
+            .await
+            .unwrap();
+    }
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .schedule
+            .due("reviewer")
+            .is_some()
+    );
+    let service = Arc::new(service);
+    let wait = shown_wait(&api(&service), "reviewer").await;
+    assert!(wait.contains("removing the task checkout"), "{wait}");
+    assert_eq!(logged("reviewer", "removing the task checkout"), 1);
     forge.abort();
 }
