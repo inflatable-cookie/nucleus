@@ -1,5 +1,11 @@
 //! Service entry points for the isolated Rust task engine.
 
+macro_rules! service_log {
+    ($($arg:tt)*) => {
+        crate::diagnostics::line(format_args!($($arg)*))
+    };
+}
+
 mod acp;
 mod allowance;
 mod attention;
@@ -1013,11 +1019,11 @@ impl Service {
                 let failed = match result {
                     Ok(Ok(())) => false,
                     Ok(Err(error)) => {
-                        eprintln!("scheduled database backup: {error}");
+                        service_log!("scheduled database backup: {error}");
                         true
                     }
                     Err(error) => {
-                        eprintln!("scheduled database backup worker: {error}");
+                        service_log!("scheduled database backup worker: {error}");
                         true
                     }
                 };
@@ -1027,7 +1033,7 @@ impl Service {
             };
             let (pruned, ()) = tokio::join!(self.prune_archived_threads(), backup);
             if let Err(error) = pruned {
-                eprintln!("archived thread housekeeping: {error}");
+                service_log!("archived thread housekeeping: {error}");
             }
         }
     }
@@ -1040,8 +1046,8 @@ impl Service {
                     .await;
             match result {
                 Ok(Ok(())) => {}
-                Ok(Err(error)) => eprintln!("checkout trash housekeeping: {error}"),
-                Err(error) => eprintln!("checkout trash worker: {error}"),
+                Ok(Err(error)) => service_log!("checkout trash housekeeping: {error}"),
+                Err(error) => service_log!("checkout trash worker: {error}"),
             }
             self.trash_wake.notified().await;
         }
@@ -1163,7 +1169,7 @@ impl Service {
                 let scratch = self.storage.scratch().clone();
                 tokio::task::spawn_blocking(move || {
                     if let Err(error) = nucleus_work::prune_quarantines(&scratch, now_ms()) {
-                        eprintln!("checkout quarantine housekeeping: {error}");
+                        service_log!("checkout quarantine housekeeping: {error}");
                     }
                 })
                 .await

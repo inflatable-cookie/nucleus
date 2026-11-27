@@ -338,7 +338,7 @@ impl Service {
             }
             Ok(false) => false,
             Err(error) => {
-                eprintln!("{id}: {error}");
+                service_log!("{id}: {error}");
                 false
             }
         }
@@ -432,7 +432,7 @@ impl Service {
                         self.desire_title(&mut state, &row.task, row.number);
                     }
                 }
-                Err(error) => eprintln!("{error}"),
+                Err(error) => service_log!("{error}"),
             }
         }
         loop {
@@ -447,7 +447,7 @@ impl Service {
                         Some(Duration::from_millis(receipt.retry_at.abs_diff(now)))
                     } else {
                         if let Err(error) = self.apply_title(provider, &receipt, now).await {
-                            eprintln!("{}: {error}", receipt.thread);
+                            service_log!("{}: {error}", receipt.thread);
                         }
                         // The next due candidate can run before this title retries.
                         continue;
@@ -455,14 +455,14 @@ impl Service {
                 }
                 Ok(None) => None,
                 Err(error) => {
-                    eprintln!("{error}");
+                    service_log!("{error}");
                     Some(Duration::from_secs(5))
                 }
             };
             let row_wait = match self.reconcile_task_rows(provider, &threads).await {
                 Ok(wait) => wait,
                 Err(error) => {
-                    eprintln!("{error}");
+                    service_log!("{error}");
                     Some(Duration::from_secs(15))
                 }
             };

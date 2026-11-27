@@ -293,12 +293,13 @@ fn routes(
         .route("/v1/tasks/{id}/history", get(history))
         .route("/v1/tasks/{id}/commands", post(command))
         .route("/v1/tasks/{id}/events", get(task_events))
-        .route_layer(middleware::from_fn_with_state(api.clone(), authorize_task));
+        .route_layer(middleware::from_fn_with_state(api.clone(), authorize_task))
+        .layer(middleware::from_fn(log_acp_error));
     let mut routes = controller
         .merge(tasks)
         .route("/v1/planning/claim", post(claim_planner))
         .route("/v1/planning/tell", post(tell))
-        .merge(inbox::routes())
+        .merge(inbox::routes().layer(middleware::from_fn(log_acp_error)))
         .merge(planning::report_lane_routes())
         .route("/v1/runs/{task}/{instance}/report", post(report));
     if let Some(board) = board {
@@ -311,6 +312,42 @@ fn routes(
             authorize_address,
         ))
         .with_state(api)
+}
+
+async fn log_acp_error(request: Request, next: Next) -> Response {
+    let route = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map_or("unknown", axum::extract::MatchedPath::as_str)
+        .to_owned();
+    let response = next.run(request).await;
+    if !response.status().is_server_error() {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    if let Ok(bytes) = axum::body::to_bytes(body, 1024 * 1024).await {
+        let message = serde_json::from_slice::<Value>(&bytes)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "unreadable error response".into());
+        service_log!(
+            "acp route={route} status={} error={}",
+            parts.status.as_u16(),
+            message
+        );
+        Response::from_parts(parts, Body::from(bytes))
+    } else {
+        service_log!(
+            "acp route={route} status={} error=unreadable error response",
+            parts.status.as_u16()
+        );
+        Response::from_parts(parts, Body::empty())
+    }
 }
 
 async fn claim_planner(
@@ -649,7 +686,11 @@ async fn detail(
     authority: Option<Extension<Authority>>,
     credential: Option<Extension<SessionCredential>>,
 ) -> Result<Json<Detail>, ApiError> {
-    let state = api.service.state.lock().await;
+    let state = if credential.is_some() {
+        api.service.state.lock_for_detail().await
+    } else {
+        api.service.state.lock().await
+    };
     let row = api.service.lookup(&state, &id)?;
     scope.task(&state, row.task.identity())?;
     let task = &row.task;

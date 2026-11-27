@@ -305,17 +305,36 @@ async fn main() -> Result<()> {
             } else {
                 Authority::Operator { actor }
             };
-            let provider = acp_provider.ok_or("supply the T3 ACP provider")?;
-            serve(
-                endpoint,
-                home.as_deref(),
-                provider,
-                t3.as_deref(),
-                authority,
-                fixture_origin_thread,
-                board_assets.as_deref(),
-            )
-            .await
+            std::panic::set_hook(Box::new(|info| {
+                eprintln!(
+                    "{} {}",
+                    ::time::OffsetDateTime::now_utc(),
+                    info.to_string().replace(['\r', '\n'], " ")
+                );
+            }));
+            let result = async {
+                let provider = acp_provider.ok_or("supply the T3 ACP provider")?;
+                serve(
+                    endpoint,
+                    home.as_deref(),
+                    provider,
+                    t3.as_deref(),
+                    authority,
+                    fixture_origin_thread,
+                    board_assets.as_deref(),
+                )
+                .await
+            }
+            .await;
+            if let Err(error) = result {
+                eprintln!(
+                    "{} {}",
+                    ::time::OffsetDateTime::now_utc(),
+                    error.to_string().replace(['\r', '\n'], " ")
+                );
+                std::process::exit(1);
+            }
+            Ok(())
         }
         Action::Report { ticket } => report(&ticket).await,
         Action::Planning(action) if action.uses_ticket() => action.run_ticket().await,
@@ -456,18 +475,26 @@ async fn serve(
                 Ok(outcomes) => {
                     for outcome in outcomes {
                         if let Err(error) = outcome.result {
-                            eprintln!("{}: {error}", outcome.task);
+                            eprintln!(
+                                "{} {}: {error}",
+                                ::time::OffsetDateTime::now_utc(),
+                                outcome.task
+                            );
                         }
                     }
                 }
                 Err(error) => {
-                    eprintln!("{error}");
+                    eprintln!("{} {error}", ::time::OffsetDateTime::now_utc());
                     tokio::time::sleep(Duration::from_secs(3)).await;
                 }
             }
         }
     });
-    println!("Nucleus engine listening on http://{}", tcp.local_addr()?);
+    println!(
+        "{} Nucleus engine listening on http://{}",
+        ::time::OffsetDateTime::now_utc(),
+        tcp.local_addr()?
+    );
     let result = tokio::select! {
         result = axum::serve(tcp, api) => result,
         result = tokio::signal::ctrl_c() => result,

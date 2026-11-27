@@ -1,5 +1,12 @@
 //! Host observation and delivery for the isolated Rust task engine.
 
+macro_rules! host_log {
+    ($($arg:tt)*) => {{
+        let message = format!($($arg)*).replace(['\r', '\n'], " ");
+        eprintln!("{} {message}", ::time::OffsetDateTime::now_utc());
+    }};
+}
+
 mod admission;
 mod assignment;
 mod catalog;
@@ -1250,13 +1257,13 @@ impl TaskHost for T3Pass<'_> {
             })
             .await;
         match &reply {
-            Ok(Reply::Failure(cause)) => eprintln!(
+            Ok(Reply::Failure(cause)) => host_log!(
                 "{}: T3 {} refused with {:?}",
                 dispatch.instance,
                 wire.diagnostic(),
                 self.host.rpc.failure_detail(cause)
             ),
-            Err(error) => eprintln!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic()),
+            Err(error) => host_log!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic()),
             Ok(Reply::Value(_)) => {}
         }
         if matches!(&reply, Ok(Reply::Failure(cause)) if rejected(cause, &wire, &dispatch.instance))
