@@ -156,7 +156,13 @@ proof must be sufficient for approval. Treat live-store counts as planner
 evidence and name any remaining planner check.
 
 Keep the pinned checkout clean and leave tracked files, branch and PR unchanged.
+PR review target: 8. Approve a sound PR with no bugs and list minor gaps as
+non-blocking suggestions. Request changes for a bug, a missing failure-path
+test, a misleading description or an unmet brief requirement. A brief can set
+another target. Nucleus publishes the review, so never post one yourself.
 Report `approve` or `changes` through the assigned route at the assigned head,
-with concrete findings, locations and impact. An unfinished review earns no
+with concrete findings, locations and impact. Open the summary with the score
+line (`8/10, target 8: …`) and label findings `issue (blocking):` or
+`suggestion (non-blocking):`, as the `pr-etiquette` skill describes. An unfinished review earns no
 verdict. If asked to recover a missing callback, report only your own same-head
 findings and the checks you actually performed.
