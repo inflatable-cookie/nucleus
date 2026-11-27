@@ -1352,7 +1352,7 @@ async fn a_successor_prompt_releases_the_previous_acp_turn_and_anchors_the_reser
 }
 
 #[tokio::test]
-async fn a_reserved_role_waiting_to_send_keeps_the_delivery_snoozed() {
+async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
     let fixture = Fixture::new(&pending_task()).await;
     let service = &fixture.service;
     let (mut worker, _, _) = reservation(ID, Entry::Brief, &service.fixture().start);
@@ -2625,7 +2625,7 @@ fn plan_row(
 }
 
 #[tokio::test]
-async fn a_child_starting_after_planning_prevents_the_delivery_snooze() {
+async fn a_child_starting_after_planning_prevents_the_parent_snooze() {
     let fixture = Fixture::new(&pending_task()).await;
     fixture.publish_shell();
     let host = &fixture.service.host;
