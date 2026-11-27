@@ -1816,94 +1816,7 @@ async fn lost_parent_turn_recovers_after_service_restart_and_capacity_wait() {
                 )
                 .unwrap();
         }
-        if failure != "Another provider failed." {
-            assert!(matches!(
-                advance().await.unwrap(),
-                Action::Wait(WaitReason::Starting)
-            ));
-            if stranded {
-                let row = service.task("restart-parent").await.unwrap();
-                let (mut holder, _, _) =
-                    reservation("holder", Entry::Brief, &service.fixture().start);
-                let instance = holder.run().unwrap().launch().instance.clone();
-                holder.record_send(&instance, 1).unwrap();
-                holder.revoke_run();
-                {
-                    let mut state = service.state.lock().await;
-                    state.settings.dispatch = Some(nucleus_store::DispatchSettings {
-                        global_slots: 1,
-                        project_default_slots: 1,
-                        ..Default::default()
-                    });
-                    state.store.create(&holder, &event("fixture")).unwrap();
-                    let record = state
-                        .store
-                        .parent_deliveries("restart-parent", row.version, None)
-                        .unwrap()
-                        .remove(0);
-                    // The native queue exists even when the wire acknowledgement was lost.
-                    state
-                        .store
-                        .finish_parent_delivery(
-                            "restart-parent",
-                            row.version,
-                            &record,
-                            nucleus_store::ParentResult::Pending,
-                            0,
-                        )
-                        .unwrap();
-                }
-                let calls = service.host.host_calls();
-                let waiting = advance().await;
-                assert!(matches!(waiting, Ok(Action::Wait(WaitReason::Capacity))));
-                assert_eq!(service.host.host_calls(), calls);
-                service
-                    .schedule_result(&row, &waiting, Priority::Effect)
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    service.task("restart-parent").await.unwrap().version,
-                    row.version
-                );
-                assert_eq!(holds.lock().unwrap().len(), 1);
-                assert!(children.lock().unwrap().is_empty());
-
-                let holder = service.task("holder").await.unwrap();
-                let mut settled = holder.task.clone();
-                settled.reconcile(&Observation {
-                    host: Observed::Known(Host::Current {
-                        instance,
-                        state: nucleus_core::RunState::Ended,
-                    }),
-                    forge: Observed::Unknown,
-                    workspace: Observed::Unknown,
-                });
-                assert!(settled.run().is_none());
-                service
-                    .save(&holder, settled, &event("phase_reconciled"))
-                    .await
-                    .unwrap();
-                assert!(
-                    service
-                        .state
-                        .lock()
-                        .await
-                        .schedule
-                        .effect_ready("restart-parent", Instant::now())
-                );
-                assert!(matches!(
-                    advance().await.unwrap(),
-                    Action::Wait(WaitReason::Starting)
-                ));
-                let holds = holds.lock().unwrap();
-                assert_eq!(holds.len(), 2);
-                assert_ne!(holds[0]["commandId"], holds[1]["commandId"]);
-            }
-            assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
-            assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
-            assert_eq!(holds.lock().unwrap().len(), if stranded { 2 } else { 1 });
-            assert_eq!(children.lock().unwrap().len(), 1);
-        } else {
+        if failure == "Another provider failed." {
             let result = advance().await;
             let row = service.task("restart-parent").await.unwrap();
             assert!(matches!(
@@ -1917,7 +1830,95 @@ async fn lost_parent_turn_recovers_after_service_restart_and_capacity_wait() {
             ));
             assert!(holds.lock().unwrap().is_empty());
             assert!(children.lock().unwrap().is_empty());
+            native.abort();
+            forge_server.abort();
+            continue;
         }
+        assert!(matches!(
+            advance().await.unwrap(),
+            Action::Wait(WaitReason::Starting)
+        ));
+        if stranded {
+            let row = service.task("restart-parent").await.unwrap();
+            let (mut holder, _, _) = reservation("holder", Entry::Brief, &service.fixture().start);
+            let instance = holder.run().unwrap().launch().instance.clone();
+            holder.record_send(&instance, 1).unwrap();
+            holder.revoke_run();
+            {
+                let mut state = service.state.lock().await;
+                state.settings.dispatch = Some(nucleus_store::DispatchSettings {
+                    global_slots: 1,
+                    project_default_slots: 1,
+                    ..Default::default()
+                });
+                state.store.create(&holder, &event("fixture")).unwrap();
+                let record = state
+                    .store
+                    .parent_deliveries("restart-parent", row.version, None)
+                    .unwrap()
+                    .remove(0);
+                // The native queue exists even when the wire acknowledgement was lost.
+                state
+                    .store
+                    .finish_parent_delivery(
+                        "restart-parent",
+                        row.version,
+                        &record,
+                        nucleus_store::ParentResult::Pending,
+                        0,
+                    )
+                    .unwrap();
+            }
+            let calls = service.host.host_calls();
+            let waiting = advance().await;
+            assert!(matches!(waiting, Ok(Action::Wait(WaitReason::Capacity))));
+            assert_eq!(service.host.host_calls(), calls);
+            service
+                .schedule_result(&row, &waiting, Priority::Effect)
+                .await
+                .unwrap();
+            assert_eq!(
+                service.task("restart-parent").await.unwrap().version,
+                row.version
+            );
+            assert_eq!(holds.lock().unwrap().len(), 1);
+            assert!(children.lock().unwrap().is_empty());
+
+            let holder = service.task("holder").await.unwrap();
+            let mut settled = holder.task.clone();
+            settled.reconcile(&Observation {
+                host: Observed::Known(Host::Current {
+                    instance,
+                    state: nucleus_core::RunState::Ended,
+                }),
+                forge: Observed::Unknown,
+                workspace: Observed::Unknown,
+            });
+            assert!(settled.run().is_none());
+            service
+                .save(&holder, settled, &event("phase_reconciled"))
+                .await
+                .unwrap();
+            assert!(
+                service
+                    .state
+                    .lock()
+                    .await
+                    .schedule
+                    .effect_ready("restart-parent", Instant::now())
+            );
+            assert!(matches!(
+                advance().await.unwrap(),
+                Action::Wait(WaitReason::Starting)
+            ));
+            let holds = holds.lock().unwrap();
+            assert_eq!(holds.len(), 2);
+            assert_ne!(holds[0]["commandId"], holds[1]["commandId"]);
+        }
+        assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
+        assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
+        assert_eq!(holds.lock().unwrap().len(), if stranded { 2 } else { 1 });
+        assert_eq!(children.lock().unwrap().len(), 1);
         native.abort();
         forge_server.abort();
     }
