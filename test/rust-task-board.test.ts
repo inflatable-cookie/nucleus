@@ -9,6 +9,8 @@ import { rustTaskCard as task } from "./support/rust-task-card";
 import { profilesSnapshot, type storageView } from "../client/web/rust-api";
 import {
   createRustBoardTransport,
+  groupRustTasks,
+  rustCardAgeAt,
   rustProjectActivity,
   rustWaitDetail,
   type RustCommand,
@@ -45,6 +47,88 @@ test("Rust board settings retain imported profile fields across edits", () => {
 });
 
 const head = "a".repeat(40);
+
+async function capturedTaskOrderRows(): Promise<RustTask[]> {
+  const raw: unknown = JSON.parse(await readFile(new URL("./fixtures/rust-task-order-rows.json", import.meta.url), "utf8"));
+  const transport = createRustBoardTransport(async () => Response.json(raw));
+  return transport.list(new AbortController().signal);
+}
+
+function capturedTask(rows: RustTask[], id: string): RustTask {
+  const row = rows.find(({ identity }) => identity.id === `captured-${id}`);
+  assert.ok(row, `missing captured ${id} /v1/tasks row`);
+  return row;
+}
+
+function taskCopy(row: RustTask, id: string, number: number): RustTask {
+  const reference = `example#${number}`;
+  return {
+    ...row,
+    identity: { ...row.identity, id: `test-${id}`, reference },
+    number,
+    reference,
+  };
+}
+
+function stepEntered(row: RustTask, key: string, at: number): RustTask {
+  return {
+    ...row,
+    lifecycle: {
+      ...row.lifecycle,
+      steps: row.lifecycle.steps.map((step) => row.phase === "report_ready" && step.key === "review"
+        ? { ...step, key: "report_ready", enteredAtMs: at }
+        : step.key === key ? { ...step, enteredAtMs: at } : step),
+    },
+  };
+}
+
+test("Rust task columns sort captured /v1/tasks rows by stable lifecycle times", async () => {
+  // Each base row is captured from /v1/tasks in the service test harness, scrubbed and
+  // parsed through the same transport schema used by the board.
+  const rows = await capturedTaskOrderRows();
+  const needsBase = capturedTask(rows, "needs");
+  const admittedAtMs = needsBase.lifecycle.admittedAtMs!;
+  const needs = [
+    { ...taskCopy(needsBase, "needs-new", 3), stateSinceMs: admittedAtMs + 1_000, latestEventAtMs: admittedAtMs + 99_000 },
+    taskCopy(needsBase, "needs-old", 1),
+    { ...taskCopy(needsBase, "needs-tie", 2), stateSinceMs: admittedAtMs },
+  ];
+  const queue = [
+    taskCopy(capturedTask(rows, "queue"), "queue-normal", 2),
+    taskCopy(capturedTask(rows, "heldQueue"), "queue-held", 1),
+  ];
+  const working = [
+    stepEntered(taskCopy(capturedTask(rows, "working"), "working-new", 2), "working", admittedAtMs + 300),
+    stepEntered(taskCopy(capturedTask(rows, "working"), "working-old", 1), "working", admittedAtMs + 100),
+  ];
+  const review = [
+    stepEntered(taskCopy(capturedTask(rows, "review"), "review-new", 2), "review", admittedAtMs + 300),
+    stepEntered(taskCopy(capturedTask(rows, "review"), "review-old", 1), "review", admittedAtMs + 100),
+  ];
+  const merging = [
+    stepEntered(taskCopy(capturedTask(rows, "merging"), "merge-new", 2), "merge", admittedAtMs + 300),
+    stepEntered(taskCopy(capturedTask(rows, "merging"), "merge-old", 1), "merge", admittedAtMs + 100),
+  ];
+  const closing = [
+    stepEntered(taskCopy(capturedTask(rows, "closing"), "close-new", 2), "close", admittedAtMs + 300),
+    stepEntered(taskCopy(capturedTask(rows, "closing"), "close-old", 1), "close", admittedAtMs + 100),
+  ];
+  const history = [
+    { ...taskCopy(capturedTask(rows, "history"), "history-old", 1), lifecycle: { ...capturedTask(rows, "history").lifecycle, finishedAtMs: admittedAtMs + 100 } },
+    { ...taskCopy(capturedTask(rows, "history"), "history-new", 2), lifecycle: { ...capturedTask(rows, "history").lifecycle, finishedAtMs: admittedAtMs + 300 } },
+  ];
+
+  assert.equal(needs[1]!.stateSinceMs, null);
+  assert.deepEqual(groupRustTasks(needs).needs.map(({ identity }) => identity.id), ["test-needs-old", "test-needs-tie", "test-needs-new"]);
+  assert.deepEqual(groupRustTasks(queue).queue.map(({ identity }) => identity.id), ["test-queue-normal", "test-queue-held"]);
+  assert.deepEqual(groupRustTasks(working).working.map(({ identity }) => identity.id), ["test-working-old", "test-working-new"]);
+  assert.deepEqual(groupRustTasks(review).review.map(({ identity }) => identity.id), ["test-review-old", "test-review-new"]);
+  assert.deepEqual(groupRustTasks(merging).merging.map(({ identity }) => identity.id), ["test-merge-old", "test-merge-new"]);
+  assert.deepEqual(groupRustTasks(closing).closing.map(({ identity }) => identity.id), ["test-close-old", "test-close-new"]);
+  assert.deepEqual(groupRustTasks(history).history.map(({ identity }) => identity.id), ["test-history-new", "test-history-old"]);
+  assert.equal(rustCardAgeAt(needs[1]!), admittedAtMs);
+  assert.equal(rustCardAgeAt({ ...needs[0]!, latestEventAtMs: admittedAtMs + 199_000 }), admittedAtMs + 1_000);
+});
 
 test("project activity counts distinct recent tasks and linked planning items", () => {
   const repo = { origin: "example/board-fixture", path: "/fixture" };
@@ -398,8 +482,11 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     task("merging", "merging"),
     { ...task("closing", "closing"), wait: "workspace_blocked", attention: "attention" as const },
     { ...task("history-oldest", "done"), stateSinceMs: 1_790_000_000_000, latestEventAtMs: 1_799_000_000_000 },
-    { ...task("history-middle", "cancelled"), latestEventAtMs: 1_795_000_000_000 },
-    ...Array.from({ length: 23 }, (_, i) => task(`past-${String(i).padStart(2, "0")}`, "done")),
+    { ...task("history-middle", "cancelled"), stateSinceMs: 1_795_000_000_000, latestEventAtMs: 1_795_000_000_000 },
+    ...Array.from({ length: 23 }, (_, i) => {
+      const past = task(`past-${String(i).padStart(2, "0")}`, "done");
+      return { ...past, lifecycle: { ...past.lifecycle, finishedAtMs: 1_794_000_000_000 + i } };
+    }),
     { ...task("history-newest", "done"), stateSinceMs: 1_796_000_000_000 },
     ...Array.from({ length: 25 }, (_, index) =>
       task(`queued-${index}`, "queued"),
@@ -1030,6 +1117,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     hold: { reason: "Wait for the schema review. Then continue with the API." },
     stateLabel: "Held by planner",
     stateSinceMs: now - 3 * 3_600_000 - 60_000,
+    lifecycle: { ...task("held-task", "queued").lifecycle, admittedAtMs: now - 3 * 3_600_000 - 60_000 },
   };
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
@@ -1184,6 +1272,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         ...task("board-task", taskPhase, "board-fixture#80"),
         number: 80,
         title: "Standalone task",
+        lifecycle: { ...task("board-task", taskPhase).lifecycle, admittedAtMs: taskPhase === "queued" ? now - 4 * 60_000 : now - 12 * 60_000 },
         stateLabel: taskPhase === "queued" ? "Waiting for capacity" : workerRunning ? "Working" : "Working*",
         stateSinceMs: taskPhase === "queued" ? null : now - 12 * 60_000,
         latestEventAtMs: now - 4 * 60_000,
@@ -1192,7 +1281,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       };
       if (taskPhase === "working") {
         card.lifecycle.steps = card.lifecycle.steps.map((step) => {
-          if (step.key === "working") return { ...step, activeSinceMs: now };
+          if (step.key === "working") return { ...step, enteredAtMs: now - 12 * 60_000, activeSinceMs: now };
           if (step.key === "review") return { ...step, elapsedMs: 430_000 };
           return step;
         });
