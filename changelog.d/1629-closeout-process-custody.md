@@ -1,1 +1,0 @@
-Closeout clears exited PIDs and uses verified working-directory identity or filesystem device evidence to scope custody. The task names the process holding retirement, and a shared Inbox decision stays actionable until the census clears unresolved custody.

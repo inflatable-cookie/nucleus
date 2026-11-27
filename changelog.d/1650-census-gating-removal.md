@@ -1,0 +1,1 @@
+Trash cleanup keeps a retired checkout only while a process is seen working inside it, so one unreadable process no longer holds disk space. The process check for a revoked run no longer recovers a missing working directory from file metadata. It waits and checks again.

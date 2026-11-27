@@ -1002,7 +1002,8 @@ impl TrashCensus {
         Inventory::from_listings(lsof, ps, rustix::process::geteuid().as_raw(), 0).map(Self)
     }
 
-    /// Missing or ambiguous evidence leaves this entry in trash for a later sweep.
+    /// A listed process working inside the entry leaves it in trash for a later
+    /// sweep. A process whose working directory cannot be read does not.
     pub async fn can_remove(&self, entry: &Path) -> bool {
         self.0.trash_clear(entry).await
     }
