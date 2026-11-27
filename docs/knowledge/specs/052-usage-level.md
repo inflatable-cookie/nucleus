@@ -234,6 +234,12 @@ ran every worker and reviewer on Heavyweight or Frontier.
   and falls back to the most capable eligible profile on a shortfall. The
   worker's ordinary ceiling is the climb bracket, including for worker
   preferences and `preferredProfileId`. Maximum sets that ceiling to Frontier.
+- **Amended complexity.** A raise reselects a retained role below its start
+  bracket at the current usage level on its next fresh reservation. The
+  reviewer uses the worker's actual bracket. The new thread receives the
+  existing review and continuation context, and `nucleus next` explains the
+  pending reselection. A required profile request takes precedence. Lowering
+  complexity alone keeps an eligible retained role and its thread.
 - **The usage level sets the reviewer's bracket** (Tom, 2026-11-19: "the
   reviewer should be 1 bracket down from the worker on minimal, low and
   normal. Above that, it should be same bracket"). The reviewer reads the

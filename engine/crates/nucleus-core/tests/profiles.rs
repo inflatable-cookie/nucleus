@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use nucleus_core::profiles::{
     BriefPolicy, Candidate, Capability, Complexity, Effort, LaunchPolicy, Profile, ProfileLaunch,
     ProfileLaunchError, Provider, RotationCounts, UsageLevel, Weight, decide_profile_launch,
-    decide_weighted_launch, own_bracket, request_only, requested_bracket, reviewer_bracket,
-    worker_climb, worker_start,
+    decide_weighted_launch, own_bracket, pending_complexity_reselection, request_only,
+    requested_bracket, reviewer_bracket, worker_climb, worker_start,
 };
 use nucleus_core::{
     Action, Authority, CallbackCredential, CheckState, Command, CommandError, Entry, Forge, Host,
@@ -724,6 +724,137 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
     );
     assert_eq!(second.profile(), &heavy);
     assert_eq!(second.replaced_thread(), Some("worker-2"));
+}
+
+#[test]
+fn complexity_amendments_route_legacy_retained_workers_on_their_next_selection() {
+    let luna = profile("luna", Mechanical);
+    let worker = profile("worker", Worker);
+    let sol = profile("sol", Heavyweight);
+    let reviewer = profile("reviewer", Mechanical);
+    let pool = [candidate(&luna), candidate(&worker), candidate(&sol)];
+    let obs = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let planner = Authority::Planner {
+        actor: "fixture-planner".into(),
+    };
+    for (before, after, retained, expected, replacement) in [
+        ("low", "very_high", &luna, &sol, true),
+        ("very_high", "low", &sol, &sol, false),
+        ("low", "low", &luna, &luna, false),
+        (
+            "low",
+            "very_high, profileRequests: {worker: {profileId: worker, reason: fixture, required: true}}",
+            &luna,
+            &worker,
+            true,
+        ),
+    ] {
+        let mut task = working(&format!(
+            "---\nqueue: {{complexity: {before}}}\n---\nFix it."
+        ));
+        finish_worker(&mut task, retained);
+        review_changes(&mut task, &open('a'), &reviewer);
+        let mut row = serde_json::to_value(&task).unwrap();
+        let bound = row["threads"]["worker_profile"].as_object_mut().unwrap();
+        bound.remove("complexity");
+        bound.remove("brief_version");
+        let mut task: Task = serde_json::from_value(row).unwrap();
+        task.command(
+            Command::Amend(format!(
+                "---\nqueue: {{complexity: {after}}}\n---\nFix this."
+            )),
+            &planner,
+            &obs,
+        )
+        .unwrap();
+        let mut task: Task = serde_json::from_value(serde_json::to_value(task).unwrap()).unwrap();
+        assert_eq!(
+            pending_complexity_reselection(&task, Role::Worker, Normal),
+            (after == "very_high").then_some((Mechanical, Heavyweight))
+        );
+        let intent = pick(&task, &obs, Normal, &pool);
+        assert_eq!(intent.profile(), expected);
+        assert_eq!(intent.replaced_thread(), replacement.then_some("worker-1"));
+        assert_eq!(intent.pull_request(), Some(&pr('a')));
+        assert_eq!(
+            intent.findings(),
+            Some("Fix the race in the revision path.")
+        );
+        assert_eq!(intent.brief(), task.brief());
+
+        let thread = if replacement { "worker-2" } else { "worker-1" };
+        let (instance, _) = reserve(&mut task, &obs, intent, thread);
+        task.record_send(&instance, 2).unwrap();
+        assert!(pending_complexity_reselection(&task, Role::Worker, Normal).is_none());
+        assert_eq!(
+            task.reconcile(&current(open('a'), &instance, RunState::Gone)),
+            Action::Relaunch(Role::Worker)
+        );
+        let retry = role_thread(open('a'), thread, RetainedThread::Idle);
+        assert_eq!(pick(&task, &retry, Normal, &pool).profile(), expected);
+    }
+}
+
+#[test]
+fn a_raise_during_a_prepared_send_is_seen_by_each_roles_next_reservation() {
+    let luna = profile("luna", Mechanical);
+    let reviewer = profile("reviewer", Mechanical);
+    let sol = profile("sol", Heavyweight);
+    let stronger_reviewer = profile("stronger-reviewer", Worker);
+    let pool = [
+        candidate(&luna),
+        candidate(&reviewer),
+        candidate(&sol),
+        candidate(&stronger_reviewer),
+    ];
+    let mut task = working("---\nqueue: {complexity: low}\n---\nFix it.");
+    finish_worker(&mut task, &luna);
+    review_changes(&mut task, &open('a'), &reviewer);
+    let obs = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let old = pick(&task, &obs, Normal, &pool);
+    let (instance, _) = reserve(&mut task, &obs, old, "worker-1");
+    let frozen = task.run().unwrap().launch().clone();
+    let planner = Authority::Planner {
+        actor: "fixture-planner".into(),
+    };
+    let ready = current(open('a'), &instance, RunState::ReadyToSend);
+    for (complexity, rest) in [("very_high", "Fix it."), ("very_high", "Fix this.")] {
+        task.command(
+            Command::Amend(format!(
+                "---\nqueue: {{complexity: {complexity}}}\n---\n{rest}"
+            )),
+            &planner,
+            &ready,
+        )
+        .unwrap();
+    }
+    assert!(select(&task, &ready, Normal, &pool).unwrap().is_none());
+    assert_eq!(task.run().unwrap().launch(), &frozen);
+    task.record_send(&instance, 2).unwrap();
+    assert_eq!(
+        task.reconcile(&current(open('a'), &instance, RunState::Gone)),
+        Action::Relaunch(Role::Worker)
+    );
+    let replacement = pick(&task, &obs, Normal, &pool);
+    assert_eq!(replacement.profile(), &sol);
+    let (instance, bearer) = reserve(&mut task, &obs, replacement, "worker-2");
+    task.record_send(&instance, 2).unwrap();
+    task.record_report(&instance, bearer.as_bytes(), Report::Work(pr('b').into()))
+        .unwrap();
+    assert_eq!(
+        task.reconcile(&current(open('b'), &instance, RunState::Ended)),
+        Action::Advance(Phase::Reviewing)
+    );
+
+    assert_eq!(
+        pending_complexity_reselection(&task, Role::Reviewer, Normal),
+        Some((Mechanical, Worker))
+    );
+    let review = role_thread(open('b'), "reviewer-1", RetainedThread::Idle);
+    let next = pick(&task, &review, Normal, &pool);
+    assert_eq!(next.profile(), &stronger_reviewer);
+    assert_eq!(next.replaced_thread(), Some("reviewer-1"));
+    assert_eq!(next.pull_request(), Some(&pr('b')));
 }
 
 #[test]
