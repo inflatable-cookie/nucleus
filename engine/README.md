@@ -42,7 +42,9 @@ tag `v0.6.0` and require Rust 1.97.1.
 updates and config backups. `longhorn-storage-layout` resolves their roots and
 the separate engine data root. `longhorn-git-workspace` compares exact worktree
 and repository identity and supplies the bounded Git executor. `nucleus-work` owns allocation
-and retirement. Normal retirement retains dirty work. Before removing a clean checkout, the engine verifies local process inactivity and checks the task row, attached children and retained roles for activity, even if no role was ever bound. Recovery of an interrupted
+and retirement. Normal retirement retains dirty work. The engine checks the
+published Git head, held T3 shell and Dispatch before moving a checkout to
+trash. Recovery of an interrupted
 initial allocation can force removal only after verifying its exact Git registration,
 initialization lock and absent index under the unsent task fence. `longhorn-redact` and
 `longhorn-support-log` cover adapter diagnostics. `longhorn-operation` leaves
