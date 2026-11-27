@@ -243,6 +243,8 @@ export const item = z.object({
   id: z.string(),
   kind: z.enum(["lead", "papercut"]),
   author: z.string(),
+  authorLabel: z.string().default("Agent thread"),
+  authorProjectId: z.string().optional(),
   taskLinks: z.array(z.string()).optional(),
   title: z.string(),
   createdAtMs: integer.nullish(),

@@ -28,6 +28,29 @@ use tokio_tungstenite::{
 };
 
 const THREAD: &str = "fixture-thread";
+
+#[test]
+fn cached_thread_titles_include_archived_rows_without_a_host_read() {
+    let host = T3::new("http://127.0.0.1:1", "fixture-key").expect("fixture host");
+    host.rpc.fixture_shell(&json!({
+        "kind":"snapshot",
+        "snapshot":{
+            "threads":[{"id":"current","title":"Current thread"}],
+            "archivedThreads":[{"id":"archived","title":"Archived thread"}],
+            "projects":[]
+        }
+    }));
+
+    assert_eq!(
+        host.cached_thread_title("current").as_deref(),
+        Some("Current thread")
+    );
+    assert_eq!(
+        host.cached_thread_title("archived").as_deref(),
+        Some("Archived thread")
+    );
+    assert_eq!(host.cached_thread_title("unknown"), None);
+}
 const NATIVE_RUN: &str = "fixture-native-turn";
 const LATE_REPLY_MS: u64 = 600_000;
 

@@ -723,3 +723,150 @@ async fn reopen_items_preserves_history_and_rejects_stale_versions() {
         }
     }
 }
+
+async fn stored_label_fixture() -> (tempfile::TempDir, Service) {
+    let (home, service) = fixture(GitHub::new("fixture").expect("client"));
+    service.host.fixture_project_shell(
+        &json!({
+            "projects": [{
+                "id": "local-fixture",
+                "workspaceRoot": service.fixture().checkout,
+            }],
+            "threads": [{"id":"named-thread", "title":"Longhorn filer"}],
+            "archivedThreads": [{"id":"archived-thread", "title":"Archived collaborator"}],
+        }),
+        "fixture-acp",
+    );
+    let current = service.settings.read::<nucleus_store::Projects>().unwrap();
+    let (updated, _) = service
+        .settings
+        .edit(
+            &current.revision,
+            |projects: &mut nucleus_store::Projects| {
+                projects.projects.insert(
+                    "local-fixture".into(),
+                    nucleus_store::ProjectSettings {
+                        planner_claim: None,
+                        claimed_planner_threads: vec!["past-planner".into()],
+                        name: "Longhorn".into(),
+                        archived: false,
+                        repositories: Vec::new(),
+                    },
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+    service.state.lock().await.settings.projects = Some(updated.value);
+
+    let rows = [
+        ("past-planner", "past-planner", Some("local-fixture")),
+        ("named-thread-item", "named-thread", None),
+        ("archived-thread-item", "archived-thread", None),
+        (
+            "attested-operator-item",
+            "operator via T3 Inbox (attested)",
+            None,
+        ),
+        ("fixture-operator-item", "fixture-operator", None),
+        ("unknown-item", "unknown-thread-id", None),
+    ];
+    {
+        let mut state = service.state.lock().await;
+        for (id, actor, author_project_id) in rows {
+            state
+                .store
+                .add_item_with_author_project(
+                    "local-fixture",
+                    id.into(),
+                    nucleus_store::planning::ItemKind::Papercut,
+                    nucleus_store::planning::ItemContent {
+                        title: id.into(),
+                        body: "A real stored planning row.".into(),
+                        lanes: Vec::new(),
+                    },
+                    author_project_id.map(str::to_owned),
+                    nucleus_store::planning::WriteAt { actor, at_ms: 42 },
+                )
+                .expect("persist item and history row");
+        }
+    }
+
+    (home, service)
+}
+
+#[tokio::test]
+async fn paired_item_authors_and_actors_have_labels_from_stored_rows() {
+    let (home, service) = stored_label_fixture().await;
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).expect("assets directory");
+    std::fs::write(assets.join("index.html"), "<script src='/app.js'></script>")
+        .expect("board HTML");
+    std::fs::write(assets.join("app.js"), "document.title = 'Fixture Board';")
+        .expect("board JavaScript");
+    let api = router_with_board(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "operator via T3 Inbox (attested)".into(),
+            },
+        }],
+        &assets,
+    )
+    .expect("paired board router");
+    let cookie = pair_board(&api, &BOARD_KEY).await;
+    let listed = json_body(
+        browser_request(
+            &api,
+            Method::GET,
+            "/api/engine/planning/local-fixture/items",
+            Some(&cookie),
+            None,
+        )
+        .await,
+    )
+    .await;
+    let author_labels = listed
+        .as_array()
+        .expect("stored item rows")
+        .iter()
+        .map(|row| {
+            (
+                row["id"].as_str().unwrap(),
+                row["authorLabel"].as_str().unwrap(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(author_labels["past-planner"], "Longhorn planner");
+    assert_eq!(author_labels["named-thread-item"], "Longhorn filer");
+    assert_eq!(
+        author_labels["archived-thread-item"],
+        "Archived collaborator"
+    );
+    assert_eq!(author_labels["attested-operator-item"], "Operator");
+    assert_eq!(author_labels["fixture-operator-item"], "Operator");
+    assert_eq!(author_labels["unknown-item"], "Agent thread");
+
+    for (id, expected) in [
+        ("past-planner", "Longhorn planner"),
+        ("named-thread-item", "Longhorn filer"),
+        ("archived-thread-item", "Archived collaborator"),
+        ("attested-operator-item", "Operator"),
+        ("fixture-operator-item", "Operator"),
+        ("unknown-item", "Agent thread"),
+    ] {
+        let history = json_body(
+            browser_request(
+                &api,
+                Method::GET,
+                &format!("/api/engine/planning/local-fixture/history/item/{id}"),
+                Some(&cookie),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(history[0]["actorLabel"], expected, "{id}");
+    }
+}
