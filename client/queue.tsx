@@ -39,8 +39,19 @@ import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
 import { projectName } from "./board/text";
 import { BoardHeader } from "./board/header";
-import { InboxList, RustListRows, useInboxBoard, usePipelineState } from "./board/inbox-list";
+import {
+  InboxList,
+  RustListRows,
+  useInboxBoard,
+  usePipelineState,
+} from "./board/inbox-list";
 import { InboxMenu, type BoardView } from "./board/inbox-menu";
+import {
+  ProjectsOverview,
+  projectOverviewColumns,
+  type ProjectListView,
+  type ProjectSelectorInputs,
+} from "./board/projects-overview";
 import { useBoardSelection } from "./board/use-board-selection";
 import {
   useBoardAct,
@@ -49,7 +60,17 @@ import {
   type BoardTab,
 } from "./board/use-board-data";
 import { RustTaskDialog } from "./task/rust-task";
-import { groupRustTasks, postRustCommand, rustProjectActivity, useRustTasks, type RustCommand, type RustTask, type RustInvalidation, type RustBoardTransport } from "./web/rust-board";
+import {
+  groupRustTasks,
+  postRustCommand,
+  rustProjectActivity,
+  rustSelectorCounts,
+  useRustTasks,
+  type RustCommand,
+  type RustTask,
+  type RustInvalidation,
+  type RustBoardTransport,
+} from "./web/rust-board";
 import { RustItemDialog } from "./records/rust-item";
 import { DecisionDialog } from "./records/decision-dialog";
 import type { RecordNoticeValue } from "./task/parts";
@@ -73,14 +94,24 @@ export function registerSettingsOpener(
 function useSavedScope(rust: boolean) {
   const [stored, save] = useProjectScope();
   const bindings = stored.projects;
-  const surfaceScope = useMemo(() => rust
-    ? { projects: bindings.filter(key => key.startsWith("rust:")).map(key => key.slice(5)) }
-    : stored, [bindings, rust, stored]);
+  const surfaceScope = useMemo(
+    () =>
+      rust
+        ? {
+            projects: bindings
+              .filter((key) => key.startsWith("rust:"))
+              .map((key) => key.slice(5)),
+          }
+        : stored,
+    [bindings, rust, stored],
+  );
   return {
     surfaceScope,
     unresolvedScope: rust && surfaceScope.projects.length !== bindings.length,
     saveSurfaceScope: (value: { projects: string[] }) =>
-      save(rust ? { projects: value.projects.map(key => "rust:" + key) } : value),
+      save(
+        rust ? { projects: value.projects.map((key) => "rust:" + key) } : value,
+      ),
   };
 }
 
@@ -99,7 +130,13 @@ export function MainSurface({
   rustBoard,
   planningIssues,
   boardTransport,
-}: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope; now?: number; rustBoard?: RustInvalidation; planningIssues?: string; boardTransport?: RustBoardTransport }) {
+}: BoardSurfaceProps & {
+  workspaceBoard?: WorkspaceBoardScope;
+  now?: number;
+  rustBoard?: RustInvalidation;
+  planningIssues?: string;
+  boardTransport?: RustBoardTransport;
+}) {
   const c = theme.colors;
   const [panelWidth, setPanelWidth] = useState(0);
   const mode = inboxLayout(panelWidth, layout.compact);
@@ -126,8 +163,12 @@ export function MainSurface({
   const { stateQuery, state } = useBoardState();
   const { surfaceScope, saveSurfaceScope, unresolvedScope } =
     useSavedScope(!workspaceBoard);
-  const [panelScope, setPanelScope] = usePanelScope(workspaceBoard?.key ?? null);
-  const scope = workspaceBoard ? (panelScope ?? { projects: [workspaceBoard.key] }) : surfaceScope;
+  const [panelScope, setPanelScope] = usePanelScope(
+    workspaceBoard?.key ?? null,
+  );
+  const scope = workspaceBoard
+    ? (panelScope ?? { projects: [workspaceBoard.key] })
+    : surfaceScope;
   const setScope = workspaceBoard ? setPanelScope : saveSurfaceScope;
   const [, setScopeOpen] = useState(false);
   const {
@@ -164,26 +205,29 @@ export function MainSurface({
   const rustColumns = useMemo(() => {
     if (!rustTasks.data) return undefined;
     const contains = scopeContains(state?.projects ?? [], scope.projects);
-    return groupRustTasks(rustTasks.data.filter(({ identity }) =>
-      contains(identity.repository, identity.repository),
-    ));
+    return groupRustTasks(
+      rustTasks.data.filter(({ identity }) =>
+        contains(identity.repository, identity.repository),
+      ),
+    );
   }, [rustTasks.data, state?.projects, scope.projects]);
-  const rustView = Boolean(rustBoard) && view !== "planning" && view !== "leads" && view !== "papercuts" ? view : null;
+  const rustView =
+    Boolean(rustBoard) &&
+    view !== "planning" &&
+    view !== "projects" &&
+    view !== "leads" &&
+    view !== "papercuts"
+      ? view
+      : null;
   // On the Rust engine every task is a Rust task. The project selector counts
   // each project's open tasks through its hidden-count input, keyed by checkout.
-  const selectorCounts = useMemo(() => {
-    if (!rustTasks.data) return state?.queuedCounts ?? [];
-    const counts = new Map<string, number>();
-    for (const task of rustTasks.data) {
-      if (task.phase === "done" || task.phase === "cancelled") continue;
-      const origin = task.identity.repository;
-      const repo = (state?.projects ?? [])
-        .flatMap((project) => project.repositories)
-        .find((candidate) => matchesRepository(candidate, origin, origin));
-      if (repo?.path) counts.set(repo.path, (counts.get(repo.path) ?? 0) + 1);
-    }
-    return [...counts].map(([repoPath, count]) => ({ repoPath, count }));
-  }, [rustTasks.data, state?.projects, state?.queuedCounts]);
+  const selectorCounts = useMemo(
+    () =>
+      rustTasks.data
+        ? rustSelectorCounts(state?.projects ?? [], rustTasks.data)
+        : (state?.queuedCounts ?? []),
+    [rustTasks.data, state?.projects, state?.queuedCounts],
+  );
   // The selector's row actions (nucleus#1430) refresh the board after each save; Remove opens the shared removal dialog below.
   const projectSelector = useProjectSelectorActions(
     () => stateQuery.refetch(),
@@ -202,10 +246,49 @@ export function MainSurface({
     leadLinks,
   } = records;
   const projectActivity = useMemo(
-    () => state && rustTasks.data
-      ? rustProjectActivity(state.projects, rustTasks.data, leadsQuery.data?.activity ?? [])
-      : state?.projectActivity ?? [],
-    [state?.projects, state?.projectActivity, rustTasks.data, leadsQuery.data?.activity],
+    () =>
+      state && rustTasks.data
+        ? rustProjectActivity(
+            state.projects,
+            rustTasks.data,
+            leadsQuery.data?.activity ?? [],
+          )
+        : (state?.projectActivity ?? []),
+    [
+      state?.projects,
+      state?.projectActivity,
+      rustTasks.data,
+      leadsQuery.data?.activity,
+    ],
+  );
+  // The header's project select and the Projects overview order projects from the same inputs.
+  const selectorInputs: ProjectSelectorInputs = {
+    tasks: state?.tasks ?? [],
+    leads: boardLeads,
+    queuedCounts: selectorCounts,
+    projectActivity,
+  };
+  const overviewColumns = useMemo(
+    () =>
+      view === "projects" && state
+        ? projectOverviewColumns({
+            projects: state.projects,
+            selector: selectorInputs,
+            leads: leadsQuery.data ? boardLeads : undefined,
+            tasks: rustTasks.data,
+          })
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      view,
+      state?.projects,
+      state?.tasks,
+      boardLeads,
+      leadsQuery.data,
+      selectorCounts,
+      projectActivity,
+      rustTasks.data,
+    ],
   );
   const {
     lanes,
@@ -271,19 +354,25 @@ export function MainSurface({
       ? (id: string, command: RustCommand) => {
           setRustBusy(true);
           setError("");
-          void postRustCommand(id, command).then(
-            () => {
-              rustBoard(id);
-            },
-            (err: unknown) => setError(errorText(err)),
-          ).finally(() => setRustBusy(false));
+          void postRustCommand(id, command)
+            .then(
+              () => {
+                rustBoard(id);
+              },
+              (err: unknown) => setError(errorText(err)),
+            )
+            .finally(() => setRustBusy(false));
         }
       : undefined,
     project: ({ identity }: RustTask) => {
       const origin = normalizeRepositoryOrigin(identity.repository);
-      const project = projectForRepository(identity.repository, identity.repository);
-      const repo = project?.repositories
-        .find((candidate) => matchesRepository(candidate, identity.repository, identity.repository));
+      const project = projectForRepository(
+        identity.repository,
+        identity.repository,
+      );
+      const repo = project?.repositories.find((candidate) =>
+        matchesRepository(candidate, identity.repository, identity.repository),
+      );
       return {
         name: project?.name ?? origin ?? identity.repository,
         key: project?.key,
@@ -342,12 +431,19 @@ export function MainSurface({
     setView(next);
     setMenuOpen(false);
   };
+  /** A Projects header count: its list, with the project filter on that project. */
+  const openProjectList = (project: string, next: ProjectListView) => {
+    setScope({ projects: [project] });
+    openView(next);
+  };
   const laneName = (key: string) =>
     lanes.find((lane) => lane.key === key)?.title ?? key;
   /** A project's T3 badge, from its first repository with one. */
   const itemBadge = (key: string) => {
     const project = state?.projects.find((candidate) => candidate.key === key);
-    const path = project?.repositories.find((repo) => repo.path && state?.repositoryBadges?.[repo.path])?.path;
+    const path = project?.repositories.find(
+      (repo) => repo.path && state?.repositoryBadges?.[repo.path],
+    )?.path;
     return (path && state?.repositoryBadges?.[path]) || null;
   };
   const inset = space.md;
@@ -368,73 +464,90 @@ export function MainSurface({
       ? storedBoardErrorText(state.error)
       : null;
   // Records open in the detail pane on a wide board's lists. Planning's detail pane
-  // holds the lane, so a record opened from it is a modal, as on a narrower board.
-  const inlineDetail = wide && view !== "planning";
+  // holds the lane and Projects fills the width, so a record opened from either is a
+  // modal, as on a narrower board.
+  const inlineDetail = wide && view !== "planning" && view !== "projects";
   const anyRecord = Boolean(
     rustTaskId || selectedLeadId || openPapercutId || openDecisionId,
   );
-  const detail = rustTaskId && rustBoard ? (
-    <RustTaskDialog key={`rust:${rustTaskId}`} id={rustTaskId}
-      summary={rustTasks.data?.find(({ identity }) => identity.id === rustTaskId)}
-      project={rustListProps.project}
-      onOpenTask={selectRustTask}
-      inline={inlineDetail} compact={compact} c={c}
-      onClose={() => setRustTaskId(null)} invalidate={rustBoard} />
-  ) : selectedLeadId || openPapercutId ? (
-    // The Rust engine keeps leads and papercuts as one item (Spec 071).
-    <RustItemDialog
-      key={recordKey}
-      id={(selectedLeadId ?? openPapercutId)!}
-      project={recordProject}
-      kind={selectedLeadId ? "lead" : "papercut"}
-      inline={inlineDetail}
-      compact={compact}
-      c={c}
-      laneName={laneName}
-      badge={itemBadge}
-      task={(id) => rustTasks.data?.find(({ identity }) => identity.id === id)}
-      onOpenTask={selectRustTask}
-      onClose={() => {
-        setLeadLane(null);
-        setSelectedLeadId(null);
-        setOpenPapercutId(null);
-      }}
-    />
-  ) : openDecisionId ? (
-    <DecisionDialog
-      key={recordKey}
-      project={recordProject}
-      id={openDecisionId}
-      compact={compact}
-      busy={busy}
-      act={act}
-      recordNotice={recordNotice}
-      setRecordNotice={setRecordNotice}
-      onOpenDecision={id => selectDecision(id, recordProject)}
-      taskLinkLabel={(id) => {
-        const task = state?.tasks.find((item) => item.id === id);
-        if (!task) return null;
-        const reference =
-          task.reference ??
-          (task.number ? api.taskNumberLabel(task, true) : null);
-        const project =
-          projectForRepository(task.repoPath, task.repository)?.name ??
-          projectName(task);
-        return [reference, task.title, project].filter(Boolean).join(" · ");
-      }}
-      onOpenTask={(id) => {
-        setOpenDecisionId(null);
-        selectRustTask(id);
-      }}
-      inline={inlineDetail}
-      onClose={() => setOpenDecisionId(null)}
-      c={c}
-    />
-  ) : null;
+  const detail =
+    rustTaskId && rustBoard ? (
+      <RustTaskDialog
+        key={`rust:${rustTaskId}`}
+        id={rustTaskId}
+        summary={rustTasks.data?.find(
+          ({ identity }) => identity.id === rustTaskId,
+        )}
+        project={rustListProps.project}
+        onOpenTask={selectRustTask}
+        inline={inlineDetail}
+        compact={compact}
+        c={c}
+        onClose={() => setRustTaskId(null)}
+        invalidate={rustBoard}
+      />
+    ) : selectedLeadId || openPapercutId ? (
+      // The Rust engine keeps leads and papercuts as one item (Spec 071).
+      <RustItemDialog
+        key={recordKey}
+        id={(selectedLeadId ?? openPapercutId)!}
+        project={recordProject}
+        kind={selectedLeadId ? "lead" : "papercut"}
+        inline={inlineDetail}
+        compact={compact}
+        c={c}
+        laneName={laneName}
+        badge={itemBadge}
+        task={(id) =>
+          rustTasks.data?.find(({ identity }) => identity.id === id)
+        }
+        onOpenTask={selectRustTask}
+        onClose={() => {
+          setLeadLane(null);
+          setSelectedLeadId(null);
+          setOpenPapercutId(null);
+        }}
+      />
+    ) : openDecisionId ? (
+      <DecisionDialog
+        key={recordKey}
+        project={recordProject}
+        id={openDecisionId}
+        compact={compact}
+        busy={busy}
+        act={act}
+        recordNotice={recordNotice}
+        setRecordNotice={setRecordNotice}
+        onOpenDecision={(id) => selectDecision(id, recordProject)}
+        taskLinkLabel={(id) => {
+          const task = state?.tasks.find((item) => item.id === id);
+          if (!task) return null;
+          const reference =
+            task.reference ??
+            (task.number ? api.taskNumberLabel(task, true) : null);
+          const project =
+            projectForRepository(task.repoPath, task.repository)?.name ??
+            projectName(task);
+          return [reference, task.title, project].filter(Boolean).join(" · ");
+        }}
+        onOpenTask={(id) => {
+          setOpenDecisionId(null);
+          selectRustTask(id);
+        }}
+        inline={inlineDetail}
+        onClose={() => setOpenDecisionId(null)}
+        c={c}
+      />
+    ) : null;
   const detailPane = (
     <View
       accessibilityLabel="Detail"
-      style={{ flex: 1, minWidth: 0, minHeight: 0, backgroundColor: roles(c).canvas }}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        backgroundColor: roles(c).canvas,
+      }}
     >
       {detail ?? (
         <View
@@ -464,19 +577,25 @@ export function MainSurface({
         ...(!planQuery.data ? ["planning" as const] : []),
         ...(!leadsQuery.data ? ["leads" as const, "papercuts" as const] : []),
       ]}
-      rust={rustBoard ? { totals: Object.fromEntries(
-        Object.entries(rustColumns ?? {}).map(([column, tasks]) => [column, tasks.length]),
-      ) } : undefined}
+      rust={
+        rustBoard
+          ? {
+              totals: Object.fromEntries(
+                Object.entries(rustColumns ?? {}).map(([column, tasks]) => [
+                  column,
+                  tasks.length,
+                ]),
+              ),
+            }
+          : undefined
+      }
       onSelect={openView}
     />
   );
   const filter = (
     <ProjectSelector
       projects={state?.projects ?? []}
-      tasks={state?.tasks ?? []}
-      leads={boardLeads}
-      queuedCounts={selectorCounts}
-      projectActivity={projectActivity}
+      {...selectorInputs}
       value={scope.projects}
       // The picker commits the selection it reports, and an empty pick
       // (Clear, or Shift-clearing the last project) restores all projects.
@@ -486,21 +605,31 @@ export function MainSurface({
       }
       projectActions={{
         ...projectSelector.actions,
-        ...(state?.canEditSettings === true ? { remove: setRemovingProject } : {}),
+        ...(state?.canEditSettings === true
+          ? { remove: setRemovingProject }
+          : {}),
       }}
       onOpenChange={setScopeOpen}
       compact={narrow}
       c={c}
     />
   );
-  if (unresolvedScope) return (
-    <PopoverHost>
-      <BoardNotice c={c} text={state
-        ? "The saved project filter uses an older format. Choose a project or clear the selection."
-        : stateQuery.error ? readErrorText("Board state", stateQuery.error) : "Reading the saved project filter…"} />
-      {state && filter}
-    </PopoverHost>
-  );
+  if (unresolvedScope)
+    return (
+      <PopoverHost>
+        <BoardNotice
+          c={c}
+          text={
+            state
+              ? "The saved project filter uses an older format. Choose a project or clear the selection."
+              : stateQuery.error
+                ? readErrorText("Board state", stateQuery.error)
+                : "Reading the saved project filter…"
+          }
+        />
+        {state && filter}
+      </PopoverHost>
+    );
   // Every popover on the board renders in this host's layer, above the panes (Tom, 2026-11-08).
   return (
     <PopoverHost>
@@ -512,13 +641,18 @@ export function MainSurface({
           c={c}
           workspaceName={workspaceBoard?.name}
           state={state}
-          activeWorkers={rustTasks.data?.filter((task) => task.wait === "running").length ?? null}
+          activeWorkers={
+            rustTasks.data?.filter((task) => task.wait === "running").length ??
+            null
+          }
           refetchState={stateQuery.refetch}
           busy={busy}
           act={act}
           error={error}
           onDismissError={() => setError("")}
-          readError={[readError, planningIssues].filter(Boolean).join("\n") || null}
+          readError={
+            [readError, planningIssues].filter(Boolean).join("\n") || null
+          }
           staleRead={staleRead}
           inset={inset}
           settingsOpener={settingsOpener}
@@ -550,14 +684,19 @@ export function MainSurface({
                   listWidth: wide ? inboxListWidth : null,
                   laneModal: !wide,
                   listFill,
-                  listSurface: narrow && canvas !== section ? "canvas" : "section",
+                  listSurface:
+                    narrow && canvas !== section ? "canvas" : "section",
                 }}
                 leads={boardLeads}
                 onCloseLane={(key, project, note) =>
-                  void act(() => changeLaneStatus({ key, project, status: "done", note }))
+                  void act(() =>
+                    changeLaneStatus({ key, project, status: "done", note }),
+                  )
                 }
                 onReopenLane={(key, project) =>
-                  void act(() => changeLaneStatus({ key, project, status: "active" }))
+                  void act(() =>
+                    changeLaneStatus({ key, project, status: "active" }),
+                  )
                 }
                 busy={busy}
                 step={planningStep}
@@ -571,8 +710,15 @@ export function MainSurface({
                 selection={scope.projects}
                 plans={planQuery.data ?? []}
                 plansError={planMessage(planQuery.error)}
-                lanesLoading={planQuery.isLoading || (!state && !stateQuery.error) || Boolean(rustBoard && rustTasks.isLoading)}
-                lanesError={planMessage(stateQuery.error ?? (rustBoard && !rustTasks.data ? rustTasks.error : null))}
+                lanesLoading={
+                  planQuery.isLoading ||
+                  (!state && !stateQuery.error) ||
+                  Boolean(rustBoard && rustTasks.isLoading)
+                }
+                lanesError={planMessage(
+                  stateQuery.error ??
+                    (rustBoard && !rustTasks.data ? rustTasks.error : null),
+                )}
                 onRetryLanes={() => {
                   if (rustBoard && !rustTasks.data) void rustTasks.refetch();
                   void stateQuery.refetch();
@@ -627,19 +773,26 @@ export function MainSurface({
                 }
                 lanePanel={(laneContext) =>
                   rustBoard && !rustTasks.data ? (
-                    <RustListRows c={c} view="working" rust={{ ...rustListProps, tasks: undefined }} />
+                    <RustListRows
+                      c={c}
+                      view="working"
+                      rust={{ ...rustListProps, tasks: undefined }}
+                    />
                   ) : planningLaneRecord && planningLaneRef ? (
                     <LaneScreen
-                      key={JSON.stringify([planningLaneRef.project, planningLaneRef.key])}
+                      key={JSON.stringify([
+                        planningLaneRef.project,
+                        planningLaneRef.key,
+                      ])}
                       lane={planningLaneRecord}
                       project={planningLaneRef.project}
                       compact={compact}
                       projects={state?.projects ?? []}
-                      plans={
-                        (planQuery.data ?? []).filter(
-                          ({ project }) => !planningLaneRecord.project || project === planningLaneRef.project,
-                        )
-                      }
+                      plans={(planQuery.data ?? []).filter(
+                        ({ project }) =>
+                          !planningLaneRecord.project ||
+                          project === planningLaneRef.project,
+                      )}
                       busy={busy}
                       canEdit
                       doc={{
@@ -669,25 +822,40 @@ export function MainSurface({
                           version,
                         })
                       }
-                      tasks={rustBoard ? {
-                        total: rustLaneTasks?.length,
-                        rows: <RustListRows c={c} view="working" rust={{ ...rustListProps, tasks: rustLaneTasks }} />,
-                      } : {
-                        items: laneTasksQuery.data?.tasks,
-                        error: laneTasksQuery.error
-                          ? planMessage(laneTasksQuery.error)
-                          : undefined,
-                        total: laneTasksQuery.data?.total,
-                        offset: laneTaskOffset,
-                        nextOffset: laneTasksQuery.data?.nextOffset,
-                      }}
+                      tasks={
+                        rustBoard
+                          ? {
+                              total: rustLaneTasks?.length,
+                              rows: (
+                                <RustListRows
+                                  c={c}
+                                  view="working"
+                                  rust={{
+                                    ...rustListProps,
+                                    tasks: rustLaneTasks,
+                                  }}
+                                />
+                              ),
+                            }
+                          : {
+                              items: laneTasksQuery.data?.tasks,
+                              error: laneTasksQuery.error
+                                ? planMessage(laneTasksQuery.error)
+                                : undefined,
+                              total: laneTasksQuery.data?.total,
+                              offset: laneTaskOffset,
+                              nextOffset: laneTasksQuery.data?.nextOffset,
+                            }
+                      }
                       onLoadMoreTasks={(offset) => setLaneTaskOffset(offset)}
                       onLoadPreviousTasks={() =>
                         setLaneTaskOffset(Math.max(0, laneTaskOffset - 25))
                       }
                       onRetryTasks={() => void laneTasksQuery.refetch()}
                       leads={{
-                        items: leadsQuery.data ? boardLeads.filter(lead => laneCards.has(lead)) : undefined,
+                        items: leadsQuery.data
+                          ? boardLeads.filter((lead) => laneCards.has(lead))
+                          : undefined,
                         error: leadsQuery.error
                           ? planMessage(leadsQuery.error)
                           : undefined,
@@ -695,12 +863,17 @@ export function MainSurface({
                       onRetryLeads={() => void leadsQuery.refetch()}
                       onOpenTask={selectRustTask}
                       onOpenLead={(lead) => {
-                        if (isPapercut(lead)) selectPapercut(lead.id, lead.projectKey);
+                        if (isPapercut(lead))
+                          selectPapercut(lead.id, lead.projectKey);
                         else
-                          selectLead(lead.id, {
-                            key: planningLaneRecord.key,
-                            title: planningLaneRecord.title,
-                          }, lead.projectKey);
+                          selectLead(
+                            lead.id,
+                            {
+                              key: planningLaneRecord.key,
+                              title: planningLaneRecord.title,
+                            },
+                            lead.projectKey,
+                          );
                       }}
                       onSelectProject={(project) => {
                         if (!laneContext.showProject(project))
@@ -708,7 +881,11 @@ export function MainSurface({
                       }}
                       onSetStatus={(status, note) =>
                         void act(() =>
-                          changeLaneStatus({ ...planningLaneRef, status, note }),
+                          changeLaneStatus({
+                            ...planningLaneRef,
+                            status,
+                            note,
+                          }),
                         )
                       }
                       c={c}
@@ -725,6 +902,15 @@ export function MainSurface({
                     </View>
                   )
                 }
+              />
+            ) : view === "projects" ? (
+              <ProjectsOverview
+                c={c}
+                columns={overviewColumns}
+                narrowWidth={narrow && panelWidth > 0 ? panelWidth : null}
+                badge={itemBadge}
+                rust={rustListProps}
+                onOpenList={openProjectList}
               />
             ) : (
               <>
@@ -753,10 +939,14 @@ export function MainSurface({
                     inbox={inbox}
                     scope={selection}
                     view={view}
-                    rust={rustView ? {
-                      tasks: rustColumns?.[rustView],
-                      ...rustListProps,
-                    } : undefined}
+                    rust={
+                      rustView
+                        ? {
+                            tasks: rustColumns?.[rustView],
+                            ...rustListProps,
+                          }
+                        : undefined
+                    }
                     leadsLoading={leadsQuery.isLoading}
                     decisions={decisionsQuery.data}
                     decisionsError={decisionsQuery.error}
