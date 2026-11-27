@@ -107,7 +107,12 @@ enum Action {
     /// Read the task detail.
     Task { id: String },
     /// Read the task's next commands and current wait.
-    Next { id: String },
+    Next {
+        id: String,
+        /// Authenticate with this run's report ticket instead of a T3 caller identity.
+        #[arg(long)]
+        ticket: Option<PathBuf>,
+    },
     /// Watch a task to receive one queued notice when it finishes.
     Watch {
         id: String,
@@ -351,16 +356,23 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Action::Report { ticket } => report(&ticket).await,
+        Action::Next { id, ticket } => {
+            if let Some(path) = ticket_path(ticket.as_deref()) {
+                ticket_post(&path, &id, "watchers").await
+            } else {
+                next_control(endpoint, &id).await
+            }
+        }
         Action::Watch { id, ticket } => {
             if let Some(path) = ticket_path(ticket.as_deref()) {
-                watch_with_ticket(&path, &id, true).await
+                ticket_post(&path, &id, "watch").await
             } else {
                 control(endpoint, Action::Watch { id, ticket }).await
             }
         }
         Action::Unwatch { id, ticket } => {
             if let Some(path) = ticket_path(ticket.as_deref()) {
-                watch_with_ticket(&path, &id, false).await
+                ticket_post(&path, &id, "unwatch").await
             } else {
                 control(endpoint, Action::Unwatch { id, ticket }).await
             }
@@ -636,18 +648,64 @@ async fn report(path: &Path) -> Result<()> {
 }
 
 fn ticket_path(explicit: Option<&Path>) -> Option<PathBuf> {
-    explicit.map(Path::to_path_buf).or_else(|| {
-        env::var_os("NUCLEUS_TICKET")
-            .map(PathBuf::from)
-            .filter(|path| path.exists())
-    })
+    explicit
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            env::var_os("NUCLEUS_TICKET")
+                .map(PathBuf::from)
+                .filter(|path| path.exists())
+        })
+        .or_else(|| {
+            env::var_os("NUCLEUS_CONTINUATION_TICKET")
+                .map(PathBuf::from)
+                .filter(|path| path.exists())
+        })
 }
 
-async fn watch_with_ticket(ticket: &Path, id: &str, subscribe: bool) -> Result<()> {
-    let suffix = if subscribe { "watch" } else { "unwatch" };
+async fn ticket_post(ticket: &Path, id: &str, suffix: &str) -> Result<()> {
     let response = run_ticket_request(ticket, Method::POST, suffix, Some(json!({ "task": id })))?
         .send()
         .await?;
+    print_control_response(response, false).await
+}
+
+async fn next_control(endpoint: SocketAddr, id: &str) -> Result<()> {
+    loopback(endpoint)?;
+    let (key, actor) = control_caller()?;
+    let segment = task_segment(id)?;
+    let response = request(
+        endpoint,
+        Method::GET,
+        &format!("/v1/tasks/{segment}/next"),
+        &key,
+        None,
+        actor.as_deref(),
+    )?
+    .send()
+    .await?;
+    // Cross-project and non-planner T3 callers fall back to scoped watcher status
+    // without exposing project-scoped commands or task state.
+    if actor.is_some()
+        && matches!(
+            response.status(),
+            reqwest::StatusCode::BAD_REQUEST
+                | reqwest::StatusCode::UNAUTHORIZED
+                | reqwest::StatusCode::FORBIDDEN
+                | reqwest::StatusCode::NOT_FOUND
+        )
+    {
+        let fallback = request(
+            endpoint,
+            Method::GET,
+            &format!("/v1/tasks/{segment}/watchers"),
+            &key,
+            None,
+            actor.as_deref(),
+        )?
+        .send()
+        .await?;
+        return print_control_response(fallback, false).await;
+    }
     print_control_response(response, false).await
 }
 
@@ -717,11 +775,6 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         A::Task { id } => (
             Method::GET,
             format!("/v1/tasks/{}", task_segment(&id)?),
-            None,
-        ),
-        A::Next { id } => (
-            Method::GET,
-            format!("/v1/tasks/{}/next", task_segment(&id)?),
             None,
         ),
         A::Watch { id, .. } => (

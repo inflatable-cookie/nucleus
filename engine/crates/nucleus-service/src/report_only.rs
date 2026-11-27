@@ -25,6 +25,22 @@ use crate::{
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct WatcherSummary {
+    pub(crate) count: usize,
+    pub(crate) watching: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WatcherStatus {
+    pub(crate) reference: String,
+    pub(crate) title: String,
+    pub(crate) phase: Phase,
+    pub(crate) watchers: WatcherSummary,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct WatchResponse {
     pub(crate) reference: String,
     pub(crate) title: String,
@@ -513,61 +529,24 @@ impl Service {
         selector: &str,
         subscribe: bool,
     ) -> Result<WatchResponse, ServiceError> {
-        let (actor, default_repo) = match caller.actor() {
-            Some(actor) => {
-                let needs_enrollment = {
-                    let state = self.state.lock().await;
-                    if let Some(project) = state.live_planner_project(actor) {
-                        Some((
-                            actor.to_owned(),
-                            state
-                                .settings
-                                .only_bound_repository(project)
-                                .map(str::to_owned),
-                        ))
-                    } else if state.settings.planner_route(actor).is_some() {
-                        None
-                    } else {
-                        return Err(ServiceError::WatchAgentRequired);
-                    }
-                };
-                if let Some(resolved) = needs_enrollment {
-                    resolved
-                } else {
-                    caller
-                        .with_enrollment(|| async {
-                            let mut state = self.state.lock().await;
-                            self.planning_planner_project(&mut state, actor, None)
-                                .map(|_| ())
-                        })
-                        .await?;
-                    let state = self.state.lock().await;
-                    let project = state
-                        .live_planner_project(actor)
-                        .ok_or(ServiceError::WatchAgentRequired)?;
-                    (
-                        actor.to_owned(),
-                        state
-                            .settings
-                            .only_bound_repository(project)
-                            .map(str::to_owned),
-                    )
-                }
-            }
-            None => match authority {
-                Authority::Planner { actor } => (
-                    actor.clone(),
-                    self.project
-                        .as_ref()
-                        .map(|project| project.repository.clone()),
-                ),
-                Authority::Operator { .. } => return Err(ServiceError::WatchAgentRequired),
-            },
-        };
+        let (actor, default_repo) = self.resolve_watch_caller(caller, authority).await?;
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let id = self.resolve_watch_reference(&state, selector, default_repo.as_deref())?;
         Self::apply_watch(&mut state, &id, &actor, subscribe)
+    }
+
+    pub(crate) async fn watchers_for_caller(
+        &self,
+        caller: &ControllerScope,
+        authority: &Authority,
+        selector: &str,
+    ) -> Result<WatcherStatus, ServiceError> {
+        let (actor, default_repo) = self.resolve_watch_caller(caller, authority).await?;
+        self.storage.database().verify()?;
+        let state = self.state.lock().await;
+        let id = self.resolve_watch_reference(&state, selector, default_repo.as_deref())?;
+        self.read_watcher_status(&state, &id, &actor)
     }
 
     pub(crate) async fn watch_with_ticket(
@@ -580,12 +559,135 @@ impl Service {
     ) -> Result<WatchResponse, ServiceError> {
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
-        let caller_row = self.lookup(&state, task_id)?;
+        let (id, actor) =
+            self.resolve_ticket_watch(&state, task_id, instance, credential, selector)?;
+        Self::apply_watch(&mut state, &id, &actor, subscribe)
+    }
+
+    pub(crate) async fn watchers_with_ticket(
+        &self,
+        task_id: &str,
+        instance: &str,
+        credential: &[u8; 32],
+        selector: &str,
+    ) -> Result<WatcherStatus, ServiceError> {
+        self.storage.database().verify()?;
+        let state = self.state.lock().await;
+        let (id, actor) =
+            self.resolve_ticket_watch(&state, task_id, instance, credential, selector)?;
+        self.read_watcher_status(&state, &id, &actor)
+    }
+
+    async fn resolve_watch_caller(
+        &self,
+        caller: &ControllerScope,
+        authority: &Authority,
+    ) -> Result<(String, Option<String>), ServiceError> {
+        let Some(actor) = caller.actor() else {
+            return match authority {
+                Authority::Planner { actor } => Ok((
+                    actor.clone(),
+                    self.project
+                        .as_ref()
+                        .map(|project| project.repository.clone()),
+                )),
+                Authority::Operator { .. } => Err(ServiceError::WatchAgentRequired),
+            };
+        };
+        let route_state = {
+            let state = self.state.lock().await;
+            if let Some(project) = state.live_planner_project(actor) {
+                Some(Some(
+                    state
+                        .settings
+                        .only_bound_repository(project)
+                        .map(str::to_owned),
+                ))
+            } else if state.settings.planner_route(actor).is_some() {
+                None
+            } else {
+                Some(None)
+            }
+        };
+        match route_state {
+            Some(Some(default_repo)) => return Ok((actor.to_owned(), default_repo)),
+            None => {
+                caller
+                    .with_enrollment(|| async {
+                        let mut state = self.state.lock().await;
+                        self.planning_planner_project(&mut state, actor, None)
+                            .map(|_| ())
+                    })
+                    .await?;
+                let state = self.state.lock().await;
+                let project = state
+                    .live_planner_project(actor)
+                    .ok_or(ServiceError::WatchAgentRequired)?;
+                return Ok((
+                    actor.to_owned(),
+                    state
+                        .settings
+                        .only_bound_repository(project)
+                        .map(str::to_owned),
+                ));
+            }
+            Some(None) => {}
+        }
+        // Any live, unarchived T3 thread may watch/inspect watch status across projects.
+        let identity = self
+            .host
+            .planner_identity(actor)
+            .await?
+            .ok_or(ServiceError::WatchAgentRequired)?;
+        let state = self.state.lock().await;
+        let default_repo = state.settings.projects.as_ref().and_then(|projects| {
+            let mut repos = projects.projects.values().filter_map(|project| {
+                project
+                    .repositories
+                    .iter()
+                    .any(|repo| repo.host_project.as_deref() == Some(identity.project_id.as_str()))
+                    .then(|| match project.repositories.as_slice() {
+                        [only] => Some(only.origin.clone()),
+                        _ => None,
+                    })
+                    .flatten()
+            });
+            let first = repos.next()?;
+            repos.next().is_none().then_some(first)
+        });
+        Ok((actor.to_owned(), default_repo))
+    }
+
+    fn resolve_ticket_watch(
+        &self,
+        state: &State,
+        task_id: &str,
+        instance: &str,
+        credential: &[u8; 32],
+        selector: &str,
+    ) -> Result<(String, String), ServiceError> {
+        let caller_row = self.lookup(state, task_id)?;
         let run = caller_row.task.authenticate_run(instance, credential)?;
         let actor = run.launch().thread.clone();
-        let default_repo = caller_row.task.identity().repository.clone();
-        let id = self.resolve_watch_reference(&state, selector, Some(&default_repo))?;
-        Self::apply_watch(&mut state, &id, &actor, subscribe)
+        let default_repo = &caller_row.task.identity().repository;
+        let id = self.resolve_watch_reference(state, selector, Some(default_repo))?;
+        Ok((id, actor))
+    }
+
+    fn read_watcher_status(
+        &self,
+        state: &State,
+        id: &str,
+        actor: &str,
+    ) -> Result<WatcherStatus, ServiceError> {
+        let row = self.lookup(state, id)?;
+        let (count, watching) = state.store.watcher_summary(id, Some(actor))?;
+        Ok(WatcherStatus {
+            reference: row.reference().into_owned(),
+            title: crate::titles::brief(&row.task),
+            phase: row.task.phase(),
+            watchers: WatcherSummary { count, watching },
+        })
     }
 
     fn apply_watch(

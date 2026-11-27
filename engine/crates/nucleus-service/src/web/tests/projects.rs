@@ -29,6 +29,7 @@ pub(super) struct NoticeFixture {
     settled: bool,
     uncertain_planner: bool,
     archived_threads: BTreeSet<String>,
+    missing_threads: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -297,6 +298,15 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
                 if id == "alpha-planner" && notices.uncertain_planner {
                     return json!({"_tag":"Exit", "requestId":request["id"], "exit":{
                         "_tag":"Failure", "cause":[{"_tag":"Fail", "error":{"_tag":"ReadUnavailable"}}]
+                    }});
+                }
+                if id == "unknown-caller" || notices.missing_threads.contains(id) {
+                    return json!({"_tag":"Exit", "requestId":request["id"], "exit":{
+                        "_tag":"Failure", "cause":[{"_tag":"Fail", "error":{
+                            "_tag":"OrchestrationV2GetThreadProjectionError",
+                            "threadId": id,
+                            "cause": {"name": "ProjectionStoreThreadNotFoundError", "message": "missing"}
+                        }}]
                     }});
                 }
                 notices.thread_snapshot(id, closed.load(Ordering::Relaxed))
@@ -3801,14 +3811,6 @@ async fn settle_phase(service: &Service, id: &str, phase: &str, pr: Option<&str>
 async fn unknown_caller_cannot_watch_or_unwatch_and_makes_no_t3_calls() {
     let registry = registry().await;
     let reads = registry.reads.load(Ordering::Relaxed);
-    for verb in ["watch", "unwatch"] {
-        assert_eq!(
-            watch_via(&registry.api, "unknown-caller", "missing", verb)
-                .await
-                .status(),
-            StatusCode::FORBIDDEN
-        );
-    }
     assert_eq!(
         post_as(
             &registry.api,
@@ -3820,7 +3822,46 @@ async fn unknown_caller_cannot_watch_or_unwatch_and_makes_no_t3_calls() {
         .status(),
         StatusCode::FORBIDDEN
     );
+    assert_eq!(
+        get_as(&registry.api, "/v1/tasks/missing/watchers", &BOARD_KEY)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+
+    for verb in ["watch", "unwatch"] {
+        assert_eq!(
+            watch_via(&registry.api, "unknown-caller", "missing", verb)
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            "/v1/tasks/missing/watchers",
+            "unknown-caller",
+            Value::Null,
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    registry
+        .notices
+        .lock()
+        .unwrap()
+        .archived_threads
+        .insert("archived-agent".into());
+    assert_eq!(
+        watch_via(&registry.api, "archived-agent", "missing", "watch")
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
 }
 
 #[tokio::test]
@@ -4002,6 +4043,32 @@ async fn ticket_caller_watches_across_projects_and_receives_completion_notice() 
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let ticket_watchers = json_body(
+        registry
+            .api
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/runs/alpha-runner/{instance}/watchers"))
+                    .header(HOST, LOCAL_HOST)
+                    .header(
+                        AUTHORIZATION,
+                        format!("Bearer {}", hex::encode(bearer.as_bytes())),
+                    )
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"task": "alpha-target"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        ticket_watchers["watchers"],
+        json!({"count": 1, "watching": true})
+    );
+    assert!(ticket_watchers.get("commands").is_none());
     let _ = runner;
 
     settle_phase(&registry.service, "alpha-target", "done", Some(PR)).await;
@@ -4018,6 +4085,153 @@ async fn ticket_caller_watches_across_projects_and_receives_completion_notice() 
         .map(|s| s["threadId"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(recipients, vec!["alpha-planner", "worker-thread"]);
+}
+
+#[tokio::test]
+async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.task("alpha-planner", "alpha-task").await;
+    let number = registry
+        .service
+        .task("alpha-task")
+        .await
+        .unwrap()
+        .number
+        .unwrap();
+    let target_ref = format!("{ALPHA_REPO}#{number}");
+
+    // "standalone-agent" has no planner_route and no run ticket, only a live T3 thread.
+    let watched =
+        json_body(watch_via(&registry.api, "standalone-agent", &target_ref, "watch").await).await;
+    assert_eq!(watched["watching"], true);
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            "/v1/tasks/alpha-task/next",
+            "standalone-agent",
+            Value::Null,
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    let status = json_body(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            "/v1/tasks/alpha-task/watchers",
+            "standalone-agent",
+            Value::Null,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status["watchers"], json!({"count": 1, "watching": true}));
+    assert!(status.get("commands").is_none());
+
+    // Cached shell threads do not trigger an extra T3 subscribeThread call.
+    registry.service.host.fixture_project_shell(
+        &json!({
+            "projects": [{"id": "alpha-native", "workspaceRoot": "/tmp/alpha"}],
+            "threads": [{
+                "id": "cached-agent",
+                "projectId": "external-native",
+                "updatedAt": "2026-11-27T12:00:00Z",
+                "archivedAt": null,
+                "deletedAt": null,
+            }]
+        }),
+        "fixture-acp",
+    );
+    let reads = registry.reads.load(Ordering::Relaxed);
+    assert_eq!(
+        watch_via(&registry.api, "cached-agent", &target_ref, "watch")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+    assert_eq!(
+        watch_via(&registry.api, "cached-agent", &target_ref, "unwatch")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    settle_phase(&registry.service, "alpha-task", "done", Some(PR)).await;
+    let row = registry.service.task("alpha-task").await.unwrap();
+    registry.service.notify_completion(&row).await.unwrap();
+    let sends = &registry.notices.lock().unwrap().sends;
+    let recipients: Vec<_> = sends
+        .iter()
+        .map(|s| s["threadId"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(recipients, vec!["alpha-planner", "standalone-agent"]);
+}
+
+#[tokio::test]
+async fn cross_project_planner_reads_scoped_watchers_without_next_details() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    registry.task("alpha-planner", "alpha-scoped").await;
+    let number = registry
+        .service
+        .task("alpha-scoped")
+        .await
+        .unwrap()
+        .number
+        .unwrap();
+    let target_ref = format!("{ALPHA_REPO}#{number}");
+    let encoded = target_ref.replace('/', "%2F").replace('#', "%23");
+
+    assert_eq!(
+        watch_via(&registry.api, "beta-planner", &target_ref, "watch")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            "/v1/tasks/alpha-scoped/next",
+            "beta-planner",
+            Value::Null,
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            &format!("/v1/tasks/{encoded}/next"),
+            "beta-planner",
+            Value::Null,
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let scoped = json_body(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            &format!("/v1/tasks/{encoded}/watchers"),
+            "beta-planner",
+            Value::Null,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(scoped["watchers"], json!({"count": 1, "watching": true}));
+    assert!(scoped.get("commands").is_none());
+    assert!(scoped.get("hold").is_none());
+    assert!(scoped.get("allowance").is_none());
 }
 
 #[tokio::test]

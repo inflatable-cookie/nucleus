@@ -453,7 +453,7 @@ async fn watch_and_unwatch_cli_support_t3_identity_and_ticket() {
     let t3_key = hex::encode([6; 32]);
     let expected_t3 = format!("Bearer {t3_key}");
     let expected_ticket = format!("Bearer {}", hex::encode(REPORT_KEY));
-    let (requests_tx, mut requests_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (requests_tx, mut requests_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String)>();
     let tx_t3 = requests_tx.clone();
     let tx_ticket = requests_tx;
     let app = Router::new()
@@ -537,5 +537,125 @@ async fn watch_and_unwatch_cli_support_t3_identity_and_ticket() {
     assert_eq!(
         requests_rx.recv().await.unwrap(),
         ("ticket-unwatch".into(), "other/repo#7".into())
+    );
+}
+
+#[tokio::test]
+async fn next_cli_supports_cross_project_and_ticket_watcher_status() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("loopback");
+    let endpoint = listener.local_addr().expect("local address").to_string();
+    let ticket = report_ticket(listener.local_addr().expect("local address"));
+    let t3_key = hex::encode([6; 32]);
+    let expected_t3 = format!("Bearer {t3_key}");
+    let expected_watchers = expected_t3.clone();
+    let expected_ticket = format!("Bearer {}", hex::encode(REPORT_KEY));
+    let (requests_tx, mut requests_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String)>();
+    let tx_next = requests_tx.clone();
+    let tx_watchers = requests_tx.clone();
+    let tx_ticket = requests_tx;
+    let app = Router::new()
+        .route(
+            "/v1/tasks/{task}/next",
+            axum::routing::get(move |headers: HeaderMap, Path(task): Path<String>| {
+                let tx = tx_next.clone();
+                let expected = expected_t3.clone();
+                async move {
+                    assert_eq!(headers[AUTHORIZATION], expected);
+                    tx.send(("next".into(), task.clone())).unwrap();
+                    if task == "my-task" {
+                        (
+                            axum::http::StatusCode::OK,
+                            Json(json!({"phase": "working", "watchers": {"count": 1, "watching": true}})),
+                        )
+                    } else {
+                        (
+                            axum::http::StatusCode::UNAUTHORIZED,
+                            Json(json!({"error": "out of scope"})),
+                        )
+                    }
+                }
+            }),
+        )
+        .route(
+            "/v1/tasks/{task}/watchers",
+            axum::routing::get(move |headers: HeaderMap, Path(task): Path<String>| {
+                let tx = tx_watchers.clone();
+                let expected = expected_watchers.clone();
+                async move {
+                    assert_eq!(headers[AUTHORIZATION], expected);
+                    assert_eq!(headers["x-nucleus-t3-caller"], "agent-thread");
+                    tx.send(("watchers".into(), task)).unwrap();
+                    Json(json!({"reference": "repo#7", "title": "Fix", "phase": "working", "watchers": {"count": 2, "watching": true}}))
+                }
+            }),
+        )
+        .route(
+            "/v1/runs/fixture/worker-1/watchers",
+            post(
+                move |headers: HeaderMap, Json(body): Json<serde_json::Value>| {
+                    let tx = tx_ticket.clone();
+                    let expected = expected_ticket.clone();
+                    async move {
+                        assert_eq!(headers[AUTHORIZATION], expected);
+                        tx.send((
+                            "ticket-watchers".into(),
+                            body["task"].as_str().unwrap().to_owned(),
+                        ))
+                        .unwrap();
+                        Json(json!({"reference": "repo#7", "title": "Fix", "phase": "working", "watchers": {"count": 1, "watching": true}}))
+                    }
+                },
+            ),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let ticket_path = ticket.path().to_path_buf();
+    let run = tokio::task::spawn_blocking(move || {
+        for selector in ["my-task", "other/repo#7"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
+                .args(["--endpoint", &endpoint, "next", selector])
+                .env("NUCLEUS_ENGINE_T3_CALLER_KEY", &t3_key)
+                .env("T3CODE_THREAD_ID", "agent-thread")
+                .env("T3CODE_DESKTOP_HOST_SCOPE", "desktop")
+                .env_remove("NUCLEUS_TICKET")
+                .env_remove("NUCLEUS_CONTINUATION_TICKET")
+                .output()
+                .expect("CLI output");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let ticket_output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
+            .args(["next", "other/repo#7"])
+            .env("NUCLEUS_TICKET", &ticket_path)
+            .output()
+            .expect("ticket CLI output");
+        assert!(
+            ticket_output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ticket_output.stderr)
+        );
+    });
+    tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .expect("CLI commands completed")
+        .expect("CLI process ran");
+    server.abort();
+    assert_eq!(
+        requests_rx.recv().await.unwrap(),
+        ("next".into(), "my-task".into())
+    );
+    assert_eq!(
+        requests_rx.recv().await.unwrap(),
+        ("next".into(), "other/repo#7".into())
+    );
+    assert_eq!(
+        requests_rx.recv().await.unwrap(),
+        ("watchers".into(), "other/repo#7".into())
+    );
+    assert_eq!(
+        requests_rx.recv().await.unwrap(),
+        ("ticket-watchers".into(), "other/repo#7".into())
     );
 }
