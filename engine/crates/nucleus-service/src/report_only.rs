@@ -54,7 +54,6 @@ pub(crate) struct WatchResponse {
 pub(super) enum PlannerNotice {
     ReportReady,
     PrerequisiteRelease(i64),
-    ParentRecovery,
     Completion,
 }
 
@@ -73,7 +72,6 @@ struct NoticeOccurrence {
 enum NoticeClaim {
     ReportReady(Box<TaskRow>),
     PrerequisiteRelease(i64),
-    ParentRecovery,
     Completion(bool),
 }
 
@@ -112,17 +110,6 @@ impl PlannerNotice {
                 rejected_event: "planner_notice_rejected",
                 propagate_uncertain: true,
             },
-            Self::ParentRecovery => NoticeOccurrence {
-                kind: self,
-                effect: "parent-recovery",
-                version: row_version,
-                release_version: None,
-                prefer_claim: false,
-                intent_event: "parent_recovery_notice_intent",
-                not_sent_event: "parent_recovery_notice_not_sent",
-                rejected_event: "parent_recovery_notice_rejected",
-                propagate_uncertain: false,
-            },
             Self::Completion => NoticeOccurrence {
                 kind: self,
                 effect: "completion",
@@ -147,9 +134,6 @@ impl NoticeOccurrence {
         let task_id = &row.task.identity().id;
         match self.kind {
             PlannerNotice::Completion => store.completion_notice(task_id),
-            PlannerNotice::ParentRecovery => {
-                store.parent_recovery_notice_retry(task_id, self.version)
-            }
             PlannerNotice::ReportReady => row
                 .task
                 .report_task()
@@ -191,12 +175,6 @@ impl NoticeOccurrence {
                 service.publish(id, row.version);
                 Ok(Some(NoticeClaim::PrerequisiteRelease(release)))
             }
-            PlannerNotice::ParentRecovery => {
-                let mut state = service.state.lock().await;
-                state.store.record_task_effect(id, audit)?;
-                state.planner_notice_waiters.remove(id);
-                Ok(Some(NoticeClaim::ParentRecovery))
-            }
             PlannerNotice::Completion => {
                 let mut state = service.state.lock().await;
                 state
@@ -231,7 +209,6 @@ impl NoticeClaim {
                             .store
                             .reopen_prerequisite_notice(id, release, audit, outcome)?;
                     }
-                    Self::ParentRecovery => state.store.record_task_effect(id, outcome)?,
                     Self::Completion(retry) => state.store.set_completion_notice(
                         id,
                         None,

@@ -27,7 +27,6 @@ use crate::{
     HostError, ParentSendError, ProfileCatalog, T3_RETRY_DELAY,
     admission::Admission,
     catalog::CatalogRevision,
-    runtime::ServerRuntime,
     thread_snapshots::{ThreadRead, ThreadSnapshots},
     traffic::Traffic,
 };
@@ -450,18 +449,7 @@ impl Rpc {
         read: Read,
         check: impl FnOnce() -> Result<bool, HostError> + Send,
     ) -> Result<Reply, HostError> {
-        self.call_admitted(method, payload, read, None, check).await
-    }
-
-    async fn call_admitted(
-        &self,
-        method: &'static str,
-        payload: impl Serialize + Send,
-        read: Read,
-        runtime: Option<&str>,
-        check: impl FnOnce() -> Result<bool, HostError> + Send,
-    ) -> Result<Reply, HostError> {
-        self.call_write(method, payload, read, runtime, check)
+        self.call_write(method, payload, read, check)
             .await
             .map_err(CallError::into_host_error)
     }
@@ -471,7 +459,6 @@ impl Rpc {
         method: &'static str,
         payload: impl Serialize + Send,
         read: Read,
-        runtime: Option<&str>,
         check: impl FnOnce() -> Result<bool, HostError> + Send,
     ) -> Result<Reply, CallError> {
         self.check_retry().map_err(CallError::NotSent)?;
@@ -480,29 +467,7 @@ impl Rpc {
             .enter(!matches!(read, Read::Background))
             .await
             .map_err(CallError::NotSent)?;
-        Box::pin(self.call_locked_tracked(method, payload, read, runtime, check)).await
-    }
-
-    pub(crate) async fn verify_runtime(&self, server: &ServerRuntime) -> Option<String> {
-        self.check_retry().ok()?;
-        let identity = server.replay_identity();
-        if self
-            .socket
-            .lock()
-            .expect("request socket")
-            .as_ref()
-            .is_some_and(|connection| connection.runtime.as_deref() == Some(&identity))
-        {
-            return Some(identity);
-        }
-        let _admission = self.admission.enter(true).await.ok()?;
-        let mut connection = self.request_connection().await.ok()?;
-        if connection.runtime.as_deref() != Some(&identity) {
-            connection.runtime = connection.owned_by(server).await.then(|| identity.clone());
-        }
-        let verified = connection.runtime.is_some();
-        *self.socket.lock().expect("request socket") = Some(connection);
-        verified.then_some(identity)
+        Box::pin(self.call_locked_tracked(method, payload, read, check)).await
     }
 
     pub(crate) async fn write_guarded(
@@ -510,10 +475,9 @@ impl Rpc {
         method: &'static str,
         payload: Value,
         class: Read,
-        runtime: Option<&str>,
         check: impl FnOnce() -> Result<(), HostError> + Send,
     ) -> Result<Reply, ParentSendError> {
-        self.call_write(method, payload, class, runtime, || {
+        self.call_write(method, payload, class, || {
             check()?;
             Ok(true)
         })
@@ -532,25 +496,11 @@ impl Rpc {
         }
     }
 
-    async fn call_locked(
-        &self,
-        method: &'static str,
-        payload: impl Serialize + Send,
-        read: Read,
-        runtime: Option<&str>,
-        check: impl FnOnce() -> Result<bool, HostError> + Send,
-    ) -> Result<Reply, HostError> {
-        self.call_locked_tracked(method, payload, read, runtime, check)
-            .await
-            .map_err(CallError::into_host_error)
-    }
-
     async fn call_locked_tracked(
         &self,
         method: &'static str,
         payload: impl Serialize + Send,
         read: Read,
-        runtime: Option<&str>,
         check: impl FnOnce() -> Result<bool, HostError> + Send,
     ) -> Result<Reply, CallError> {
         self.check_retry().map_err(CallError::NotSent)?;
@@ -575,12 +525,7 @@ impl Rpc {
             .await
             .inspect_err(|error| self.record_timeout(method, target, *error))
             .map_err(CallError::NotSent)?;
-        match self.check_retry().and_then(|()| {
-            if runtime.is_some() && socket.runtime.as_deref() != runtime {
-                return Err(HostError::Uncertain);
-            }
-            check()
-        }) {
+        match self.check_retry().and_then(|()| check()) {
             Ok(true) => {}
             outcome => {
                 *self.socket.lock().expect("request socket") = Some(socket);
@@ -683,15 +628,6 @@ impl Rpc {
         id: &str,
         policy: ThreadRead<'_>,
     ) -> Result<ThreadObservation, HostError> {
-        self.observe_thread_with(id, policy, || {}).await
-    }
-
-    pub(crate) async fn observe_thread_with(
-        &self,
-        id: &str,
-        policy: ThreadRead<'_>,
-        before_read: impl FnOnce() + Send,
-    ) -> Result<ThreadObservation, HostError> {
         let requested_at = time::Instant::now();
         let _admission = self
             .admission
@@ -718,20 +654,19 @@ impl Rpc {
             (fence, policy.reason(snapshots.as_ref(), id))
         };
         self.check_thread_read(before.row.as_deref(), policy)?;
-        let reply = Box::pin(self.call_locked(
+        let reply = Box::pin(self.call_locked_tracked(
             "orchestration.subscribeThread",
             json!({"threadId":id,"requestCompletionMarker":true,"acceptBoundedSnapshot":true,
                 "acceptCompactTurnItems":true,"acceptDedupedBodies":true}),
             Read::Thread,
-            None,
             || {
                 self.check_thread_read(self.thread_row(id).as_deref(), policy)?;
-                before_read();
                 self.traffic.record_thread_read(reason);
                 Ok(true)
             },
         ))
-        .await?;
+        .await
+        .map_err(CallError::into_host_error)?;
         let mut snapshots = self.snapshots.lock().expect("thread snapshots");
         let fence = self.fence_at(id, snapshots.as_ref());
         let same_marker = before.matches(&fence);
@@ -791,7 +726,9 @@ impl Rpc {
         policy: ThreadRead<'_>,
     ) -> Result<(), HostError> {
         if row.is_some_and(closed_row)
-            || (row.is_none() && self.uses_held_shell() && matches!(policy, ThreadRead::Inbox))
+            || (row.is_none()
+                && self.uses_held_shell()
+                && matches!(policy, ThreadRead::Inbox | ThreadRead::Visibility))
         {
             return Err(HostError::Uncertain);
         }
@@ -1152,28 +1089,11 @@ fn parse_native_time(value: &str) -> Option<::time::OffsetDateTime> {
 struct Connection {
     socket: Socket,
     next_id: u64,
-    runtime: Option<String>,
 }
 
 impl Connection {
     fn new(socket: Socket) -> Self {
-        Self {
-            socket,
-            next_id: 0,
-            runtime: None,
-        }
-    }
-
-    async fn owned_by(&self, server: &ServerRuntime) -> bool {
-        let tcp = match self.socket.get_ref() {
-            MaybeTlsStream::Plain(tcp) => tcp,
-            MaybeTlsStream::Rustls(tls) => tls.get_ref().0,
-            _ => return false,
-        };
-        let (Ok(local), Ok(peer)) = (tcp.local_addr(), tcp.peer_addr()) else {
-            return false;
-        };
-        server.owns_connection(local, peer).await
+        Self { socket, next_id: 0 }
     }
 
     async fn frames(&mut self) -> Result<Vec<Value>, HostError> {

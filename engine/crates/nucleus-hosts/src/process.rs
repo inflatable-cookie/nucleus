@@ -1,5 +1,3 @@
-#[cfg(target_os = "macos")]
-mod native_cwd;
 pub(crate) mod orphans;
 
 use std::{
@@ -33,10 +31,6 @@ use crate::{
 
 const DEADLINE: Duration = Duration::from_secs(5);
 const MAX_PROBE_OUTPUT: u64 = 8 * 1024 * 1024;
-#[cfg(target_os = "macos")]
-const PS_COLUMNS: &str = "pid=,ppid=,uid=,stat=,lstart=,ucomm=";
-#[cfg(not(target_os = "macos"))]
-const PS_COLUMNS: &str = "pid=,ppid=,uid=,stat=,lstart=,comm=";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ProcessEvidenceFailure {
@@ -61,16 +55,8 @@ pub(crate) const fn coverage_error(error: HostError) -> HostError {
     })
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum Activity {
-    Busy(u32),
-    Quiet,
-    Unknown(Option<u32>),
-}
-
-/// Snapshot of the local host user's processes. Missing cwd evidence stays
-/// unknown until a follow-up verifies the directory or confirms exit.
-/// Retirement can also rule out a root on unrelated filesystem devices.
+/// Snapshot of the local host user's processes. A missing cwd stays unknown to
+/// the writer check unless a follow-up reads it or confirms the process exited.
 pub(crate) struct Inventory {
     processes: HashMap<u32, ProcessPaths>,
     runtime: Option<(u32, HashMap<u32, RuntimeProcess>)>,
@@ -81,9 +67,6 @@ struct ProcessPaths {
     parent: u32,
     cwd: Option<PathBuf>,
     ambiguous_path: bool,
-    cwd_device: Option<u32>,
-    cwd_inode: Option<u64>,
-    started: Option<i64>,
 }
 
 impl Inventory {
@@ -178,7 +161,7 @@ impl Inventory {
         // has already released its cwd and cannot access the checkout.
         let (processes, probe_pid) = read_listing(
             "/bin/ps",
-            &["-axww", "-o", PS_COLUMNS],
+            &["-axo", "pid=,ppid=,uid=,stat="],
             Some(scratch),
             u64::MAX,
         )
@@ -208,99 +191,34 @@ impl Inventory {
         Ok(inventory)
     }
 
-    pub(crate) async fn complete_missing(&mut self, scratch: &Path) {
+    async fn complete_missing(&mut self, scratch: &Path) {
         // Processes begun during lsof's walk need their own read. This is one
         // bounded follow-up for the captured census, independent of task count.
-        let missing: Vec<u32> = self
+        let missing = self
             .processes
             .iter()
-            .filter_map(|(&pid, paths)| paths.unverified().then_some(pid))
-            .collect();
-        if missing.is_empty() {
-            return;
-        }
-        let selected = missing
-            .iter()
-            .map(u32::to_string)
+            .filter(|(_, paths)| paths.cwd.is_none())
+            .map(|(pid, _)| pid.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        let observed = orphans::observed_seconds().ok();
-        let paths = read_listing(
-            "/usr/sbin/lsof",
-            &["-a", "-p", &selected, "-d", "cwd", "-n", "-P", "-F0pfnDi"],
-            Some(scratch),
-            MAX_PROBE_OUTPUT,
-        )
-        .await
-        .ok()
-        .and_then(|listing| listing.cwd_followup())
-        .unwrap_or_default();
-        // Query again even if lsof returned a path. A reaped PID and a zombie
-        // are both gone for custody purposes. A reused PID starts unverified.
-        if let Ok(listing) = read_listing(
-            "/bin/ps",
-            &["-ww", "-p", &selected, "-o", PS_COLUMNS],
-            Some(scratch),
-            MAX_PROBE_OUTPUT,
-        )
-        .await
-            && let Ok((rows, _)) = listing.successful()
-            && let Ok(current) = Self::from_listings(&[], &rows, geteuid().as_raw(), 0)
+        if !missing.is_empty()
+            && let Ok(listing) = read_listing(
+                "/usr/sbin/lsof",
+                &["-a", "-p", &missing, "-d", "cwd", "-n", "-P", "-F0pfn"],
+                Some(scratch),
+                MAX_PROBE_OUTPUT,
+            )
+            .await
+            && let Some(paths) = listing.cwd_followup()
         {
-            self.apply_followup(missing, paths, current, observed);
-            #[cfg(target_os = "macos")]
-            self.recover_paths().await;
+            for (pid, paths) in paths {
+                if let Some(existing) = self.processes.get_mut(&pid) {
+                    existing.cwd = paths.cwd;
+                    existing.ambiguous_path = paths.ambiguous_path;
+                }
+            }
         }
         self.processes.retain(|&pid, _| !gone(pid));
-    }
-
-    fn apply_followup(
-        &mut self,
-        missing: Vec<u32>,
-        mut paths: HashMap<u32, ProcessPaths>,
-        mut current: Self,
-        observed: Option<i64>,
-    ) {
-        for pid in missing {
-            let Some(mut latest) = current.processes.remove(&pid) else {
-                self.processes.remove(&pid);
-                continue;
-            };
-            // ps reports whole seconds. Only trust the follow-up when both
-            // listings identify a process that predates its start second.
-            let same_process = self.processes[&pid].started == latest.started
-                && latest
-                    .started
-                    .zip(observed)
-                    .is_some_and(|(start, at)| start < at);
-            if same_process && let Some(found) = paths.remove(&pid) {
-                latest.cwd = found.cwd;
-                latest.ambiguous_path = found.ambiguous_path;
-                latest.cwd_device = found.cwd_device;
-                latest.cwd_inode = found.cwd_inode;
-            }
-            self.processes.insert(pid, latest);
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn recover_paths(&mut self) {
-        let unresolved = self
-            .processes
-            .iter()
-            .filter_map(|(&pid, paths)| {
-                paths.started?;
-                paths
-                    .unverified()
-                    .then_some((pid, paths.cwd_device?, paths.cwd_inode?))
-            })
-            .collect();
-        for (pid, path) in native_cwd::recover(unresolved).await {
-            if let Some(process) = self.processes.get_mut(&pid) {
-                process.cwd = Some(path);
-                process.ambiguous_path = false;
-            }
-        }
     }
 
     pub(crate) fn from_listings(
@@ -330,8 +248,6 @@ impl Inventory {
             if pid != probe_pid && uid == user && !status.starts_with('Z') {
                 let mut process = by_pid.remove(&pid).unwrap_or_default();
                 process.parent = parent;
-                let started = columns.by_ref().take(5).collect::<Vec<_>>().join(" ");
-                process.started = orphans::start_epoch(&started);
                 live.insert(pid, process);
             }
         }
@@ -341,83 +257,41 @@ impl Inventory {
         })
     }
 
-    pub(crate) fn activity(
-        &self,
-        path: &Path,
-        scratch: Option<&Path>,
-        runtime: &HashSet<u32>,
-    ) -> Activity {
-        self.activity_with_devices(path, scratch, runtime, None)
-    }
-
-    fn activity_with_devices(
-        &self,
-        path: &Path,
-        scratch: Option<&Path>,
-        runtime: &HashSet<u32>,
-        devices: Option<&HashSet<u32>>,
-    ) -> Activity {
-        let mut missing: Option<u32> = None;
-        for (&pid, process) in &self.processes {
-            if runtime.contains(&pid) {
-                continue;
-            }
-            if process.cwd.as_ref().is_some_and(|cwd| {
-                cwd.starts_with(path) || scratch.is_some_and(|root| cwd.starts_with(root))
-            }) {
-                return Activity::Busy(pid);
-            }
-            let outside = process
-                .cwd_device
-                .zip(devices)
-                .is_some_and(|(device, devices)| !devices.contains(&device));
-            if process.unverified() && !outside {
-                missing = Some(missing.map_or(pid, |prior| prior.min(pid)));
-            }
-        }
-        if missing.is_some() || self.processes.is_empty() {
-            Activity::Unknown(missing)
-        } else {
-            Activity::Quiet
-        }
-    }
-
+    /// A trash entry stays while a listed process works inside it. A process
+    /// whose cwd cannot be read does not keep it.
     pub(crate) async fn trash_clear(&self, root: &Path) -> bool {
-        if verify_roots(&[Some(root)]).await.is_err() {
-            return false;
-        }
-        let runtime = HashSet::new();
-        let activity = self.activity(root, None, &runtime);
-        #[cfg(target_os = "macos")]
-        let activity = if matches!(activity, Activity::Unknown(Some(_)))
-            && self
-                .processes
-                .values()
-                .any(|process| process.unverified() && process.cwd_device.is_some())
-        {
-            let devices = native_cwd::directory_devices(root).await;
-            self.activity_with_devices(root, None, &runtime, devices.as_ref())
-        } else {
-            activity
-        };
-        matches!(activity, Activity::Quiet)
+        verify_roots(&[Some(root)]).await.is_ok()
+            && !self.processes.is_empty()
+            && !self.processes.values().any(|process| process.under(root))
     }
 
+    /// The first listed writer in the checkout or run scratch, outside `runtime`.
     pub(crate) fn writer(
         &self,
         checkout: &Path,
         scratch: Option<&Path>,
         runtime: &HashSet<u32>,
     ) -> Result<Option<u32>, HostError> {
-        match self.activity(checkout, scratch, runtime) {
-            Activity::Busy(pid) => Ok(Some(pid)),
-            Activity::Quiet => Ok(None),
-            Activity::Unknown(pid) => Err(HostError::ProcessCoverage(
-                pid.map_or(ProcessEvidenceFailure::Incomplete, |pid| {
-                    ProcessEvidenceFailure::Cwd { pid }
-                }),
-            )),
+        let mut missing: Option<u32> = None;
+        for (&pid, process) in &self.processes {
+            if runtime.contains(&pid) {
+                continue;
+            }
+            if process.under(checkout) || scratch.is_some_and(|root| process.under(root)) {
+                return Ok(Some(pid));
+            }
+            if process.unverified() {
+                missing = Some(missing.map_or(pid, |prior| prior.min(pid)));
+            }
         }
+        if missing.is_none() && !self.processes.is_empty() {
+            return Ok(None);
+        }
+        Err(HostError::ProcessCoverage(
+            missing.map_or(ProcessEvidenceFailure::Incomplete, |pid| {
+                ProcessEvidenceFailure::Cwd { pid }
+            }),
+        ))
     }
 
     pub(crate) fn standing_pids(&self, thread: &str) -> HashSet<u32> {
@@ -455,6 +329,10 @@ impl Inventory {
 impl ProcessPaths {
     fn unverified(&self) -> bool {
         self.cwd.is_none() || self.ambiguous_path
+    }
+
+    fn under(&self, root: &Path) -> bool {
+        self.cwd.as_ref().is_some_and(|cwd| cwd.starts_with(root))
     }
 }
 
@@ -511,20 +389,6 @@ fn process_paths(stdout: &[u8]) -> Result<HashMap<u32, ProcessPaths>, HostError>
                 is_cwd = false;
             }
             [b'f', file @ ..] => is_cwd = file == b"cwd",
-            [b'D', device @ ..] if is_cwd => {
-                let process = rows.entry(pid.ok_or(HostError::Protocol)?).or_default();
-                process.cwd_device = std::str::from_utf8(device)
-                    .ok()
-                    .and_then(|value| value.strip_prefix("0x"))
-                    .and_then(|value| u32::from_str_radix(value, 16).ok())
-                    .filter(|&device| device != 0);
-            }
-            [b'i', inode @ ..] if is_cwd => {
-                let process = rows.entry(pid.ok_or(HostError::Protocol)?).or_default();
-                process.cwd_inode = std::str::from_utf8(inode)
-                    .ok()
-                    .and_then(|value| value.parse().ok());
-            }
             [b'n', path @ ..] if is_cwd && path.starts_with(b"/") => {
                 let process = rows.entry(pid.ok_or(HostError::Protocol)?).or_default();
                 let Some(path) = decode_lsof_path(path) else {
@@ -704,8 +568,10 @@ mod tests {
         )
         .expect("parse inventory");
         assert!(matches!(
-            inventory.activity(&path, None, &HashSet::new()),
-            Activity::Unknown(Some(2))
+            inventory.writer(&path, None, &HashSet::new()),
+            Err(HostError::ProcessCoverage(ProcessEvidenceFailure::Cwd {
+                pid: 2
+            }))
         ));
     }
 
@@ -721,14 +587,61 @@ mod tests {
         let mut inventory = Inventory::quiet_fixture();
         inventory.processes.insert(exited, ProcessPaths::default());
         assert!(matches!(
-            inventory.activity(&checkout, None, &HashSet::new()),
-            Activity::Unknown(Some(pid)) if pid == exited
+            inventory.writer(&checkout, None, &HashSet::new()),
+            Err(HostError::ProcessCoverage(ProcessEvidenceFailure::Cwd { pid })) if pid == exited
         ));
         inventory.complete_missing(&checkout).await;
         assert!(matches!(
-            inventory.activity(&checkout, None, &HashSet::new()),
-            Activity::Quiet
+            inventory.writer(&checkout, None, &HashSet::new()),
+            Ok(None)
         ));
+    }
+
+    #[tokio::test]
+    async fn the_cwd_followup_names_a_live_writer_the_walk_missed() {
+        let directory = tempfile::Builder::new()
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("checkout");
+        let checkout = directory.path().canonicalize().expect("canonical checkout");
+        let mut child = Command::new("/bin/sleep")
+            .arg("60")
+            .current_dir(&checkout)
+            .kill_on_drop(true)
+            .spawn()
+            .expect("fixture child");
+        let pid = child.id().expect("fixture PID");
+        let mut inventory = Inventory::quiet_fixture();
+        inventory.processes.insert(pid, ProcessPaths::default());
+        inventory.complete_missing(&checkout).await;
+        assert!(matches!(
+            inventory.writer(&checkout, None, &HashSet::new()),
+            Ok(Some(writer)) if writer == pid
+        ));
+        assert!(!inventory.trash_clear(&checkout).await);
+        child.kill().await.expect("stop fixture child");
+    }
+
+    #[tokio::test]
+    async fn only_a_listed_working_directory_keeps_a_trash_entry() {
+        let directory = tempfile::Builder::new()
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("trash entry");
+        let entry = directory.path().canonicalize().expect("canonical entry");
+        let rows = b"1 0 501 S\n2 1 501 S\n3 1 501 S\n";
+        // PID 2 has no cwd row. PID 3's caret path cannot be decoded.
+        let unreadable = b"p1\0\nfcwd\0n/elsewhere\0\np3\0\nfcwd\0n/elsewhere/^A\0\n";
+        let inventory = Inventory::from_listings(unreadable, rows, 501, 0).expect("inventory");
+        assert!(inventory.trash_clear(&entry).await);
+
+        let mut held = unreadable.to_vec();
+        held.extend(format!("p2\0\nfcwd\0n{}/nested\0\n", entry.display()).bytes());
+        let inventory = Inventory::from_listings(&held, rows, 501, 0).expect("inventory");
+        assert!(!inventory.trash_clear(&entry).await);
+
+        let empty = Inventory::from_listings(b"", b"", 501, 0).expect("inventory");
+        assert!(!empty.trash_clear(&entry).await);
     }
 
     #[tokio::test]
@@ -799,8 +712,8 @@ mod tests {
             Some(checkout.as_path())
         );
         assert!(matches!(
-            inventory.activity(&checkout, None, &HashSet::new()),
-            Activity::Busy(_)
+            inventory.writer(&checkout, None, &HashSet::new()),
+            Ok(Some(writer)) if writer == pid
         ));
         child.kill().await.expect("stop fixture child");
     }
@@ -824,8 +737,8 @@ mod tests {
             Some(expected.as_path())
         );
         assert!(matches!(
-            inventory.activity(&checkout, None, &HashSet::new()),
-            Activity::Busy(_)
+            inventory.writer(&checkout, None, &HashSet::new()),
+            Ok(Some(1))
         ));
 
         for field in [
@@ -839,8 +752,10 @@ mod tests {
             let inventory =
                 Inventory::from_listings(&listing, b"1 0 501 S\n", 501, 0).expect("inventory");
             assert!(matches!(
-                inventory.activity(&checkout, None, &HashSet::new()),
-                Activity::Unknown(Some(1))
+                inventory.writer(&checkout, None, &HashSet::new()),
+                Err(HostError::ProcessCoverage(ProcessEvidenceFailure::Cwd {
+                    pid: 1
+                }))
             ));
         }
     }

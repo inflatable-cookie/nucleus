@@ -735,211 +735,6 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "exercise the receipt and its visible wait in the same fixture"
-)]
-async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
-    use nucleus_store::ParentResult;
-
-    for (delivered, unfrozen, inconclusive, stale_descriptor) in [
-        (false, false, false, false),
-        (true, false, false, false),
-        (false, true, false, false),
-        (false, true, true, false),
-        (false, false, true, false),
-        (false, false, false, true),
-        (true, false, false, true),
-    ] {
-        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
-        let identity = task.identity().clone();
-        let task = Task::new(identity.clone(), "Fixture".into(), None);
-        let binding = {
-            let work = service.worktrees();
-            let checkout = work
-                .checkout(
-                    &service.fixture().checkout,
-                    &identity.repository,
-                    &identity.id,
-                )
-                .unwrap();
-            service.binding(&checkout).unwrap()
-        };
-        let parent = nucleus_hosts::parent_thread(std::path::Path::new(&binding.worktree_path));
-        let command = format!("{parent}-hold-acp-1:fixture-acp");
-        let message = format!("{command}-message");
-        let frozen = serde_json::json!({
-            "binding":binding, "method":"continue", "provider":"fixture-acp",
-            "payload":{"type":"message.dispatch","threadId":parent,"commandId":command,
-                "messageId":message,"text":"Original prompt",
-                "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"}}
-        });
-
-        let (host, native) = native_fixture(move |request| {
-        assert_eq!(request["tag"], "orchestration.subscribeThread");
-        assert_eq!(request["payload"]["threadId"], parent);
-        if inconclusive {
-            return serde_json::json!({"_tag":"Exit","requestId":request["id"],"exit":{
-                "_tag":"Failure","cause":[{"_tag":"Fail","error":{"_tag":"FixtureUnavailable"}}]
-            }});
-        }
-        let messages = if delivered { serde_json::json!([{"id":message,"runId":"exact-run"}]) }
-            else { serde_json::json!([{"id":"unrelated-message","runId":"another-run"}]) };
-        serde_json::json!({"_tag":"Chunk", "requestId":request["id"], "values":[
-            {"kind":"snapshot","snapshotSequence":1,"projection":{
-                "thread":{"id":parent,"projectId":binding.project_id,
-                    "worktreePath":binding.worktree_path,"branch":binding.branch,
-                    "providerInstanceId":"fixture-acp",
-                    "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"}},
-                "runs":[],"messages":messages,"runtimeRequests":[],"providerThreads":[],"turnItems":[],"subagents":[]
-            }},
-            {"kind":"synchronized"}
-        ]})
-    }).await;
-        let previous = stale_descriptor.then(|| {
-            tokio::process::Command::new("/bin/sleep")
-                .arg("60")
-                .kill_on_drop(true)
-                .spawn()
-                .unwrap()
-        });
-        let pid = previous
-            .as_ref()
-            .map_or_else(std::process::id, |child| child.id().unwrap());
-        let host = described_native_fixture(host, home.path(), pid);
-        let recorded_runtime = if stale_descriptor {
-            host.parent_runtime_hint().unwrap()
-        } else {
-            // Rows from the previous release have a descriptor-only pin.
-            host.runtime_identity().unwrap()
-        };
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
-        let row = {
-            let mut state = service.state.lock().await;
-            state.store.create(&task, &event("fixture")).unwrap();
-            let row = service.lookup(&state, &identity.id).unwrap();
-            state
-                .store
-                .freeze_parent_delivery(
-                    &identity.id,
-                    &nucleus_store::ParentDelivery {
-                        version: row.version,
-                        command,
-                        refresh: false,
-                        runtime: Some(recorded_runtime),
-                        wire: (!unfrozen).then(|| frozen.to_string()),
-                        legacy_prompt: None,
-                        due_ms: 0,
-                        result: ParentResult::Pending,
-                    },
-                )
-                .unwrap();
-            row
-        };
-        if unfrozen && !inconclusive {
-            let failed_host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
-            let offline_root = home.path().join("offline");
-            std::fs::create_dir(&offline_root).unwrap();
-            service.host = verified_native_fixture(failed_host, &offline_root);
-            let result = service.parent_delivery_fenced(&row).await;
-            assert!(matches!(
-                result,
-                Err(ServiceError::ParentDeliveryUnknown {
-                    source: HostError::Unavailable,
-                    ..
-                })
-            ));
-            service
-                .schedule_result(&row, &result.map(|()| Action::Nothing), Priority::Effect)
-                .await
-                .unwrap();
-            assert!(matches!(
-                service.parent_delivery_fenced(&row).await,
-                Err(ServiceError::ParentDeliveryUnknown { until, .. }) if until > Instant::now()
-            ));
-            assert!(
-                !service
-                    .host
-                    .host_calls()
-                    .contains_key("orchestration.subscribeThread")
-            );
-            let state = service.state.lock().await;
-            assert!(matches!(
-                state.wait_detail(&identity.id),
-                Some(crate::WaitDetail::ConfirmingDelivery(_))
-            ));
-            let records = state
-                .store
-                .parent_deliveries(&identity.id, row.version, None)
-                .unwrap();
-            let record = &records[0];
-            assert_eq!(record.result, ParentResult::Pending);
-            assert!(record.due_ms > i64::try_from(crate::now_ms()).unwrap());
-            state
-                .store
-                .finish_parent_delivery(&identity.id, row.version, record, ParentResult::Pending, 0)
-                .unwrap();
-        }
-        service.host = host;
-        for _ in 0..2 {
-            let result = service.parent_delivery_fenced(&row).await;
-            if delivered {
-                assert!(result.is_ok());
-            } else {
-                assert!(matches!(result, Err(ServiceError::ParentDeliveryHeld)));
-                service
-                    .schedule_result(&row, &result.map(|()| Action::Nothing), Priority::Effect)
-                    .await
-                    .unwrap();
-            }
-        }
-        let mut calls = service.host.host_calls();
-        calls.remove("auth.websocketTicket");
-        calls.remove("websocket.upgrade");
-        assert_eq!(calls, [("orchestration.subscribeThread", 1)].into());
-        let records = service
-            .state
-            .lock()
-            .await
-            .store
-            .parent_deliveries(&identity.id, row.version, None)
-            .unwrap();
-        assert_eq!(records.len(), 1);
-        let expected = if delivered {
-            ParentResult::Accepted
-        } else {
-            ParentResult::Held
-        };
-        assert_eq!(records[0].result, expected);
-        assert_eq!(
-            service.task(&identity.id).await.unwrap().version,
-            row.version
-        );
-        if !delivered {
-            assert!(
-                tokio::time::timeout(Duration::from_millis(30), service.pass())
-                    .await
-                    .is_err()
-            );
-            assert_eq!(
-                service.host.host_calls()["orchestration.subscribeThread"],
-                1
-            );
-            let state = service.state.lock().await;
-            assert_eq!(
-                state.wait_reason(&identity.id),
-                Some(WaitReason::HostObservationBlocked)
-            );
-            assert!(matches!(state.wait_detail(&identity.id),
-                Some(crate::WaitDetail::Observation(cause)) if cause.contains("use Next")));
-            assert!(state.schedule.due(&identity.id).is_none());
-        }
-        native.abort();
-    }
-}
-
-#[tokio::test]
 async fn a_generic_runless_check_cannot_replace_a_proven_refusal_with_a_fence() {
     let (_home, service) = fixture(GitHub::new("fixture").unwrap());
     let (reserved, _, _) = reservation("runless", Entry::Brief, &service.fixture().start);
@@ -1457,7 +1252,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     if lose_launch_reply {
         assert!(matches!(
             outcomes[0].result,
-            Err(ServiceError::ParentDeliveryUnknown { .. })
+            Err(ServiceError::ParentRetry { .. })
         ));
     } else {
         assert!(matches!(
@@ -1721,12 +1516,12 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
 async fn lost_parent_turn_recovers_after_service_restart_and_capacity_wait() {
     // Sanitized fields from the failed root error in the 2026-11-27 T3 projection.
     let process_exit = "The provider process exited after signal SIGTERM. Check the server logs for the provider's output, then retry the turn.";
-    for (failure, recorded_failure, stranded) in [
-        ("Nucleus is unavailable.", false, false),
-        (process_exit, true, false),
-        (process_exit, false, true),
-        ("Provider turn failed.", false, false),
-        ("Another provider failed.", true, false),
+    for (failure, stranded) in [
+        ("Nucleus is unavailable.", false),
+        (process_exit, false),
+        (process_exit, true),
+        ("Provider turn failed.", false),
+        ("Another provider failed.", false),
     ] {
         let (forge, forge_server) = serve_forge(Router::new().route(
             &format!("/repos/{REPOSITORY}/pulls"),
@@ -1832,25 +1627,6 @@ async fn lost_parent_turn_recovers_after_service_restart_and_capacity_wait() {
             let row = service.task("restart-parent").await.unwrap();
             Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await
         };
-        if recorded_failure {
-            let row = service.task("restart-parent").await.unwrap();
-            let state = service.state.lock().await;
-            let record = state
-                .store
-                .parent_deliveries("restart-parent", row.version, None)
-                .unwrap()
-                .remove(0);
-            state
-                .store
-                .finish_parent_delivery(
-                    "restart-parent",
-                    row.version,
-                    &record,
-                    nucleus_store::ParentResult::Failed,
-                    0,
-                )
-                .unwrap();
-        }
         if failure == "Another provider failed." {
             let result = advance().await;
             let row = service.task("restart-parent").await.unwrap();

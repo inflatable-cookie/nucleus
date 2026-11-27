@@ -56,8 +56,8 @@ use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
     ActiveChild, ArchiveWrite, DoneArchive, FrozenParentWrite, ParentAttempt, ParentRun,
-    ParentSendError, ParentStep, ParentWrite, QuietCheckout, is_parent_reentry,
-    is_pinned_parent_hold, parent_thread,
+    ParentSendError, ParentSnooze, ParentStep, ParentWrite, QuietCheckout, SnoozeRestoration,
+    is_parent_reentry, is_pinned_parent_hold, parent_thread,
 };
 /// A link within the same T3 environment as the task thread.
 #[must_use]
@@ -118,8 +118,6 @@ pub enum HostError {
     Deferred { until: tokio::time::Instant },
     #[error("waiting for T3 to confirm the role assignment")]
     RoleReplyPending { until: tokio::time::Instant },
-    #[error("the exact parent receipt read did not establish delivery")]
-    ParentReceiptInconclusive,
     #[error("the host reply could not be confirmed")]
     Protocol,
     #[error("the host thread does not match the configured project and checkout")]
@@ -148,8 +146,6 @@ pub enum HostError {
         prepared: u64,
         observed: Option<u64>,
     },
-    #[error("parent row is snoozed until {until} ms (verified revision {revision})")]
-    ParentSnoozed { until: u64, revision: u64 },
     #[error(
         "parent shell {field} changed after verification (prepared revision {prepared}, observed revision {observed:?}, expected {before:016x}, observed {after:016x}, custody before {activity_before:?}, custody now {activity_now:?}; values are fingerprints)"
     )]
@@ -550,22 +546,8 @@ impl T3 {
         }
     }
 
-    /// Identify the descriptor's process after it proves ownership of the RPC socket.
-    pub async fn verified_runtime_identity(&self) -> Option<String> {
-        let server = self.described_runtime()?;
-        let identity = Box::pin(self.rpc.verify_runtime(&server)).await?;
-        (self.parent_runtime_hint().as_ref() == Some(&identity)).then_some(identity)
-    }
-
     fn described_runtime(&self) -> Option<ServerRuntime> {
         ServerRuntime::read(self.runtime_descriptor.as_deref()?, self.rpc.endpoint())
-    }
-
-    /// Read the candidate replay key without connecting or proving socket ownership.
-    #[must_use]
-    pub fn parent_runtime_hint(&self) -> Option<String> {
-        self.described_runtime()
-            .map(|server| server.replay_identity())
     }
 
     /// Use the connected T3 server's own runtime descriptor for custody checks.
@@ -740,20 +722,7 @@ impl T3 {
         id: &str,
         policy: ThreadRead<'_>,
     ) -> Result<(Option<Projection>, rpc::ThreadFence), HostError> {
-        self.observe_thread_with(binding, id, policy, || {}).await
-    }
-
-    async fn observe_thread_with(
-        &self,
-        binding: &Binding,
-        id: &str,
-        policy: ThreadRead<'_>,
-        before_read: impl FnOnce() + Send,
-    ) -> Result<(Option<Projection>, rpc::ThreadFence), HostError> {
-        let rpc::ThreadObservation { reply, fence } = self
-            .rpc
-            .observe_thread_with(id, policy, before_read)
-            .await?;
+        let rpc::ThreadObservation { reply, fence } = self.rpc.observe_thread(id, policy).await?;
         let projection = match reply {
             ThreadReply::Closed { row, sequence } => {
                 Some(Projection::closed(&row, sequence, binding, id)?)
@@ -1050,7 +1019,8 @@ impl TrashCensus {
         Inventory::from_listings(lsof, ps, rustix::process::geteuid().as_raw(), 0).map(Self)
     }
 
-    /// Missing or ambiguous evidence leaves this entry in trash for a later sweep.
+    /// A listed process working inside the entry leaves it in trash for a later
+    /// sweep. A process whose working directory cannot be read does not.
     pub async fn can_remove(&self, entry: &Path) -> bool {
         self.0.trash_clear(entry).await
     }
@@ -1381,19 +1351,13 @@ impl TaskHost for T3Pass<'_> {
         let reply = self
             .host
             .rpc
-            .call_write(
-                wire.method.rpc(),
-                wire.payload.as_ref(),
-                Read::One,
-                None,
-                || {
-                    if dispatch.queued_continuation && self.host.rpc.uses_held_shell() {
-                        self.host
-                            .verify_retained_target(&wire, &dispatch.owned_parent_snoozes)?;
-                    }
-                    Ok(true)
-                },
-            )
+            .call_write(wire.method.rpc(), wire.payload.as_ref(), Read::One, || {
+                if dispatch.queued_continuation && self.host.rpc.uses_held_shell() {
+                    self.host
+                        .verify_retained_target(&wire, &dispatch.owned_parent_snoozes)?;
+                }
+                Ok(true)
+            })
             .await;
         match &reply {
             Ok(Reply::Failure(cause)) => host_log!(

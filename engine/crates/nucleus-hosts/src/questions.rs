@@ -320,7 +320,6 @@ impl T3 {
                 "orchestration.launchThread",
                 payload.as_ref(),
                 Read::Background,
-                None,
                 || {
                     if self
                         .cached_project(project_id)
@@ -455,7 +454,6 @@ impl T3 {
                 "orchestration.dispatchCommand",
                 authorization.payload.as_ref(),
                 Read::Background,
-                None,
                 || {
                     self.check_notice_target(authorization)
                         .map_err(|_| HostError::Deferred {
