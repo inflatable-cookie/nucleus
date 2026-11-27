@@ -457,7 +457,7 @@ impl TaskHost for Due {
         unreachable!("no new reservation in the replay fixture")
     }
 
-    async fn observe_retained(&self, _: &Binding, _: &str) -> Result<Host, HostError> {
+    async fn observe_retained_role(&self, _: &Binding, _: &str) -> Result<Host, HostError> {
         unreachable!("only replay gate is exercised")
     }
     async fn observe_run(&self, run: &Run, _: u64) -> Result<RunObservation, HostError> {

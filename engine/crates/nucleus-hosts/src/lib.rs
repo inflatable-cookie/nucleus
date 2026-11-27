@@ -360,19 +360,11 @@ pub trait TaskHost: Send + Sync {
         scratch: &Path,
     ) -> impl Future<Output = Result<Vec<OrphanProcess>, HostError>> + Send;
 
-    fn observe_retained(
-        &self,
-        binding: &Binding,
-        thread: &str,
-    ) -> impl Future<Output = Result<Host, HostError>> + Send;
-
     fn observe_retained_role(
         &self,
         binding: &Binding,
         thread: &str,
-    ) -> impl Future<Output = Result<Host, HostError>> + Send {
-        self.observe_retained(binding, thread)
-    }
+    ) -> impl Future<Output = Result<Host, HostError>> + Send;
 
     fn observe_run(
         &self,
@@ -1083,26 +1075,6 @@ impl TaskHost for T3Pass<'_> {
         }
         .inputs(request.instance, thread, request.started_at)
     }
-    async fn observe_retained(&self, binding: &Binding, thread: &str) -> Result<Host, HostError> {
-        let projection = self
-            .host
-            .read_thread(binding, thread, ThreadRead::Observation)
-            .await?;
-        let retained = projection
-            .as_ref()
-            .map_or(Ok(RetainedThread::Gone), Projection::retained)?;
-        let state =
-            if retained == RetainedThread::Busy || !self.quiet(binding, thread, None).await? {
-                RetainedThread::Busy
-            } else {
-                retained
-            };
-        Ok(Host::Retained {
-            thread: thread.into(),
-            state,
-        })
-    }
-
     async fn observe_retained_role(
         &self,
         binding: &Binding,
