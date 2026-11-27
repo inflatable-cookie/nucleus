@@ -87,7 +87,6 @@ export function RepositoryBlock({ c, repo, primary, single, open, disabled, sett
   </View>;
 }
 
-const REMOVE_HELP = "Separate project: it leaves this project and becomes a project of its own. Remove from Nucleus: it leaves this project and that project is deleted too. Task history stays readable either way. Open work blocks Remove from Nucleus.";
 
 const note = { fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight };
 

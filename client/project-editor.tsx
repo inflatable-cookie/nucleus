@@ -44,8 +44,7 @@ export type { ProjectEditActions } from "./project-editor/index";
  * Add repository taking a repository out of another project).
  */
 
-const NONE = "__none__",
-  OTHER = "__other__";
+const NONE = "__none__";
 export function ProjectEditor({
   c,
   compact = false,
@@ -73,7 +72,7 @@ export function ProjectEditor({
   const saved = data?.projects.find(
     (candidate) => candidate.project.key === projectKey,
   );
-  // Live planner, agent and responsible-thread state comes from the focused read; the saved row
+  // Live planner and agent state comes from the focused read; the saved row
   // keeps the project, its version and every count, so a live read never changes what is saved.
   const focused =
     actions.focus?.row?.project.key === projectKey

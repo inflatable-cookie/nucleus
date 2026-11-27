@@ -1340,7 +1340,9 @@ test("a problem shows an unboxed warning glyph; needing a request shows no glyph
       }),
       children: h(PluginRpcProvider, {
         invoke: (async (method: string) =>
-          method === "queue.ui-snapshot"
+          method === "rust.profile-usage"
+            ? usageOf(state)
+            : method === "queue.ui-snapshot"
             ? state
             : method === "backup.list"
               ? { snapshots: [], localError: null }
@@ -1389,11 +1391,12 @@ test("a problem shows an unboxed warning glyph; needing a request shows no glyph
     assert.deepEqual(
       rowLabels,
       [
+        "Paused oracle, all roles: 0 of 0 recent assignments",
         "Paused oracle: Subscription paused",
         "Disable Paused oracle",
         "Edit Paused oracle",
       ],
-      "the warning, On/Off and Edit",
+      "usage, then the warning, On/Off and Edit",
     );
     node.props.onHoverIn();
     await settle(() => ui.text().includes("Subscription paused"));
@@ -1842,6 +1845,68 @@ test("a stop slider is one continuous track with stops and labels placed at thei
     );
     assert.equal(ring("Weight: more assignments").width, 18, "the chosen stop is larger");
     assert.equal(ring("Weight: more assignments").borderWidth, 2);
+  } finally {
+    unmount(ui);
+  }
+});
+
+test("every Settings section aligns with the tab row: no inner side padding at any width", async () => {
+  await load();
+  const ui = mount(
+    screenTree(
+      board({
+        profiles: [profile("live", "Live model")],
+        pool: [entry("live")],
+      }),
+    ),
+  );
+  try {
+    for (const width of [390, 640, 1280]) {
+      setSettingsWidth(ui, width);
+      for (const section of [
+        "Dispatch limits",
+        "Profiles",
+        "Projects",
+        "Hosts",
+        "Storage",
+      ]) {
+        selectSettingsTab(ui, section);
+        await tick();
+        let checked = 0;
+        for (const node of [
+          ...ui.ofType("ScrollView"),
+          ...ui.ofType("View"),
+        ] as Node[]) {
+          const style = node.props.style ?? {};
+          if (node.props.accessibilityLabel === "Settings sections") continue;
+          if (style.flex === 1 && style.minHeight === 0) {
+            checked++;
+            assert.equal(
+              style.marginHorizontal ?? 0,
+              0,
+              `${section} at ${width}: no side margin`,
+            );
+            assert.equal(
+              style.paddingHorizontal ?? 0,
+              0,
+              `${section} at ${width}: no side padding`,
+            );
+          }
+        }
+        assert.ok(
+          checked > 0,
+          `${section} at ${width}: its content column was checked`,
+        );
+        assert.equal(
+          ui.get("Nucleus settings").props.style.paddingHorizontal ?? 0,
+          0,
+        );
+        assert.equal(
+          ui.query("Store backups")?.props.style.paddingHorizontal ?? 0,
+          0,
+        );
+      }
+    }
   } finally {
     unmount(ui);
   }

@@ -37,7 +37,7 @@ const implicit = (origin: string, extra: Partial<ProjectSettingsRow> = {}) =>
   row(`repo-${Buffer.from(origin).toString('hex').padEnd(20, '0').slice(0, 20)}`, origin.split('/')[1]!, [repo(origin)], extra);
 const settingsOf = (projects: ProjectSettingsRow[]): ProjectSettings => ({ defaultSlots: 4, projects });
 
-const board = { revision: 1, connected: true, hostId: 'host', paused: false, error: '', quiet: true, activeWorkers: 0, unsettled: 0, globalLimit: 32, projectLimit: 5, papercutProjectLimit: 2, tasks: [], profiles: [], pool: [], availability: [], assignments: {}, recentAssignments: {}, lanes: [], projects: [], projectLimitOverrides: {}, projectInFlightLimitOverrides: {}, projectCapacities: [], prStates: {}, usage: { level: 'normal', setLevel: 'normal', until: null, expired: false }, backup: { newestSnapshotAt: new Date().toISOString(), localError: null } };
+const board = { revision: 1, connected: true, hostId: 'host', paused: false, error: '', quiet: true, activeWorkers: 0, unsettled: 0, globalLimit: 32, projectLimit: 5,  tasks: [], profiles: [], pool: [], availability: [], assignments: {}, recentAssignments: {}, lanes: [], projects: [], projectLimitOverrides: {}, projectInFlightLimitOverrides: {}, projectCapacities: [], prStates: {}, usage: { level: 'normal', setLevel: 'normal', until: null, expired: false }, backup: { newestSnapshotAt: new Date().toISOString(), localError: null } };
 
 async function screen(width: number, invoke: (method: string, input: unknown) => Promise<unknown>) {
   const { QueueSettingsScreen } = await import('../client/settings-screen');

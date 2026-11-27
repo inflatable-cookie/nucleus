@@ -1603,7 +1603,10 @@ for (const compact of [false, true])
 test("nucleus#1502: the usage view strip shows its count and view in a tooltip on hover", async () => {
   await load();
   const ui = mount(
-    usageTree(ALL_WINDOW, false, { sample: 50, roles: ROLE_WINDOWS }),
+    usageTree(ALL_WINDOW, false, {
+      sample: 50,
+      roles: { ...ROLE_WINDOWS, reviewer: { counts: {}, sample: 0 } },
+    }),
   );
   try {
     await settle(() => ui.text().includes("Profiles"));
@@ -1621,6 +1624,139 @@ test("nucleus#1502: the usage view strip shows its count and view in a tooltip o
       ui.text().includes("Sol A, workers: 5 of 15 recent assignments"),
       "the tooltip names the view, count and sample",
     );
+  } finally {
+    ui.update(h("View", null));
+  }
+});
+
+test("Settings Profiles creates a profile from the host catalog and shows the unavailable one with its reason", async () => {
+  await load();
+  const state = fixture();
+  const ui = mount(screenTree(state));
+  try {
+    await settle(() => ui.text().includes("Profiles"));
+    ui.press("Profiles");
+    await settle(() => ui.text().includes("Imported Sol"));
+    assert.doesNotMatch(
+      ui.text(),
+      /Routing still reads Paseo|Available on this host|Profile notes|Changes save automatically|Feature values come from one project directory/,
+    );
+    await settle(() => state.catalogReads.length > 0);
+    await settle(() => Boolean(ui.query("Imported Sol: Unavailable")));
+    assert.equal(
+      ui.get("Imported Sol: Unavailable").props.accessibilityHint,
+      "Unavailable",
+    );
+    assert.equal(ui.query("Availability for Imported Sol"), undefined);
+    assert.equal(
+      ui.query("Remove Imported Sol"),
+      undefined,
+      "Remove stays off the list row",
+    );
+
+    ui.press("Edit Imported Sol");
+    await settle(() => Boolean(ui.query("Profile availability preview")));
+    assert.equal(
+      ui.get("Profile availability preview").children.join(""),
+      "Provider anthropic is not available on this host",
+    );
+    ui.press("Close Imported Sol");
+
+    ui.press("Add profile");
+    await settle(() => Boolean(ui.query("Close new profile")));
+    assert.equal(ui.query("Create profile"), undefined);
+    assert.equal(ui.query("Save"), undefined);
+    ui.type("Name", "Fast worker");
+    choose(ui, "Provider", "Codex", "Choose a provider");
+    choose(ui, "Model", "GPT-5, gpt-5", "Choose a model");
+    await settle(() => state.creates.length === 1);
+    assert.deepEqual(state.creates[0], {
+      name: "Fast worker",
+      provider: "codex",
+      model: "gpt-5",
+      thinkingOptionId: "high",
+      featureValues: { web: false, permissions: "ask" },
+    });
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(state.creates[0] as object, "notes"),
+      false,
+      "notes stay stored and unsent",
+    );
+    await settle(
+      () =>
+        ui.text().includes("Fast worker") &&
+        Boolean(ui.query("Edit Fast worker") || ui.query("Close Fast worker")),
+    );
+    assert.doesNotMatch(
+      ui.text(),
+      /Available on this host|Mode: Plan|Web search: on/,
+    );
+
+    choose(ui, "Mode", "Plan", "Host default");
+    choose(ui, "Thinking", "Low", "High");
+    ui.press("Feature Web search on");
+    choose(ui, "Permissions", "Allow", "Ask");
+    await settle(() =>
+      state.updates.some(
+        (entry) =>
+          (entry as { modeId?: string }).modeId === "plan" &&
+          (entry as { thinkingOptionId?: string }).thinkingOptionId === "low",
+      ),
+    );
+    const latest = state.updates.at(-1) as Record<string, unknown>;
+    assert.equal(latest.id, "created-1");
+    assert.equal(latest.modeId, "plan");
+    assert.equal(latest.thinkingOptionId, "low");
+    assert.deepEqual(latest.featureValues, { web: true, permissions: "allow" });
+    assert.equal(Object.prototype.hasOwnProperty.call(latest, "notes"), false);
+
+    assert.equal(
+      ui.query("Provider map"),
+      undefined,
+      "one host and an empty map show no provider map",
+    );
+    assert.doesNotMatch(
+      ui.text(),
+      /Provider map|Every host key maps to itself|Host provider key/,
+    );
+
+    ui.press("Edit Imported Sol");
+    await settle(() => Boolean(ui.query("Remove Imported Sol")));
+    ui.press("Remove Imported Sol");
+    await settle(() => Boolean(ui.query("Confirm removing Imported Sol")));
+    ui.press("Confirm removing Imported Sol");
+    await settle(() => state.removes.length === 1);
+    assert.deepEqual(state.removes[0], { id: "imported" });
+    await settle(() => !ui.text().includes("Imported Sol"));
+    assert.match(ui.text(), /Fast worker/, "the other profile is untouched");
+  } finally {
+    ui.update(h("View", null));
+  }
+});
+
+
+
+test("nucleus#1502: an empty role view says so and keeps every row editable", async () => {
+  await load();
+  const ui = mount(
+    usageTree(ALL_WINDOW, false, {
+      sample: 50,
+      roles: { ...ROLE_WINDOWS, reviewer: { counts: {}, sample: 0 } },
+    }),
+  );
+  try {
+    await settle(() => ui.text().includes("Profiles"));
+    ui.press("Profiles");
+    await settle(() => Boolean(ui.query("Reviewers")));
+    ui.press("Reviewers");
+    await settle(() =>
+      ui.text().includes("No recorded reviewer assignments yet."),
+    );
+    for (const name of ["Sol A", "Sol B", "Sol C", "Sol D"])
+      assert.ok(
+        ui.query(`Edit ${name}`),
+        `${name} stays editable with no history`,
+      );
   } finally {
     ui.update(h("View", null));
   }
