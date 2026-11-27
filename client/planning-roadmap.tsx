@@ -3,7 +3,6 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import type {
   LaneView,
   LeadListFacts,
-  PlanningTriage,
   Project,
   ProjectPlan,
 } from "../shared/contracts";
@@ -49,7 +48,6 @@ import {
 } from "./design";
 import { ProjectBadgeMark } from "./board/cards";
 import { Icon } from "./shell";
-import { ProjectTriage } from "./planning-triage";
 
 /**
  * Spec 026 Planning read view (nucleus#1531, Tom 2026-11-22: "it's quite impenetrable as a
@@ -480,7 +478,7 @@ export function ProjectRow({
   );
 }
 
-/** The list pane's group header: Active, Idle on purpose, Dormant. */
+/** The list pane's group header: Active or Dormant. */
 export function GroupHeader({ title, c }: { title: string; c: Colors }) {
   return (
     <Text
@@ -497,7 +495,7 @@ export function GroupHeader({ title, c }: { title: string; c: Colors }) {
   );
 }
 
-/** The banner under the roadmap header: the focus, the idle reason or the dormant note. */
+/** The banner under the roadmap header: the focus or the dormant note. */
 function Banner({
   plan,
   lanes,
@@ -535,10 +533,9 @@ function Banner({
         </Text>
       </View>
     );
-  const idle = banner.kind === "idle";
   return (
     <View
-      accessibilityLabel={idle ? "Idle on purpose" : "Dormant"}
+      accessibilityLabel="Dormant"
       style={{
         gap: space.xxs,
         padding: space.md,
@@ -551,12 +548,10 @@ function Banner({
       }}
     >
       <Text style={{ ...body(c), color: r.warning, fontWeight: "600" }}>
-        {idle ? "Idle on purpose" : "Dormant"}
+        Dormant
       </Text>
       <Text style={body(c)}>
-        {idle
-          ? banner.reason
-          : "No recent activity and no lane in Now. New work makes it active again."}
+        No recent activity and no lane in Now. New work makes it active again.
       </Text>
     </View>
   );
@@ -652,13 +647,6 @@ function PlanHistory({
             {savedLine(shown)}
             {isLatest ? " · the latest" : " · not the latest"}
           </Text>
-          {shown.idle && (
-            <Text style={meta(c)}>
-              Idle on purpose since {formatLocalDateTime(shown.idle.at)}:{" "}
-              {shown.idle.reason.replace(/[.!?]+$/, "")}. Saving a changed plan
-              or finishing new work ends it.
-            </Text>
-          )}
           {PLAN_HORIZONS.map((horizon) => {
             const entries = shown.entries.filter(
               (entry) => entry.horizon === horizon,
@@ -769,7 +757,6 @@ export type RoadmapSection = {
   latest?: ProjectPlan;
   /** The latest save's own membership, as stored; `latest` is the live projection. */
   saved?: ProjectPlan;
-  triage?: PlanningTriage;
   error?: string;
 };
 
@@ -1101,7 +1088,6 @@ export function ProjectRoadmapView({
       )}
       {latest &&
         !latest.entries.length &&
-        !latest.idle &&
         group !== "dormant" && (
           <Text style={{ ...body(c), color: r.muted }}>
             {unplanned.length
@@ -1171,14 +1157,7 @@ export function ProjectRoadmapView({
             )}
           </View>
         )}
-        {section.triage && (
-          <ProjectTriage
-            project={name}
-            triage={section.triage}
-            onOpenTask={onOpenTask}
-            c={c}
-          />
-        )}
+
       </CappedScroll>
     </View>
   );

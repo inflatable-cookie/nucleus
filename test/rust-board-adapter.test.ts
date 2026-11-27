@@ -11,10 +11,6 @@ import {
 } from "../client/web/rust-board";
 import { rustTaskCard } from "./support/rust-task-card";
 import { useNativeStubs, mount } from "./support/render";
-import {
-  EngineFeaturesContext,
-  RUST_ENGINE_FEATURES,
-} from "../client/engine-features";
 import { waitFor, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS } from "./support/budgets";
 import * as api from "../shared/contracts";
 import { createRustApi, namedProfile } from "../client/web/rust-api";
@@ -529,8 +525,7 @@ test("the Rust Hosts panel hides the default picker below two registered hosts",
         client,
         children: h(PluginRpcProvider, {
           invoke: (async () => ({})) as never,
-          children: h(EngineFeaturesContext.Provider, {
-            value: RUST_ENGINE_FEATURES,
+          children: h((props) => props.children, {
             children: h(HostsPanel, {
               c: new Proxy({}, { get: () => "#123" }) as never,
               list,
@@ -652,8 +647,7 @@ test("Rust Settings opens an adapter project without requesting owner candidates
   const ui = mount(
     h(QueryClientProvider, {
       client,
-      children: h(EngineFeaturesContext.Provider, {
-        value: RUST_ENGINE_FEATURES,
+      children: h((props) => props.children, {
         children: h(PluginRpcProvider, {
           invoke: invoke as never,
           children: h(QueueSettingsScreen as never, {
@@ -888,14 +882,10 @@ test("project keys round-trip independent of the registry, including the encodin
 test("a saved filter keeps its owner across a registry collision and a fresh board mount", async (t) => {
   const fake = engine();
   let ids = ["p-orbit-main"];
-  let legacyScopeKeys: Record<string, string> = {
-    "p-orbit-main": "p-orbit-main",
-  };
   const fetcher: typeof fetch = async (url, init) => {
     const response = await fake.fetcher(url, init);
     if (!String(url).endsWith("/settings")) return response;
     const settings = await response.json();
-    settings.projects.legacyScopeKeys = legacyScopeKeys;
     const registry = settings.projects.settings.value;
     const template = registry.projects.lantern;
     registry.projects = Object.fromEntries(
@@ -944,7 +934,7 @@ test("a saved filter keeps its owner across a registry collision and a fresh boa
   const seed = (selection: string) =>
     storage.set(key, JSON.stringify({ projects: [selection] }));
   const saved = () => JSON.parse(storage.get(key) ?? "{}").projects;
-  seed("p-orbit-main");
+  seed("rust:p-orbit-main");
   const h = React.createElement;
   const open = () => {
     const client = new QueryClient({
@@ -956,8 +946,7 @@ test("a saved filter keeps its owner across a registry collision and a fresh boa
         client,
         children: h(web.WebContext.Provider, {
           value: { transport: adapter, settings: false },
-          children: h(EngineFeaturesContext.Provider, {
-            value: RUST_ENGINE_FEATURES,
+          children: h((props) => props.children, {
             children: h(MainSurface, {
               theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
               layout: { compact: false },
@@ -985,7 +974,6 @@ test("a saved filter keeps its owner across a registry collision and a fresh boa
   );
   assert.deepEqual(saved(), ["rust:p-orbit-main"]);
   ids = ["Orbit_Main", "p-orbit-main"];
-  legacyScopeKeys = {};
   await board.client.refetchQueries({ queryKey: ["nucleus", "state"] });
   assert.ok(board.ui.query("Projects, Original"));
   board.close();
@@ -999,10 +987,10 @@ test("a saved filter keeps its owner across a registry collision and a fresh boa
   seed("p-orbit-main");
   board = open();
   await wait(
-    () => board.ui.text().includes("no unique match"),
-    "ambiguous old selection asks for a new pick",
+    () => board.ui.text().includes("uses an older format"),
+    "an older filter asks for a new pick",
   );
-  assert.deepEqual(saved(), ["unresolved:p-orbit-main"]);
+  assert.deepEqual(saved(), ["p-orbit-main"]);
   board.ui.press("Projects, All projects");
   board.ui.press(/^Project Arrival,/);
   await wait(
@@ -1011,24 +999,6 @@ test("a saved filter keeps its owner across a registry collision and a fresh boa
   );
   assert.deepEqual(saved(), ["rust:" + projectKey("Orbit_Main")]);
 
-  board.close();
-  seed("p-orbit-main");
-  ids = ["Orbit_Main"];
-  board = open();
-  await wait(
-    () => board.ui.text().includes("no unique match"),
-    "first mount after original owner removal",
-  );
-  assert.deepEqual(saved(), ["unresolved:p-orbit-main"]);
-  board.close();
-  seed("p-orbit-main");
-  legacyScopeKeys = { Orbit_Main: "p-orbit-main" };
-  board = open();
-  await wait(
-    () => Boolean(board.ui.query("Projects, Arrival")),
-    "a unique legacy alias migrates to its native owner",
-  );
-  assert.deepEqual(saved(), ["rust:" + projectKey("Orbit_Main")]);
 });
 
 test("Projects shows and clears the claimed planner when another thread is most recently verified", async () => {
@@ -1479,8 +1449,7 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
                 throw new Error(`Unexpected profile RPC ${method}`);
             }
           }) as never,
-          children: h(EngineFeaturesContext.Provider, {
-            value: RUST_ENGINE_FEATURES,
+          children: h((props) => props.children, {
             children: h(ProfilesPanel, {
               c: new Proxy({}, { get: () => "#123" }) as never,
               compact: false,
@@ -1590,12 +1559,7 @@ test("Rust board loads scoped collections on entry and shares them across views"
     view: "needs" | "planning" | "leads" | "queue";
   }) {
     const { state, stateQuery } = useBoardState();
-    const records = useRecordQueries({
-      state,
-      stateQuery,
-      tab: view === "planning" ? view : "queue",
-      scopeOpen: false,
-    });
+    const records = useRecordQueries();
     const inbox = useInboxBoard({
       state,
       selection: [],
@@ -1624,8 +1588,7 @@ test("Rust board loads scoped collections on entry and shares them across views"
       client,
       children: h(PluginRpcProvider, {
         invoke: invoke as never,
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(Records, { view }),
         }),
       }),
@@ -2154,8 +2117,7 @@ test("a board click and action address the selected project's colliding decision
       client,
       children: h(web.WebContext.Provider, {
         value: { transport: adapter, settings: false },
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(MainSurface, {
             theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
             layout: { compact: false },
@@ -2288,8 +2250,7 @@ test("a fresh Rust board opens promoted and dropped items from the Closed filter
       client,
       children: h(web.WebContext.Provider, {
         value: { transport: adapter, settings: false },
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(MainSurface, {
             theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
             layout: { compact: false },
@@ -2406,8 +2367,7 @@ test("the mounted Rust board counts parked leads and papercuts like their All li
       client,
       children: h(web.WebContext.Provider, {
         value: { transport: adapter, settings: false },
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(MainSurface, {
             theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
             layout: { compact: false },
@@ -2570,8 +2530,7 @@ test("the board reads, edits, and closes the selected project's lane when keys c
       client,
       children: h(web.WebContext.Provider, {
         value: { transport: adapter, settings: false },
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(MainSurface, {
             theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
             layout: { compact: false },
@@ -2949,8 +2908,7 @@ test("the paired Profiles panel adds, edits, and duplicates using the shared con
       client,
       children: h(PluginRpcProvider, {
         invoke: invoke as never,
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(ProfilesPanel, {
             c: new Proxy({}, { get: () => "#123" }) as never,
             compact: false,

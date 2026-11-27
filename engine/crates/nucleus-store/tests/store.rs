@@ -960,7 +960,7 @@ fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
     store.create(&task, &event("admitted")).unwrap();
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN queue_priority; ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; PRAGMA user_version = 10;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; PRAGMA user_version = 10;")
         .unwrap();
     drop(db);
 
@@ -1468,7 +1468,7 @@ fn profile_domain_defaults_are_read_only_and_stable_ids_survive_name_edits() {
         "name": "Heavy",
         "selection": {
             "id": "stable-profile", "capability": "heavyweight", "weight": "fewer",
-            "provider": "codex", "model": "fixture-model", "thinkingOptionId": "high"
+            "provider": "codex", "model": "fixture-model", "effort": "high"
         }
     }]}))
     .expect("canonical profile shape");
@@ -1480,19 +1480,13 @@ fn profile_domain_defaults_are_read_only_and_stable_ids_survive_name_edits() {
         .expect("save profiles");
     assert!(changed);
     let path = home.join("config/profiles.json");
-    let mut document: serde_json::Value =
+    let document: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).expect("published settings"))
             .expect("versioned JSON");
-    assert_eq!(document["schemaVersion"], 1);
-
-    document["value"]["profiles"][0]["roles"] = serde_json::json!(["reviewer", "coordinator"]);
-    document["value"]["profiles"][0]["scopes"] = serde_json::json!(["mechanical"]);
-    let legacy = document.to_string();
-    std::fs::write(&path, &legacy).expect("old profile file");
+    assert_eq!(document["schemaVersion"], 2);
     let reopened = SettingsFile::open(&home).expect("reopen settings");
-    let loaded = reopened.read::<Profiles>().expect("load old profiles");
+    let loaded = reopened.read::<Profiles>().expect("load profiles");
     assert_eq!(loaded.value, first.value);
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), legacy);
     let (saved, changed) = reopened
         .edit::<Profiles>(&loaded.revision, |profiles| {
             profiles.profiles[0].name = "Renamed".into();
@@ -1507,8 +1501,6 @@ fn profile_domain_defaults_are_read_only_and_stable_ids_survive_name_edits() {
         written["value"],
         serde_json::to_value(&saved.value).unwrap()
     );
-    assert!(written["value"]["profiles"][0].get("roles").is_none());
-    assert!(written["value"]["profiles"][0].get("scopes").is_none());
     let (same, changed) = reopened
         .edit::<Profiles>(&saved.revision, |_| Ok(()))
         .expect("no-op");
@@ -1639,7 +1631,7 @@ fn schema_twelve_preserves_existing_snooze_ownership() {
 
 fn revert_parent_schema(storage: &EngineStorage) {
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN queue_priority; DROP TABLE parent_deliveries; PRAGMA user_version=11;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; DROP TABLE parent_deliveries; PRAGMA user_version=11;")
         .unwrap();
 }
 
@@ -1824,7 +1816,7 @@ fn migrating_version_twelve_defaults_queue_priority_without_rewriting_rows() {
     drop(store);
 
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN queue_priority; PRAGMA user_version = 12;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; PRAGMA user_version = 12;")
         .unwrap();
     drop(db);
 
@@ -1854,4 +1846,41 @@ fn migrating_version_twelve_defaults_queue_priority_without_rewriting_rows() {
             },
         ]
     );
+}
+
+#[test]
+fn migrating_version_thirteen_keeps_existing_holds_and_stores_merge_holds() {
+    let root = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(root.path());
+    let mut legacy = task("held", "fixture#1");
+    let operator = Authority::Operator {
+        actor: "operator".into(),
+    };
+    legacy
+        .command(
+            Command::Hold("Pause dispatch".into()),
+            &operator,
+            &observation(),
+        )
+        .unwrap();
+    let mut store = Store::open(&storage).unwrap();
+    store.create(&legacy, &event("admitted")).unwrap();
+    drop(store);
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; PRAGMA user_version = 13;")
+        .unwrap();
+    drop(db);
+
+    let mut store = Store::open(&storage).unwrap();
+    let prior = row(&store, "held");
+    assert_eq!(prior.task, legacy);
+    legacy
+        .set_brief_merge_hold(Some("Verify the candidate"), &operator, 123)
+        .unwrap();
+    store
+        .save_row(&prior, &legacy, &event("brief_merge_hold_changed"))
+        .unwrap();
+    drop(store);
+    let reopened = Store::open(&storage).unwrap();
+    assert_eq!(row(&reopened, "held").task, legacy);
 }

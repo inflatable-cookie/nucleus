@@ -22,7 +22,7 @@ mod volume;
 
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use nucleus_core::{Identity, Phase, QueuePriority, Role, Task, profiles::RotationCounts};
+use nucleus_core::{Head, Identity, Phase, QueuePriority, Role, Task, profiles::RotationCounts};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, named_params,
     params,
@@ -54,10 +54,10 @@ pub use usage::{ProfileUsage, SubscriptionPause, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 13;
+const SCHEMA_VERSION: i32 = 14;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
-const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation, queue_priority";
+const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation, queue_priority, merge_hold";
 const LEGACY_PROJECT_IMPORT_JOURNAL: &str = "
 CREATE TABLE IF NOT EXISTS legacy_project_import (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -68,7 +68,8 @@ const PAPERCUT_TITLE: &str = "(SELECT CASE WHEN json_valid(i.snapshot) THEN
     THEN json_extract(i.snapshot, '$.title') END END
     FROM planning_task_sources s JOIN planning_items i ON i.project=s.project AND i.id=s.item_id
     WHERE s.task_id=tasks.id) AS papercut_title";
-const PUBLIC_NUMBER: &str = "(SELECT number FROM task_numbers WHERE task_id = tasks.id)";
+const PUBLIC_NUMBER: &str =
+    "(SELECT number FROM task_numbers WHERE task_id = tasks.id) AS public_number";
 const OCCUPIED_SLOTS_INDEX: &str = "CREATE INDEX occupied_launch_slots ON tasks (id)
   WHERE json_extract(run, '$.last_send_at_ms') IS NOT NULL";
 const ACP_SESSIONS: &str = "CREATE TABLE acp_sessions (
@@ -389,6 +390,13 @@ impl Store {
         if version < 12 {
             tx.execute_batch(include_str!("parent_delivery.sql"))?;
             tx.execute_batch(include_str!("parent_delivery_legacy.sql"))?;
+        }
+        // Earlier schemas rebuild tasks from TASK_SCHEMA above.
+        if version >= 10 {
+            tx.execute(
+                "ALTER TABLE tasks ADD COLUMN merge_hold TEXT CHECK (json_valid(merge_hold))",
+                [],
+            )?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -1238,6 +1246,26 @@ impl Store {
         let rows = query.query_map([id], event_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+
+    /// The latest merge commit recorded from an observed merge of this task.
+    ///
+    /// # Errors
+    /// Returns an error if history cannot be read or holds an invalid commit.
+    pub fn merge_commit(&self, id: &str) -> Result<Option<Head>, StoreError> {
+        let commit: Option<String> = self
+            .connection
+            .prepare_cached(
+                "SELECT json_extract(detail, '$.mergeCommit') FROM events
+                 WHERE task_id = ?1
+                   AND json_type(CASE WHEN json_valid(detail) THEN detail END, '$.mergeCommit') = 'text'
+                 ORDER BY sequence DESC LIMIT 1",
+            )?
+            .query_row([id], |row| row.get::<_, String>(0))
+            .optional()?;
+        Ok(commit
+            .map(|commit| serde_json::from_value(Value::String(commit)))
+            .transpose()?)
+    }
 }
 
 fn event_from_row(row: &Row<'_>) -> rusqlite::Result<Event> {
@@ -1264,8 +1292,8 @@ fn load(connection: &Connection, id: &str) -> rusqlite::Result<Option<TaskRow>> 
 fn decode_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     Ok(TaskRow {
         task: decode_display_task(row)?,
-        version: row.get(18)?,
-        number: row.get(19)?,
+        version: row.get("version")?,
+        number: row.get("public_number")?,
     })
 }
 
@@ -1275,7 +1303,7 @@ fn decode_listed_row(row: &Row<'_>) -> rusqlite::Result<Result<TaskRow, Box<Unre
         Err(rusqlite::Error::FromSqlConversionFailure(_, _, cause)) => {
             let identity: Identity = serde_json::from_value(identity_columns(row)?)
                 .map_err(|error| decode_error(0, error))?;
-            let number: Option<i64> = row.get(19)?;
+            let number: Option<i64> = row.get("public_number")?;
             let reference = number.map_or_else(
                 || identity.reference.clone(),
                 |n| numbers::reference(&identity.repository, n),
@@ -1284,7 +1312,7 @@ fn decode_listed_row(row: &Row<'_>) -> rusqlite::Result<Result<TaskRow, Box<Unre
                 identity,
                 number,
                 reference,
-                version: row.get(18)?,
+                version: row.get("version")?,
                 cause: cause.to_string(),
             })))
         }
@@ -1324,6 +1352,7 @@ fn decode_task(row: &Row<'_>) -> rusqlite::Result<Task> {
         "report_task": json_column(row, 15)?,
         "work_continuation": json_column(row, 16)?,
         "queue_priority": row.get::<_, String>(17)?,
+        "merge_hold": json_column(row, 18)?,
     });
     serde_json::from_value(value).map_err(|error| decode_error(0, error))
 }
@@ -1366,10 +1395,10 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
     let identity = task.identity();
     let snapshot = serde_json::to_value(task)?;
     let mut sql = format!(
-        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold, :origin_thread, :report_task, :work_continuation, :queue_priority)"
+        "INSERT INTO tasks ({TASK_COLUMNS}) VALUES (\n        :id, :reference, :repository, :base, :entry, :brief, :phase, :threads,\n        :run, :pr, :verdict, :attempts, :question, :hold, :origin_thread, :report_task, :work_continuation, :queue_priority, :merge_hold)"
     );
     if update {
-        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold,\n            report_task = excluded.report_task, work_continuation = excluded.work_continuation, queue_priority = excluded.queue_priority, version = tasks.version + 1");
+        sql.push_str(" ON CONFLICT(id) DO UPDATE SET\n            brief = excluded.brief, phase = excluded.phase, threads = excluded.threads,\n            run = excluded.run, pr = excluded.pr, verdict = excluded.verdict,\n            attempts = excluded.attempts, question = excluded.question, hold = excluded.hold,\n            report_task = excluded.report_task, work_continuation = excluded.work_continuation,\n            queue_priority = excluded.queue_priority, merge_hold = excluded.merge_hold, version = tasks.version + 1");
     }
     let nullable_json = |key: &str| (!snapshot[key].is_null()).then(|| snapshot[key].to_string());
     tx.execute(
@@ -1393,6 +1422,7 @@ fn persist(tx: &Transaction<'_>, task: &Task, update: bool) -> Result<(), StoreE
             ":report_task": nullable_json("report_task"),
             ":work_continuation": nullable_json("work_continuation"),
             ":queue_priority": if task.queue_priority().is_promoted() { "promoted" } else { "normal" },
+            ":merge_hold": nullable_json("merge_hold"),
         },
     )?;
     Ok(())

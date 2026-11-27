@@ -49,17 +49,6 @@ const raised = (id: string, since: string | null): PipelineCard =>
     lanes: [],
     value: { id, hold: { since } },
   }) as unknown as PipelineCard;
-const drained = (
-  key: string,
-  escalatedAt: string | null,
-  since: string,
-): PipelineCard =>
-  ({
-    kind: "lane_drain",
-    id: `lane-drain:${key}`,
-    lanes: [key],
-    value: { key, drain: { escalatedAt, since } },
-  }) as unknown as PipelineCard;
 const task = (id: string, since: string | null): PipelineCard =>
   ({
     kind: "task",
@@ -146,12 +135,11 @@ test("Leads and Papercuts split the Triage column by tag, each with its own tota
   );
 });
 
-test("Needs you is one list, newest needing action first, across decisions, holds, lanes and tasks", () => {
+test("Needs you is one list, newest needing action first, across decisions, holds and tasks", () => {
   const cards = board({
     Decisions: [
       decision("old-decision", "2026-11-01T00:00:00.000Z"),
       raised("hold", "2026-11-15T00:00:00.000Z"),
-      drained("lane", "2026-11-20T00:00:00.000Z", "2026-11-18T00:00:00.000Z"),
     ],
     Attention: [
       task("undated", null),
@@ -160,7 +148,7 @@ test("Needs you is one list, newest needing action first, across decisions, hold
   });
   assert.deepEqual(
     needsCards(cards).map((card) => card.id),
-    ["lane-drain:lane", "hold", "attention", "old-decision", "undated"],
+    ["hold", "attention", "old-decision", "undated"],
   );
   const [needs] = inboxSections(cards, "needs");
   assert.equal(
@@ -169,22 +157,5 @@ test("Needs you is one list, newest needing action first, across decisions, hold
     "one section, so no section headers",
   );
   assert.equal(needs!.label, "Needs you");
-  assert.equal(inboxCounts(cards).needs, 5);
-});
-
-test("a drained lane sorts by its escalation, falling back to when the drain began", () => {
-  const cards = board({
-    Decisions: [
-      drained(
-        "escalated",
-        "2026-11-21T00:00:00.000Z",
-        "2026-11-01T00:00:00.000Z",
-      ),
-      drained("waiting", null, "2026-11-19T00:00:00.000Z"),
-    ],
-  });
-  assert.deepEqual(
-    needsCards(cards).map((card) => card.id),
-    ["lane-drain:escalated", "lane-drain:waiting"],
-  );
+  assert.equal(inboxCounts(cards).needs, 4);
 });

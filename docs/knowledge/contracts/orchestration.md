@@ -94,6 +94,21 @@ pinned `[sources]` revisions. The checkout, branch and run scratch are bound
 before handing work to the worker. Follow [repository hooks](repository-hooks.md)
 and [worktree handling](../../../engine/crates/nucleus-work/src/lib.rs).
 
+### Checkout start
+
+A brief task's checkout starts from the published base. Nucleus fetches
+`origin`'s base branch into the registered repository, which moves only the
+remote-tracking ref. The local branch and working tree stay as they are, however
+far behind. A task branch left by an earlier allocation keeps its head when the
+published base already holds it and it contains the prerequisite merges below.
+
+The start must contain the recorded merge commit of every prerequisite that
+landed on the same repository and base. A failed fetch or a missing landing is a
+workspace wait that names its cause. Nucleus never falls back to the local head.
+
+Review-entry tasks start at their recorded head, and report-only tasks at their
+pinned planning commit.
+
 ### Wait states and prerequisites
 
 Record first-dispatch prerequisites and deliberate post-dispatch waits as
@@ -112,6 +127,32 @@ initialized checkout under the task fence and allocate from the verified
 start. Workspace observation errors receive the bounded recheck in
 [Spec 070 ruling 37](../specs/070-small-engine.md#rulings).
 After repairing the checkout, the owner can use Recheck at the version shown by Next. See the [worktree implementation](../../../engine/crates/nucleus-work/src/lib.rs).
+
+### Work volume outages
+
+Checkout, run scratch and checkout Git calls run on their own threads, outside
+the state lock and under a deadline. API reads and run reports answer while such
+a call waits, and the pass rechecks the task row before its next send. A call
+past its deadline can start no further mutation, including a fetch. A hung read
+never holds back later calls; once sixteen of a task's calls have not returned,
+each further hung call delays that task's next ones by five minutes. A mutation
+already started holds back its task until that mutation ends. Neither elapsed
+time nor a returned volume releases it, because neither proves it can no longer
+take effect. Git's own bounds end a Git mutation. A published-base fetch holds
+back its whole repository the same way. A task held this way waits with the held
+step and its age, and the log records it once the step is a minute old. Only a
+call which never returns needs a restart; other tasks, the pass, API reads and
+run reports carry on (planner ruling, 2026-11-27). A quarantine stopped after
+its move stays pending for the owner to check.
+
+A task whose work volume or layout, including its registered checkout, cannot be
+verified waits with that reason and retries with a delay that doubles to one
+minute. This wait never becomes a blocked checkout, and an absent path under an
+unverified root is not evidence of absence. The engine creates the work and
+scratch roots at startup and holds on to those directories. A missing or
+substitute directory is refused and never recreated. A remounted root resumes
+when it has the same directory and volume ID. See the
+[work volume gate](../../../engine/crates/nucleus-service/src/volume.rs).
 
 ## Worker run
 

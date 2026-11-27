@@ -340,6 +340,10 @@ pub struct Hold {
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<HoldBy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -616,6 +620,8 @@ pub struct Threads {
     pub(crate) applied_review_sequence: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) settled_scratch: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) missing_report_from: Option<String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub(crate) earlier_scratch: std::collections::BTreeMap<u64, PathBuf>,
 }
@@ -636,6 +642,12 @@ impl Threads {
             Role::Reviewer => self.reviewer_profile.as_ref(),
         }
         .map(|bound| &bound.selected)
+    }
+
+    /// The ended run whose report a replacement assignment should recover.
+    #[must_use]
+    pub fn missing_report_from(&self) -> Option<&str> {
+        self.missing_report_from.as_deref()
     }
 
     pub(crate) fn bind(&mut self, launch: &PreparedLaunch) {
@@ -673,6 +685,8 @@ pub struct Task {
     pub(crate) question: Option<OpenQuestion>,
     pub(crate) hold: Option<Hold>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) merge_hold: Option<Hold>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) work_continuation: Option<WorkContinuation>,
     #[serde(rename = "report_task", skip_serializing_if = "Option::is_none")]
     pub(crate) report_state: Option<ReportTask>,
@@ -692,6 +706,7 @@ struct StoredTask {
     attempts: u8,
     question: Option<OpenQuestion>,
     hold: Option<Hold>,
+    merge_hold: Option<Hold>,
     #[serde(default)]
     work_continuation: Option<WorkContinuation>,
     #[serde(rename = "report_task")]
@@ -772,6 +787,7 @@ impl TryFrom<StoredTask> for Task {
             attempts: stored.attempts,
             question: stored.question,
             hold: stored.hold,
+            merge_hold: stored.merge_hold,
             work_continuation: stored.work_continuation,
             report_state: stored.report_state,
             queue_priority: stored.queue_priority,
@@ -802,6 +818,7 @@ impl Task {
             attempts: 0,
             question: None,
             hold: None,
+            merge_hold: None,
             work_continuation: None,
             report_state: None,
             queue_priority,
@@ -1020,6 +1037,12 @@ impl Task {
     #[must_use]
     pub const fn hold(&self) -> Option<&Hold> {
         self.hold.as_ref()
+    }
+
+    /// Return the outstanding brief-declared hold on the merge request.
+    #[must_use]
+    pub const fn merge_hold(&self) -> Option<&Hold> {
+        self.merge_hold.as_ref()
     }
 
     #[must_use]

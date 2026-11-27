@@ -32,14 +32,7 @@ const c = dark as never;
 const CAPACITY: CapacityAuthorityValues = {
   globalLimit: 32,
   projectLimit: 5,
-  papercutProjectLimit: 2,
   hostCallLimit: 6,
-  stallThresholdMinutes: 30,
-  holdReminderMinutes: 120,
-  holdEscalationMinutes: 240,
-  laneDrainMinutes: 120,
-  laneDrainEscalationMinutes: 1440,
-  hostOutageNoticeMinutes: 120,
   operatorDefaultHostKind: "paseo",
   threadRetentionDays: 3,
   threadRetentionIntervalHours: 12,
@@ -147,7 +140,7 @@ test("Limits sends the edited field at the displayed Dispatch revision", async (
 });
 
 test("limits show applied values beside controls, and the recorded changes stay off the screen", async () => {
-  const applied = { globalLimit: 21, stallThresholdMinutes: 45 };
+  const applied = { globalLimit: 21, projectLimit: 6 };
   const v1 = "2026-11-02T09:00:00.000Z",
     v2 = "2026-11-03T10:30:00.000Z";
   const { ui, done } = await mountLimits({
@@ -155,7 +148,7 @@ test("limits show applied values beside controls, and the recorded changes stay 
       effective: applied,
       changes: [
         change(1, { globalLimit: [32, 21] }, v1),
-        change(2, { stallThresholdMinutes: [30, 45] }, v2),
+        change(2, { projectLimit: [5, 6] }, v2),
       ],
     }),
   });
@@ -170,11 +163,6 @@ test("limits show applied values beside controls, and the recorded changes stay 
       "the value in force shows only when the entered value differs",
     );
     assert.doesNotMatch(ui.text(), /Last saved/);
-    ui.press("Advanced limits");
-    assert.equal(
-      ui.get("Stall threshold dispatch limit (minutes, 1–240)").props.value,
-      "45",
-    );
     // The change log stays for the CLI through queue.capacity-state; Settings shows no view of it (Tom, 2026-11-08).
     assert.doesNotMatch(
       ui.text(),
@@ -192,7 +180,7 @@ test("a full record adds nothing to the screen: Project overrides is the last se
   const twenty = Array.from({ length: 20 }, (_, index) =>
     change(
       index + 1,
-      { holdReminderMinutes: [120, 120 + index] },
+      { projectLimit: [5, 5 + (index % 20)] },
       `2026-11-01T0${index % 9}:00:00.000Z`,
     ),
   );
@@ -392,72 +380,6 @@ test("empty states name what is absent and the next meaningful action", async ()
   }
 });
 
-test("Advanced limits stays folded until opened, and its six limits keep their accessible names and units", async () => {
-  const { ui, done } = await mountLimits();
-  try {
-    assert.equal(
-      ui.get("Advanced limits").props.accessibilityState.expanded,
-      false,
-    );
-    assert.equal(
-      ui.query("Concurrent host calls dispatch limit (calls, 1–32)"),
-      undefined,
-      "folded: the timing fields are not on the page",
-    );
-    ui.press("Advanced limits");
-    assert.equal(
-      ui.get("Advanced limits").props.accessibilityState.expanded,
-      true,
-    );
-    assert.equal(
-      ui.get("Concurrent host calls dispatch limit (calls, 1–32)").props.value,
-      "6",
-    );
-    assert.equal(
-      ui.get("Stall threshold dispatch limit (minutes, 1–240)").props.value,
-      "30",
-      "an advanced field keeps its value",
-    );
-  } finally {
-    done();
-  }
-});
-
-test("a limit saved under the Paseo-era name shows as Concurrent host calls, says it is per host, and an edit saves the canonical name", async () => {
-  const saves: Array<Record<string, unknown>> = [];
-  const { ui, done } = await mountLimits({
-    authority: authority({ effective: { hostCallLimit: 9 } }),
-    saveCapacity: async (values: Record<string, unknown>) => {
-      saves.push(values);
-    },
-  });
-  try {
-    ui.press("Advanced limits");
-    assert.equal(
-      ui.get("Concurrent host calls dispatch limit (calls, 1–32)").props.value,
-      "9",
-      "the persisted legacy value is the value in force",
-    );
-    assert.match(
-      ui.get("Concurrent host calls help").props.accessibilityHint,
-      /ceiling for each host, not a total across hosts/,
-      "the (?) says the ceiling is per host",
-    );
-    ui.press("Increase Concurrent host calls dispatch limit (calls, 1–32)");
-    for (let attempt = 0; attempt < 60 && saves.length === 0; attempt++)
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(saves.length, 1, "the edit saves once");
-    assert.equal(saves[0]!.hostCallLimit, 10, "the canonical name is written");
-    assert.equal(
-      "paseoCallLimit" in saves[0]!,
-      false,
-      "the legacy name is not written back",
-    );
-  } finally {
-    done();
-  }
-});
-
 test("long names and reasons wrap instead of running past their row", async () => {
   const longName =
     "Project-A Integration Workspace For Long Project Names On A Narrow Board";
@@ -637,8 +559,8 @@ test("the task slots sit on one wrapping row of steppers at narrow and wide size
         .filter((node) =>
           /dispatch limit \(/.test(node.props.accessibilityLabel ?? ""),
         ).length,
-      3,
-      "the three task slots are typeable steppers",
+      2,
+      "both task slots are typeable steppers",
     );
     assert.ok(
       !ui.ofType("View").some((node) => node.props.style?.width === 200),
@@ -779,36 +701,14 @@ test("an inline label never shrinks into its words: a tight card wraps the contr
   );
 });
 
-test("Advanced limits stack every label; Task slots keep theirs inline, at narrow and wide sizes", async () => {
+test("Task slot labels stay inline", async () => {
   const { ui, done } = await mountLimits();
   try {
-    ui.press("Advanced limits");
-    for (const name of [
-      "Concurrent host calls",
-      "Stall threshold",
-      "Hold reminder",
-      "Hold escalation",
-      "Lane drain",
-      "Lane drain escalation",
-    ]) {
-      const text = textNode(ui, name);
-      assert.ok(text, `${name} shows`);
-      assert.equal(
-        text.props.style.flexShrink,
-        undefined,
-        `${name} is stacked: its label has its own line`,
-      );
-    }
-    for (const name of ["Global", "Per project", "Papercuts"]) {
+    for (const name of ["Global", "Per project"]) {
       const text = textNode(ui, name);
       assert.ok(text, `${name} shows`);
       assert.equal(text.props.style.flexShrink, 0, `${name} stays inline`);
     }
-    assert.match(
-      ui.text(),
-      /Lane drain escalation[\s\S]*min/,
-      "the unit stays with the control",
-    );
   } finally {
     done();
   }
@@ -888,39 +788,6 @@ test("a revealer centres its label and Show/Hide in one touch-target line, and i
   );
   assert.equal(ring.props.style.top, 0);
   assert.equal(ring.props.style.bottom, 0);
-});
-
-test("Advanced limits has a gap above it, closed and open, and the advanced cards follow it", async () => {
-  const { space, touchTarget } = await import("../client/design");
-  const { ui, done } = await mountLimits();
-  try {
-    for (const expanded of [false, true]) {
-      const revealer = ui.get("Advanced limits");
-      assert.equal(revealer.props.accessibilityState.expanded, expanded);
-      assert.equal(
-        revealer.props.style.marginTop,
-        space.sm,
-        "separated from the Task slots cards above",
-      );
-      assert.equal(revealer.props.style.minHeight, touchTarget);
-      assert.equal(revealer.props.style.flexWrap, "nowrap");
-      assert.ok(textNode(ui, expanded ? "Hide" : "Show"));
-      if (!expanded) ui.press("Advanced limits");
-    }
-    const cards = sharedView(
-      ui,
-      ui.get("Concurrent host calls dispatch limit (calls, 1–32)"),
-      ui.get("Lane drain dispatch limit (minutes, 1–10080)"),
-    );
-    assert.equal(
-      cards.props.style.marginTop,
-      undefined,
-      "the advanced cards keep the section spacing",
-    );
-    assert.equal(cards.props.style.gap, space.sm);
-  } finally {
-    done();
-  }
 });
 
 /* Task 1014: the usage level's end time is small text on the heading row's right, above Normal only. */

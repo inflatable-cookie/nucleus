@@ -1,6 +1,5 @@
 import type {
   Project,
-  ProjectOwnerCandidateKind,
   ProjectMergeCheck,
   ProjectMergeInput,
   ProjectMergeResult,
@@ -13,12 +12,6 @@ import type {
 } from "../../shared/contracts";
 import type { ProjectManagementApi } from "../project-management-view";
 
-export type OwnerCandidate = {
-  id: string;
-  title: string;
-  workspaceId: string | null;
-  kind: ProjectOwnerCandidateKind;
-};
 export type ProjectEditActions = {
   saveProject: (input: ProjectUpsertInput) => Promise<Project>;
   setPlanner: (input: {
@@ -48,11 +41,6 @@ export type ProjectEditActions = {
   removal?: ProjectManagementApi;
   /** Re-read `project.settings` (and the board) after a batch of writes. */
   refresh: () => Promise<unknown>;
-  candidates: {
-    data: OwnerCandidate[] | undefined;
-    error: unknown;
-    isPending: boolean;
-  };
   /** The opened project's live state (`project.settings` with its key); absent until it is read. */
   focus?: {
     row: ProjectSettingsRow | undefined;

@@ -1,5 +1,6 @@
 use nucleus_core::{Authority, Entry, Phase, Task};
 use nucleus_store::{Dependencies, DependencyEdit, StoreError, TaskRow};
+use nucleus_work::Landing;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -364,13 +365,10 @@ impl Service {
         state: &State,
         scope: &ControllerScope,
         prior: &Task,
-        amended: &Task,
+        before: &[String],
+        after: &[String],
     ) -> Result<Option<Vec<String>>, ServiceError> {
-        use nucleus_core::profiles::BriefPolicy;
-
-        let before = BriefPolicy::parse(&prior.brief().text).unwrap_or_default();
-        let after = BriefPolicy::submitted(&amended.brief().text)?;
-        if before.depends_on == after.depends_on {
+        if before == after {
             return Ok(None);
         }
         if !DependencyEdits::for_task(prior, false).set_dependencies {
@@ -386,8 +384,7 @@ impl Service {
                 .dependencies(&prior.identity().id)?
                 .before_dispatch,
         )?;
-        let (ids, _) =
-            self.resolve_dependencies(state, prior.identity(), &after.depends_on, scope)?;
+        let (ids, _) = self.resolve_dependencies(state, prior.identity(), after, scope)?;
         Ok(Some(ids))
     }
 
@@ -588,6 +585,37 @@ impl Service {
             .store
             .pending_prerequisite_notice(id)?
             .is_some())
+    }
+
+    /// The recorded merge of each prerequisite that landed on this task's base.
+    /// A report or a prerequisite on another base landed nothing here. The
+    /// dependency gate has already required these prerequisites to be done.
+    pub(super) async fn prerequisite_landings(
+        &self,
+        identity: &nucleus_core::Identity,
+    ) -> Result<Vec<Landing>, ServiceError> {
+        let state = self.state.lock().await;
+        let mut landings = Vec::new();
+        for id in state.store.dependencies(&identity.id)?.before_dispatch {
+            let (prerequisite, reference) = match state.store.row(&id) {
+                Ok(Some(row)) => (row.task.identity().clone(), row.reference().into_owned()),
+                Err(StoreError::UnreadableTask(row)) => (row.identity, row.reference),
+                Ok(None) => continue,
+                Err(error) => return Err(error.into()),
+            };
+            if prerequisite
+                .repository
+                .eq_ignore_ascii_case(&identity.repository)
+                && prerequisite.base == identity.base
+                && let Some(commit) = state.store.merge_commit(&id)?
+            {
+                landings.push(Landing {
+                    prerequisite: reference,
+                    commit,
+                });
+            }
+        }
+        Ok(landings)
     }
 
     pub(super) async fn dependencies_blocked(&self, row: &TaskRow) -> Result<bool, ServiceError> {

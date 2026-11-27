@@ -31,6 +31,7 @@ const escapeRegExp = (value: string) =>
  * nucleus#1546: the Planning menu entry counts the open lanes in scope through
  * the board snapshot contract in wide, medium and narrow layouts.
  */
+
 test("1546 the Planning menu entry counts the open lanes in scope", async () => {
   const fixture = planningFixture();
   // One lane two projects list: it counts once, whatever selects both.

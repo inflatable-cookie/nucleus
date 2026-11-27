@@ -449,7 +449,10 @@ impl Projection {
             .and_then(|item| item.failure.as_ref())
             .is_some_and(|failure| {
                 failure["class"] == "provider_error"
-                    && failure["message"] == "Nucleus is unavailable."
+                    && (failure["message"] == "Nucleus is unavailable."
+                        || failure["message"].as_str().is_some_and(|message| {
+                            message.starts_with("Nucleus could not answer: ")
+                        }))
             })
     }
 

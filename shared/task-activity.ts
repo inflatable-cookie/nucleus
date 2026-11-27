@@ -11,7 +11,6 @@ import {
   type BudgetEvent,
   type TaskBudgetView,
 } from "./task-budget";
-import { DEFAULT_STALL_THRESHOLD_MINUTES } from "./schema/settings/capacity";
 import { REVISION_BUDGET } from "./incident";
 import { holdsOf, isOperatorOwner } from "./holds";
 import { isDispositionActive } from "./disposition";
@@ -563,7 +562,9 @@ export function taskActivity({
       occurrence: `revision-cap:${task.phase}:${task.resolution.revisionRuns}`,
     });
 
-  const quietMs = read?.quietMs ?? DEFAULT_STALL_THRESHOLD_MINUTES * 60_000;
+  // Quiet time before a run without a read counts as stalled: 30 minutes, the Rust
+  // engine's default. The stall threshold is no longer a Settings value.
+  const quietMs = read?.quietMs ?? 30 * 60_000;
   const runningTool = observation?.tool;
   if (
     runningTool &&

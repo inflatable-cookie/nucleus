@@ -17,7 +17,6 @@ import {
 import { radius, roles, space, type } from "./design";
 import { formatLocalDateTime } from "./date-time-field";
 import { errorText } from "./error-text";
-import { useEngineFeatures } from "./engine-features";
 import type * as api from "../shared/contracts";
 import type { HostDependency, HostView } from "../shared/rpc/hosts";
 
@@ -64,30 +63,22 @@ export function HostDefault({
     host: api.CapacityAuthorityValues["operatorDefaultHostKind"],
   ) => Promise<void>;
 }) {
-  const rust = useEngineFeatures().engine === "rust";
   const [host, setHost] = useState<
     api.CapacityAuthorityValues["operatorDefaultHostKind"]
   >(values ? values.operatorDefaultHostKind : null);
   const auto = useSectionAutoSave(save);
   const registeredKinds = new Set((hosts ?? []).map(({ kind }) => kind));
-  const options = rust
-    ? [
-        ...(hosts ?? []).map(({ kind, label }) => ({ value: kind, label })),
-        { value: "inherit", label: "Planner's host" },
-      ]
-    : [
-        { value: "paseo", label: "Paseo" },
-        { value: "t3code", label: "T3Code" },
-        { value: "bb", label: "BB" },
-        { value: "inherit", label: "Planner's host" },
-      ];
+  const options = [
+    ...(hosts ?? []).map(({ kind, label }) => ({ value: kind, label })),
+    { value: "inherit", label: "Planner's host" },
+  ];
   useEffect(() => {
     if (values && !auto.saver.busy && !auto.failed)
       setHost(values.operatorDefaultHostKind);
   }, [values?.operatorDefaultHostKind, auto.failed]);
-  if (rust && (hosts === undefined || hosts.length < 2)) return null;
+  if (hosts === undefined || hosts.length < 2) return null;
   const placeholder =
-    rust && host !== null && !registeredKinds.has(host)
+    host !== null && !registeredKinds.has(host)
       ? "Unavailable"
       : undefined;
   return (
@@ -107,11 +98,7 @@ export function HostDefault({
         disabled={!values}
         options={options}
         onChange={(value) => {
-          const next = rust
-            ? (hosts?.find(({ kind }) => kind === value)?.kind ?? null)
-            : value === "paseo" || value === "t3code" || value === "bb"
-              ? value
-              : null;
+          const next = hosts.find(({ kind }) => kind === value)?.kind ?? null;
           setHost(next);
           if (values) auto.enqueue(next);
         }}

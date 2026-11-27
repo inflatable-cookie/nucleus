@@ -4,8 +4,8 @@ import { uiStateSchema } from "../shared/schema/state";
 
 /**
  * Board contracts only the Rust engine answers (Spec 070 ruling 8).
- * They stay out of the service RPC catalogue; the shared screens show their
- * controls only when `useEngineFeatures().engine` is `rust`.
+ * They stay out of the service RPC catalogue; the board runs only on the Rust
+ * engine, so its screens show these controls directly.
  */
 
 /** Ruling 8: an archived project takes no new work. */

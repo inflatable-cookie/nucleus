@@ -68,7 +68,10 @@ export function useProjectSelectorActions(
     },
   };
 
-  const removal: ProjectManagementApi = { previewRpc, removeRpc };
+  const removal: ProjectManagementApi = {
+    previewRpc,
+    removeRpc,
+  };
 
   return { actions, removal, refresh };
 }

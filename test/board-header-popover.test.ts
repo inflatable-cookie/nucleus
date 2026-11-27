@@ -34,35 +34,3 @@ test('the open project selector renders in the popover layer, not inside the hea
 });
 
 /** Queue #1391: the header's queue menu, which holds the slot table (Tom, 2026-11-21), renders in the top layer too. */
-test("the header's queue menu and its slot table render in the popover layer, above the board", async () => {
-  const { PopoverHost, POPOVER_LAYER_ID } = await import('../client/popover');
-  const { BoardHeader } = await import('../client/board/header');
-  const state = {
-    connected: true, paused: false, quiet: false, stoppedThreads: 0,
-    activeWorkers: 0, unsettled: 0, occupiedSlots: 1, globalLimit: 10,
-    projectLimit: 2, projectLimitOverrides: {}, dispatchHeld: false,
-    operationBacklog: 0, drained: false, boundRuns: [],
-    projectCapacities: [{ projectKey: 'a', projectName: 'Alpha', occupiedSlots: 1, slotLimit: 2, inFlightTasks: 1, inFlightLimit: 5 }],
-
-  };
-  const query = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const ui = mount(h(QueryClientProvider, { client: query, children: h(PluginRpcProvider, { invoke: async () => ({}), children: h(PopoverHost, null,
-    h(BoardHeader, {
-      c, state: state as never, refetchState: async () => {}, busy: false,
-      act: async () => {}, error: '', onDismissError: () => {}, readError: null,
-      staleRead: null, inset: 12, settingsOpener: null, filter: null,
-      children: h('View', { accessibilityLabel: 'Column container' }, h('Text', null, 'Working card')),
-    })) }) }));
-  const layer = () => ui.ofType('View').find(node => node.props.testID === POPOVER_LAYER_ID)!;
-  assert.ok(layer(), 'the board shell mounts one layer');
-
-  ui.press('Queue controls menu');
-  assert.ok(contains(layer(), 'Queue controls'), 'the queue menu is in the top layer');
-  assert.ok(!contains(ui.get('Column container'), 'Queue controls'), 'and not inside the column container');
-  assert.ok(contains(layer(), 'Project slot usage (1/10 in use)'), 'the slot table is in the queue menu');
-  assert.ok(textOf(layer()).includes('Alpha'), 'the slot counts render in the layer');
-  ui.press('Close queue controls');
-  assert.ok(!contains(layer(), 'Queue controls'), 'an outside press closes the menu');
-  ui.update(h('View'));
-  query.clear();
-});

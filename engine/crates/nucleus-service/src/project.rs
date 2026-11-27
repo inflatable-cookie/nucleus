@@ -9,17 +9,15 @@ use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Identity, Role};
 use nucleus_forge::Branches;
 use nucleus_hosts::{Binding, HostError, RoleProfile};
-use nucleus_store::RepositorySettings;
-use nucleus_work::Checkout;
-use serde::{Deserialize, Deserializer, Serialize};
+use nucleus_store::{RepositorySettings, StorageError};
+use nucleus_work::{Checkout, WorkError};
 
-use crate::{Service, ServiceError, State};
+use crate::{Service, ServiceError, State, volume::Limit};
 
 const FIXTURE_REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 
 /// The single-repository fixture configuration that tests build in memory.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone)]
 pub struct Project {
     pub repository: String,
     pub checkout: PathBuf,
@@ -29,33 +27,13 @@ pub struct Project {
     pub worker: RoleProfile,
     pub reviewer: RoleProfile,
     /// The local T3 ACP provider running the Rust session agent.
-    #[serde(default)]
     pub acp_provider: Option<String>,
-    #[serde(default, deserialize_with = "read_launch_budget")]
     pub launch_budget: LaunchBudget,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone)]
 pub struct LaunchBudget {
     pub slots: u32,
-}
-
-impl Default for LaunchBudget {
-    fn default() -> Self {
-        Self { slots: 1 }
-    }
-}
-
-fn read_launch_budget<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<LaunchBudget, D::Error> {
-    let mut value = serde_json::Value::deserialize(deserializer)?;
-    if let Some(fields) = value.as_object_mut() {
-        fields.remove("maxLoad");
-        fields.remove("max_load");
-    }
-    serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
 impl Project {
@@ -187,18 +165,44 @@ impl Service {
         let checkout = route.checkout.clone();
         let base = identity.base.clone();
         let git = self.git.clone();
-        tokio::task::spawn_blocking(move || verify_repository(&repository, &checkout, &base, &git))
+        let (work, scratch) = (self.storage.work().clone(), self.storage.scratch().clone());
+        let verify = move |_| {
+            verify_repository(&repository, &checkout, &base, &git).or_else(|refused| {
+                // A refusal with the volume or checkout unavailable says nothing
+                // about the project.
+                work.verify().map_err(WorkError::from)?;
+                scratch.verify().map_err(WorkError::from)?;
+                if !checkout.is_dir() {
+                    return Err(WorkError::from(StorageError::VolumeUnavailable).into());
+                }
+                Err(refused)
+            })
+        };
+        self.volume
+            .run(
+                &identity.id,
+                "verifying the project checkout",
+                Limit::Check,
+                verify,
+            )
             .await
-            .map_err(|_| ServiceError::Project)?
+            .map_err(WorkError::from)?
     }
 
     pub(super) async fn verify_linked_checkout(
         &self,
+        owner: &str,
         project: PathBuf,
         checkout: PathBuf,
     ) -> Result<bool, HostError> {
         let git = self.git.clone();
-        tokio::task::spawn_blocking(move || linked_checkout(&project, &checkout, &git))
+        self.volume
+            .run(
+                owner,
+                "verifying a linked checkout",
+                Limit::Check,
+                move |_| linked_checkout(&project, &checkout, &git),
+            )
             .await
             .map_err(|_| HostError::Uncertain)?
     }
@@ -407,6 +411,10 @@ pub(crate) mod git_gate {
     #[derive(Default)]
     pub struct Gate {
         pub entered: AtomicUsize,
+        /// Hold only this many calls. Zero holds every call until release.
+        pub holds: AtomicUsize,
+        /// Count and hold only Git commands with this argument.
+        pub only: OnceLock<&'static str>,
         released: Mutex<bool>,
         ready: Condvar,
     }
@@ -429,10 +437,18 @@ pub(crate) mod git_gate {
         gate
     }
 
-    pub fn enter(path: &PathBuf) {
+    pub fn enter(path: &PathBuf, command: &std::process::Command) {
         let gate = gates().lock().unwrap().get(path).cloned();
-        if let Some(gate) = gate {
-            gate.entered.fetch_add(1, Ordering::SeqCst);
+        if let Some(gate) = gate.filter(|gate| {
+            gate.only
+                .get()
+                .is_none_or(|only| command.get_args().any(|argument| argument == *only))
+        }) {
+            let earlier = gate.entered.fetch_add(1, Ordering::SeqCst);
+            let holds = gate.holds.load(Ordering::SeqCst);
+            if holds != 0 && earlier >= holds {
+                return;
+            }
             let released = gate.released.lock().unwrap();
             drop(
                 gate.ready
@@ -446,7 +462,7 @@ pub(crate) mod git_gate {
 impl GitPolicy for LocalGit {
     fn isolate(&self, command: &mut Command) {
         #[cfg(test)]
-        git_gate::enter(&self.0);
+        git_gate::enter(&self.0, command);
         command
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
@@ -485,18 +501,10 @@ mod tests {
     };
 
     #[test]
-    fn fixture_files_keep_their_scope_and_both_remotes_must_name_the_repository() {
+    fn fixture_scope_and_both_remotes_must_name_the_repository() {
         let (_home, service) = fixture(GitHub::new("unused-fixture").expect("forge"));
-        let mut legacy = serde_json::to_value(service.fixture()).expect("fixture configuration");
-        legacy["launchBudget"]["maxLoad"] = json!(18);
-        let mut project: Project = serde_json::from_value(legacy).expect("old serve file");
-        assert_eq!(
-            serde_json::to_value(&project.launch_budget).expect("current budget"),
-            json!({"slots": 1})
-        );
-        project
-            .verify(&service.git)
-            .expect("old fixture is still accepted");
+        let mut project = service.fixture().clone();
+        project.verify(&service.git).expect("fixture repository");
 
         // A Project serves only the fixture repository. The remote checks run on the
         // same repository verification that the registry route uses.
@@ -593,7 +601,7 @@ mod tests {
             "Add a synthetic greeting.".into(),
             None,
         );
-        let worktrees = service.worktrees().expect("worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,

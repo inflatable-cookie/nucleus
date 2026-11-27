@@ -2,13 +2,14 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Arc, Mutex},
 };
 
 use longhorn_git_workspace::{GitCredential, GitFailure, GitPolicy};
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Workspace};
 use nucleus_store::{EngineSettings, SettingsFile};
-use nucleus_work::{Retirement, WorkError, Worktrees};
+use nucleus_work::{Custody, Retirement, WorkError, Worktrees};
 
 struct LocalGit;
 
@@ -49,7 +50,8 @@ fn worktrees_with_policy<'a>(
         })
         .expect("save fixture settings");
     let storage = settings.storage().expect("resolve storage");
-    Worktrees::new(&storage, policy, redactor).expect("work root")
+    storage.work().ensure().expect("work root");
+    Worktrees::new(&storage, policy, redactor)
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -719,12 +721,15 @@ fn a_clean_head_moved_after_preparation_remains_in_custody() {
         .checkout(&repo, "example/fixture", "task-moved")
         .unwrap();
     checkout.allocate(&published).unwrap();
-    let retire = checkout.prepare_retirement(&published).unwrap();
+    let observed = checkout.observe_for_retirement().unwrap();
     git(
         checkout.path(),
         &["commit", "--allow-empty", "-m", "Unpublished"],
     );
-    assert_eq!(retire().unwrap(), Retirement::Retained);
+    assert_eq!(
+        checkout.finish_retirement(observed, &published).unwrap(),
+        Retirement::Retained
+    );
     assert!(checkout.path().is_dir());
 }
 
@@ -952,4 +957,197 @@ fn retire_refuses_locked_worktree_without_moving_directory() {
     assert!(checkout.retire(&head).is_err());
     assert!(checkout.path().is_dir());
     assert!(checkout.path().join("README.md").is_file());
+}
+
+#[test]
+fn an_abandoned_job_removes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let head = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-abandoned")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    let observed = checkout.observe_for_retirement().unwrap();
+    let redactor = Redactor::new([], RedactionRules::common());
+    let published = head.clone();
+    let job = checkout.job(LocalGit, redactor, move |checkout| {
+        checkout.finish_retirement(observed, &published)
+    });
+
+    // The caller stopped waiting before the call reached its rename.
+    let custody = Arc::new(Custody::default());
+    custody.abandon();
+    assert!(matches!(job(custody), Err(WorkError::Storage(_))));
+    assert!(checkout.path().join(".git").is_file());
+    assert_eq!(checkout.retire(&head).unwrap(), Retirement::Removed);
+}
+
+/// Stops the caller's wait as one named Git command starts.
+struct AbandonAt(Arc<Custody>, &'static str);
+
+impl GitPolicy for AbandonAt {
+    fn isolate(&self, command: &mut Command) {
+        if command.get_args().any(|argument| argument == self.1) {
+            self.0.abandon();
+        }
+        LocalGit.isolate(command);
+    }
+
+    fn credential(&self, _: &str) -> Result<Option<GitCredential>, GitFailure> {
+        Ok(None)
+    }
+
+    fn refresh_credential(&self, _: &GitCredential) -> Option<GitCredential> {
+        None
+    }
+}
+
+/// Records whether each fetch started as an admitted mutation.
+struct Fetches(Arc<Custody>, Arc<Mutex<Vec<bool>>>);
+
+impl GitPolicy for Fetches {
+    fn isolate(&self, command: &mut Command) {
+        if command.get_args().any(|argument| argument == "fetch") {
+            self.1.lock().unwrap().push(self.0.mutating());
+        }
+        LocalGit.isolate(command);
+    }
+
+    fn credential(&self, _: &str) -> Result<Option<GitCredential>, GitFailure> {
+        Ok(None)
+    }
+
+    fn refresh_credential(&self, _: &GitCredential) -> Option<GitCredential> {
+        None
+    }
+}
+
+#[test]
+fn a_fetch_is_an_admitted_mutation_which_an_abandoned_call_never_starts() {
+    let home = tempfile::tempdir().expect("scratch");
+    let upstream = home.path().join("upstream");
+    let registered = home.path().join("registered");
+    repository(&upstream);
+    git(
+        home.path(),
+        &[
+            "clone",
+            upstream.to_str().expect("path"),
+            registered.to_str().expect("path"),
+        ],
+    );
+    git(&upstream, &["commit", "--allow-empty", "-m", "Published"]);
+    let head: Head = git(&upstream, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("published head");
+    git(&upstream, &["update-ref", "refs/pull/7/head", "HEAD"]);
+    let worktrees = worktrees(home.path());
+    let checkout = worktrees
+        .checkout(&registered, "example/fixture", "fetching")
+        .expect("checkout");
+    let tracked = || git(&registered, &["rev-parse", "refs/remotes/origin/main"]);
+    let before = tracked();
+    let redactor = || Redactor::new([], RedactionRules::common());
+
+    // A call whose caller gave up during an earlier read starts neither fetch.
+    let fetches = Arc::new(Mutex::new(Vec::new()));
+    let custody = Arc::new(Custody::default());
+    custody.abandon();
+    let policy = Fetches(Arc::clone(&custody), Arc::clone(&fetches));
+    let job = checkout.job(policy, redactor(), |checkout| {
+        checkout.published_start("main", &[])
+    });
+    assert!(matches!(job(custody), Err(WorkError::Storage(_))));
+    let custody = Arc::new(Custody::default());
+    // The read before the review fetch outlasts the caller.
+    let policy = AbandonAt(Arc::clone(&custody), "cat-file");
+    let review = head.clone();
+    let job = checkout.job(policy, redactor(), move |checkout| {
+        checkout.allocate_review(&review, 7)
+    });
+    assert!(matches!(job(custody), Err(WorkError::Storage(_))));
+    assert_eq!(tracked(), before);
+    assert!(!checkout.path().exists());
+    assert!(fetches.lock().unwrap().is_empty());
+
+    // A fetch which runs is held as a mutation for as long as it runs.
+    for review in [true, false] {
+        let custody = Arc::new(Custody::default());
+        let policy = Fetches(Arc::clone(&custody), Arc::clone(&fetches));
+        let head = head.clone();
+        let job = checkout.job(policy, redactor(), move |checkout| {
+            if review {
+                checkout.allocate_review(&head, 7).map(drop)
+            } else {
+                checkout.published_start("main", &[]).map(drop)
+            }
+        });
+        job(Arc::clone(&custody)).expect("fetch");
+        assert!(!custody.mutating());
+    }
+    assert_eq!(*fetches.lock().unwrap(), [true, true]);
+    assert_eq!(tracked().trim(), head.as_str());
+}
+
+#[test]
+fn a_quarantine_abandoned_midway_deletes_no_further_custody() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let head = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-midway")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    let admin = git(checkout.path(), &["rev-parse", "--absolute-git-dir"]);
+    let admin = Path::new(admin.trim_end_matches('\n'));
+    fs::remove_file(admin.join("index")).unwrap();
+    fs::write(admin.join("locked"), "initializing").unwrap();
+    let custody = Arc::new(Custody::default());
+    // The read before the branch delete outlasts the caller.
+    let policy = AbandonAt(Arc::clone(&custody), "for-each-ref");
+    let redactor = Redactor::new([], RedactionRules::common());
+    let job = checkout.job(policy, redactor, |checkout| {
+        checkout.quarantine_initialization(1000)
+    });
+
+    assert!(matches!(job(custody), Err(WorkError::Storage(_))));
+    assert_eq!(
+        git(&repo, &["rev-parse", "ns-task-midway"]).trim_end(),
+        head.as_str()
+    );
+    // The marker keeps the next attempt from starting over.
+    assert!(matches!(
+        checkout.quarantine_initialization(2000),
+        Err(WorkError::QuarantinePending)
+    ));
+}
+
+#[test]
+fn a_missing_work_root_is_unavailable_rather_than_an_absent_checkout() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let head = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-outage")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    let work = checkout.path().ancestors().nth(2).unwrap().to_owned();
+    let away = root.path().join("work-away");
+    fs::rename(&work, &away).unwrap();
+
+    assert!(matches!(checkout.observe(), Err(WorkError::Storage(_))));
+    assert!(matches!(
+        checkout.allocate(&head),
+        Err(WorkError::Storage(_))
+    ));
+    assert!(matches!(checkout.retire(&head), Err(WorkError::Storage(_))));
+    assert!(!work.exists());
+
+    fs::rename(&away, &work).unwrap();
+    assert_eq!(checkout.observe().unwrap(), Workspace::Clean(head));
 }

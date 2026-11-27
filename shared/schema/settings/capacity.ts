@@ -10,8 +10,6 @@ import { hostKindSchema, DEFAULT_HOST_KIND } from "../../host-kind";
 
 export const DEFAULT_PROJECT_LIMIT = 5;
 
-export const DEFAULT_PAPERCUT_PROJECT_LIMIT = 2;
-
 export const DEFAULT_GLOBAL_LIMIT = 32;
 
 /** Host-local dispatch limit overrides, indexed by Queue project key. */
@@ -36,31 +34,6 @@ export const DEFAULT_HOST_CALL_LIMIT = 6;
 
 export const MAX_HOST_CALL_LIMIT = 32;
 
-// Mid-turn stall threshold (Queue reliability): minutes of no agent activity
-// while Paseo still reports the run running before Queue routes it to recovery.
-export const DEFAULT_STALL_THRESHOLD_MINUTES = 30;
-
-export const MAX_STALL_THRESHOLD_MINUTES = 240;
-
-export const DEFAULT_HOLD_REMINDER_MINUTES = 120;
-
-export const DEFAULT_HOLD_ESCALATION_MINUTES = 240;
-
-// Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): how long a host may
-// stay unavailable before each affected project's planner hears once. A shorter
-// outage stays a visible wait only.
-export const DEFAULT_HOST_OUTAGE_NOTICE_MINUTES = 120;
-
-export const MAX_HOST_OUTAGE_NOTICE_MINUTES = 10080;
-
-export const MAX_HOLD_MINUTES = 10080;
-
-// Spec 041: how long a plan lane or a drained board sits before Queue prompts the plan
-// owner, and how long it waits for an answer before the operator's decisions view.
-export const DEFAULT_LANE_DRAIN_MINUTES = 120;
-
-export const DEFAULT_LANE_DRAIN_ESCALATION_MINUTES = 1440;
-
 // Orchestration contract, "Archived thread retention": how long a finished task's
 // archived threads stay on the host before the service's retention pass removes
 // them (Tom, 2026-11-19: "Maybe three days?").
@@ -84,45 +57,10 @@ interface CapacityBound {
 
 /** Spec 006/040/041: every limit Settings owns, bounded and defaulted once. */
 export const capacityBounds = {
-  papercutProjectLimit: {
-    min: 1,
-    max: 32,
-    fallback: DEFAULT_PAPERCUT_PROJECT_LIMIT,
-  },
   hostCallLimit: {
     min: 1,
     max: MAX_HOST_CALL_LIMIT,
     fallback: DEFAULT_HOST_CALL_LIMIT,
-  },
-  stallThresholdMinutes: {
-    min: 1,
-    max: MAX_STALL_THRESHOLD_MINUTES,
-    fallback: DEFAULT_STALL_THRESHOLD_MINUTES,
-  },
-  holdReminderMinutes: {
-    min: 1,
-    max: MAX_HOLD_MINUTES,
-    fallback: DEFAULT_HOLD_REMINDER_MINUTES,
-  },
-  holdEscalationMinutes: {
-    min: 1,
-    max: MAX_HOLD_MINUTES,
-    fallback: DEFAULT_HOLD_ESCALATION_MINUTES,
-  },
-  laneDrainMinutes: {
-    min: 1,
-    max: MAX_HOLD_MINUTES,
-    fallback: DEFAULT_LANE_DRAIN_MINUTES,
-  },
-  laneDrainEscalationMinutes: {
-    min: 1,
-    max: MAX_HOLD_MINUTES,
-    fallback: DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
-  },
-  hostOutageNoticeMinutes: {
-    min: 1,
-    max: MAX_HOST_OUTAGE_NOTICE_MINUTES,
-    fallback: DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
   },
   threadRetentionDays: {
     min: 1,
@@ -151,22 +89,11 @@ const legacyCapacitySchema = z
     globalLimit: z.number().int().min(1).max(64),
     projectLimit: z.number().int().min(1).max(32),
     // Optional so an older caller saving one group never resets the others.
-    papercutProjectLimit: capacityValue("papercutProjectLimit").optional(),
     hostCallLimit: capacityValue("hostCallLimit").optional(),
     // Legacy alias for `hostCallLimit`, from before the limit was host-neutral. An
     // older caller's write still lands; both names in one write must agree, and
     // the write boundary refuses a disagreement (see the journal's apply).
     paseoCallLimit: capacityValue("hostCallLimit").optional(),
-    stallThresholdMinutes: capacityValue("stallThresholdMinutes").optional(),
-    holdReminderMinutes: capacityValue("holdReminderMinutes").optional(),
-    holdEscalationMinutes: capacityValue("holdEscalationMinutes").optional(),
-    laneDrainMinutes: capacityValue("laneDrainMinutes").optional(),
-    laneDrainEscalationMinutes: capacityValue(
-      "laneDrainEscalationMinutes",
-    ).optional(),
-    hostOutageNoticeMinutes: capacityValue(
-      "hostOutageNoticeMinutes",
-    ).optional(),
     threadRetentionDays: capacityValue("threadRetentionDays").optional(),
     threadRetentionIntervalHours: capacityValue(
       "threadRetentionIntervalHours",
@@ -200,14 +127,7 @@ export type CapacityInput = z.infer<typeof capacitySchema>;
 export const capacityAuthorityValuesSchema = legacyCapacitySchema
   .omit({ paseoCallLimit: true })
   .extend({
-    papercutProjectLimit: capacityValue("papercutProjectLimit"),
     hostCallLimit: capacityValue("hostCallLimit"),
-    stallThresholdMinutes: capacityValue("stallThresholdMinutes"),
-    holdReminderMinutes: capacityValue("holdReminderMinutes"),
-    holdEscalationMinutes: capacityValue("holdEscalationMinutes"),
-    laneDrainMinutes: capacityValue("laneDrainMinutes"),
-    laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes"),
-    hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes"),
     threadRetentionDays: capacityValue("threadRetentionDays"),
     threadRetentionIntervalHours: capacityValue("threadRetentionIntervalHours"),
     operatorDefaultHostKind: hostKindSchema.nullable(),
@@ -223,29 +143,8 @@ export type CapacityAuthorityValues = z.infer<
  * bounds, so a limit has one answer wherever it is read.
  */
 export const capacityStateFields = {
-  papercutProjectLimit: capacityValue("papercutProjectLimit").default(
-    capacityBounds.papercutProjectLimit.fallback,
-  ),
   hostCallLimit: capacityValue("hostCallLimit").default(
     capacityBounds.hostCallLimit.fallback,
-  ),
-  stallThresholdMinutes: capacityValue("stallThresholdMinutes").default(
-    capacityBounds.stallThresholdMinutes.fallback,
-  ),
-  holdReminderMinutes: capacityValue("holdReminderMinutes").default(
-    capacityBounds.holdReminderMinutes.fallback,
-  ),
-  holdEscalationMinutes: capacityValue("holdEscalationMinutes").default(
-    capacityBounds.holdEscalationMinutes.fallback,
-  ),
-  laneDrainMinutes: capacityValue("laneDrainMinutes").default(
-    capacityBounds.laneDrainMinutes.fallback,
-  ),
-  laneDrainEscalationMinutes: capacityValue(
-    "laneDrainEscalationMinutes",
-  ).default(capacityBounds.laneDrainEscalationMinutes.fallback),
-  hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes").default(
-    capacityBounds.hostOutageNoticeMinutes.fallback,
   ),
   threadRetentionDays: capacityValue("threadRetentionDays").default(
     capacityBounds.threadRetentionDays.fallback,

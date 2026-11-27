@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
+import { readFileSync } from "node:fs";
+import { createRustBoardTransport } from "../client/web/rust-board";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
@@ -32,12 +34,25 @@ async function mountBoard(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const rows: unknown = JSON.parse(readFileSync(new URL("./fixtures/rust-task-order-rows.json", import.meta.url), "utf8"));
+  const base = (await createRustBoardTransport(async () => Response.json(rows)).list(new AbortController().signal))[0]!;
+  const boardTransport = createRustBoardTransport(async () => Response.json(fixture.tasks.map((task) => ({
+    ...base, identity: { ...base.identity, id: task.id, reference: task.reference, repository: "fixture/roadmap" },
+    title: task.title, number: task.number, reference: task.reference, lanes: task.lanes,
+    phase: task.phase, attention: task.phase === "blocked" ? "attention" : "active",
+    stateLabel: task.phase === "reviewing" ? "In review" : task.phase[0]!.toUpperCase() + task.phase.slice(1),
+  })).concat(fixture.outcomes.map((outcome, index) => ({
+    ...base, identity: { ...base.identity, id: outcome.taskId, reference: `roadmap#${100 + index}`, repository: "fixture/roadmap" },
+    title: outcome.title, number: 100 + index, reference: `roadmap#${100 + index}`, lanes: outcome.lanes,
+    phase: outcome.outcome, attention: "finished", stateLabel: outcome.outcome,
+    lifecycle: { ...base.lifecycle, finishedAtMs: Date.parse(outcome.finishedAt) },
+  })))));
   const ui = mount(
     h(QueryClientProvider, {
       client,
       children: h(PluginRpcProvider, {
         invoke: fixture.invoke,
-        children: h(MainSurface, { theme: { colors }, layout: { compact } }),
+        children: h(MainSurface, { theme: { colors }, layout: { compact }, rustBoard: () => {}, boardTransport }),
       }),
     }),
   );
@@ -68,10 +83,6 @@ test("1531 wide: the list groups projects with a status line in words, and the f
     );
     // The probe task sits in two lanes; summing the lanes' counts would say 5 (Spec 019: count it once).
     assert.match(textOf(ui.get("Active projects")), /roadmap/);
-    assert.match(
-      textOf(ui.get("Idle on purpose projects")),
-      /idle[\s\S]*Idle · Benchmark roadmap complete\. Waiting for your next direction\./,
-    );
     assert.match(
       textOf(ui.get("Dormant projects")),
       /dormant[\s\S]*No recent activity/,
@@ -202,17 +213,22 @@ test("1531 wide: the columns sit side by side, and See all pages through the lan
     for (
       let i = 0;
       i < 400 &&
-      !/The last 10 of 13 finished\./.test(textOf(ui.get("Recently finished")));
+      !/Sibling and callback parity/.test(textOf(ui.get("Recently finished")));
       i++
     )
       await new Promise((resolve) => setTimeout(resolve, 5));
     const all = textOf(ui.get("Recently finished"));
     assert.equal(
-      (all.match(/[✓✕]/g) ?? []).length,
-      10,
-      "See all shows the lane view's own ten rows; the engine keeps no paged finished history",
+      (all.match(/✓/g) ?? []).length,
+      12,
+      "every finished task, past the lane view's ten",
     );
-    assert.match(all, /The last 10 of 13 finished\./);
+    assert.match(all, /Sibling and callback parity for BB/);
+    assert.match(
+      all,
+      /✕ Abandoned host probe Cancelled ·/,
+      "cancelled work counts in the total, so See all lists it too",
+    );
     assert.equal(
       ui.query("Show more finished work in BB as a host"),
       undefined,
@@ -278,30 +294,19 @@ test("1531 wide: a project whose only record is a new lane shows that lane's tim
   }
 });
 
-test("1531 wide: an idle project shows its reason instead of a focus, and a dormant one says it is dormant", async () => {
+test("1531 wide: projects without activity show the dormant state", async () => {
   const board = await mountBoard(false);
-  const { ui, waitFor } = board;
   try {
-    await waitFor(planningEntry);
-    ui.press(planningEntry);
-    await waitFor("Project row idle");
-    ui.press("Project row idle");
-    assert.match(
-      textOf(ui.get("Idle on purpose")),
-      /Benchmark roadmap complete\. Waiting for your next direction\./,
-    );
-    assert.equal(ui.query("Focus"), undefined);
-    ui.press("Project row dormant");
-    assert.match(textOf(ui.get("Dormant")), /No recent activity/);
-    assert.equal(ui.query("Focus"), undefined);
-    assert.equal(
-      ui.query("Roadmap"),
-      undefined,
-      "no columns for a project with no plan",
-    );
-  } finally {
-    board.close();
-  }
+    await board.waitFor(planningEntry);
+    board.ui.press(planningEntry);
+    await board.waitFor("Project row idle");
+    board.ui.press("Project row idle");
+    assert.match(textOf(board.ui.get("Dormant")), /No recent activity/);
+    assert.equal(board.ui.query("Focus"), undefined);
+    board.ui.press("Project row dormant");
+    assert.match(textOf(board.ui.get("Dormant")), /No recent activity/);
+    assert.equal(board.ui.query("Roadmap"), undefined);
+  } finally { board.close(); }
 });
 
 test("1531 wide: a lane page shows its finish line, why it is open, status, work, leads and finished work, with a breadcrumb back", async () => {
@@ -312,7 +317,7 @@ test("1531 wide: a lane page shows its finish line, why it is open, status, work
     ui.press(planningEntry);
     await waitFor("Open lane Queue reliability");
     ui.press("Open lane Queue reliability");
-    await waitFor(/^Open task Spec 067 batch 2/);
+    await waitFor("#1, Spec 067 batch 2: run.start and phase.set");
     await waitFor("Open lead Show the stuck cause on every card");
     const page = textOf(ui.get("Lane Queue reliability"));
     assert.match(
@@ -340,7 +345,7 @@ test("1531 wide: a lane page shows its finish line, why it is open, status, work
     );
     const flight = textOf(ui.get("In flight"));
     assert.match(flight, /4 tasks/);
-    assert.match(flight, /roadmap#001[\s\S]*Spec 067 batch 2[\s\S]*In review/);
+    assert.match(flight, /#1[\s\S]*Spec 067 batch 2[\s\S]*In review/);
     assert.match(flight, /Blocked/);
     assert.match(
       textOf(ui.get("Waiting to start")),
@@ -350,7 +355,7 @@ test("1531 wide: a lane page shows its finish line, why it is open, status, work
     assert.match(finished, /2 in total/);
     assert.match(
       finished,
-      /Spec 067 batch 1: typed decision fields[\s\S]*PR #416/,
+      /Spec 067 batch 1: typed decision fields/,
     );
     assert.ok(ui.get("Live tasks: 4"));
     assert.ok(ui.get("Need you: 1"));

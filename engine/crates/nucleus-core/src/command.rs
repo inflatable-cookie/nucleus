@@ -72,6 +72,8 @@ pub enum CommandError {
     ReportAlreadyReceived,
     ReportPolicyChanged,
     QueuePriorityChanged,
+    MergeHoldOwner,
+    MergeHoldChangeTooLate,
     ReportOwnerAction,
     ReportAcceptanceMismatch,
     ReportInstructionRequired,
@@ -109,6 +111,8 @@ impl fmt::Display for CommandError {
             Self::QueuePriorityChanged => {
                 "queue.priority is read at admission only; use promote or demote commands"
             }
+            Self::MergeHoldOwner => "the planner who placed the merge hold or the operator must release it",
+            Self::MergeHoldChangeTooLate => "the brief's merge hold cannot change once merging has started; use nucleus release REF to lift it",
             Self::ReportOwnerAction => {
                 "use complete to accept the delivered report or move to work with an instruction"
             }
@@ -187,6 +191,9 @@ impl Task {
         let run = self.settle_run(observation);
         if run.as_ref().is_some_and(|run| run.revoked) {
             return;
+        }
+        if self.phase != phase {
+            self.threads.missing_report_from = None;
         }
         let reminder_cause = run
             .as_ref()
@@ -496,17 +503,19 @@ impl Task {
 
     /// Retire a proven unsent reservation so another subscription can be selected.
     pub fn discard_paused_reservation(&mut self, observation: &Observation) -> bool {
-        let unsent = self.run.as_ref().is_some_and(|run| {
+        let Some(run) = self.run.as_ref().filter(|run| {
             !run.revoked
                 && run.last_send_at_ms.is_none()
                 && run.report.is_none()
-                && run.report_reminder_for().is_none()
                 && observation.current(&run.launch.instance) == Some(RunState::ReadyToSend)
-        });
-        if unsent {
-            self.run = None;
+        }) else {
+            return false;
+        };
+        if let Some(original) = &run.report_reminder_for {
+            self.threads.missing_report_from = Some(original.clone());
         }
-        unsent
+        self.run = None;
+        true
     }
 
     /// Obtain the ID the next reservation will use so the caller can freeze its wire.
@@ -577,6 +586,7 @@ impl Task {
         }
         run.last_send_at_ms = Some(now_ms);
         self.threads.bind(&run.launch);
+        self.threads.missing_report_from = None;
         Ok(())
     }
 
@@ -774,9 +784,56 @@ impl Task {
                         Authority::Operator { .. } => HoldBy::Operator,
                         Authority::Planner { .. } => HoldBy::Planner,
                     }),
+                    actor: None,
+                    since_ms: None,
                 });
             }
-            Command::Release => self.hold = None,
+            Command::Release => {
+                if self.hold.is_some() {
+                    self.hold = None;
+                } else {
+                    self.check_merge_hold_owner(authority)?;
+                    self.merge_hold = None;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply the validated merge hold declaration at admission or when it changes.
+    ///
+    /// # Errors
+    /// Returns an error if a change would override another owner's hold or
+    /// if the task has already reached merging.
+    pub fn set_brief_merge_hold(
+        &mut self,
+        reason: Option<&str>,
+        authority: &Authority,
+        since_ms: u64,
+    ) -> Result<(), CommandError> {
+        if matches!(self.phase, Phase::Merging | Phase::Closing) || self.phase.is_terminal() {
+            return Err(CommandError::MergeHoldChangeTooLate);
+        }
+        self.check_merge_hold_owner(authority)?;
+        let (by, actor) = match authority {
+            Authority::Operator { actor } => (HoldBy::Operator, actor),
+            Authority::Planner { actor } => (HoldBy::Planner, actor),
+        };
+        self.merge_hold = reason.map(|reason| Hold {
+            reason: reason.into(),
+            by: Some(by),
+            actor: Some(actor.clone()),
+            since_ms: Some(since_ms),
+        });
+        Ok(())
+    }
+
+    fn check_merge_hold_owner(&self, authority: &Authority) -> Result<(), CommandError> {
+        if let Authority::Planner { actor } = authority
+            && let Some(hold) = &self.merge_hold
+            && (hold.by != Some(HoldBy::Planner) || hold.actor.as_ref() != Some(actor))
+        {
+            return Err(CommandError::MergeHoldOwner);
         }
         Ok(())
     }
@@ -856,6 +913,7 @@ impl Task {
         self.attempts = 0;
         self.question = None;
         self.work_continuation = None;
+        self.threads.missing_report_from = None;
     }
 
     fn check_move(&self, phase: Phase, observation: &Observation) -> Result<(), CommandError> {

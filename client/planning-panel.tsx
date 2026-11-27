@@ -10,7 +10,6 @@ import {
 import type {
   LaneView,
   LeadListFacts,
-  PlanningTriage,
   Project,
   ProjectPlan,
   TaskSummary,
@@ -24,7 +23,6 @@ import {
 } from "../shared/lane-finder";
 import { effectiveSelection } from "../shared/project-scope";
 import {
-  activeSteps,
   movePlan,
   planDraftStale,
   planningPlan,
@@ -74,7 +72,6 @@ import {
   projectStatusParts,
 } from "../shared/planning-read";
 import type { ProjectBadge } from "../shared/t3/project-badge";
-import { ProjectTriage } from "./planning-triage";
 import {
   Breadcrumb,
   GroupHeader,
@@ -89,22 +86,19 @@ export type PlanSection = {
   project: Project;
   latest?: ProjectPlan;
   saved?: ProjectPlan;
-  triage?: PlanningTriage;
   error?: string;
 };
-/** A draft: the order, horizons and idle change the operator is making, and the version it was based on. See `PlanDraft`. */
+/** A draft: the order and horizons the operator is making, and the version it was based on. See `PlanDraft`. */
 export type PlanEdit = PlanDraft;
 
 const HORIZONS = ["now", "next", "later"] as const;
 const horizonTitle = (horizon: PlanEntry["horizon"]) =>
   horizon[0].toUpperCase() + horizon.slice(1);
 const day = (value: string | null) => value?.slice(0, 10) ?? "No activity";
-/** What ends an idle mark. Said in one place so the read and edit copy never drift. */
-const IDLE_ENDS = "Saving a changed plan or finishing new work ends it.";
 
 /**
  * The plan editor (nucleus#1531 keeps it unchanged until its own redesign): the roadmap's
- * "Edit plan" opens a draft here with move controls, Save and Cancel, the idle mark and the
+ * "Edit plan" opens a draft here with move controls, Save and Cancel, and the
  * unplanned lanes. The draft is kept when the plan changes underneath it; Reapply or Reload
  * settles it. Reading is the roadmap (`planning-roadmap.tsx`).
  */
@@ -152,9 +146,7 @@ function PlanEditor({
     [showUnplanned, setShowUnplanned] = useState(false);
   // Marking a lane done always asks first (nucleus#1536); closing the dialog cancels.
   const [confirmLane, setConfirmLane] = useState<string | null>(null);
-  const [moveOpen, setMoveOpen] = useState<string | null>(null),
-    [showIdle, setShowIdle] = useState(false);
-  const [idleReason, setIdleReason] = useState("");
+  const [moveOpen, setMoveOpen] = useState<string | null>(null);
   const { project, latest, saved, error } = section;
   const name = project.name;
   const r = roles(c);
@@ -169,14 +161,7 @@ function PlanEditor({
   const editing = Boolean(edit);
   const pending = edit?.entries ?? basePlan;
   const stale = Boolean(edit && planDraftStale(edit.version, latest));
-  // Ending an existing mark is a change; a draft that leaves the mark alone is not.
-  const idleChanged =
-    typeof edit?.idle === "string" ||
-    (edit?.idle === null && Boolean(latest?.idle));
-  const changed = Boolean(
-    edit && (!sameOrder(edit.entries, basePlan) || idleChanged),
-  );
-  const active = activeSteps(pending);
+  const changed = Boolean(edit && !sameOrder(edit.entries, basePlan));
   const saveError = saveErrors?.[project.key];
   // Save is refused, with the reason shown, rather than sent and failed.
   const saveBlock = !edit
@@ -185,9 +170,7 @@ function PlanEditor({
       ? "The plan changed. Reapply or reload before saving."
       : !changed
         ? "No changes to save."
-        : typeof edit.idle === "string" && active.length
-          ? "An idle plan has no Now or Next steps. Move them to Later or clear idle."
-          : "";
+        : "";
   const change = (patch: Partial<PlanEdit>) => {
     if (edit) onEdit(project.key, { ...edit, ...patch });
   };
@@ -367,137 +350,6 @@ function PlanEditor({
       </View>
     );
   };
-  // Idle is a deliberate mark for a plan with nothing in Now or Next. Without that, the draft says how to get there.
-  const idleEditor = () => {
-    if (typeof edit?.idle === "string")
-      return (
-        <View style={{ gap: space.xs }}>
-          <Text
-            accessibilityLabel={`Idle on purpose in draft: ${edit.idle}`}
-            style={{
-              color: r.foreground,
-              fontSize: type.body.fontSize,
-              lineHeight: type.body.lineHeight,
-            }}
-          >
-            Idle on purpose: {edit.idle}. {IDLE_ENDS}
-          </Text>
-          <View style={row}>
-            <Button
-              small
-              c={c}
-              text="Remove idle mark"
-              label={`Remove idle mark from ${name} draft`}
-              disabled={busy}
-              onPress={() => change({ idle: undefined })}
-            />
-          </View>
-        </View>
-      );
-    // The saved plan is idle and the draft leaves that alone: ending it is an explicit choice, and the save then carries no mark.
-    if (edit?.idle === null)
-      return (
-        <View style={{ gap: space.xs }}>
-          <Text style={muted(c)}>
-            The idle mark ends when you save this plan.
-          </Text>
-          <View style={row}>
-            <Button
-              small
-              c={c}
-              text="Keep idle"
-              label={`Keep ${name} idle`}
-              disabled={busy}
-              onPress={() => change({ idle: undefined })}
-            />
-          </View>
-        </View>
-      );
-    if (latest?.idle)
-      return (
-        <View style={{ gap: space.xs }}>
-          <Text
-            accessibilityLabel={`Idle on purpose: ${latest.idle.reason}`}
-            style={{
-              color: r.foreground,
-              fontSize: type.body.fontSize,
-              lineHeight: type.body.lineHeight,
-            }}
-          >
-            Idle on purpose since {day(latest.idle.at)}: {latest.idle.reason}.{" "}
-            {IDLE_ENDS}
-          </Text>
-          <View style={row}>
-            <Button
-              small
-              c={c}
-              text="End idle"
-              label={`End idle mark on ${name} plan`}
-              disabled={busy}
-              onPress={() => change({ idle: null })}
-            />
-          </View>
-        </View>
-      );
-    if (active.length) {
-      const now = active.filter((item) => item.horizon === "now").length,
-        next = active.filter((item) => item.horizon === "next").length;
-      const counted = [now && `${now} Now`, next && `${next} Next`]
-        .filter(Boolean)
-        .join(" and ");
-      return (
-        <View style={{ gap: space.xs }}>
-          <Text style={muted(c)}>
-            Idle is for a plan with nothing in Now or Next. To go idle, move the{" "}
-            {counted} {active.length === 1 ? "step" : "steps"} to Later first.
-          </Text>
-          <View style={row}>
-            <Button
-              small
-              c={c}
-              text="Move all to Later"
-              label={`Move all ${name} steps to Later`}
-              disabled={busy}
-              onPress={() =>
-                change({
-                  entries: pending.map((item) => ({
-                    ...item,
-                    horizon: "later" as const,
-                  })),
-                })
-              }
-            />
-          </View>
-        </View>
-      );
-    }
-    return (
-      <View style={{ gap: space.xs }}>
-        <Field
-          label="Idle reason"
-          placeholder="Why nothing is planned now"
-          value={idleReason}
-          onChange={(value) => setIdleReason(value.slice(0, 300))}
-          c={c}
-          detail={`Idle is for a plan with nothing in Now or Next. ${IDLE_ENDS}`}
-          disabled={busy}
-        />
-        <View style={row}>
-          <Button
-            small
-            c={c}
-            text="Mark plan idle"
-            label={`Mark ${name} plan idle`}
-            disabled={busy || !idleReason.trim()}
-            onPress={() => {
-              change({ idle: idleReason.trim() });
-              setIdleReason("");
-            }}
-          />
-        </View>
-      </View>
-    );
-  };
   const panelBox = {
     gap: space.xs,
     padding: space.sm,
@@ -671,29 +523,6 @@ function PlanEditor({
           ) : (
             <Text style={muted(c)}>Version {latest.version}</Text>
           )}
-          {!edit && latest.idle && (
-            <Text
-              accessibilityLabel={`Idle on purpose: ${latest.idle.reason}`}
-              style={{ color: c.foreground, fontSize: type.metadata.fontSize }}
-            >
-              Idle on purpose since {day(latest.idle.at)}: {latest.idle.reason}.{" "}
-              {IDLE_ENDS}
-            </Text>
-          )}
-          {edit && (
-            <View style={{ gap: space.xs }}>
-              <View style={row}>
-                <Button
-                  small
-                  c={c}
-                  text={showIdle ? "Hide idle options" : "Idle options"}
-                  label={`${showIdle ? "Hide" : "Show"} idle options for ${name} plan`}
-                  onPress={() => setShowIdle(!showIdle)}
-                />
-              </View>
-              {showIdle && idleEditor()}
-            </View>
-          )}
           {!latest.version && !pending.length && (
             <Text style={muted(c)}>
               No plan yet.
@@ -836,14 +665,7 @@ function PlanEditor({
           )}
         </>
       )}
-      {section.triage && (
-        <ProjectTriage
-          project={name}
-          triage={section.triage}
-          onOpenTask={onOpenTask}
-          c={c}
-        />
-      )}
+
       {confirmLane && onCloseLane && (
         <MarkDoneConfirm
           c={c}
@@ -1268,8 +1090,8 @@ export function PlanningTab({
   // roadmap in place and the lane page opens in the modal (below 1100 points).
   const twoPane = !inbox.laneModal;
   const groupOf = (section: PlanSection) =>
-    projectGroup(section.latest, activityByKey.get(section.project.key), nowMs);
-  const ordered = (["active", "idle", "dormant"] as const).flatMap((group) =>
+    projectGroup(activityByKey.get(section.project.key), nowMs);
+  const ordered = (["active", "dormant"] as const).flatMap((group) =>
     sections.filter((section) => groupOf(section) === group),
   );
   const laneOpen = Boolean(selectedLane) && step === "lane";
@@ -1321,7 +1143,6 @@ export function PlanningTab({
       return { ...base, state: { kind: "loading" } };
     const parts = projectStatusParts(
       group,
-      section.latest,
       { ...projectStatus({
         project: section.project,
         plan: section.latest,
@@ -1458,7 +1279,7 @@ export function PlanningTab({
       {!sections.length && (
         <Text style={{ ...muted(c), padding: space.md }}>No projects yet.</Text>
       )}
-      {(["active", "idle", "dormant"] as const).map((group) => {
+      {(["active", "dormant"] as const).map((group) => {
         const members = ordered.filter((section) => groupOf(section) === group);
         if (!members.length) return null;
         return (

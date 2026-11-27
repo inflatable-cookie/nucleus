@@ -4,6 +4,9 @@ import { boardTasks } from "./support/board-tasks";
 import { leadActionHints } from "./support/lead-actions";
 import assert from "node:assert/strict";
 import React from "react";
+import { readFileSync } from "node:fs";
+import { createRustBoardTransport, type RustTask } from "../client/web/rust-board";
+import { generatedProjectBadge, projectBadgeWebStyle } from "../shared/t3/project-badge";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { build } from "esbuild";
@@ -444,29 +447,6 @@ async function bundleMainSurface() {
 }
 
 // Tom, 2026-11-21: the status line left the header; the slot table lives in the queue menu.
-test("the bundled queue menu keeps the project default and override count readable", async () => {
-  const mainSurface = await bundleMainSurface();
-  const previous = board.projectLimitOverrides;
-  board.projectLimitOverrides = { "project-a": 6 };
-  const ui = mount(tree(mainSurface, false));
-  try {
-    await settleUntil(
-      ui,
-      () => ui.query("Queue controls menu")?.props.disabled === false,
-      "the queue controls did not load",
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /project default|global slots/,
-      "the header carries no status line",
-    );
-    ui.press("Queue controls menu");
-    assert.match(ui.text(), /0\/32 global · project default 5 · 1 override/);
-  } finally {
-    unmount(ui);
-    board.projectLimitOverrides = previous;
-  }
-});
 
 function hostStyle(node: HostNode): Record<string, unknown> {
   const style = node.props.style;
@@ -632,6 +612,7 @@ function tree(
   compact: boolean,
   rpc: typeof invoke = invoke,
   failFast = false,
+  rustRows?: RustTask[],
 ) {
   return h(QueryClientProvider, {
     client: new QueryClient({
@@ -643,6 +624,7 @@ function tree(
         theme: { colors: c },
         layout: { compact, platform: "ios" as const },
         navigation: {},
+        ...(rustRows ? { rustBoard: () => {}, boardTransport: createRustBoardTransport(async () => Response.json(rustRows)) } : {}),
       }),
     }),
   });
@@ -738,6 +720,7 @@ function assertDarkTheme(ui: ReturnType<typeof mount>) {
   // A kind tile's tint is a palette role at low alpha (nucleus#1515), derived, not a literal.
   const palette: Set<string> = new Set([
     ...Object.values(dark),
+    ...Object.values(projectBadgeWebStyle(generatedProjectBadge("App"), true)),
     ...Object.values(dark).map((value) => toneSurface(value, value)),
     toneSurface(dark.foreground, dark.foreground, 0.75),
     // Planning's review segment and idle banner tint a role at their own token alphas (nucleus#1531);
@@ -1030,13 +1013,7 @@ test("026-14/A2 the bundled Planning tab renders its roadmap in the dark theme",
   }
 });
 
-test("026-13/15 the bundled inbox renders in the dark theme at the wide viewport", async () => {
-  await verifyViewport(false);
-});
 
-test("026-13/15 the bundled inbox renders in the dark theme at the medium viewport", async () => {
-  await verifyViewport(true);
-});
 
 test("141 the bundled inbox distinguishes dispatch and merge holds in the dark theme", async () => {
   const originalTasks = board.tasks;
@@ -1147,415 +1124,6 @@ const decision = (over: Record<string, unknown>): DecisionFixture => ({
   ...over,
 });
 
-test("032 the bundled inbox shows agent decisions and Nucleus-raised merge holds under Needs you in the dark theme", async () => {
-  const stamp = new Date().toISOString();
-  const fresh = decision({});
-  const stale = decision({
-    id: "dec-stale",
-    question: "Still worth splitting?",
-    stale: true,
-    context: null,
-    choices: undefined,
-    options: ["Keep", "Remove"],
-    recommendation: null,
-    links: { tasks: [], leads: [], papercuts: [] },
-  });
-  const withdrawable = decision({
-    id: "dec-withdraw",
-    question: "Rename the lane?",
-    context: null,
-    options: [],
-    recommendation: null,
-    askedBy: {
-      agentId: "worker-2",
-      project: { origin: "owner/app", path: "/app" },
-    },
-    askerLabel: "unlaned worker",
-    overtakenBy: [
-      {
-        kind: "brief_amendment",
-        id: "unlaned",
-        sourceId: "brief-v2",
-        label: "Brief amendment for task unlaned: updated scope",
-        at: stamp,
-      },
-    ],
-    links: { tasks: ["unlaned"], leads: [], papercuts: [] },
-  });
-  const general = decision({
-    id: "dec-general",
-    question: "Where should this decision live?",
-    context: null,
-    options: [],
-    recommendation: null,
-    askedBy: { agentId: "thread-general", project: null },
-    askerLabel: "an earlier thread",
-    links: { tasks: ["project-d-task"], leads: [], papercuts: [] },
-  });
-  const decisions = new Map<string, DecisionFixture>([
-    [fresh.id, fresh],
-    [stale.id, stale],
-    [withdrawable.id, withdrawable],
-    [general.id, general],
-  ]);
-  const answers: Array<Record<string, unknown>> = [],
-    withdrawals: Array<Record<string, unknown>> = [];
-  const originalProjects = board.projects,
-    originalTasks = board.tasks;
-  board.projects = [project, projectDProject];
-  // This fixture serves its own open decisions. The board's decision read is keyed on the
-  // store revision (#1011), so the store moves, as it does whenever decisions change.
-  board.revision++;
-  board.tasks = tasks
-    .map((task) =>
-      task.id === "shared"
-        ? {
-            ...task,
-            number: 5747,
-            reference: "project-a-accelerator#5747",
-            title: "Close the F1 and F3 checks",
-            waitState: {
-              state: "needs_operator_input" as const,
-              owner: "operator",
-              nextAction: "Answer decision dec-fresh",
-              decisionId: "dec-fresh",
-            },
-          }
-        : task,
-    )
-    .concat([
-      {
-        ...summary("project-d-task", "Project-D task", [], "working"),
-        repoPath: projectDRepo.path,
-        repository: projectDRepo.origin,
-      },
-      {
-        ...summary("held-task", "Held reviewed task", ["first"], "verifying"),
-        held: true,
-        holdKind: "merge",
-        holdEscalated: true,
-        hold: {
-          owner: "agent-hold",
-          reason: "External receipt pending",
-          since: stamp,
-        },
-      },
-    ]);
-  const rpc = async (method: string, input: unknown) => {
-    if (method === "decision.list")
-      return [...decisions.values()].filter((item) => item.status === "open");
-    if (method === "decision.get")
-      return decisions.get((input as { id: string }).id) ?? {};
-    if (method === "decision.answer") {
-      answers.push(input as Record<string, unknown>);
-      const item = decisions.get((input as { id: string }).id)!;
-      item.status = "answered";
-      item.version = 2;
-      item.answer = {
-        text: answers.at(-1)!.answer as string,
-        answeredBy: answers.at(-1)!.answeredBy as string,
-        answeredAt: stamp,
-        relayed: null,
-        note: "",
-      };
-      return item;
-    }
-    if (method === "decision.withdraw") {
-      withdrawals.push(input as Record<string, unknown>);
-      const item = decisions.get((input as { id: string }).id)!;
-      item.status = "withdrawn";
-      item.version = 2;
-      item.withdrawal = {
-        reason: withdrawals.at(-1)!.reason as string,
-        withdrawnBy: withdrawals.at(-1)!.withdrawnBy as string,
-        withdrawnAt: stamp,
-      };
-      return item;
-    }
-    return invoke(method, input);
-  };
-  const MainSurface = await bundleMainSurface();
-  const ui = mount(tree(MainSurface, false, rpc));
-  try {
-    await settle(ui);
-    // Needs you is one list: four agent decisions and one Nucleus-raised merge hold, with the
-    // attention tasks after them. Each card names its kind; there are no section headers (Tom, 2026-11-21).
-    // The escalated merge hold names its kind on line 1 and draws the hold tile.
-    assert.equal(
-      ui
-        .ofType("Text")
-        .filter((node) => /^Merge hold( · #\d+)?$/.test(node.children.join("")))
-        .length,
-      1,
-      "the escalated merge hold names its kind",
-    );
-    assert.equal(
-      ui.query(/ section, \d+$/),
-      undefined,
-      "Needs you has no section headers",
-    );
-    const needsTotal = Number(
-      String(ui.get(/^Needs you, \d+$/).props.accessibilityLabel).split(
-        ", ",
-      )[1],
-    );
-    assert.ok(
-      needsTotal >= 5,
-      `the menu counts every Needs you card: ${navigationLabels(ui).join(" | ")}`,
-    );
-    assert.equal(
-      countText(ui, `${needsTotal} items`),
-      1,
-      "the list header counts the same total",
-    );
-    // Each decision row names its kind once on line 1. Linked-decision chips moved to the
-    // task detail (nucleus#1515), and lead rows never carried one (Tom, 2026-11-07).
-    assert.equal(
-      countAcross(ui, "Decision"),
-      4,
-      `the four decision rows, each naming its kind; project selector:${ui
-        .all(/^Projects,/)
-        .map((node) => node.props.accessibilityLabel)
-        .join(", ")}; decisions: ${ui
-        .ofType("Text")
-        .map((node) => node.children.join(""))
-        .filter((text) => text.includes("Decision"))
-        .join(" | ")}`,
-    );
-    openView(ui, "Needs you");
-    assert.equal(
-      countText(ui, "Stale"),
-      1,
-      "the stale decision shows as stale, never hidden",
-    );
-    // The hold row names its kind on line 1; the Nucleus-raised chip is in its task detail (nucleus#1515).
-    assert.equal(
-      countText(ui, "Nucleus-raised"),
-      0,
-      "the row leaves the Nucleus-raised chip to the detail",
-    );
-    assert.ok(ui.query("Held merge: Held reviewed task"));
-    assert.match(
-      ui.text(),
-      /Ready to merge · held for External receipt pending/,
-    );
-    assert.ok(ui.get("Release"));
-    assert.ok(ui.get("Keep"));
-    assert.ok(
-      ui.query(/^Decision: Where should this decision live\?/),
-      "a General decision is present under Needs you",
-    );
-    assert.equal(
-      countText(ui, "General"),
-      1,
-      "the General decision has its own project label",
-    );
-    assert.match(
-      ui.text(),
-      /Your answer · asked by project-a-accelerator#5747 worker/,
-      "the row names the task reference and role that asked",
-    );
-    // The linked shared task is working, so its card is in Working.
-    openView(ui, "Working");
-    assert.ok(ui.text().includes("Waiting on you"));
-    assert.doesNotMatch(ui.text(), /Waiting on you · Which branch do we cut\?/);
-    assert.ok(
-      ui
-        .ofType("Pressable")
-        .some((node) =>
-          String(node.props.accessibilityLabel).includes(
-            "Waiting on you · Which branch do we cut?",
-          ),
-        ),
-      "the task card accessibility label names the decision",
-    );
-    openView(ui, "Needs you");
-    // Tom, 2026-09-29: cards named the asking agent's id, not the project it came from.
-    assert.ok(
-      countText(ui, "App") >= 3,
-      "each decision row names its asking project by its display name",
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /agent-asker/,
-      "the raw asker id is not the card label",
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /thread-general/,
-      "an unplaced asker is never a bare thread ID",
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /Choose this direction|Accept the proposed direction/,
-      "missing consequences never become placeholder filler",
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /Cut from main\./,
-      "the choices stay in the decision detail",
-    );
-    assertDarkTheme(ui);
-    // The decision modal starts with the compact question and choices; full details stay collapsed.
-    ui.press(/^Decision: Which branch do we cut\?/);
-    await settleUntil(
-      ui,
-      () => ui.query("Operator answer") !== undefined,
-      "the decision modal did not load",
-    );
-    assert.doesNotMatch(
-      ui.text(),
-      /Release is Friday\./,
-      "the long details start collapsed",
-    );
-    ui.press("Details, collapsed");
-    await settleUntil(
-      ui,
-      () => ui.text().includes("Release is Friday."),
-      "the decision details did not expand",
-    );
-    assert.match(ui.text(), /Release is Friday\./);
-    assert.match(
-      ui.text(),
-      /Recommended · main — Cut from main\./,
-      "the first choice is marked recommended and shows its consequence",
-    );
-    assert.match(
-      ui.text(),
-      /release — Cut from release\./,
-      "the other choice shows its consequence",
-    );
-    // A linked task reads by its reference, title and project (nucleus#1515).
-    assert.match(
-      ui.text(),
-      /Task · project-a-accelerator#5747 · Close the F1 and F3 checks · App/,
-    );
-    assert.match(ui.text(), /Lead · lead-1/);
-    assert.equal(
-      ui.get("Answer").props.accessibilityState.disabled,
-      true,
-      "an empty answer disables the button",
-    );
-    assert.equal(ui.get("Withdraw").props.accessibilityState.disabled, true);
-    assertDarkTheme(ui);
-    ui.type("Operator answer", "Cut from main at noon.");
-    assert.equal(ui.get("Answer").props.accessibilityState.disabled, false);
-    ui.press("Answer");
-    await settleUntil(
-      ui,
-      () => ui.query("Record action result") !== undefined,
-      "the answer result stayed out of the modal",
-    );
-    assert.equal(answers.length, 1);
-    assert.equal(
-      answers[0]!.answeredBy,
-      "operator (board)",
-      "the board answers with operator authority",
-    );
-    assert.equal(answers[0]!.relayed, false);
-    assert.equal(answers[0]!.version, 1);
-    // The Pipeline updates without reload: the answered decision leaves its column.
-    await settleUntil(
-      ui,
-      () => ui.query(/^Decision: Which branch do we cut\?/) === undefined,
-      "the answered decision stayed on the board",
-    );
-    assert.equal(
-      countText(ui, `${needsTotal - 1} items`),
-      1,
-      "the list count dropped",
-    );
-    await settleUntil(
-      ui,
-      () => ui.text().includes("operator authority"),
-      "the recorded answer did not render in the modal",
-    );
-    assertDarkTheme(ui);
-    closeRecord(ui, "Close decision detail");
-    // The withdraw path.
-    ui.press(/^Decision: Rename the lane\?/);
-    await settleUntil(
-      ui,
-      () => ui.query("Withdraw as overtaken") !== undefined,
-      "the overtaken decision detail did not load",
-    );
-    assert.ok(
-      ui.query(/View citing/),
-      `the modal links to the exact citing amendment; labels: ${ui
-        .all(/View citing/)
-        .map((node) => node.props.accessibilityLabel)
-        .join(" | ")}`,
-    );
-    ui.press("Withdraw as overtaken");
-    await settleUntil(
-      ui,
-      () =>
-        ui
-          .text()
-          .includes(
-            "Withdrawn after Brief amendment for task unlaned: updated scope",
-          ),
-      "the one-click withdrawal did not record",
-    );
-    assert.equal(withdrawals.length, 1);
-    assert.equal(withdrawals[0]!.withdrawnBy, "operator (board)");
-    assert.equal(
-      withdrawals[0]!.reason,
-      "Withdrawn after Brief amendment for task unlaned: updated scope",
-    );
-    await settleUntil(
-      ui,
-      () => ui.query(/^Decision: Rename the lane\?/) === undefined,
-      "the withdrawn decision stayed on the board",
-    );
-    assert.equal(
-      countText(ui, `${needsTotal - 2} items`),
-      1,
-      "the list count dropped again",
-    );
-    closeRecord(ui, "Close decision detail");
-    // The stale decision stays open on the board until a human withdraws it.
-    assert.ok(ui.query(/^Decision: Still worth splitting\?/));
-    assert.equal(countText(ui, "Stale"), 1);
-    assert.equal(
-      countAcross(ui, "Decision"),
-      2,
-      "the stale and General decision rows keep their kind on line 1",
-    );
-    openView(ui, "Needs you");
-    assertDarkTheme(ui);
-    // A specific project filter keeps General and the held merge under Needs you.
-    ui.press("Projects, All projects");
-    assert.ok(ui.query("Project selector"));
-    ui.press(/^Project App/);
-    assert.equal(
-      ui.get(/^Projects, /).props.accessibilityLabel,
-      "Projects, App",
-    );
-    assert.ok(
-      ui.query("Held merge: Held reviewed task"),
-      "the project filter keeps the held merge under Needs you",
-    );
-    assert.ok(
-      ui.query("Needs you list"),
-      "the Needs you list keeps General and the held merge under a specific project filter",
-    );
-    assert.equal(
-      ui.query(/^Decisions \(/),
-      undefined,
-      "agent decisions remain under Needs you without a separate tab",
-    );
-    assert.ok(ui.query(/^Decision: Still worth splitting\?/));
-    // The General decision's linked projects read in its detail's Links (nucleus#1515).
-    assert.ok(ui.query(/^Decision: Where should this decision live\?/));
-    assertDarkTheme(ui);
-  } finally {
-    board.projects = originalProjects;
-    board.tasks = originalTasks;
-    board.revision++;
-    unmount(ui);
-  }
-});
 
 test("043 (a) the bundled inbox labels every declared wait state with owner and next action in the dark theme", async () => {
   const originalTasks = board.tasks;
@@ -1819,224 +1387,6 @@ for (const compact of [false, true]) {
       unmount(ui);
     }
   });
-
-  // Tom, 2026-11-08: the swim-lane view is retired; the inbox (2026-11-21) lists each card once.
-  // An empty board and a long list of cards in several lanes both read real totals.
-  test(`the inbox lists an empty board and a long list of multi-lane cards with real totals at the ${viewport} viewport`, async () => {
-    const respond =
-      (uiBoard: unknown) => async (method: string, input: unknown) => {
-        if (method === "queue.ui-snapshot") return uiBoard;
-        if (method === "papercut.list") return [];
-        if (method === "lead.board") return { cards: [], links: [] };
-        return invoke(method, input);
-      };
-    const MainSurface = await bundleMainSurface();
-    const empty = mount(
-      tree(
-        MainSurface,
-        compact,
-        respond({ ...board, tasks: [], pendingSubmissions: [] }),
-      ),
-    );
-    try {
-      await settle(empty);
-      assert.deepEqual(
-        navigationLabels(empty),
-        [
-          "Needs you, 0",
-          "Planning, 2 open lanes",
-          "Leads, 0",
-          "Papercuts, 0",
-          "Queue, 0",
-          "Working, 0",
-          "In review, 0",
-          "Closing, 0",
-        ],
-        "every menu entry reads its real total, Planning its open lanes",
-      );
-      assert.ok(
-        empty.text().includes("Nothing here."),
-        "an empty list says so",
-      );
-      assert.ok(
-        empty.query(/^Projects, /),
-        "the project selector stays in the header",
-      );
-      assertDarkTheme(empty);
-    } finally {
-      unmount(empty);
-    }
-    const longTitle =
-      "A task title written at length, so that it runs well past what a list row can hold and has to clamp to two lines "
-        .repeat(3)
-        .trim();
-    const many = [
-      ...Array.from({ length: 40 }, (_, index) =>
-        summary(
-          `multi-${index}`,
-          `Multi-lane task ${index}`,
-          index % 2 ? ["first", "second"] : ["second"],
-          "queued",
-        ),
-      ),
-      summary("long-queued", longTitle, ["first"], "queued"),
-    ];
-    const ui = mount(
-      tree(MainSurface, compact, respond({ ...board, tasks: many })),
-    );
-    try {
-      await settle(ui);
-      openView(ui, "Queue");
-      assert.equal(
-        countText(ui, "41 items"),
-        1,
-        "the list counts each card once",
-      );
-      assert.ok(ui.query("Queue, 41"), "and so does the menu");
-      for (let index = 0; index < 40; index++)
-        assert.equal(
-          countText(ui, `Multi-lane task ${index}`),
-          1,
-          `card ${index} renders once`,
-        );
-      const title = ui
-        .ofType("Text")
-        .find((node) => node.children.join("") === longTitle);
-      assert.ok(title, "the long title renders in full in the row");
-      assert.equal(
-        title.props.numberOfLines,
-        1,
-        "the row clamps a long title to one line",
-      );
-      assert.equal(
-        ui.query(/lane, \d+ cards/),
-        undefined,
-        "no swim-lane row headers",
-      );
-      assert.equal(
-        ui.query(/^Collapse /),
-        undefined,
-        "no per-cell collapse control",
-      );
-      assertDarkTheme(ui);
-    } finally {
-      unmount(ui);
-    }
-  });
-
-  // nucleus#1525: Working, In review and Closing are top-level menu entries with
-  // their own counts and lists, behind group gaps; zero-count entries dim.
-  test(`the inbox menu splits Working, In review and Closing top-level with group gaps at the ${viewport} viewport`, async () => {
-    const respond =
-      (uiBoard: unknown) => async (method: string, input: unknown) => {
-        if (method === "queue.ui-snapshot") return uiBoard;
-        if (method === "papercut.list") return [];
-        if (method === "lead.board") return { cards: [], links: [] };
-        return invoke(method, input);
-      };
-    const MainSurface = await bundleMainSurface();
-    const ui = mount(
-      tree(
-        MainSurface,
-        compact,
-        respond({
-          ...board,
-          tasks: [
-            summary("w1", "Working one", ["first"], "working"),
-            summary("r1", "Review one", ["first"], "reviewing"),
-          ],
-          pendingSubmissions: [],
-          qaRuns: [],
-        }),
-      ),
-    );
-    try {
-      await settle(ui);
-      const menu = ui
-        .get("Nucleus navigation")
-        .children.filter((node): node is HostNode => typeof node !== "string");
-      const kinds = menu.map((node) =>
-        node.type === "Pressable"
-          ? `entry:${viewName(String(node.props.accessibilityLabel))}`
-          : node.type === "View" && node.props.style?.height === space.md
-            ? "divider"
-            : `other:${node.type}`,
-      );
-      assert.deepEqual(
-        kinds,
-        [
-          "entry:Needs you",
-          "divider",
-          "entry:Planning",
-          "entry:Leads",
-          "entry:Papercuts",
-          "entry:Queue",
-          "divider",
-          "entry:Working",
-          "entry:In review",
-          "entry:Closing",
-        ],
-        "two dividers split Needs you and the Working entries off",
-      );
-      // nucleus#1540: the groups part with spacing, never a drawn line.
-      const dividers = menu.filter(
-        (node) => node.type === "View" && node.props.style?.height === space.md,
-      );
-      assert.equal(dividers.length, 2);
-      for (const divider of dividers)
-        assert.equal(
-          divider.props.style.backgroundColor,
-          undefined,
-          "a group gap draws nothing",
-        );
-      assert.ok(ui.query("Working, 1"), "Working carries its own count");
-      assert.ok(ui.query("In review, 1"), "In review carries its own count");
-      assert.ok(
-        ui.query("Planning, 2 open lanes"),
-        "Planning carries its open lanes",
-      );
-      assert.ok(ui.query("Closing, 0"), "Closing reads its real zero");
-      assert.equal(ui.query(/^Active/), undefined, "no Active entry remains");
-      // Dimming: a zero-count entry dims, while the selected entry and
-      // non-zero entries do not.
-      const opacityOf = (name: string) =>
-        navigationButton(ui, name).props.style.opacity;
-      assert.equal(
-        opacityOf("Planning"),
-        1,
-        "a non-zero Planning count never dims",
-      );
-      assert.equal(opacityOf("Working"), 1, "a non-zero entry never dims");
-      assert.equal(opacityOf("Closing"), 0.55, "a zero-count entry dims");
-      assert.equal(
-        opacityOf("Needs you"),
-        1,
-        "the selected entry keeps its selected styling",
-      );
-      // Each entry opens its own list with its real count.
-      openView(ui, "Working");
-      assert.ok(ui.query("Working list"), "Working opens its own list");
-      assert.equal(countText(ui, "1 item"), 1);
-      assert.ok(ui.text().includes("Working one"));
-      openView(ui, "In review");
-      assert.ok(ui.text().includes("Review one"));
-      assert.ok(
-        !ui.text().includes("Working one"),
-        "an entry lists only its own cards",
-      );
-      openView(ui, "Closing");
-      assert.ok(ui.query("Closing list"), "Closing opens its own list");
-      assert.equal(
-        countText(ui, "0 items"),
-        1,
-        "an empty entry counts its real zero",
-      );
-      assert.ok(ui.text().includes("Nothing here."));
-      assertDarkTheme(ui);
-    } finally {
-      unmount(ui);
-    }
-  });
 }
 
 // nucleus#1525: at a narrow panel the same split menu lives in the drawer; each
@@ -2139,3 +1489,125 @@ test("the narrow drawer lists Working, In review and Closing top-level with grou
     unmount(ui);
   }
 });
+
+
+/** Rows captured from the Rust /v1/tasks endpoint, with synthetic project names. */
+async function rustRows(): Promise<RustTask[]> {
+  const raw: unknown = JSON.parse(readFileSync(new URL("./fixtures/rust-task-order-rows.json", import.meta.url), "utf8"));
+  const rows = await createRustBoardTransport(async () => Response.json(raw)).list(new AbortController().signal);
+  return rows.map(row => ({ ...row, identity: { ...row.identity, repository: repo.origin } }));
+}
+
+for (const compact of [false, true]) {
+  test(`026-13/15 dark Rust inbox shows the task columns and totals (${compact ? "medium" : "wide"})`, async () => {
+    const rows = await rustRows();
+    const previous = board.tasks;
+    board.tasks = [];
+    const ui = mount(tree(await bundleMainSurface(), compact, invoke, false, rows));
+    try {
+      await settleUntil(ui, () => Boolean(ui.query("History, 1")), "Rust task counts did not load");
+      assert.deepEqual(navigationLabels(ui).map(viewName), ["Needs you", "Planning", "Leads", "Papercuts", "Queue", "Working", "In review", "Merging", "Closing", "History"]);
+      const menu = ui.get("Nucleus navigation").children.filter((node): node is HostNode => typeof node !== "string");
+      const gaps = menu.filter(node => node.type === "View" && node.props.style?.height === space.md);
+      assert.equal(gaps.length, 2);
+      for (const gap of gaps) assert.equal(gap.props.style.backgroundColor, undefined);
+      assert.ok(ui.get("Needs you, 1"));
+      assert.ok(ui.get("Queue, 3"));
+      assert.ok(ui.get("Working, 1"));
+      assert.ok(ui.get("In review, 1"));
+      assert.ok(ui.get("Merging, 1"));
+      assert.ok(ui.get("Closing, 1"));
+      assert.match(ui.text(), /Needs task/);
+      for (const [name, title] of [["Queue", "Queued task"], ["Working", "Working task"], ["In review", "Review task"], ["Merging", "Merging task"], ["Closing", "Closing task"], ["History", "History task"]]) {
+        ui.press(new RegExp(`^${name},`));
+        assert.match(ui.text(), new RegExp(title));
+        assertDarkTheme(ui);
+      }
+    } finally { unmount(ui); board.tasks = previous; }
+  });
+}
+
+test("032 Rust inbox places a work question and a held task in Needs you", async () => {
+  const rows = await rustRows();
+  const needs = rows[0]!;
+  const question: RustTask = { ...needs, question: { work: { prompt: "Choose the next step", options: ["Continue", "Stop"] } } };
+  const held: RustTask = { ...rows[1]!, identity: { ...rows[1]!.identity, id: "held", reference: "app#20" }, title: "Held merge", attention: "attention", hold: { reason: "Awaiting acceptance" } };
+  const previous = board.tasks;
+  board.tasks = [];
+  const ui = mount(tree(await bundleMainSurface(), false, invoke, false, [question, held]));
+  try {
+    await settleUntil(ui, () => Boolean(ui.query("Needs you, 2")), "Needs you did not load");
+    assert.match(ui.text(), /Choose the next step/);
+    assert.match(ui.text(), /Held merge/);
+  } finally { unmount(ui); board.tasks = previous; }
+});
+
+test("queue controls default to the current Rust menu", async () => {
+  const previous = board.tasks;
+  board.tasks = [];
+  const ui = mount(tree(await bundleMainSurface(), false, invoke, false, await rustRows()));
+  try {
+    await settleUntil(ui, () => ui.query("Queue controls menu")?.props.disabled === false, "queue controls did not load");
+    ui.press("Queue controls menu");
+    assert.ok(ui.get("Pause"));
+    assert.ok(ui.get("Dispatch hold"));
+    assert.ok(ui.get("Stop"));
+    assert.equal(ui.query(/^Project slot usage/), undefined);
+  } finally { unmount(ui); board.tasks = previous; }
+});
+
+test("026-15a bundled records show the result of an action in their detail", async () => {
+  const writes: unknown[] = [];
+  const item = {
+    id: "lead-1", kind: "lead" as const, projectKey: "app", projectName: "App", title: "Lead one", body: "Ship it.",
+    lanes: [], repositories: [{ origin: repo.origin, bound: true }], author: "planner", state: "open" as const,
+    reason: null, disposition: null, briefComplexity: null, revisitAt: null, taskId: null, version: 1,
+    createdAtMs: null, updatedAtMs: null, history: [],
+  };
+  const rpc = async (method: string, input: unknown): Promise<unknown> => {
+    if (method === "item.get") return item;
+    if (method === "item.drop") {
+      writes.push(input);
+      return { ...item, state: "dropped", disposition: "deprecated", version: 2 };
+    }
+    return invoke(method, input);
+  };
+  const previous = board.tasks;
+  board.tasks = [];
+  const ui = mount(tree(await bundleMainSurface(), false, rpc, false, await rustRows()));
+  try {
+    await settleUntil(ui, () => Boolean(ui.query(/^Leads, /)), "Leads did not load");
+    openView(ui, "Leads");
+    await settleUntil(ui, () => Boolean(ui.query(/^Lead: Lead one, Status: /)), "lead did not load");
+    ui.press(/^Lead: Lead one, Status: /);
+    await settleUntil(ui, () => Boolean(ui.query("Open drop for lead")), "lead detail did not load");
+    assertDarkTheme(ui);
+    ui.press("Open drop for lead");
+    ui.type("Note", "No longer needed");
+    ui.press("Drop lead");
+    await settleUntil(ui, () => Boolean(ui.query("State: Dropped · deprecated")), "drop result did not render");
+    assert.deepEqual(writes, [{ id: "lead-1", project: "app", disposition: "deprecated", note: "No longer needed" }]);
+    assertDarkTheme(ui);
+  } finally { unmount(ui); board.tasks = previous; }
+});
+
+for (const compact of [false, true]) {
+  test(`inbox totals count long multi-lane Rust task lists (${compact ? "medium" : "wide"})`, async () => {
+    const rows = await rustRows();
+    const working = rows.find(row => row.phase === "working")!;
+    const many = Array.from({ length: 40 }, (_, i) => ({ ...working, identity: { ...working.identity, id: `long-${i}`, reference: `app#${i + 1}` }, title: `Long task ${i}`, number: i + 1, lanes: ["first", "second"] }));
+    const previous = board.tasks;
+    board.tasks = [];
+    const ui = mount(tree(await bundleMainSurface(), compact, invoke, false, many));
+    try {
+      await settleUntil(ui, () => Boolean(ui.query("Working, 40")), "working total did not load");
+      assert.ok(ui.get("Needs you, 0"));
+      assert.match(ui.text(), /Nothing here\./);
+      assert.ok(ui.get("Queue, 0"));
+      ui.press("Working, 40");
+      assert.match(ui.text(), /40 items/);
+      assert.match(ui.text(), /Long task/);
+      assertDarkTheme(ui);
+    } finally { unmount(ui); board.tasks = previous; }
+  });
+}

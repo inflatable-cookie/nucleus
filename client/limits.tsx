@@ -1,11 +1,9 @@
-import { useEngineFeatures } from "./engine-features";
 import { errorText as failureText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import {
   ActionButton,
   Button,
-  Disclosure,
   DropdownSelect,
   HelpPopover,
   HelpTip,
@@ -24,12 +22,6 @@ import { DateTimeLink, formatLocalDateTime } from "./date-time-field";
 import { USAGE_LABELS } from "../shared/pool";
 import * as api from "../shared/contracts";
 import {
-  MAX_HOLD_MINUTES,
-  MAX_HOST_OUTAGE_NOTICE_MINUTES,
-  MAX_HOST_CALL_LIMIT,
-  MAX_STALL_THRESHOLD_MINUTES,
-  MAX_THREAD_RETENTION_DAYS,
-  MAX_THREAD_RETENTION_INTERVAL_HOURS,
   usageLevels,
   type UiQueueState,
   type UsageLevel,
@@ -197,115 +189,13 @@ function UsageSlider({
  * record is read through `queue.capacity-state`; Settings shows no view of it (Tom, 2026-11-08).
  */
 
-/**
- * Every limit, in the shared schema's own order and bounds; the schema still refuses
- * anything else. The first three are the ordinary task slots; the rest sit under Advanced.
- */
-const CAPACITY_FIELD_LABELS: Record<keyof api.CapacityAuthorityValues, string> =
-  {
-    globalLimit: "Global",
-    projectLimit: "Per project",
-    papercutProjectLimit: "Papercuts",
-    hostCallLimit: "Concurrent host calls",
-    stallThresholdMinutes: "Stall threshold",
-    holdReminderMinutes: "Hold reminder",
-    holdEscalationMinutes: "Hold escalation",
-    laneDrainMinutes: "Lane drain",
-    laneDrainEscalationMinutes: "Lane drain escalation",
-    hostOutageNoticeMinutes: "Host outage notice",
-    operatorDefaultHostKind: "Default host",
-    threadRetentionDays: "Archived thread retention",
-    threadRetentionIntervalHours: "Archived thread pruning",
-  };
-type CapacityKey = Exclude<
-  keyof api.CapacityAuthorityValues,
-  "operatorDefaultHostKind"
->;
-type LimitSpec = {
-  key: CapacityKey;
-  min: number;
-  max: number;
-  unit: "slots" | "calls" | "minutes" | "hours" | "days";
-  advanced?: true;
-  /** Explained under a (?) beside the label, for a limit whose meaning the label cannot carry. */
-  help?: string;
-};
-const CAPACITY_FIELDS: LimitSpec[] = [
-  { key: "globalLimit", min: 1, max: 64, unit: "slots" },
-  { key: "projectLimit", min: 1, max: 32, unit: "slots" },
-  { key: "papercutProjectLimit", min: 1, max: 32, unit: "slots" },
-  {
-    key: "hostCallLimit",
-    min: 1,
-    max: MAX_HOST_CALL_LIMIT,
-    unit: "calls",
-    advanced: true,
-    help: "A ceiling for each host, not a total across hosts: Paseo, T3 Code and BB each run up to this many calls at once, and each keeps its own count.",
-  },
-  {
-    key: "stallThresholdMinutes",
-    min: 1,
-    max: MAX_STALL_THRESHOLD_MINUTES,
-    unit: "minutes",
-    advanced: true,
-  },
-  {
-    key: "holdReminderMinutes",
-    min: 1,
-    max: MAX_HOLD_MINUTES,
-    unit: "minutes",
-    advanced: true,
-  },
-  {
-    key: "holdEscalationMinutes",
-    min: 1,
-    max: MAX_HOLD_MINUTES,
-    unit: "minutes",
-    advanced: true,
-  },
-  {
-    key: "laneDrainMinutes",
-    min: 1,
-    max: MAX_HOLD_MINUTES,
-    unit: "minutes",
-    advanced: true,
-  },
-  {
-    key: "laneDrainEscalationMinutes",
-    min: 1,
-    max: MAX_HOLD_MINUTES,
-    unit: "minutes",
-    advanced: true,
-  },
-  {
-    key: "hostOutageNoticeMinutes",
-    min: 1,
-    max: MAX_HOST_OUTAGE_NOTICE_MINUTES,
-    unit: "minutes",
-    advanced: true,
-  },
-  {
-    key: "threadRetentionDays",
-    min: 1,
-    max: MAX_THREAD_RETENTION_DAYS,
-    unit: "days",
-    advanced: true,
-  },
-  {
-    key: "threadRetentionIntervalHours",
-    min: 1,
-    max: MAX_THREAD_RETENTION_INTERVAL_HOURS,
-    unit: "hours",
-    advanced: true,
-  },
-];
-const UNIT_SHORT: Record<LimitSpec["unit"], string> = {
-  slots: "slots",
-  calls: "calls",
-  minutes: "min",
-  hours: "h",
-  days: "days",
-};
+/** The two dispatch limits exposed by the Rust board. */
+const CAPACITY_FIELDS = [
+  { key: "globalLimit", label: "Global", max: 64 },
+  { key: "projectLimit", label: "Per project", max: 32 },
+] as const;
+type CapacityKey = (typeof CAPACITY_FIELDS)[number]["key"];
+type LimitSpec = (typeof CAPACITY_FIELDS)[number];
 
 /** A limits read that has not settled: loading, a failed first read, or a failed refresh. Nothing here writes, so Try again is always safe. */
 function ReadNotice({
@@ -353,7 +243,7 @@ function ReadNotice({
   );
 }
 
-/** The task slots: the three ordinary limits first, the six timing and call limits under Advanced. */
+/** The global and per-project task slots. */
 function TaskSlots({
   c,
   values,
@@ -369,16 +259,9 @@ function TaskSlots({
   retry: () => void;
   save: (values: api.CapacityInput) => Promise<void>;
 }) {
-  const features = useEngineFeatures();
-  const shown = CAPACITY_FIELDS.filter(({ key }) =>
-    features.advancedLimits || key === "globalLimit" || key === "projectLimit"
-  );
-  const advanced = shown.filter((spec) => spec.advanced);
   const [drafts, setDrafts] = useState<Partial<Record<CapacityKey, number>>>(
     {},
   );
-  // Local UI state: opening Advanced never writes, and collapsing keeps every draft and pending save.
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   // Coalesce only the fields edited during this debounce, against their displayed revision.
   const pending = useRef<{ revision?: string; fields: Partial<Record<CapacityKey, number>> }>({ fields: {} });
   const auto = useSectionAutoSave<api.CapacityInput>(async (input) => {
@@ -403,29 +286,25 @@ function TaskSlots({
   // A labelled card per limit. The line under it names the value in force only when the
   // entered value differs, so an unsaved draft never reads as applied.
   const field = (spec: LimitSpec, current: api.CapacityAuthorityValues) => {
-    const name = CAPACITY_FIELD_LABELS[spec.key],
-      unit = UNIT_SHORT[spec.unit];
+    const name = spec.label;
     const max = revision !== undefined && spec.key === "globalLimit" ? api.MAX_GLOBAL_SLOTS : spec.max;
     const draft = drafts[spec.key] ?? current[spec.key];
     return (
       <NumberStepper
         key={spec.key}
         card
-        stacked={spec.advanced}
         c={c}
         label={name}
-        help={spec.help}
-        a11yLabel={`${name} dispatch limit (${spec.unit}, ${spec.min}–${max})`}
+        a11yLabel={`${name} dispatch limit (slots, 1–${max})`}
         value={draft}
-        min={spec.min}
+        min={1}
         max={max}
-        unit={spec.unit === "slots" ? undefined : unit}
         onChange={(value) => edit(spec.key, value)}
         onCommit={() => void auto.saver.flush()}
       >
         {draft !== current[spec.key] && (
           <Text style={small(c)}>
-            In force {current[spec.key]} {unit}
+            In force {current[spec.key]} slots
           </Text>
         )}
       </NumberStepper>
@@ -436,9 +315,7 @@ function TaskSlots({
       c={c}
       title="Task slots"
       status={auto.status}
-      description={features.engine === "rust"
-        ? "Parked tasks hold no slot. Lowering a limit lets running work finish."
-        : "Only Settings changes these. Parked tasks hold no slot, lowering a limit lets running work finish, and papercuts also count toward Global."}
+      description="Parked tasks hold no slot. Lowering a limit lets running work finish."
     >
       <ReadNotice
         c={c}
@@ -451,26 +328,8 @@ function TaskSlots({
           <View
             style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}
           >
-            {shown.filter((spec) => !spec.advanced).map(
-              (spec) => field(spec, values),
-            )}
+            {CAPACITY_FIELDS.map((spec) => field(spec, values))}
           </View>
-          {advanced.length > 0 && (
-            <Disclosure
-              c={c}
-              gapAbove
-              label="Advanced limits"
-              expanded={advancedOpen}
-              onToggle={() => setAdvancedOpen((open) => !open)}
-            />
-          )}
-          {advancedOpen && advanced.length > 0 && (
-            <View
-              style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}
-            >
-              {advanced.map((spec) => field(spec, values))}
-            </View>
-          )}
         </>
       )}
     </Section>
@@ -502,7 +361,6 @@ function ProjectOverrides({
 }) {
   // Choosing a project creates its override at once with the per-project limit;
   // a failure to create it is shown here, beside the picker.
-  const features = useEngineFeatures();
   const [addStatus, setAddStatus] = useState("");
   // One create at a time: + and the picker wait for it, so a second pick can
   // never overwrite an edit made after the first (review #596).
@@ -544,15 +402,11 @@ function ProjectOverrides({
   return (
     <Section
       c={c}
-      title={features.projectDefaultLimit ? "Project overrides" : "Project slots"}
+      title="Project overrides"
       last
-      description={
-        features.projectDefaultLimit
-          ? "Slots run 0–64, where 0 admits nothing. A project may have twice its slots in flight. A project without an override uses the per-project limit."
-          : "Each project's own slot limit, at least 1."
-      }
+      description="Slots run 0–64, where 0 admits nothing. A project may have twice its slots in flight. A project without an override uses the per-project limit."
       action={
-        features.projectDefaultLimit && <DropdownSelect
+        <DropdownSelect
           compact
           label="Add project limit override"
           value=""
@@ -591,7 +445,7 @@ function ProjectOverrides({
             value={limit}
             canSave={Boolean(projectRecord)}
             pendingRemoval={pendingOverrideRemovals?.[projectKey]}
-            removable={features.projectDefaultLimit}
+            removable
             save={(next) => saveProjectLimit({ projectKey, ...next })}
           />
         );

@@ -1,16 +1,22 @@
 use std::{
+    cell::RefCell,
+    collections::BTreeSet,
+    error::Error,
     marker::PhantomData,
     os::fd::OwnedFd,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use longhorn_config::{
-    BackupApplication, BackupArchiveLimits, BackupOperationalRoot, CheckedMutationError,
-    ConfigDomain, ConfigStore, CoordinationAuthority, DomainDescriptor, DomainFilePath,
-    DomainIssue, DurabilityRequirement, LoadOutcome, LoadedOrigin, MigrationStep, MutationError,
-    MutationOptions, Sha256Digest, StorageClass, list_operational_backups,
+    BackupApplication, BackupArchiveFileName, BackupArchiveLimits, BackupCaptureOptions,
+    BackupCatalog, BackupKind, BackupMetadata, BackupOperationalRoot, BackupProducer,
+    CheckedMutationError, ConfigDomain, ConfigStore, CoordinationAuthority, DomainDescriptor,
+    DomainFilePath, DomainIssue, DurabilityRequirement, LoadOutcome, LoadedConfig, LoadedOrigin,
+    MigrationRewriteError, MigrationRewriteOptions, MigrationStep, MutationError, MutationOptions,
+    RestoreOperationState, RestoreRecoveryOptions, RestoreSafetyBackupOptions, Sha256Digest,
+    StorageClass, list_operational_backups,
 };
 use longhorn_core::{DomainId, SchemaVersion};
 use longhorn_storage_layout::{
@@ -21,9 +27,14 @@ use longhorn_storage_layout::{
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::{DispatchSettings, Hosts, PinnedVolume, Profiles, Projects, StorageDirectory};
+use crate::{
+    DispatchSettings, GitHubAccountSettings, Hosts, PinnedVolume, Profiles, Projects,
+    StorageDirectory,
+};
 
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_ID: &str = "com.inflatablecookie.nucleus-engine";
 const MUTATION: MutationOptions =
     MutationOptions::new(Duration::from_secs(5), DurabilityRequirement::Durable);
@@ -36,6 +47,12 @@ pub enum StorageError {
     MissingVolume,
     #[error("the pinned, writable work volume is unavailable")]
     VolumeUnavailable,
+    /// A write or removal which outlived its caller and holds its owner.
+    #[error(
+        "The work volume or layout cannot be verified: {step} has not returned after {}. This waits until it does. If it never does, restart the engine.",
+        age(.since)
+    )]
+    CallHeld { step: &'static str, since: Instant },
     #[error("Barge could not place {class}: {reason}")]
     BargePlacement { class: &'static str, reason: String },
     #[error("the storage path is outside the pinned volume")]
@@ -48,6 +65,8 @@ pub enum StorageError {
     SettingsConflict,
     #[error("the engine settings could not be loaded")]
     SettingsUnavailable,
+    #[error("{0}")]
+    SettingsDocument(String),
     #[error("the engine settings could not be updated")]
     SettingsMutation(#[from] longhorn_config::MutationError),
     #[error("the engine storage directory could not be prepared")]
@@ -56,6 +75,15 @@ pub enum StorageError {
     ConfinedDirectory(#[from] rustix::io::Errno),
     #[error("an isolated engine is already serving this profile or its lock is unreadable")]
     ProfileLock,
+}
+
+fn age(since: &Instant) -> String {
+    let seconds = since.elapsed().as_secs();
+    if seconds < 120 {
+        format!("{seconds} seconds")
+    } else {
+        format!("{} minutes", seconds / 60)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,10 +176,10 @@ impl SettingsFile {
     }
 
     /// Open the settings domains in an explicitly selected, existing engine home.
-    /// Opening creates no engine directories.
+    /// Opening validates the domains and publishes any required schema upgrades.
     ///
     /// # Errors
-    /// Returns an error if the home is missing, redirected, or the layout is invalid.
+    /// Returns an error if the home, layout, or settings cannot be verified.
     pub fn open(home: &Path) -> Result<Self, StorageError> {
         if !home.is_absolute() || home.canonicalize()? != home || !home.is_dir() {
             return Err(StorageError::Layout);
@@ -165,7 +193,7 @@ impl SettingsFile {
     /// Open the internal transition home, with platform defaults for expendable files.
     ///
     /// # Errors
-    /// Returns an error for missing platform facts or inaccessible directories.
+    /// Returns an error if the directories or settings cannot be verified.
     pub fn open_default() -> Result<Self, StorageError> {
         Self::open_account(
             &default_home()?,
@@ -202,12 +230,24 @@ impl SettingsFile {
     fn with_layout(layout: ResolvedStorageLayout, base: &Path) -> Result<Self, StorageError> {
         let coordination = CoordinationAuthority::new(base).map_err(|_| StorageError::Layout)?;
         let mut store = ConfigStore::new(layout.storage_roots().clone(), coordination);
-        register::<EngineSettings>(&mut store)?;
-        register::<Profiles>(&mut store)?;
-        register::<DispatchSettings>(&mut store)?;
-        register::<Projects>(&mut store)?;
-        register::<Hosts>(&mut store)?;
-        register::<crate::GitHubAccountSettings>(&mut store)?;
+        let engine = register::<EngineSettings>(&mut store)?;
+        let profiles = register::<Profiles>(&mut store)?;
+        let dispatch = register::<DispatchSettings>(&mut store)?;
+        let projects = register::<Projects>(&mut store)?;
+        let hosts = register::<Hosts>(&mut store)?;
+        let github = register::<GitHubAccountSettings>(&mut store)?;
+        if store.restore_operation_state() != RestoreOperationState::Inactive {
+            store
+                .recover_restore(RestoreRecoveryOptions::new(MUTATION.lock_timeout))
+                .map_err(|error| StorageError::InvalidSettings(error.to_string()))?;
+        }
+        let backup = layout.storage_roots().backup();
+        engine.upgrade(&store, backup)?;
+        profiles.upgrade(&store, backup)?;
+        dispatch.upgrade(&store, backup)?;
+        projects.upgrade(&store, backup)?;
+        hosts.upgrade(&store, backup)?;
+        github.upgrade(&store, backup)?;
         Ok(Self {
             home: base.to_path_buf(),
             layout,
@@ -220,18 +260,8 @@ impl SettingsFile {
     /// # Errors
     /// Returns an error for a corrupt, future, or unreadable settings file.
     pub fn read<S: SettingsValue>(&self) -> Result<SettingsSnapshot<S>, StorageError> {
-        match self
-            .store
-            .load(&SettingsDomain::<S>::new()?)
-            .map_err(|_| StorageError::SettingsUnavailable)?
-        {
-            LoadOutcome::Ready(config) => {
-                snapshot(config.value, config.origin != LoadedOrigin::Default)
-            }
-            LoadOutcome::Recovery(_) | LoadOutcome::Unavailable(_) => {
-                Err(StorageError::SettingsUnavailable)
-            }
-        }
+        let config = SettingsDomain::<S>::new()?.load(&self.store)?;
+        snapshot(config.value, config.origin != LoadedOrigin::Default)
     }
 
     /// Compare a revision and apply a validated edit in one Longhorn transaction.
@@ -405,10 +435,11 @@ fn snapshot<S: SettingsValue>(
     })
 }
 
-fn register<S: SettingsValue>(store: &mut ConfigStore) -> Result<(), StorageError> {
-    store
-        .register(&SettingsDomain::<S>::new()?)
-        .map_err(|_| StorageError::Layout)
+fn register<S: SettingsValue>(store: &mut ConfigStore) -> Result<SettingsDomain<S>, StorageError> {
+    let mut domain = SettingsDomain::new()?;
+    domain.retired_keys = Some(RefCell::default());
+    store.register(&domain).map_err(|_| StorageError::Layout)?;
+    Ok(domain)
 }
 
 pub struct EngineStorage {
@@ -539,6 +570,17 @@ impl EngineStorage {
         Ok(storage)
     }
 
+    /// Hold on to the work and scratch roots a running service starts with, so a
+    /// missing or substituted root is unavailable until the original returns.
+    ///
+    /// # Errors
+    /// Returns an error if either root cannot be created or opened.
+    pub fn pin_roots(&mut self) -> Result<(), StorageError> {
+        self.work = self.work.clone().pinned()?;
+        self.scratch = self.scratch.clone().pinned()?;
+        Ok(())
+    }
+
     /// The profile home used for durable state.
     #[must_use]
     pub fn home(&self) -> &Path {
@@ -642,8 +684,8 @@ impl EngineStorage {
         }
         let root =
             BackupOperationalRoot::new(response.root.clone()).map_err(|_| StorageError::Layout)?;
-        let application = BackupApplication::new(APP_ID, env!("CARGO_PKG_VERSION"))
-            .map_err(|_| StorageError::Layout)?;
+        let application =
+            BackupApplication::new(APP_ID, APP_VERSION).map_err(|_| StorageError::Layout)?;
         let listing =
             list_operational_backups(&root, &application, BackupArchiveLimits::default(), 128);
         response.complete = listing.is_complete();
@@ -750,8 +792,6 @@ pub trait SettingsValue: Default + Serialize + DeserializeOwned {
     const ID: &'static str;
     const FILE: &'static str;
     const CLASS: StorageClass;
-    /// Discard obsolete keys only when reading previously stored documents.
-    fn discard_retired_fields(_value: &mut Value) {}
 
     /// Check stored or submitted settings without consulting an adapter.
     ///
@@ -787,18 +827,94 @@ impl SettingsValue for EngineSettings {
     }
 }
 
-struct SettingsDomain<S>(DomainDescriptor, PhantomData<S>);
+struct SettingsDomain<S> {
+    descriptor: DomainDescriptor,
+    value_type: PhantomData<S>,
+    retired_keys: Option<RefCell<BTreeSet<&'static str>>>,
+}
 
 impl<S: SettingsValue> SettingsDomain<S> {
     fn new() -> Result<Self, StorageError> {
         let id = DomainId::new(S::ID).map_err(|_| StorageError::Layout)?;
-        let version = SchemaVersion::new(1).map_err(|_| StorageError::Layout)?;
+        let version = SchemaVersion::new(2).map_err(|_| StorageError::Layout)?;
         let path = DomainFilePath::new(S::FILE).map_err(|_| StorageError::Layout)?;
-        Ok(Self(
-            DomainDescriptor::new(id, version, S::CLASS, Some(path))
+        Ok(Self {
+            descriptor: DomainDescriptor::new(id, version, S::CLASS, Some(path))
                 .map_err(|_| StorageError::Layout)?,
-            PhantomData,
-        ))
+            value_type: PhantomData,
+            retired_keys: None,
+        })
+    }
+
+    fn error(detail: &(impl std::fmt::Display + ?Sized)) -> StorageError {
+        StorageError::SettingsDocument(format!("{}: {detail}", S::FILE))
+    }
+
+    fn load(&self, store: &ConfigStore) -> Result<LoadedConfig<S>, StorageError> {
+        match store.load(self).map_err(|error| Self::error(&error))? {
+            LoadOutcome::Ready(config) => Ok(config),
+            LoadOutcome::Recovery(recovery) => Err(Self::error(&recovery.detail)),
+            LoadOutcome::Unavailable(_) => Err(StorageError::SettingsUnavailable),
+        }
+    }
+
+    fn upgrade(&self, store: &ConfigStore, backup: &Path) -> Result<(), StorageError> {
+        let loaded = self.load(store)?;
+        let (LoadedOrigin::MigratedInMemory { .. }, Some(source)) = (loaded.origin, loaded.source)
+        else {
+            return Ok(());
+        };
+        let path = source
+            .path
+            .canonicalize()
+            .map_err(|error| Self::error(&error))?;
+        if path != source.path {
+            return Err(Self::error("settings path is redirected"));
+        }
+        StorageDirectory::native(backup.into())?.ensure()?;
+        self.rewrite(store, backup)
+            .map_err(|error| Self::error(&error))
+    }
+
+    fn rewrite(&self, store: &ConfigStore, backup: &Path) -> Result<(), Box<dyn Error>> {
+        let mut catalog = BackupCatalog::new();
+        catalog.include(self)?;
+        let id = format!("settings-v1-{}-{}", S::FILE, uuid::Uuid::new_v4());
+        let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let application = BackupApplication::new(APP_ID, APP_VERSION)?;
+        let producer = BackupProducer::new("nucleus", APP_VERSION)?;
+        let metadata =
+            BackupMetadata::new(&id, BackupKind::PreMigration, now, application, producer)?;
+        let timeout = MUTATION.lock_timeout;
+        let safety = RestoreSafetyBackupOptions::new(
+            metadata,
+            BackupOperationalRoot::new(backup)?,
+            BackupArchiveFileName::new(format!("{id}.longhorn-backup"))?,
+            BackupCaptureOptions::new(timeout, longhorn_config::BackupLimits::default()),
+            BackupArchiveLimits::default(),
+        );
+        match store.rewrite_migrated_domain(
+            &catalog,
+            self,
+            MigrationRewriteOptions::new(timeout, safety),
+        ) {
+            Ok(receipt) => {
+                let keys = self
+                    .retired_keys
+                    .as_ref()
+                    .map_or_else(BTreeSet::new, RefCell::take);
+                eprintln!(
+                    "{} Upgraded {} to settings version {}. Removed keys {keys:?}. Verified backup at {}",
+                    time::OffsetDateTime::now_utc(),
+                    S::FILE,
+                    receipt.to(),
+                    receipt.safety_backup().path.display()
+                );
+                Ok(())
+            }
+            Err(MigrationRewriteError::NotRequired) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 
@@ -806,17 +922,15 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
     type Value = S;
 
     fn descriptor(&self) -> &DomainDescriptor {
-        &self.0
+        &self.descriptor
     }
 
     fn default_value(&self) -> S {
         S::default()
     }
 
-    fn decode(&self, mut value: Value) -> Result<S, DomainIssue> {
-        S::discard_retired_fields(&mut value);
-        serde_json::from_value(value)
-            .map_err(|_| DomainIssue::new("decode", "invalid settings document"))
+    fn decode(&self, value: Value) -> Result<S, DomainIssue> {
+        serde_json::from_value(value).map_err(|error| DomainIssue::new("decode", error.to_string()))
     }
 
     fn encode(&self, value: &S) -> Result<Value, DomainIssue> {
@@ -828,16 +942,80 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
         value.validate()
     }
 
-    fn validate_raw(&self, _: SchemaVersion, value: &Value) -> Result<(), DomainIssue> {
-        self.validate(&self.decode(value.clone())?)
+    fn validate_raw(&self, version: SchemaVersion, value: &Value) -> Result<(), DomainIssue> {
+        if version == self.descriptor.schema_version() {
+            self.validate(&self.decode(value.clone())?)?;
+        }
+        Ok(())
     }
 
     fn migrate_one(
         &self,
-        _: SchemaVersion,
-        _: Value,
+        from: SchemaVersion,
+        mut value: Value,
     ) -> Result<Option<MigrationStep>, DomainIssue> {
-        Ok(None)
+        let Some(retired_keys) = self.retired_keys.as_ref().filter(|_| from.get() == 1) else {
+            return Ok(None);
+        };
+        let mut retired = BTreeSet::new();
+        let mut rewrite = |object: &mut Value, key: &'static str, replacement: Option<&str>| {
+            if let Some(fields) = object.as_object_mut()
+                && replacement.is_none_or(|name| !fields.contains_key(name))
+                && let Some(old) = fields.remove(key)
+            {
+                retired.insert(key);
+                if let Some(name) = replacement {
+                    fields.insert(name.into(), old);
+                }
+            }
+        };
+        match S::FILE {
+            DispatchSettings::FILE => {
+                for key in [
+                    "maxLoad",
+                    "max_load",
+                    "allowanceMinutes",
+                    "allowance_minutes",
+                    "hostConcurrency",
+                    "host_concurrency",
+                    "legacyLimitsImported",
+                    "providerLimitCooldownSeconds",
+                    "provider_limit_cooldown_seconds",
+                ] {
+                    rewrite(&mut value, key, None);
+                }
+                rewrite(&mut value, "slots", Some("globalSlots"));
+            }
+            Profiles::FILE => {
+                let profiles = value.get_mut("profiles").and_then(Value::as_array_mut);
+                for profile in profiles.into_iter().flatten() {
+                    rewrite(profile, "roles", None);
+                    rewrite(profile, "scopes", None);
+                    if let Some(selection) = profile.get_mut("selection") {
+                        rewrite(selection, "thinkingOptionId", Some("effort"));
+                    }
+                }
+            }
+            Projects::FILE => {
+                let projects = value.get_mut("projects").and_then(Value::as_object_mut);
+                for project in projects.into_iter().flat_map(serde_json::Map::values_mut) {
+                    rewrite(project, "slots", None);
+                    let repositories = project
+                        .get_mut("repositories")
+                        .and_then(Value::as_array_mut);
+                    for repository in repositories.into_iter().flatten() {
+                        rewrite(repository, "requiredChecks", None);
+                        rewrite(repository, "hungToolMinutes", None);
+                    }
+                }
+            }
+            _ => {}
+        }
+        retired_keys.replace(retired);
+        Ok(Some(MigrationStep {
+            schema_version: self.descriptor.schema_version(),
+            value,
+        }))
     }
 }
 
@@ -846,100 +1024,211 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_saved_dispatch_domain_discards_retired_controls() {
+    #[expect(clippy::too_many_lines, reason = "complete saved settings fixtures")]
+    fn startup_upgrades_every_settings_domain_and_keeps_verified_originals() {
+        use longhorn_config::inspect_backup_archive;
+        use serde_json::json;
+
         let temporary = tempfile::tempdir().expect("fixture home");
         let home = temporary.path().canonicalize().expect("canonical home");
         let config = home.join("config");
-        std::fs::create_dir(&config).expect("config directory");
-        let document = serde_json::json!({
-            "domain": DispatchSettings::ID,
-            "schemaVersion": 1,
-            "value": {
-                "usage": "normal",
-                "slots": 3,
-                "maxLoad": 18.0,
-                "hostConcurrency": 8,
-                "allowanceMinutes": 30,
-                "projectDefaultSlots": 4,
-                "projectSlotOverrides": {"product": 8},
-                "mode": "paused",
-                "legacyLimitsImported": true,
-                "providerLimitCooldownSeconds": 300,
-            }
+        let state = home.join("state");
+        std::fs::create_dir(&config).unwrap();
+        std::fs::create_dir(&state).unwrap();
+
+        let dispatch = json!({
+            "usage": "high", "usageUntilMs": 1_800_000_000_000_u64, "globalSlots": 3,
+            "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8, "beta": 0},
+            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused"
         });
-        std::fs::write(config.join(DispatchSettings::FILE), document.to_string())
-            .expect("old dispatch settings");
-        let file = SettingsFile::open(&home).expect("settings");
-        let saved = file
-            .read::<DispatchSettings>()
-            .expect("decode legacy settings");
-        assert!(saved.configured);
-        assert_eq!(saved.value.global_slots, 3);
-        assert_eq!(saved.value.project_slots("fixture"), 4);
-        assert_eq!(saved.value.project_slots("product"), 8);
-        assert_eq!(saved.value.mode, crate::DispatchMode::Paused);
-        let saved = serde_json::to_value(saved.value).expect("current settings");
-        assert!(saved.get("maxLoad").is_none());
-        assert!(saved.get("allowanceMinutes").is_none());
-        assert!(saved.get("hostConcurrency").is_none());
-        assert!(saved.get("legacyLimitsImported").is_none());
-        assert!(saved.get("providerLimitCooldownSeconds").is_none());
+        let legacy_dispatch = json!({
+            "usage": "high", "usageUntilMs": 1_800_000_000_000_u64, "slots": 3,
+            "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8, "beta": 0},
+            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused",
+            "maxLoad": 18, "max_load": 18, "hostConcurrency": 8, "host_concurrency": 8,
+            "allowanceMinutes": 30, "allowance_minutes": 30, "legacyLimitsImported": true,
+            "providerLimitCooldownSeconds": 300, "provider_limit_cooldown_seconds": 300
+        });
+        let profiles = json!({
+            "profiles": [{
+                "name": "Fixture",
+                "selection": {"id": "heavy", "capability": "heavyweight", "weight": "fewer",
+                              "provider": "codex", "model": "fixture", "effort": "high"},
+                "enabled": false, "group": "Fixture Team", "providerInstanceId": "codex-team",
+                "modeId": "default", "featureValues": {"useFixture": true}, "notes": "Keep",
+                "unrated": true
+            }, {
+                "name": "Alternate",
+                "selection": {"id": "alternate", "capability": "heavyweight", "weight": "fewer",
+                              "provider": "codex", "model": "fixture", "effort": null}
+            }],
+            "pausedGroups": ["Fixture Plus", "Fixture Team"]
+        });
+        let mut legacy_profiles = profiles.clone();
+        legacy_profiles["pausedGroups"] = json!(["Fixture Team", "Fixture Plus"]);
+        let profile = &mut legacy_profiles["profiles"][0];
+        profile["roles"] = json!(["worker", "reviewer", "coordinator"]);
+        profile["scopes"] = json!(["mechanical", "complex"]);
+        profile["selection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("effort");
+        profile["selection"]["thinkingOptionId"] = json!("high");
+        legacy_profiles["profiles"][1]["enabled"] = json!(true);
+
+        let projects = json!({
+            "projects": {
+                "alpha": {
+                    "name": "Alpha", "archived": false,
+                    "plannerClaim": {"thread": "planner", "occurrence": "claim", "replaced": "prior"},
+                    "repositories": [{
+                        "origin": "example/alpha", "path": "/fixture/alpha", "base": "trunk",
+                        "hostProject": "host-project", "hostProjectTitle": "Alpha T3",
+                        "plannerThreads": ["planner", "prior"]
+                    }]
+                },
+                "beta": {"name": "Beta", "archived": true, "repositories": []}
+            },
+            "removed": {"old": {
+                "repositories": [{"origin": "example/old", "path": "/fixture/old"}],
+                "blockedOrigins": ["example/old"], "cleanupPending": true, "digest": "receipt",
+                "reason": "Retired project", "removedAtMs": 42
+            }}
+        });
+        let mut legacy_projects = projects.clone();
+        let alpha = &mut legacy_projects["projects"]["alpha"];
+        alpha["slots"] = json!(11);
+        alpha["repositories"][0]["requiredChecks"] = json!(["CI", "lint"]);
+        alpha["repositories"][0]["hungToolMinutes"] = json!(47);
+
+        let github = json!({
+            "accounts": [
+                {"host": "github.com", "userId": "42", "login": "fixture-worker"},
+                {"host": "github.com", "userId": "43", "login": "fixture-reviewer"}
+            ],
+            "workerAccountId": "github.com:42", "reviewerAccountId": "github.com:43"
+        });
+        let engine = json!({
+            "enabled": true, "placement": "barge",
+            "workRoot": "/fixture/work", "scratchRoot": "/fixture/scratch",
+            "buildsRoot": "/fixture/builds", "logRoot": "/fixture/log",
+            "retention": {"keepNewest": 17, "maxAgeDays": 45}
+        });
+        let hosts =
+            json!({"t3": {"endpoint": "http://127.0.0.1:7777/", "credentialRef": "FIXTURE_T3"}});
+        let cases = [
+            (
+                config.join(DispatchSettings::FILE),
+                DispatchSettings::ID,
+                legacy_dispatch,
+                dispatch,
+            ),
+            (
+                config.join(Profiles::FILE),
+                Profiles::ID,
+                legacy_profiles,
+                profiles,
+            ),
+            (
+                config.join(GitHubAccountSettings::FILE),
+                GitHubAccountSettings::ID,
+                github.clone(),
+                github,
+            ),
+            (
+                state.join(EngineSettings::FILE),
+                EngineSettings::ID,
+                engine.clone(),
+                engine,
+            ),
+            (
+                state.join(Projects::FILE),
+                Projects::ID,
+                legacy_projects,
+                projects,
+            ),
+            (state.join(Hosts::FILE), Hosts::ID, hosts.clone(), hosts),
+        ];
+        let originals: Vec<_> = cases
+            .iter()
+            .map(|(path, domain, old, _)| {
+                let bytes = json!({"domain": domain, "schemaVersion": 1, "value": old}).to_string();
+                std::fs::write(path, &bytes).unwrap();
+                bytes.into_bytes()
+            })
+            .collect();
+
+        let file = SettingsFile::open(&home).expect("upgrade on startup");
+        let rewritten: Vec<_> = cases
+            .iter()
+            .map(|(path, domain, _, expected)| {
+                let bytes = std::fs::read(path).unwrap();
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&bytes).unwrap(),
+                    json!({"domain": domain, "schemaVersion": 2, "value": expected}),
+                    "{}",
+                    path.display()
+                );
+                (bytes, std::fs::metadata(path).unwrap().modified().unwrap())
+            })
+            .collect();
+        let backup_root = file.layout.storage_roots().backup();
+        let archives = || {
+            std::fs::read_dir(backup_root)
+                .unwrap()
+                .map(|entry| {
+                    let archive = std::fs::read(entry.unwrap().path()).unwrap();
+                    let verified =
+                        inspect_backup_archive(&archive, BackupArchiveLimits::default()).unwrap();
+                    assert_eq!(verified.payloads().len(), 1);
+                    verified.payloads()[0].bytes().to_vec()
+                })
+                .collect::<BTreeSet<_>>()
+        };
+        assert_eq!(archives(), originals.iter().cloned().collect());
+        assert_eq!(std::fs::read_dir(backup_root).unwrap().count(), cases.len());
+
+        SettingsFile::open(&home).expect("reopen current files");
+        for ((path, _, _, _), (bytes, modified)) in cases.iter().zip(rewritten) {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+            assert_eq!(
+                std::fs::metadata(path).unwrap().modified().unwrap(),
+                modified
+            );
+        }
+        assert_eq!(std::fs::read_dir(backup_root).unwrap().count(), cases.len());
     }
 
     #[test]
-    fn a_saved_projects_domain_discards_retired_required_checks() {
+    fn startup_rejects_unknown_current_keys_without_rewriting_the_file() {
+        use serde_json::json;
+
         let temporary = tempfile::tempdir().expect("fixture home");
         let home = temporary.path().canonicalize().expect("canonical home");
-        let state = home.join("state");
-        std::fs::create_dir(&state).expect("state directory");
-        let document = serde_json::json!({
-            "domain": Projects::ID,
-            "schemaVersion": 1,
-            "value": {
-                "projects": {
-                    "alpha": {
-                        "name": "Alpha",
-                        "archived": false,
-                        "repositories": [{
-                            "origin": "example/alpha",
-                            "path": "/synthetic/alpha",
-                            "base": "main",
-                            "requiredChecks": ["CI", "lint"],
-                            "hungToolMinutes": 30
-                        }]
-                    }
-                }
-            }
+        let config = home.join("config");
+        std::fs::create_dir(&config).unwrap();
+        let path = config.join(Profiles::FILE);
+        let mut document = json!({
+            "domain": Profiles::ID, "schemaVersion": 2,
+            "value": {"profiles": [{
+                "name": "Fixture", "selection": {"id": "fixture", "provider": "codex",
+                "model": "fixture", "unknownFixtureKey": true}
+            }]}
         });
-        std::fs::write(state.join(Projects::FILE), document.to_string())
-            .expect("old projects settings");
-        let file = SettingsFile::open(&home).expect("settings");
-        let saved = file.read::<Projects>().expect("decode legacy projects");
-        assert!(saved.configured);
-        assert_eq!(
-            saved.value.projects["alpha"].repositories[0].origin,
-            "example/alpha"
-        );
-        let serialized = serde_json::to_value(&saved.value).expect("current settings");
-        assert!(
-            serialized["projects"]["alpha"]["repositories"][0]
-                .get("requiredChecks")
-                .is_none()
-        );
-        file.edit::<Projects>(&saved.revision, |projects| {
-            projects.projects.get_mut("alpha").expect("alpha").name = "Alpha updated".into();
-            Ok(())
-        })
-        .expect("resave projects");
-        let raw: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(state.join(Projects::FILE)).expect("saved projects"),
-        )
-        .expect("saved json");
-        assert!(
-            raw["value"]["projects"]["alpha"]["repositories"][0]
-                .get("requiredChecks")
-                .is_none()
-        );
+        let assert_rejected = |bytes: String, key: &str| {
+            std::fs::write(&path, &bytes).unwrap();
+            let error = SettingsFile::open(&home)
+                .err()
+                .expect("strict startup rejection");
+            let message = error.to_string();
+            assert!(message.contains(Profiles::FILE), "{message}");
+            assert!(message.contains(key), "{message}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);
+        };
+        assert_rejected(document.to_string(), "unknownFixtureKey");
+        document["value"]["profiles"] = json!([]);
+        document["unexpectedEnvelopeKey"] = json!(true);
+        assert_rejected(document.to_string(), "unexpectedEnvelopeKey");
     }
 
     #[test]

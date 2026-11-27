@@ -284,7 +284,7 @@ impl Service {
                 head,
             )
         } else {
-            Task::new(identity, brief, review)
+            admitted_code_task(identity, brief, review, &policy, caller)?
         };
         let affected_tests = self.affected_tests(&task, route.checkout.clone()).await;
         let mut state = self.state.lock().await;
@@ -731,6 +731,20 @@ fn admission_identity(
             Authority::Operator { .. } => None,
         },
     })
+}
+
+fn admitted_code_task(
+    identity: Identity,
+    brief: String,
+    review: Option<PullRequest>,
+    policy: &BriefPolicy,
+    caller: &Authority,
+) -> Result<Task, ServiceError> {
+    let mut task = Task::new(identity, brief, review);
+    if let Some(reason) = policy.merge_hold_reason() {
+        task.set_brief_merge_hold(Some(reason), caller, now_ms())?;
+    }
+    Ok(task)
 }
 
 fn delivery_lane(

@@ -55,11 +55,6 @@ const lead = (id: string, lanes: string[]) => ({
 function boardInput(extra: Partial<Input> = {}): Input {
   return {
     projects: [project],
-    lanes: [
-      lane("first"),
-      lane("second"),
-      lane("empty"),
-    ] as unknown as Input["lanes"],
     selection: ["app"],
     leads: [],
     tasks: [],
@@ -277,12 +272,6 @@ test("026-14b two selected projects share one pipeline; none means all", () => {
     primary: thirdRepo,
     drain: null,
   };
-  const lanes = [
-    lane("first"),
-    lane("second"),
-    { ...lane("third"), repositories: [otherRepo] },
-    { ...lane("fourth"), repositories: [thirdRepo] },
-  ] as unknown as Input["lanes"];
   const tasks = [
     task("app-task", ["first"]),
     {
@@ -298,7 +287,6 @@ test("026-14b two selected projects share one pipeline; none means all", () => {
   ] as Input["tasks"];
   const input = {
     projects: [project, otherProject, thirdProject],
-    lanes,
     tasks,
   };
   assert.deepEqual(
@@ -645,7 +633,6 @@ test("026-12a every inbox card renders through the shared board card, and the li
     /card\.kind==='papercut'|card\.kind === "papercut"/,
   );
   assert.match(list, /<BoardCard\s+key=\{key\}/);
-  assert.doesNotMatch(list, /actions=/);
   assert.doesNotMatch(list, /actionsLabel/);
   // Every card draws as a row of the one list, which is its view's single scroll.
   assert.match(list, /<BoardCardVariantContext\.Provider value="row">/);
@@ -705,7 +692,7 @@ test("026-13 the inbox menu has no Lanes or QA destination; Planning holds the l
   // A lane opened from Planning's lane search keeps the plan and lane panes.
   assert.match(
     ui,
-    /const selectPlanningLane = \(key: string\) => \{\s*setPlanningPin\(key\);/,
+    /const selectPlanningLane = \(key: string, project\?: string\) => \{\s*if \(!project\) \{\s*setError\("Select a project before opening this lane\."\);\s*return;\s*\}\s*setPlanningPin\(key\);/,
   );
   assert.doesNotMatch(ui, /setPipelineTarget/);
   // The menu counts and every list read one derivation, then the Leads tag filter narrows a copy.
@@ -750,7 +737,7 @@ test("026-15 an accepted submission shows queued as submitting until its task ap
   assert.equal(replaced.counts.Queued, 1);
 });
 
-test("026-15a inbox cards open a record modal or the detail pane and carry no action buttons", () => {
+test("026-15a inbox cards open details and eligible tasks offer priority actions", () => {
   const ui = boardSource();
   // The inbox list lives in its own module, which the shell mounts (Tom, 2026-11-21).
   const pipeline = readFileSync(
@@ -772,11 +759,18 @@ test("026-15a inbox cards open a record modal or the detail pane and carry no ac
   assert.doesNotMatch(pipeline, /text="Drop"/);
   assert.doesNotMatch(pipeline, /text="Check again"/);
   assert.doesNotMatch(pipeline, /actionsLabel/);
+  // Only eligible Rust tasks have a card action, and it is the one priority button.
+  assert.equal((pipeline.match(/\bactions=\{/g) ?? []).length, 1);
+  assert.match(pipeline, /const canPrioritize = task\.phase === "queued" \|\| task\.wait === "capacity";/);
+  assert.match(
+    pipeline,
+    /actions=\{canPrioritize && rust\.onCommand \? \(\s*<View style=\{\{ \.\.\.row, gap: space\.xs \}\}>\s*<Button\s+small\s+c=\{c\}\s+disabled=\{rust\.busy\}\s+text=\{promoted \? "Demote" : "Promote"\}\s+label=\{`\$\{promoted \? "Demote" : "Promote"\} \$\{reference\}`\}\s+onPress=\{\(\) => rust\.onCommand\?\.\(task\.identity\.id, promoted \? \{ demote: task\.version \} : \{ promote: task\.version \}\)\}\s*\/>\s*<\/View>\s*\) : undefined\}/,
+  );
   assert.match(triageLeadCard, /onSelectPapercut\(lead\.id\)/);
   assert.match(triageLeadCard, /onSelectLead\(lead\.id\)/);
   assert.match(
     ui,
-    /const selectPapercut = \(id: string\) => \{[^}]*setOpenPapercutId\(id\); \}/,
+    /const selectPapercut = \(id: string, project\?: string\) => \{[^}]*setOpenPapercutId\(id\); \}/,
   );
   assert.match(
     ui,

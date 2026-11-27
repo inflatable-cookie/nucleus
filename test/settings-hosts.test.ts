@@ -3,11 +3,6 @@ import assert from "node:assert/strict";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
-import {
-  EngineFeaturesContext,
-  RUST_ENGINE_FEATURES,
-  TYPESCRIPT_ENGINE_FEATURES,
-} from "../client/engine-features";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
 import { hostList } from "../shared/rpc/hosts";
 import type { CapacityAuthorityValues } from "../shared/contracts";
@@ -33,14 +28,7 @@ const c = dark as never;
 const CAPACITY: CapacityAuthorityValues = {
   globalLimit: 32,
   projectLimit: 5,
-  papercutProjectLimit: 2,
   hostCallLimit: 6,
-  stallThresholdMinutes: 30,
-  holdReminderMinutes: 120,
-  holdEscalationMinutes: 240,
-  laneDrainMinutes: 120,
-  laneDrainEscalationMinutes: 1440,
-  hostOutageNoticeMinutes: 120,
   operatorDefaultHostKind: "paseo",
   threadRetentionDays: 3,
   threadRetentionIntervalHours: 12,
@@ -142,8 +130,7 @@ async function mountHosts(
       client,
       children: h(PluginRpcProvider, {
         invoke,
-        children: h(EngineFeaturesContext.Provider, {
-          value: rust ? RUST_ENGINE_FEATURES : TYPESCRIPT_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: renderPanel(props),
         }),
       }),

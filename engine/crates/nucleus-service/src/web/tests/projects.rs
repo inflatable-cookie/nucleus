@@ -993,7 +993,7 @@ async fn paired_board_reports_the_same_planner_scope_as_planning_routes() {
 
 async fn assert_workspace_limit(registry: &Registry, tasks: [&Task; 2]) {
     let service = &registry.service;
-    let worktrees = service.worktrees().expect("synthetic worktree root");
+    let worktrees = service.worktrees();
     for task in tasks {
         let identity = task.identity();
         let route = service.project_for(identity).await.expect("member route");
@@ -2416,7 +2416,7 @@ async fn registry_gate_refuses_cross_project_wrong_push_remote_and_moved_native_
     let service = &registry.service;
     let alpha = registry.task("alpha-planner", "first").await;
     let beta = registry.task("beta-planner", "second").await;
-    let worktrees = service.worktrees().expect("worktree root");
+    let worktrees = service.worktrees();
     let alpha_route = service
         .project_for(alpha.identity())
         .await
@@ -2993,26 +2993,9 @@ async fn restored_task_board_age(registry: &Registry) -> [Option<u64>; 4] {
 }
 
 #[tokio::test]
-async fn saved_filter_alias_considers_removed_projects_without_exposing_receipts() {
+async fn projects_view_keeps_removal_receipts_private() {
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
-    let before = removal_settings(&registry);
-    let project = before.value.projects.values().next().unwrap().clone();
-    registry
-        .service
-        .settings
-        .edit::<nucleus_store::Projects>(&before.revision, |settings| {
-            settings.projects.clear();
-            settings.projects.insert("Orbit_Main".into(), project);
-            Ok(())
-        })
-        .unwrap();
-    let settings = || get_as(&registry.api, PROJECTS, &BOARD_KEY);
-    let view = json_body(settings().await).await;
-    assert_eq!(
-        view["legacyScopeKeys"],
-        json!({"Orbit_Main":"p-orbit-main"})
-    );
     let before = removal_settings(&registry);
     registry
         .service
@@ -3030,8 +3013,7 @@ async fn saved_filter_alias_considers_removed_projects_without_exposing_receipts
             Ok(())
         })
         .unwrap();
-    let view = json_body(settings().await).await;
-    assert_eq!(view["legacyScopeKeys"], json!({}));
+    let view = json_body(get_as(&registry.api, PROJECTS, &BOARD_KEY).await).await;
     assert!(view["settings"]["value"].get("removed").is_none());
     assert!(!view.to_string().contains("example/retired"));
 }

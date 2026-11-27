@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
-import { EngineFeaturesContext, RUST_ENGINE_FEATURES } from "../client/engine-features";
 import { generatedProjectBadge, projectBadgeWebForeground } from "../shared/t3/project-badge";
 import { taskSummarySchema } from "../shared/contracts";
 
@@ -365,8 +364,7 @@ test("Rust rows use the known project badge when its repository refinements disa
   const expected = generatedProjectBadge(project.name);
   const refined = { monogram: "RT", color: "amber" } as const;
   for (const repositories of [[repoA, repoB], [repoB, repoA], [repoA]]) {
-    const ui = mount(h(EngineFeaturesContext.Provider, {
-      value: RUST_ENGINE_FEATURES,
+    const ui = mount(h((props) => props.children, {
       children: h(LeadProjectEyebrow, {
         repositories, c: dark, projectForRepository: () => project,
         repositoryBadges: { [repoA.path]: refined, [repoB.path]: expected },
@@ -380,8 +378,7 @@ test("Rust rows use the known project badge when its repository refinements disa
       ui.update(h("View", null));
     }
   }
-  const ui = mount(h(EngineFeaturesContext.Provider, {
-    value: RUST_ENGINE_FEATURES,
+  const ui = mount(h((props) => props.children, {
     children: h(CardProject, { name: project.name, projectKey: project.key, c: dark }),
   }));
   try {

@@ -341,8 +341,10 @@ also check the open PR and clean checkout after native authorization.
   authenticated verdict as Nucleus approval. Branch protection remains in
   force. Formal GitHub review publication needs a separate reviewer identity
   on repos that require it. Merge with `PUT /repos/{owner}/{repo}/pulls/{n}/merge`
-  and the reviewed `sha`. On a lost response or head mismatch, read the PR
-  again. Use `merged` and its merge commit for readback, including squash merges.
+  with the reviewed `sha` and `merge_method: merge`. The reviewed head is a
+  parent of the merge commit. On a lost response or head mismatch, read the PR
+  again. Use `merged` and its merge commit for readback, including historical
+  and external squash merges.
   An externally merged head with no verdict requires recorded human acceptance.
   [GitHub's exact-head merge endpoint](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)
 
@@ -512,7 +514,8 @@ as `nucleus serve`. It reuses a healthy listener only when its controller
 credential and database path match. When the port is absent, it serializes
 startup and passes the lock to the detached engine. A later ACP launch can
 recover a stopped service. Keep the serve launcher's log under the configured
-log root.
+log root. The pass logs once when one task has held it for a minute, naming the
+task and the step.
 
 ### Set up T3
 
@@ -702,22 +705,27 @@ Keep the Settings tabs, shared controls and save feedback. Use one noun per
 control, put explanations in `?` popovers, autosave, prefer dropdowns and put
 Remove inside the editor.
 
-| Group | Longhorn file in the portable profile | Settings |
+| Group | Profile file (schema version 2) | Settings |
 | --- | --- | --- |
-| Profiles | `config/profiles.json` | Name, optional subscription group, canonical selection with stable ID, capability, weight, provider, model and effort, and the operator's `pausedGroups` list. |
-| Dispatch | `config/dispatch.json` | Usage level and optional end, global slots, default slots per project, per-project overrides and the dispatch mode. |
-| Projects | `state/projects.json` | Name, archival, discovered repository routes and required check names. Planners appear from verified live bindings. |
-| Hosts | `state/hosts.json` | T3 loopback endpoint and an environment key referring to its credential. The active endpoint and cached status are displayed separately. |
-| Storage | `state/engine.json` | Optional volume pin, work, scratch and log roots, verified Longhorn config archives and retention. |
+| Profiles | `config/profiles.json` | Profile names, enabled flags, selections (stable ID, capability, weight, provider, model and effort), subscription groups, operator pauses and host-specific profile choices. |
+| Dispatch | `config/dispatch.json` | Usage and optional end, global slots, project defaults and overrides, thread retention and dispatch mode. |
+| GitHub accounts | `config/github-accounts.json` | Verified account identities and account bindings for workers and reviewers. |
+| Projects | `state/projects.json` | Names, archival, repository routes, planner bindings and removal receipts. |
+| Hosts | `state/hosts.json` | T3 loopback endpoint and the environment key referring to its credential. |
+| Storage | `state/engine.json` | Enabled flag, placement, optional volume pin, root overrides and retention. |
+
+Startup upgrades version 1 files in place. Longhorn verifies a pre-migration
+archive in the profile backup directory before atomically replacing each file.
+The engine logs discarded keys and names the file and field when validation
+fails. Restarting with version 2 files leaves them untouched.
 
 Use `GET /v1/settings/{domain}` to read one domain. `PUT` takes its current
 `revision` and replacement `value`. The operator can save only one domain
 per request. An edit whose revision changed returns HTTP 409. A Projects edit
 preserves the discovered repository routes and planner bindings. Project saves
 publish the local settings change and wake the scheduler.
-Capacity changes wake local waiters. GitHub confirms that each configured check
-is required and passing at the exact head. GitHub's branch rules and the
-exact-head approval still govern the merge.
+Capacity changes wake local waiters. GitHub's branch rules and the exact-head
+approval govern the merge.
 
 On startup both the old explicit `--t3` fixture endpoint and the saved reference
 are supported. Apply saved connection and storage changes on the next start.

@@ -1,5 +1,12 @@
 //! Host observation and delivery for the isolated Rust task engine.
 
+macro_rules! host_log {
+    ($($arg:tt)*) => {{
+        let message = format!($($arg)*).replace(['\r', '\n'], " ");
+        eprintln!("{} {message}", ::time::OffsetDateTime::now_utc());
+    }};
+}
+
 mod admission;
 mod assignment;
 mod catalog;
@@ -914,9 +921,11 @@ impl T3Pass<'_> {
                 runtime.extend(helpers);
             }
         }
-        Ok(inventory
-            .writer(checkout, self.run_scratch.as_deref(), &runtime)?
-            .is_none())
+        let scratch = self.run_scratch.as_deref();
+        process::verify_roots(&[Some(checkout), scratch])
+            .await
+            .map_err(process::coverage_error)?;
+        Ok(inventory.writer(checkout, scratch, &runtime)?.is_none())
     }
 
     async fn process_inventory(&self) -> Result<&Inventory, HostError> {
@@ -943,9 +952,11 @@ impl T3Pass<'_> {
 
 impl TaskHost for T3Pass<'_> {
     async fn retirement_writer(&self, root: &Path) -> Result<Option<u32>, HostError> {
-        self.process_inventory()
-            .await?
-            .writer(root, None, &std::collections::HashSet::new())
+        let inventory = self.process_inventory().await?;
+        process::verify_roots(&[Some(root)])
+            .await
+            .map_err(process::coverage_error)?;
+        inventory.writer(root, None, &std::collections::HashSet::new())
     }
 
     async fn terminal_orphans(
@@ -1250,13 +1261,13 @@ impl TaskHost for T3Pass<'_> {
             })
             .await;
         match &reply {
-            Ok(Reply::Failure(cause)) => eprintln!(
+            Ok(Reply::Failure(cause)) => host_log!(
                 "{}: T3 {} refused with {:?}",
                 dispatch.instance,
                 wire.diagnostic(),
                 self.host.rpc.failure_detail(cause)
             ),
-            Err(error) => eprintln!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic()),
+            Err(error) => host_log!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic()),
             Ok(Reply::Value(_)) => {}
         }
         if matches!(&reply, Ok(Reply::Failure(cause)) if rejected(cause, &wire, &dispatch.instance))

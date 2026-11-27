@@ -67,20 +67,13 @@ export function movePlan(
     : [...rest.slice(0, firstLater), moved, ...rest.slice(firstLater)];
 }
 
-/**
- * A draft of a project plan. `idle` is the change the draft makes to the idle mark: a reason sets it,
- * `null` ends the current mark, and absent leaves it as it is. A save without `idle` ends an idle plan.
- */
+/** A draft of a project plan: the order and horizons being edited, and the version they were based on. */
 export type PlanDraft = {
   entries: PlanEntry[];
   version: number;
-  idle?: string | null;
 };
 
-/**
- * The `plan.set` input for a draft. `idle` is sent only when the draft sets a new mark: a changed
- * save without one ends the idle mark, so an existing mark is never renewed by saving the plan.
- */
+/** The `plan.set` input for a draft. */
 export function planSaveInput(
   project: string,
   draft: PlanDraft,
@@ -90,7 +83,6 @@ export function planSaveInput(
     project,
     version: draft.version,
     entries: draft.entries,
-    ...(typeof draft.idle === "string" ? { idle: draft.idle } : {}),
     author,
   };
 }
@@ -101,11 +93,6 @@ export function planDraftStale(
   latest: ProjectPlan | undefined,
 ): boolean {
   return Boolean(latest && latest.version > draftVersion);
-}
-
-/** The steps an idle plan may not have: anything in Now or Next. */
-export function activeSteps(entries: readonly PlanEntry[]): PlanEntry[] {
-  return entries.filter((entry) => entry.horizon !== "later");
 }
 
 /** Same lanes in the same order at the same horizons. Notes and completion conditions are not edited in the draft. */

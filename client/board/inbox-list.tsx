@@ -1,4 +1,3 @@
-import { laneProjects } from "../../shared/lane-finder";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
@@ -7,8 +6,6 @@ import {
   type DecisionView,
   type BoardLead,
   type BoardLeadLink,
-  type LaneView,
-  type ProjectPlan,
   type TaskSummary,
   type UiQueueState,
 } from "../../shared/contracts";
@@ -24,14 +21,12 @@ import {
   inboxSections,
   triageCards,
   rustTriageStates,
-  triageStates,
   type TriageFilter,
   type InboxView,
 } from "../../shared/inbox-board";
 import { openScopeLanes } from "../../shared/project-scope";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { useRpc } from "../shell";
-import { useEngineFeatures } from "../engine-features";
 import {
   Button,
   DropdownSelect,
@@ -50,7 +45,6 @@ import {
   TaskCard,
   DecisionCard,
   HoldPromptCard,
-  LaneDrainCard,
 } from "./cards";
 import { LeadProjectEyebrow, TriageLeadCard } from "./triage-lead-card";
 import { PageSentinel, pageLabel } from "./page-sentinel";
@@ -58,7 +52,7 @@ import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
 import { RustTaskProgress } from "../task/rust-progress";
-import { rustCardAgeAt, rustQuestionText, rustTaskLabel, rustWaitDetail, type RustCommand, type RustTask } from "../web/rust-board";
+import { compareRustTasks, compareRustTasksForColumn, rustCardAgeAt, rustQuestionText, rustTaskColumn, rustTaskLabel, rustWaitDetail, type RustBoardView, type RustCommand, type RustTask } from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
 
@@ -203,7 +197,6 @@ export function useInboxBoard({
     () =>
       pipelineBoard({
         projects: state?.projects ?? [],
-        lanes: lanes ?? [],
         selection,
         leads: boardLeads,
         linkedLeads: leadLinks,
@@ -323,14 +316,27 @@ export type InboxListProps = {
   onSelectLead: (id: string, lane: null, project?: string) => void;
   onSelectPapercut: (id: string, project?: string) => void;
   /** Opens a lane in the plan view, the drained-lane card's press (nucleus#1511). */
-  onOpenLane: (key: string, project?: string) => void;
   /** Every project plan, so the drained lane's mark-done confirmation names each plan that lists it. */
-  plans?: ProjectPlan[];
   busy: boolean;
   act: BoardAct;
   /** The list's view state the shell keeps across views (`usePipelineState`). */
   pipeline: PipelineState;
 };
+
+function rustBoardColumn(view: InboxListProps["view"]): RustBoardView | undefined {
+  switch (view) {
+    case "needs":
+    case "queue":
+    case "working":
+    case "review":
+    case "closing":
+    case "merging":
+    case "history":
+      return view;
+    default:
+      return undefined;
+  }
+}
 
 const viewTitles: Record<Exclude<BoardView, "planning">, string> = {
   needs: "Needs you",
@@ -370,15 +376,11 @@ export function InboxList({
   onSelectDecision,
   onSelectLead,
   onSelectPapercut,
-  onOpenLane,
   busy,
   act,
   pipeline,
-  plans = [],
 }: InboxListProps) {
   const setTask = useRpc(api.taskControl);
-  const changeLaneStatus = useRpc(api.laneStatus);
-  const keepLaneRpc = useRpc(api.laneKeep);
   const {
     queuedPages,
     queuedTasks,
@@ -398,10 +400,9 @@ export function InboxList({
     leads: "All", papercuts: "All",
   });
   const triageView = view === "leads" || view === "papercuts" ? view : null;
-  const rustEngine = useEngineFeatures().engine === "rust";
-  const stateOptions = rustEngine ? rustTriageStates : triageStates;
-  // Closed (Rust only): promoted and dropped items, read apart from the board's cards.
-  const closedFilter = rustEngine && triageView !== null && triageFilters[triageView] === "Closed";
+  const stateOptions = rustTriageStates;
+  // Closed: promoted and dropped items, read apart from the board's cards.
+  const closedFilter = triageView !== null && triageFilters[triageView] === "Closed";
   const readClosed = useRpc(api.itemClosed);
   const closedKind = view === "papercuts" ? "papercut" : "lead";
   const closedQuery = useQuery({
@@ -496,21 +497,6 @@ export function InboxList({
         reason,
       }),
     );
-  // Close finishes the drained step; Keep records the operator's reason and ends the episode.
-  const drainedLaneProject = (lane: LaneView) => {
-    const owners = laneProjects(lane, state?.projects ?? []);
-    return owners.length === 1 ? owners[0]?.key : undefined;
-  };
-  const closeDrainedLane = (lane: LaneView, note: string) =>
-    void act(async () => {
-      const project = drainedLaneProject(lane);
-      if (!project) throw new Error("Select a project before closing this lane.");
-      return changeLaneStatus({ key: lane.key, project, status: "done", note });
-    });
-  const keepDrainedLane = (lane: LaneView, reason: string) =>
-    void act(() =>
-      keepLaneRpc({ key: lane.key, reason, author: "operator (board)" }),
-    );
   const decisionTitle = (task: TaskSummary) => {
     const id = task.waitState?.decisionId;
     if (!id) return null;
@@ -560,31 +546,6 @@ export function InboxList({
             c={c}
             selected={selected === card.id}
             onPress={() => onSelectTask(card.id)}
-          />
-        );
-      case "lane_drain":
-        return (
-          <LaneDrainCard
-            key={key}
-            lane={card.value}
-            c={c}
-            busy={busy}
-            selected={false}
-            onPress={() => onOpenLane(card.value.key, drainedLaneProject(card.value))}
-            project={
-              card.value.repositories.length ? (
-                <LeadProjectEyebrow
-                  repositories={card.value.repositories}
-                  projectForRepository={projectForRepository}
-                  repositoryBadges={state?.repositoryBadges}
-                  c={c}
-                />
-              ) : undefined
-            }
-            onClose={(note) => closeDrainedLane(card.value, note)}
-            onKeep={(reason) => keepDrainedLane(card.value, reason)}
-            projects={state?.projects ?? []}
-            plans={plans}
           />
         );
       case "task":
@@ -802,7 +763,7 @@ export function InboxList({
         contentContainerStyle={{ paddingVertical: space.xs }}
       >
         <BoardCardVariantContext.Provider value="row">
-          {rust && <RustListRows key={view} view={view} rust={rust} c={c} />}
+          {rust && <RustListRows key={view} view={view} column={rustBoardColumn(view)} rust={rust} c={c} />}
           {closedFilter && (
             // Closed has no board cards (triageCards returns none), so these rows are the list.
             <View style={{ gap: space.xxs }}>
@@ -931,16 +892,21 @@ export function InboxList({
 
 const rustPageSize = 25;
 
-export function RustListRows({ c, rust, view }: {
+export function RustListRows({ c, rust, view, column }: {
   c: Colors;
   rust: NonNullable<InboxListProps["rust"]>;
   view: InboxListProps["view"];
+  /** The Inbox passes one grouped board column; lane lists omit it and mix columns. */
+  column?: RustBoardView;
 }) {
   const [limit, setLimit] = useState(rustPageSize);
-  const tasks = rust.tasks ?? [];
+  const tasks = [...(rust.tasks ?? [])].sort(column
+    ? (a, b) => compareRustTasksForColumn(a, b, column)
+    : compareRustTasks);
   const remaining = tasks.length - limit;
+  const ageAt = (task: RustTask) => rustCardAgeAt(task, column ?? rustTaskColumn(task));
   // Ages read the clock, as TypeScript cards do; a list without one does not tick.
-  useTick(tasks.some((task) => rustCardAgeAt(task) !== null) ? 30_000 : null);
+  useTick(tasks.some((task) => ageAt(task) !== null) ? 30_000 : null);
   return <>
     {tasks.slice(0, limit).map((task) => {
       // The task number alone, as on TypeScript cards; the project shows beside it.
@@ -948,7 +914,7 @@ export function RustListRows({ c, rust, view }: {
       const question = view === "needs" ? task.question : null;
       const title = question ? rustQuestionText(question) : task.title || reference;
       const detail = task.hold?.reason ?? rustWaitDetail(task);
-      const ageAt = rustCardAgeAt(task);
+      const cardAgeAt = ageAt(task);
       const project = rust.project(task);
       const canPrioritize = task.phase === "queued" || task.wait === "capacity";
       const promoted = task.queuePriority === "promoted";
@@ -959,7 +925,7 @@ export function RustListRows({ c, rust, view }: {
           tone: task.phase === "done" ? "success" : task.hold || task.attention === "attention" ? "warning" : "muted",
           state: task.stateLabel, detail: question ? null : detail,
         }}
-        age={ageAt === null ? null : relativeAge(ageAt)}
+        age={cardAgeAt === null ? null : relativeAge(cardAgeAt)}
         flags={canPrioritize && promoted ? <Badge label="Promoted" tone="accent" c={c} a11y="Promoted" /> : undefined}
         actions={canPrioritize && rust.onCommand ? (
           <View style={{ ...row, gap: space.xs }}>
