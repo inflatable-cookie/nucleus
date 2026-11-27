@@ -51,7 +51,7 @@ import {
 } from "./board/use-board-data";
 import { TaskDialog } from "./task/task-dialog";
 import { RustTaskDialog } from "./task/rust-task";
-import { groupRustTasks, postRustCommand, rustProjectActivity, useRustTasks, type RustCommand, type RustTask, type RustInvalidation } from "./web/rust-board";
+import { groupRustTasks, postRustCommand, rustProjectActivity, useRustTasks, type RustCommand, type RustTask, type RustInvalidation, type RustBoardTransport } from "./web/rust-board";
 import { useTaskDraftStore } from "./task/drafts";
 import { RustItemDialog } from "./records/rust-item";
 import { DecisionDialog } from "./records/decision-dialog";
@@ -118,7 +118,8 @@ export function MainSurface({
   workspaceBoard,
   rustBoard,
   planningIssues,
-}: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope; now?: number; rustBoard?: RustInvalidation; planningIssues?: string }) {
+  boardTransport,
+}: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope; now?: number; rustBoard?: RustInvalidation; planningIssues?: string; boardTransport?: RustBoardTransport }) {
   const c = theme.colors;
   const [panelWidth, setPanelWidth] = useState(0);
   const mode = inboxLayout(panelWidth, layout.compact);
@@ -181,7 +182,7 @@ export function MainSurface({
   const [recordNotice, setRecordNotice] = useState<RecordNoticeValue | null>(
     null,
   );
-  const rustTasks = useRustTasks(Boolean(rustBoard));
+  const rustTasks = useRustTasks(Boolean(rustBoard), boardTransport);
   const rustColumns = useMemo(() => {
     if (!rustTasks.data) return undefined;
     const contains = scopeContains(state?.projects ?? [], scope.projects);

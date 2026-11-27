@@ -495,12 +495,14 @@ export function rustProjectActivity(
   });
 }
 
-export function useRustTasks(enabled: boolean) {
+export type RustBoardTransport = ReturnType<typeof createRustBoardTransport>;
+
+export function useRustTasks(enabled: boolean, boardTransport: RustBoardTransport = transport) {
   return useQuery({
     ...pushQuery,
     queryKey: rustTaskListKey,
     enabled,
-    queryFn: ({ signal }) => transport.list(signal),
+    queryFn: ({ signal }) => boardTransport.list(signal),
   });
 }
 
