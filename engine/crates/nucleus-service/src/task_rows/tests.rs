@@ -403,17 +403,23 @@ impl Fixture {
         self.publish_shell();
     }
 
-    async fn restore_operator_horizon(&self, thread: &str) {
+    async fn restore_operator_horizons(&self, threads: &[&str]) {
         let (restored, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
             self.service.reconcile_delivery_snoozes(),
         ))
         .await;
         restored.unwrap();
-        assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
-        let restore = self.native.lock().unwrap().commands.last().unwrap().clone();
-        assert_eq!(restore["type"], "thread.snooze");
-        assert_eq!(restore["threadId"], thread);
-        assert_eq!(restore["snoozedUntil"], OPERATOR_SNOOZE);
+        let count = u64::try_from(threads.len()).unwrap();
+        assert_eq!(calls, [("orchestration.dispatchCommand", count)].into());
+        {
+            let native = self.native.lock().unwrap();
+            let restores = &native.commands[native.commands.len() - threads.len()..];
+            for (restore, thread) in restores.iter().zip(threads) {
+                assert_eq!(restore["type"], "thread.snooze");
+                assert_eq!(restore["threadId"], *thread);
+                assert_eq!(restore["snoozedUntil"], OPERATOR_SNOOZE);
+            }
+        }
         observe_restored_delivery_snooze(self).await;
     }
 
@@ -741,7 +747,7 @@ async fn a_snoozed_parent_reenters_without_waiting_for_its_horizon() {
     service.reconcile_live_parent(&row).await.unwrap();
     assert_eq!(fixture.commands(), ["message.dispatch"; 2]);
     fixture.publish_shell();
-    fixture.restore_operator_horizon(&fixture.thread).await;
+    fixture.restore_operator_horizons(&[&fixture.thread]).await;
 }
 
 #[tokio::test]
@@ -772,7 +778,7 @@ async fn a_planner_notice_restores_the_operator_horizon_on_its_destination() {
     assert_eq!(result, nucleus_hosts::NoticeOutcome::Accepted);
     assert_eq!(fixture.commands(), ["message.dispatch"]);
     fixture.publish_shell();
-    fixture.restore_operator_horizon(planner).await;
+    fixture.restore_operator_horizons(&[planner]).await;
 }
 
 #[tokio::test]
@@ -861,9 +867,16 @@ async fn retained_role_continues_while_both_rows_are_snoozed() {
         ),
         "{result:?}"
     );
-    assert_eq!(fixture.commands(), ["message.dispatch"]);
+    assert_eq!(fixture.commands(), ["message.dispatch"; 2]);
+    {
+        let native = fixture.native.lock().unwrap();
+        assert_eq!(native.commands[0]["threadId"], fixture.thread);
+        assert_eq!(native.commands[1]["threadId"], role);
+    }
     fixture.publish_shell();
-    fixture.restore_operator_horizon(role).await;
+    fixture
+        .restore_operator_horizons(&[&fixture.thread, role])
+        .await;
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
     forge_server.abort();
     assert!(forge_server.await.unwrap_err().is_cancelled());
@@ -878,14 +891,15 @@ async fn pending_delivery_snooze(service: &Service) -> nucleus_store::StoredDeli
 }
 
 async fn allow_delivery_snooze_retry(service: &Service) {
-    let record = pending_delivery_snooze(service).await;
-    service
-        .state
-        .lock()
-        .await
-        .store
-        .finish_delivery_snooze(&record.command, Some((record.attempt, 0)))
-        .unwrap();
+    let state = service.state.lock().await;
+    let records = state.store.due_delivery_snoozes(u64::MAX).unwrap();
+    assert!(!records.is_empty());
+    for record in records {
+        state
+            .store
+            .finish_delivery_snooze(&record.command, Some((record.attempt, 0)))
+            .unwrap();
+    }
 }
 
 async fn observe_restored_delivery_snooze(fixture: &Fixture) {
@@ -2382,7 +2396,7 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
     }
     let child = fixture.native.lock().unwrap().child.clone().unwrap();
     fixture.service.host.fixture_shell_delta(
-        &json!({"kind":"thread.updated", "sequence":1, "location":"active", "thread":child}),
+        &json!({"kind":"thread.updated", "sequence":3, "location":"active", "thread":child}),
     );
     let calls = fixture.sync_held().await;
     assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
@@ -2402,7 +2416,7 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
         child.clone()
     };
     fixture.service.host.fixture_shell_delta(
-        &json!({"kind":"thread.updated", "sequence":2, "location":"active", "thread":child}),
+        &json!({"kind":"thread.updated", "sequence":4, "location":"active", "thread":child}),
     );
     let calls = fixture.sync_held().await;
     assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());

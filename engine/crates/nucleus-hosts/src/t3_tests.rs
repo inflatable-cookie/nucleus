@@ -1816,10 +1816,6 @@ async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody()
     busy["projection"]["thread"]["settledOverride"] = json!("settled");
     let mut row = busy["projection"]["thread"].clone();
     let (host, native) = server(vec![
-        (
-            "orchestration.subscribeThread",
-            Response::Snapshot(busy.clone()),
-        ),
         ("orchestration.subscribeThread", Response::Snapshot(busy)),
         ("orchestration.dispatchCommand", Response::Success),
     ])
