@@ -12,12 +12,12 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Binding, HostError, ProfileCatalog, RowChildren, RowObservation, RowVisibility, T3, clock_ms,
+    Binding, HostError, ProfileCatalog, RowChildren, RowObservation, T3, clock_ms,
     launch::Method,
     message_id,
     projection::Projection,
     rpc::{Read, Reply, Rpc, ShellRevision, ThreadFence, closed_row},
-    task_row::ThreadVisibility,
+    task_row::timestamp_ms,
     thread_snapshots::{ShellCustody, ThreadRead, ThreadSnapshots, belongs_to, row_activity},
 };
 
@@ -67,7 +67,6 @@ pub enum ParentStep {
     Live(ParentRun),
     Failed,
     Delivered,
-    DeliveryUnknown,
     Write(ParentWrite),
     AfterDelivery(ParentWrite),
     Wait,
@@ -76,8 +75,6 @@ pub enum ParentStep {
 pub struct ParentAttempt<'a> {
     pub command: &'a str,
     pub released: bool,
-    pub replay_launch: bool,
-    pub recorded_failure: bool,
 }
 
 /// Whether T3 could have delivered the write.
@@ -121,7 +118,6 @@ pub struct ParentWrite {
     reentry: Option<Box<ActiveChild>>,
     child_evidence: Option<String>,
     ended_hold: Option<Box<EndedHold>>,
-    runtime: Option<String>,
 }
 
 /// Readback of an exact prior re-entry hold, before choosing whether to send.
@@ -137,8 +133,27 @@ const INSTANT_HOLD_MS: u64 = 1_000;
 const HOLD_BACKOFF_MS: u64 = 3_000;
 const INSTANT_HOLD_LIMIT: u8 = 3;
 
-/// Immutable inputs to a parent mutation. Live authorization is prepared separately.
+/// Operator visibility intent captured before a parent message can clear it.
 #[derive(Serialize, Deserialize)]
+pub struct ParentSnooze {
+    binding: Binding,
+    provider: String,
+    pub thread: String,
+    message: String,
+    pub until: String,
+    pub until_ms: u64,
+    snoozed_at_ms: Option<u64>,
+}
+
+/// Reconciliation of one recorded operator horizon.
+pub enum SnoozeRestoration {
+    Complete,
+    Pending,
+    Rejected,
+}
+
+/// Immutable inputs to a parent mutation. Live authorization is prepared separately.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FrozenParentWrite {
     binding: Binding,
     method: Method,
@@ -161,6 +176,23 @@ impl FrozenParentWrite {
         } else {
             self.payload["text"].as_str()
         }
+    }
+
+    /// Advance to a fresh ID after T3 proves it rejected a message command.
+    pub fn replace_rejected_command(&mut self) -> Option<String> {
+        let previous = self.payload["commandId"].as_str()?;
+        let base = previous.split_once('~').map_or(previous, |(base, _)| base);
+        let fingerprint = format!("{:x}", Sha256::digest(previous));
+        let command = format!("{base}~{}", &fingerprint[..16]);
+        if base.contains("-hold-") {
+            let old_marker = hold_marker(previous);
+            let prompt = self.prompt()?;
+            let text = prompt.strip_suffix(&old_marker).unwrap_or(prompt);
+            self.payload["text"] = json!(format!("{text}{}", hold_marker(&command)));
+        }
+        self.payload["commandId"] = json!(command);
+        self.payload["messageId"] = json!(message_id(&command));
+        Some(command)
     }
 
     #[must_use]
@@ -191,7 +223,6 @@ impl ParentWrite {
             reentry: None,
             child_evidence: None,
             ended_hold: None,
-            runtime: None,
         }
     }
 
@@ -242,8 +273,15 @@ impl ParentWrite {
         Ok(())
     }
 
-    pub fn require_runtime(&mut self, runtime: Option<String>) {
-        self.runtime = runtime;
+    pub fn use_legacy_intent(&mut self, command: &str, prompt: &str) {
+        self.wire.payload["commandId"] = json!(command);
+        if self.wire.method == Method::Create {
+            self.wire.payload["initialMessage"]["text"] = json!(prompt);
+            self.wire.payload["initialMessage"]["messageId"] = json!(message_id(command));
+        } else {
+            self.wire.payload["text"] = json!(prompt);
+            self.wire.payload["messageId"] = json!(message_id(command));
+        }
     }
 
     /// The row bound to a prepared message.
@@ -265,6 +303,7 @@ pub fn is_pinned_parent_hold(command: &str) -> bool {
 }
 
 fn parent_hold_provider(command: &str) -> Option<&str> {
+    let command = command.split_once('~').map_or(command, |(base, _)| base);
     let (_, pin) = command
         .strip_prefix("thread:nucleus-")?
         .split_once("-hold-acp-")?;
@@ -279,6 +318,11 @@ pub fn is_parent_reentry(command: &str) -> bool {
     is_pinned_parent_hold(command) && command.contains("-hold-acp-child-")
 }
 
+fn hold_marker(command: &str) -> String {
+    let fingerprint = format!("{:x}", Sha256::digest(command));
+    format!(" [{}]", &fingerprint[..16])
+}
+
 fn parent_hold(
     binding: &Binding,
     thread: &str,
@@ -287,8 +331,7 @@ fn parent_hold(
     prompt: &str,
 ) -> ParentWrite {
     // ACP receives only text, so give holds with the same role label distinct prompts.
-    let fingerprint = format!("{:x}", Sha256::digest(command));
-    let prompt = format!("{prompt} [{}]", &fingerprint[..16]);
+    let prompt = format!("{prompt}{}", hold_marker(command));
     ParentWrite::new(
         binding,
         provider,
@@ -345,18 +388,12 @@ async fn initial_parent<'a>(
     attempt: Option<ParentAttempt<'_>>,
     catalogue: impl Future<Output = Result<&'a ProfileCatalog, HostError>> + Send,
 ) -> Result<ParentStep, HostError> {
-    if attempt
-        .as_ref()
-        .is_some_and(|attempt| !attempt.replay_launch)
-    {
-        return Ok(ParentStep::DeliveryUnknown);
+    let write = parent_launch(binding, provider, thread, title, prompt);
+    if attempt.is_some_and(|attempt| Some(attempt.command) != write.command_id()) {
+        return Ok(ParentStep::Wait);
     }
     if !catalogue.await?.supports_parent(provider) {
         return Err(HostError::Configuration);
-    }
-    let write = parent_launch(binding, provider, thread, title, prompt);
-    if attempt.is_some_and(|attempt| Some(attempt.command) != write.command_id()) {
-        return Err(HostError::Binding);
     }
     Ok(ParentStep::Write(write))
 }
@@ -735,42 +772,6 @@ impl T3 {
         }
     }
 
-    /// Read the exact command-linked native evidence in one bounded parent observation.
-    ///
-    /// # Errors
-    /// Returns an error when the parent evidence cannot be verified.
-    pub async fn parent_delivery_receipts(
-        &self,
-        binding: &Binding,
-        provider: &str,
-        commands: Vec<String>,
-    ) -> Result<Vec<String>, HostError> {
-        let before = self.parent_runtime_hint().ok_or(HostError::Unavailable)?;
-        let thread = parent_thread(Path::new(&binding.worktree_path));
-        let mut attempted = false;
-        let observed = self
-            .observe_thread_with(binding, &thread, ThreadRead::Exact, || attempted = true)
-            .await;
-        let (projection, _) = observed.map_err(|error| {
-            if attempted && !matches!(error, HostError::Binding) {
-                HostError::ParentReceiptInconclusive
-            } else {
-                error
-            }
-        })?;
-        if self.parent_runtime_hint().as_ref() != Some(&before) {
-            return Err(HostError::ParentReceiptInconclusive);
-        }
-        let Some(projection) = projection else {
-            return Ok(Vec::new());
-        };
-        projection.require_parent_provider(provider)?;
-        Ok(commands
-            .into_iter()
-            .filter(|command| projection.has_delivery(&message_id(command)))
-            .collect())
-    }
-
     /// Read the parent, or prepare one guarded write to establish its held turn.
     /// A missing root or uncertain projection waits for another pass.
     /// # Errors
@@ -798,7 +799,6 @@ impl T3 {
             let mut stranded = false;
             if let Some((run, node)) = prior_turn
                 .as_ref()
-                .filter(|attempt| !attempt.recorded_failure)
                 .and_then(|attempt| projection.live_parent_run(&message_id(attempt.command)))
             {
                 return Ok(ParentStep::Live(ParentRun {
@@ -808,11 +808,11 @@ impl T3 {
                 }));
             }
             if let Some(attempt) = prior_turn.as_ref()
-                && (attempt.recorded_failure || !(attempt.released && projection.archived()))
+                && !(attempt.released && projection.archived())
             {
                 let message = message_id(attempt.command);
                 let recoverable = projection.parent_recoverable(&message, provider);
-                if !recoverable && (attempt.recorded_failure || projection.turn_failed(&message)) {
+                if !recoverable && projection.turn_failed(&message) {
                     return Ok(ParentStep::Failed);
                 }
                 stranded = parent_hold_provider(attempt.command) == Some(provider)
@@ -828,11 +828,14 @@ impl T3 {
                     }
                     // The bounded window cannot prove absence. T3 deduplicates
                     // this exact message command, including a delayed receipt.
-                    if !is_pinned_parent_hold(attempt.command) {
+                    if attempt.command == format!("{thread}-launch") {
                         return initial_parent(
                             binding, provider, &thread, title, start_line, prior_turn, catalogue,
                         )
                         .await;
+                    }
+                    if !attempt.command.starts_with(&format!("{thread}-hold-")) {
+                        return Ok(ParentStep::Wait);
                     }
                     replay = Some(attempt.command);
                 }
@@ -875,12 +878,6 @@ impl T3 {
             });
         }
 
-        if prior_turn
-            .as_ref()
-            .is_some_and(|attempt| attempt.recorded_failure)
-        {
-            return Ok(ParentStep::Failed);
-        }
         initial_parent(
             binding, provider, &thread, title, start_line, prior_turn, catalogue,
         )
@@ -1147,7 +1144,11 @@ impl T3 {
     ///
     /// # Errors
     /// Returns an error when the write is vetoed or native acceptance is uncertain.
-    pub async fn write_parent(&self, write: ParentWrite) -> Result<(), ParentSendError> {
+    pub async fn write_parent(
+        &self,
+        write: ParentWrite,
+        record_snooze: impl FnOnce(ParentSnooze) -> Result<(), HostError> + Send,
+    ) -> Result<(), ParentSendError> {
         if write.ended_hold().is_some_and(|ended| ended.unchanged) {
             return Err(ParentSendError::NotSent(HostError::Uncertain));
         }
@@ -1155,27 +1156,24 @@ impl T3 {
         let thread_id = write.thread_id().map(str::to_owned);
         let launch_provider =
             (write.wire.method == Method::Create).then_some(write.wire.provider.as_str());
-        let hold = write
-            .command_id()
-            .filter(|id| is_pinned_parent_hold(id))
+        let message = (write.wire.payload["type"] == "message.dispatch")
+            .then(|| write.command_id().map(str::to_owned))
+            .flatten();
+        let delivered_message = write.wire.payload["messageId"]
+            .as_str()
+            .or_else(|| write.wire.payload["initialMessage"]["messageId"].as_str())
             .map(str::to_owned);
-        match self
+        let reply = self
             .rpc
             .write_guarded(
                 write.wire.method.rpc(),
                 write.wire.payload,
                 Read::One,
-                write.runtime.as_deref(),
                 || {
                     if let Some(fence) = &write.unarchive_fence
                         && thread_id
                             .as_deref()
                             .is_none_or(|thread| !self.rpc.same_thread(thread, fence))
-                    {
-                        return Err(HostError::Uncertain);
-                    }
-                    if let Some(runtime) = &write.runtime
-                        && self.parent_runtime_hint().as_ref() != Some(runtime)
                     {
                         return Err(HostError::Uncertain);
                     }
@@ -1190,10 +1188,10 @@ impl T3 {
                     }
                     if let (Some(delivery), Some(thread)) = (&write.delivery, thread_id.as_deref())
                     {
-                        self.check_delivery_shell(thread, delivery, &write.owned_snoozes)?;
+                        self.check_delivery_shell(thread, delivery)?;
                         self.check_quiet_parent(&write.wire.binding, thread)?;
                     }
-                    if hold.is_some() && self.rpc.uses_held_shell() {
+                    if message.is_some() && write.delivery.is_none() && self.rpc.uses_held_shell() {
                         let thread = thread_id.as_deref().ok_or(HostError::Binding)?;
                         let row = self.rpc.thread_row(thread).ok_or(HostError::Uncertain)?;
                         if !row["archivedAt"].is_null()
@@ -1212,32 +1210,104 @@ impl T3 {
                         {
                             return Err(HostError::Uncertain);
                         }
-                        crate::task_row::check_delivery_snooze(&row, &write.owned_snoozes)?;
+                    }
+                    if let (Some(thread), Some(message)) =
+                        (thread_id.as_deref(), delivered_message.as_deref())
+                        && let Some(row) = self.rpc.thread_row(thread)
+                        && let Some(until) = row["snoozedUntil"].as_str()
+                        && let Ok(until_ms) = timestamp_ms(until)
+                        && until_ms > clock_ms()?
+                        && !write.owned_snoozes.contains(&until_ms)
+                    {
+                        record_snooze(ParentSnooze {
+                            binding: write.wire.binding.clone(),
+                            provider: write.wire.provider.clone(),
+                            thread: thread.into(),
+                            message: message.into(),
+                            until: until.into(),
+                            until_ms,
+                            snoozed_at_ms: row["snoozedAt"]
+                                .as_str()
+                                .and_then(|at| timestamp_ms(at).ok()),
+                        })?;
                     }
                     Ok(())
                 },
             )
-            .await?
-        {
-            Reply::Value(value) => {
-                if expects_receipt
-                    && (value["sequence"].as_u64().is_none()
-                        || value["threadId"]
-                            .as_str()
-                            .is_some_and(|thread| Some(thread) != thread_id.as_deref()))
+            .await;
+        parent_send_result(
+            reply?,
+            expects_receipt,
+            thread_id.as_deref(),
+            message.as_deref(),
+        )
+    }
+
+    /// Reconcile a previously recorded horizon using the exact native message.
+    ///
+    /// # Errors
+    /// Returns an error when the native observation or write is uncertain.
+    pub async fn restore_parent_snooze(
+        &self,
+        intent: &ParentSnooze,
+        attempt: i64,
+        still_due: impl FnOnce() -> bool + Send,
+    ) -> Result<SnoozeRestoration, HostError> {
+        let thread = &intent.thread;
+        let (projection, fence) = self
+            .observe_thread(&intent.binding, thread, ThreadRead::Visibility)
+            .await?;
+        let Some(projection) = projection else {
+            return Ok(SnoozeRestoration::Pending);
+        };
+        if projection.archived() || projection.deleted() || intent.until_ms <= clock_ms()? {
+            return Ok(SnoozeRestoration::Complete);
+        }
+        projection.require_parent_provider(&intent.provider)?;
+        let newer_wake = intent
+            .snoozed_at_ms
+            .zip(projection.last_snooze_wake_ms())
+            .is_some_and(|(snoozed, woke)| woke > snoozed);
+        let shown = projection
+            .row_observation()?
+            .and_then(|row| row.visibility.snoozed_until_ms);
+        if newer_wake {
+            return Ok(SnoozeRestoration::Complete);
+        }
+        if let Some(until) = shown {
+            let shell_agrees = self
+                .row_visibility_hint(thread)
+                .is_some_and(|row| row.snoozed_until_ms == Some(until));
+            return Ok(
+                if shell_agrees
+                    && (until != intent.until_ms || projection.has_delivery(&intent.message))
                 {
-                    return Err(ParentSendError::Unknown(HostError::Uncertain));
-                }
-                Ok(())
+                    SnoozeRestoration::Complete
+                } else {
+                    SnoozeRestoration::Pending
+                },
+            );
+        }
+        if !projection.has_delivery(&intent.message) {
+            return Ok(SnoozeRestoration::Pending);
+        }
+        let command = format!(
+            "{}-restore-snooze-{}-{}-{attempt}",
+            intent.message,
+            intent.until_ms,
+            intent.snoozed_at_ms.unwrap_or_default()
+        );
+        let reply = self.rpc.call_guarded(
+            "orchestration.dispatchCommand",
+            json!({"type":"thread.snooze","commandId":command,"threadId":thread,"snoozedUntil":intent.until}),
+            Read::Background,
+            || Ok(self.rpc.same_thread(thread, &fence) && intent.until_ms > clock_ms()? && still_due()),
+        ).await?;
+        match reply {
+            Reply::Failure(cause) if crate::command_rejected(&cause, &command, "thread.snooze") => {
+                Ok(SnoozeRestoration::Rejected)
             }
-            Reply::Failure(cause)
-                if hold
-                    .as_ref()
-                    .is_some_and(|command| crate::dispatch_rejected(&cause, command)) =>
-            {
-                Err(ParentSendError::Rejected)
-            }
-            Reply::Failure(_) => Err(ParentSendError::Unknown(HostError::Uncertain)),
+            _ => Ok(SnoozeRestoration::Pending),
         }
     }
 
@@ -1245,7 +1315,6 @@ impl T3 {
         &self,
         thread: &str,
         delivery: &ParentDelivery,
-        owned: &[u64],
     ) -> Result<(), HostError> {
         let (row, observed) = self.rpc.thread_row_with_revision(thread);
         let refuse = |predicate| HostError::ParentPreflight {
@@ -1269,12 +1338,7 @@ impl T3 {
                 activity_now: after.activity(),
             });
         }
-        let visibility: ThreadVisibility = serde_json::from_value((*row).clone())
-            .map_err(|_| refuse("held shell visibility is invalid"))?;
-        let visibility = visibility
-            .read()
-            .map_err(|_| refuse("held shell visibility is invalid"))?;
-        verify_delivery_visibility(visibility, delivery.row.sequence, observed, owned)
+        Ok(())
     }
 }
 
@@ -1373,20 +1437,29 @@ fn parent_accepts_reentry(row: &Value) -> bool {
     )
 }
 
-fn verify_delivery_visibility(
-    visibility: RowVisibility,
-    prepared: u64,
-    observed: Option<u64>,
-    owned: &[u64],
-) -> Result<(), HostError> {
-    if let Some(until) = visibility.snoozed_until_ms
-        && until > clock_ms()?
-        && !owned.contains(&until)
-    {
-        return Err(HostError::ParentSnoozed {
-            until,
-            revision: observed.unwrap_or(prepared),
-        });
+fn parent_send_result(
+    reply: Reply,
+    expects_receipt: bool,
+    thread: Option<&str>,
+    message: Option<&str>,
+) -> Result<(), ParentSendError> {
+    match reply {
+        Reply::Value(value) => {
+            if expects_receipt
+                && (value["sequence"].as_u64().is_none()
+                    || value["threadId"]
+                        .as_str()
+                        .is_some_and(|actual| Some(actual) != thread))
+            {
+                return Err(ParentSendError::Unknown(HostError::Uncertain));
+            }
+            Ok(())
+        }
+        Reply::Failure(cause)
+            if message.is_some_and(|command| crate::dispatch_rejected(&cause, command)) =>
+        {
+            Err(ParentSendError::Rejected)
+        }
+        Reply::Failure(_) => Err(ParentSendError::Unknown(HostError::Uncertain)),
     }
-    Ok(())
 }

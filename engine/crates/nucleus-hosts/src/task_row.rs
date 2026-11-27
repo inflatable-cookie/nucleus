@@ -176,7 +176,6 @@ impl T3 {
                 "orchestration.dispatchCommand",
                 payload,
                 crate::rpc::Read::Background,
-                None,
                 || {
                     self.rpc.with_shell(|view| {
                         if matches!(change, RowChange::SnoozeUntil(_))
