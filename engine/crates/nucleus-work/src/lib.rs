@@ -108,6 +108,8 @@ pub enum WorkError {
     },
     #[error("worktree head could not be read")]
     Head(#[from] InvalidHead),
+    #[error("{0}")]
+    NotUpdated(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, thiserror::Error)]
@@ -577,6 +579,28 @@ impl Checkout<'_> {
     /// Returns an error if the fetch fails, history cannot be read, or the
     /// start lacks a landed prerequisite.
     pub fn published_start(&self, base: &str, landings: &[Landing]) -> Result<Head, WorkError> {
+        let published = self.fetch_base(base)?;
+        if let Some(head) = self.branch_head()?
+            && self.contains(&head, &published)?
+            && self.unlanded(landings, &head)?.is_none()
+        {
+            return Ok(head);
+        }
+        match self.unlanded(landings, &published)? {
+            None => Ok(published),
+            Some(landing) => Err(WorkError::UnlandedPrerequisite {
+                base: base.into(),
+                prerequisite: landing.prerequisite.clone(),
+            }),
+        }
+    }
+
+    /// Fetch `origin`'s base into the registered object store and read its tip.
+    /// Only the remote-tracking ref moves.
+    ///
+    /// # Errors
+    /// Returns an error if the fetch fails or the tip cannot be read.
+    pub fn fetch_base(&self, base: &str) -> Result<Head, WorkError> {
         let tracking = format!("refs/remotes/origin/{base}");
         {
             let _step = self.admit()?;
@@ -592,26 +616,100 @@ impl Checkout<'_> {
                 ],
             )?;
         }
-        let published: Head = self
-            .git(
+        self.commit_at(&tracking)
+    }
+
+    /// Move the registered checkout's local base forward to a merged commit
+    /// which the published base holds. A checked-out base takes a fast-forward
+    /// merge, and otherwise only its ref moves. Git refuses to overwrite local
+    /// files or to move a branch another worktree holds.
+    ///
+    /// # Errors
+    /// Returns why the local base was left where it was.
+    pub fn fast_forward(
+        &self,
+        base: &str,
+        published: &Head,
+        merged: &Head,
+    ) -> Result<(), WorkError> {
+        if !self.contains(merged, published)? {
+            return Err(WorkError::NotUpdated(
+                "the published base does not contain the merged commit",
+            ));
+        }
+        let branch = format!("refs/heads/{base}");
+        let local = self.commit_at(&branch)?;
+        if self.contains(merged, &local)? {
+            return Ok(());
+        }
+        let admin = self.git(&self.repository, &["rev-parse", "--absolute-git-dir"])?;
+        let admin = Path::new(admin.trim_end_matches('\n'));
+        for (state, reason) in [
+            ("MERGE_HEAD", "the registered checkout is in a merge"),
+            ("rebase-merge", "the registered checkout is in a rebase"),
+            ("rebase-apply", "the registered checkout is in a rebase"),
+        ] {
+            if !missing(&admin.join(state))? {
+                return Err(WorkError::NotUpdated(reason));
+            }
+        }
+        let current = self.git(
+            &self.repository,
+            &["rev-parse", "--symbolic-full-name", "HEAD"],
+        )?;
+        let current = current.trim_end();
+        if current == "HEAD" {
+            return Err(WorkError::NotUpdated(
+                "the registered checkout has a detached HEAD",
+            ));
+        }
+        if !self.contains(&local, merged)? {
+            return Err(WorkError::NotUpdated(
+                "the local base has diverged from the merged commit",
+            ));
+        }
+        let _step = self.admit()?;
+        if current == branch {
+            // Configuration must not turn this into a stash or a squash, and an
+            // ignored file is a local file too.
+            self.git(
                 &self.repository,
-                &["rev-parse", "--verify", &format!("{tracking}^{{commit}}")],
-            )?
+                &[
+                    "merge",
+                    "--ff-only",
+                    "--no-autostash",
+                    "--no-overwrite-ignore",
+                    "--no-squash",
+                    "--no-stat",
+                    "--quiet",
+                    merged.as_str(),
+                ],
+            )?;
+        } else {
+            // Without `--no-prune`, a configured prune deletes the destination.
+            self.git(
+                &self.repository,
+                &[
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--no-prune",
+                    "--no-write-fetch-head",
+                    "--no-recurse-submodules",
+                    ".",
+                    &format!("{merged}:{branch}"),
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn commit_at(&self, reference: &str) -> Result<Head, WorkError> {
+        let revision = format!("{reference}^{{commit}}");
+        Ok(self
+            .git(&self.repository, &["rev-parse", "--verify", &revision])?
             .trim_end()
-            .parse()?;
-        if let Some(head) = self.branch_head()?
-            && self.contains(&head, &published)?
-            && self.unlanded(landings, &head)?.is_none()
-        {
-            return Ok(head);
-        }
-        match self.unlanded(landings, &published)? {
-            None => Ok(published),
-            Some(landing) => Err(WorkError::UnlandedPrerequisite {
-                base: base.into(),
-                prerequisite: landing.prerequisite.clone(),
-            }),
-        }
+            .parse()?)
     }
 
     fn unlanded<'l>(
@@ -1442,6 +1540,8 @@ impl Checkout<'_> {
         let (operation, timeout) = match args {
             ["fetch", ..] => (GitOperation::Fetch, GIT_TIMEOUT),
             ["worktree", "add", ..] => (GitOperation::Add, WORKTREE_TIMEOUT),
+            // Killing a merge midway would leave the working tree half moved.
+            ["merge", ..] => (GitOperation::Other, WORKTREE_TIMEOUT),
             ["--no-optional-locks", "status", ..]
             | [
                 "--git-dir",

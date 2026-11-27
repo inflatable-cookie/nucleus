@@ -10,6 +10,8 @@ use nucleus_store::{ProjectSettings, Projects, RepositorySettings};
 use super::*;
 use crate::tests::{REPOSITORY, create_fixture_commit, fixture, git};
 
+mod merges;
+
 struct Registered {
     _home: tempfile::TempDir,
     service: Service,

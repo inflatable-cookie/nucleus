@@ -9,6 +9,7 @@ macro_rules! service_log {
 mod acp;
 mod allowance;
 mod attention;
+mod checkout_update;
 mod dependencies;
 mod diagnostics;
 mod enrollment;
@@ -256,6 +257,7 @@ pub struct Service {
     state: Arc<StateMutex>,
     project_writes: RwLock<()>,
     pass_lock: Mutex<()>,
+    merges: checkout_update::Merges,
     watch_lock: Mutex<()>,
     changes: broadcast::Sender<TaskChange>,
     project_changes: watch::Sender<()>,
@@ -530,6 +532,7 @@ impl Service {
             project,
             project_writes: RwLock::new(()),
             pass_lock: Mutex::new(()),
+            merges: checkout_update::Merges::default(),
             watch_lock: Mutex::new(()),
             changes: broadcast::Sender::new(64),
             project_changes: watch::Sender::new(()),
@@ -838,6 +841,7 @@ impl Service {
             Box::pin(self.watch_enrollments()),
             Box::pin(self.watch_housekeeping()),
             Box::pin(self.watch_trash()),
+            Box::pin(self.watch_merges()),
             Box::pin(self.watch_tells()),
             Box::pin(self.watch_inbox()),
             Box::pin(self.watch_theme())
@@ -2064,6 +2068,9 @@ impl Service {
             self.wake_dependents(state, id);
         }
         self.retire_native_decision(state, prior);
+        if let Some(commit) = presentation::landing(&prior.task, task, audit) {
+            self.merges.landed(task.identity().clone(), commit);
+        }
         self.track(state, task);
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);

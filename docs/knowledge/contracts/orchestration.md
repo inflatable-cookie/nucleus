@@ -98,9 +98,10 @@ and [worktree handling](../../../engine/crates/nucleus-work/src/lib.rs).
 
 A brief task's checkout starts from the published base. Nucleus fetches
 `origin`'s base branch into the registered repository, which moves only the
-remote-tracking ref. The local branch and working tree stay as they are, however
-far behind. A task branch left by an earlier allocation keeps its head when the
-published base already holds it and it contains the prerequisite merges below.
+remote-tracking ref. A start leaves the local branch and working tree as they
+are, however far behind. A task branch left by an earlier allocation keeps its
+head when the published base already holds it and it contains the prerequisite
+merges below.
 
 The start must contain the recorded merge commit of every prerequisite that
 landed on the same repository and base. A failed fetch or commit lookup
@@ -109,6 +110,24 @@ Nucleus never falls back to the local head.
 
 Review-entry tasks start at their recorded head, and report-only tasks at their
 pinned planning commit.
+
+### Registered checkout after a merge
+
+When a task's merge is observed, whether Nucleus merged it or accepted an
+external merge, Nucleus fetches the base and fast-forwards the registered
+checkout's local base to the merged commit
+([Spec 070 ruling 61](../specs/070-small-engine.md#rulings)). A checked-out base
+takes a fast-forward-only merge, which refuses to overwrite local changes,
+untracked files or ignored files. On another branch only the local base ref
+moves. Nucleus never resets, stashes, rebases or forces, and touches no other
+branch or worktree.
+
+The base stays put when Git refuses, the base has diverged, the published base
+lacks the merged commit, or the checkout is in a merge or rebase or has a
+detached HEAD. The task history records `checkout_not_updated` with the reason.
+This is one attempt per merge, beside closeout, which never waits for it. Updates
+run one at a time. A restart drops a pending one, and the next merge catches up.
+See [the update](../../../engine/crates/nucleus-service/src/checkout_update.rs).
 
 ### Wait states and prerequisites
 
