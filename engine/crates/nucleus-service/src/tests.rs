@@ -439,7 +439,10 @@ impl TaskHost for Due {
         unreachable!("no retirement in the replay fixture")
     }
 
-    async fn retirement_writer(&self, _: &Path) -> Result<Option<u32>, HostError> {
+    async fn retirement_writer(
+        &self,
+        _: &Path,
+    ) -> Result<Option<nucleus_hosts::RetirementBlocker>, HostError> {
         unreachable!("no retirement in the replay fixture")
     }
 

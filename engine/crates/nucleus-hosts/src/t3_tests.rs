@@ -1878,7 +1878,8 @@ async fn closing_tasks_share_one_cwd_census_for_retirement_roots() {
         scope(busy.path(), None)
             .retirement_writer(busy.path())
             .await
-            .unwrap(),
+            .unwrap()
+            .map(|blocker| blocker.pid),
         Some(pid)
     );
     child.kill().await.unwrap();
@@ -1887,7 +1888,8 @@ async fn closing_tasks_share_one_cwd_census_for_retirement_roots() {
         scope(idle.path(), None)
             .retirement_writer(busy.path())
             .await
-            .unwrap(),
+            .unwrap()
+            .map(|blocker| blocker.pid),
         Some(pid)
     );
     assert_eq!(
