@@ -815,6 +815,7 @@ impl Service {
             Box::pin(self.watch_enrollments()),
             Box::pin(self.watch_housekeeping()),
             Box::pin(self.watch_trash()),
+            Box::pin(self.watch_volume()),
             Box::pin(self.watch_tells()),
             Box::pin(self.watch_inbox()),
             Box::pin(self.watch_theme())

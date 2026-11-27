@@ -25,6 +25,8 @@ use crate::{Service, ServiceError};
 
 /// A pass step older than this is logged once.
 const STUCK: Duration = Duration::from_mins(1);
+/// How often the engine reads its roots whatever else it is doing.
+const PROBE: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy)]
 pub(crate) enum Limit {
@@ -198,6 +200,25 @@ impl WorkVolume {
         })
     }
 
+    /// Read the pinned roots, which records an outage and the return ending it.
+    async fn probe(&self) {
+        let roots = self.abandoned.roots.clone();
+        let read = move |_| {
+            for root in &roots {
+                let _ = root.verify();
+            }
+        };
+        // A probe which hangs is abandoned and bounded like any other read.
+        let _ = self
+            .run(
+                "work volume",
+                "checking the work volume",
+                Limit::Check,
+                read,
+            )
+            .await;
+    }
+
     /// Resolve while a caller is waiting on a work-volume call for this owner.
     pub(crate) async fn waiting(&self, owner: &str) {
         let mut waiting = self.waiting.subscribe();
@@ -245,6 +266,14 @@ pub(crate) async fn watched<F: Future>(task: &str, work: F) -> F::Output {
 }
 
 impl Service {
+    /// Notice an outage even while the only call using the volume is a stuck one.
+    pub(crate) async fn watch_volume(&self) {
+        loop {
+            self.volume.probe().await;
+            time::sleep(PROBE).await;
+        }
+    }
+
     /// Run a checkout operation as a bounded work-volume call.
     pub(crate) async fn checkout_job<T: Send + 'static>(
         &self,
@@ -304,11 +333,11 @@ mod tests {
             .is_ok()
     }
 
-    /// Let the engine see a root go away, and put it back.
+    /// Let the periodic probe alone see a root go away, and put it back.
     async fn lose_and_restore(volume: &WorkVolume, root: &Path) {
         let away = root.with_extension("away");
         std::fs::rename(root, &away).unwrap();
-        assert!(!quick(volume, OWNER).await, "still held while away");
+        volume.probe().await;
         std::fs::rename(&away, root).unwrap();
     }
 

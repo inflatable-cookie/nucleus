@@ -1,7 +1,7 @@
 //! A brief task's first checkout against a real origin which is ahead of the
 //! registered checkout.
 
-use std::{collections::BTreeMap, os::unix::fs::PermissionsExt};
+use std::{collections::BTreeMap, os::unix::fs::PermissionsExt, sync::atomic::Ordering};
 
 use nucleus_core::{Entry, Identity};
 use nucleus_forge::GitHub;
@@ -294,6 +294,44 @@ async fn a_failed_fetch_waits_without_a_stale_start() {
     );
     assert!(crate::workspace_cause(&step).starts_with("git fetch "));
     registered.assert_no_task_branch("offline");
+}
+
+#[tokio::test]
+async fn a_fetch_still_running_holds_back_every_start_in_its_repository() {
+    let mut registered = registered().await;
+    let published = registered.publish("published");
+    let scratch = registered.checkout.with_file_name("hung-git");
+    std::fs::create_dir(&scratch).expect("Git scratch");
+    registered.service.git = crate::project::LocalGit(scratch.clone());
+    let gate = crate::project::git_gate::install(scratch);
+    gate.only.set("fetch").unwrap();
+    gate.holds.store(1, Ordering::SeqCst);
+    registered.service.volume.check = Duration::from_secs(3);
+    let first = registered.seed("first").await;
+    let second = registered.seed("second").await;
+
+    for row in [&first, &second] {
+        assert!(matches!(
+            registered.allocate(row).await,
+            Err(ServiceError::Workspace(WorkError::Storage(_)))
+        ));
+    }
+    // The second task started no fetch beside the abandoned one.
+    assert_eq!(gate.entered.load(Ordering::SeqCst), 1);
+    registered.assert_no_task_branch("second");
+
+    gate.release();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while registered.allocate(&second).await.is_err() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the repository resumes once the fetch returns");
+    assert_eq!(
+        registered.allocate(&second).await.expect("allocated"),
+        Some(Workspace::Clean(published))
+    );
 }
 
 #[tokio::test]

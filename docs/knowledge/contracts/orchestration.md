@@ -138,8 +138,9 @@ never holds back later calls; once sixteen of a task's calls have not returned,
 each further hung call delays that task's next ones by five minutes. A mutation already started holds back its
 task until it returns, or until the volume has gone and returned or been
 remounted and the mutation is older than eleven minutes, longer than Git may
-run. A published-base fetch holds back its whole repository the same way. A
-mutation stuck while the volume never reads as gone keeps holding. A quarantine
+run. The engine reads its roots every thirty seconds to notice this. A
+published-base fetch holds back its whole repository the same way. A mutation
+stuck while the volume never reads as gone keeps holding. A quarantine
 stopped after its move stays pending for the owner to check.
 
 A task whose work volume or layout, including its registered checkout, cannot be
