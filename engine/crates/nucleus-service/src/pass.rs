@@ -4240,7 +4240,7 @@ mod tests {
     async fn stopped_dispatch_waits_then_merges_the_approved_head() {
         let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
         let head = service.fixture().start.clone();
-        let (task, _) = code_task_at_merge("reviewer", &head);
+        let (task, _) = code_task_at_merge("worker", &head);
         service
             .state
             .lock()
@@ -4253,7 +4253,8 @@ mod tests {
         let read_merged = Arc::clone(&merged);
         let write_merged = Arc::clone(&merged);
         let writes = Arc::clone(&puts);
-        let pull = forge_pull(&head);
+        let mut pull = forge_pull(&head);
+        pull["head"]["ref"] = json!("ns-worker");
         let checks = forge_checks(&head);
         let app = Router::new()
             .route(
@@ -4284,7 +4285,7 @@ mod tests {
             ..Default::default()
         });
         let host = service.host.fixture_pass();
-        let row = service.task("reviewer").await.unwrap();
+        let row = service.task("worker").await.unwrap();
         let result = Box::pin(service.advance(&row, &host)).await;
         assert!(matches!(result, Err(ServiceError::MergeDispatchStopped)));
         assert_eq!(puts.load(Ordering::Relaxed), 0);
@@ -4294,7 +4295,7 @@ mod tests {
             matches!(detail, Some(crate::WaitDetail::Observation(cause)) if cause.contains("Dispatch"))
         );
         assert_eq!(
-            service.task("reviewer").await.unwrap().task.phase(),
+            service.task("worker").await.unwrap().task.phase(),
             Phase::Merging
         );
 
@@ -4308,7 +4309,7 @@ mod tests {
             .unwrap()
             .mode = DispatchMode::Running;
         let result = Box::pin(service.advance(&row, &host)).await.unwrap();
-        assert!(matches!(result, Action::Close { .. }));
+        assert_eq!(result, Action::Advance(Phase::Closing));
         assert_eq!(puts.load(Ordering::Relaxed), 1);
         server.abort();
     }
