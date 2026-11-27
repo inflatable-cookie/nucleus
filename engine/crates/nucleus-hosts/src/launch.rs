@@ -17,6 +17,14 @@ pub struct Binding {
     pub branch: String,
 }
 
+impl Binding {
+    pub(crate) fn matches_shell_row(&self, row: &Value) -> bool {
+        row["projectId"] == self.project_id
+            && row["worktreePath"] == self.worktree_path
+            && row["branch"] == self.branch
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleProfile {

@@ -409,6 +409,40 @@ fn retained_history_preserves_item_times_and_edit_versions() {
 }
 
 #[test]
+fn item_author_project_survives_store_reopen() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).unwrap();
+    let saved = store
+        .add_item_with_author_project(
+            "project",
+            "i-planner".into(),
+            ItemKind::Papercut,
+            ItemContent {
+                title: "Readable author".into(),
+                body: "A stored planner attribution.".into(),
+                lanes: vec![],
+            },
+            Some("project".into()),
+            STAMP,
+        )
+        .unwrap();
+    assert_eq!(saved.author_project_id.as_deref(), Some("project"));
+    drop(store);
+
+    let reopened = Store::open(&storage).unwrap();
+    assert_eq!(
+        reopened
+            .item("project", "i-planner")
+            .unwrap()
+            .unwrap()
+            .author_project_id
+            .as_deref(),
+        Some("project")
+    );
+}
+
+#[test]
 fn versioned_edits_apply_to_leads_at_their_current_version() {
     let home = tempfile::tempdir().unwrap();
     let storage = fixture_storage(home.path());

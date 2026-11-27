@@ -417,6 +417,7 @@ fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
             "product".into(),
             nucleus_store::ProjectSettings {
                 planner_claim: None,
+                claimed_planner_threads: Vec::new(),
                 name: "Imported product".into(),
                 archived: false,
                 repositories: [ALPHA_REPO, BETA_REPO]
@@ -2191,6 +2192,7 @@ async fn project_tell_retries_an_empty_snapshot_and_reuses_real_receipts() {
                     "unbound".into(),
                     nucleus_store::ProjectSettings {
                         planner_claim: None,
+                        claimed_planner_threads: Vec::new(),
                         name: "Unbound project".into(),
                         archived: false,
                         repositories: Vec::new(),
@@ -4089,11 +4091,46 @@ async fn item_latest_version(api: &Router, project: &str, id: &str) -> (i64, Vec
     (version, entries)
 }
 
+async fn archive_and_assess_again(
+    registry: &Registry,
+    items: &str,
+    project: &str,
+    id: &str,
+    version: i64,
+    fallback_thread: &str,
+) {
+    registry.archived.store(true, Ordering::Relaxed);
+    registry.notices.lock().expect("notices").started = false;
+    let resent = post_as(
+        &registry.api,
+        &format!("{items}/{id}/assess"),
+        &BOARD_KEY,
+        &json!({"version": version}),
+    )
+    .await;
+    assert_eq!(resent.status(), StatusCode::OK);
+    registry.advance_tell().await.expect("deliver to fallback");
+    {
+        let fixture = registry.notices.lock().expect("notices");
+        assert_eq!(fixture.sends.len(), 2);
+        assert_eq!(fixture.sends[1]["threadId"], fallback_thread);
+        assert_eq!(
+            fixture.sends[1]["dispatchMode"]["type"],
+            "queue_after_active"
+        );
+    }
+    let (_, entries) = item_latest_version(&registry.api, project, id).await;
+    let last = entries.last().unwrap();
+    assert_eq!(last["snapshot"]["recipient"], fallback_thread);
+    assert_eq!(last["recipientLabel"], "Agent thread");
+}
+
 #[tokio::test]
 async fn item_assess_routes_to_claimed_planner_and_fallback_thread() {
     let registry = registry().await;
+    let fallback_thread = "01adc496-18f0-4b9e-a22c-d1acb7facdab";
     registry.enroll("alpha-planner").await;
-    registry.enroll("next-planner").await;
+    registry.enroll(fallback_thread).await;
     let alpha = registry
         .service
         .state
@@ -4134,12 +4171,25 @@ async fn item_assess_routes_to_claimed_planner_and_fallback_thread() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
-    let v2 = json_body(response).await["version"].as_i64().unwrap();
+    let saved = json_body(response).await;
+    assert_eq!(saved["authorLabel"], "Operator");
+    let v2 = saved["version"].as_i64().unwrap();
     let (_, entries) = item_latest_version(&registry.api, &alpha, &id).await;
     let last = entries.last().unwrap();
     assert_eq!(last["action"], "assess");
     assert_eq!(last["actor"], "fixture-operator");
     assert_eq!(last["snapshot"]["recipient"], "alpha-planner");
+    let project_name = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap()
+        .value
+        .projects[&alpha]
+        .name
+        .clone();
+    assert_eq!(last["actorLabel"], "Operator");
+    assert_eq!(last["recipientLabel"], format!("{project_name} planner"));
 
     registry.advance_tell().await.expect("deliver to claimed");
     {
@@ -4165,27 +4215,228 @@ async fn item_assess_routes_to_claimed_planner_and_fallback_thread() {
     registry.notices.lock().expect("notices").started = true;
     registry.advance_tell().await.expect("mark delivered");
 
-    // Archive claimed planner; sending again on open item falls back to next-planner.
-    registry.archived.store(true, Ordering::Relaxed);
-    registry.notices.lock().expect("notices").started = false;
-    let resent = post_as(
+    // An archived claim sends again to the registered fallback planner thread.
+    archive_and_assess_again(&registry, &items, &alpha, &id, v2, fallback_thread).await;
+}
+
+#[tokio::test]
+async fn replacing_a_planner_keeps_both_threads_in_the_project_ledger() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("next-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+
+    for actor in ["alpha-planner", "next-planner"] {
+        let response = caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/planning/claim",
+            actor,
+            json!({}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "claim by {actor}");
+    }
+
+    let project = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap()
+        .value
+        .projects
+        .remove(&alpha)
+        .expect("project");
+    assert_eq!(
+        project.planner_claim.as_ref().unwrap().thread,
+        "next-planner"
+    );
+    assert_eq!(
+        project.planner_claim.as_ref().unwrap().replaced.as_deref(),
+        Some("alpha-planner")
+    );
+    assert!(
+        project
+            .claimed_planner_threads
+            .contains(&"alpha-planner".to_owned())
+    );
+    assert!(
+        project
+            .claimed_planner_threads
+            .contains(&"next-planner".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn clearing_a_planner_keeps_current_replaced_and_older_threads() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("next-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+    let file = registry.service.settings.clone();
+    let id = alpha.clone();
+    let saved = file
+        .edit(
+            &file.read::<nucleus_store::Projects>().unwrap().revision,
+            |projects: &mut nucleus_store::Projects| {
+                projects
+                    .projects
+                    .get_mut(&id)
+                    .unwrap()
+                    .claimed_planner_threads
+                    .push("older-planner".into());
+                Ok(())
+            },
+        )
+        .unwrap();
+    registry.service.state.lock().await.settings.projects = Some(saved.0.value);
+
+    for actor in ["alpha-planner", "next-planner"] {
+        let response = caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/planning/claim",
+            actor,
+            json!({}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "claim by {actor}");
+    }
+
+    let before = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
+    let response = post_as(
         &registry.api,
-        &format!("{items}/{id}/assess"),
+        &format!("/v1/settings/projects/{alpha}/clear-planner"),
         &BOARD_KEY,
-        &json!({"version": v2}),
+        &json!({"revision": before.revision}),
     )
     .await;
-    assert_eq!(resent.status(), StatusCode::OK);
-    registry.advance_tell().await.expect("deliver to fallback");
-    {
-        let fixture = registry.notices.lock().expect("notices");
-        assert_eq!(fixture.sends.len(), 2);
-        assert_eq!(fixture.sends[1]["threadId"], "next-planner");
-        assert_eq!(
-            fixture.sends[1]["dispatchMode"]["type"],
-            "queue_after_active"
+    assert_eq!(response.status(), StatusCode::OK);
+    let project = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap()
+        .value
+        .projects
+        .remove(&alpha)
+        .expect("project");
+    assert!(project.planner_claim.is_none());
+    for thread in ["older-planner", "alpha-planner", "next-planner"] {
+        assert!(
+            project
+                .claimed_planner_threads
+                .iter()
+                .any(|known| known == thread),
+            "missing {thread}"
         );
     }
+}
+
+#[tokio::test]
+async fn project_edits_preserve_but_cannot_change_claimed_planner_threads() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/planning/claim",
+            "alpha-planner",
+            json!({})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    let before = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
+    let mut omitted_history = before.value.clone();
+    omitted_history
+        .projects
+        .get_mut(&alpha)
+        .unwrap()
+        .claimed_planner_threads
+        .clear();
+    assert_eq!(
+        planning::put_as(
+            &registry.api,
+            PROJECTS,
+            &BOARD_KEY,
+            &json!({"revision":before.revision,"value":omitted_history})
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let after = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
+    assert!(
+        after.value.projects[&alpha]
+            .claimed_planner_threads
+            .iter()
+            .any(|thread| thread == "alpha-planner")
+    );
+
+    let mut forged = after.value.clone();
+    forged
+        .projects
+        .get_mut(&alpha)
+        .unwrap()
+        .claimed_planner_threads = vec!["forged-thread".into()];
+    assert_eq!(
+        planning::put_as(
+            &registry.api,
+            PROJECTS,
+            &BOARD_KEY,
+            &json!({"revision":after.revision,"value":forged})
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let persisted = registry
+        .service
+        .settings
+        .read::<nucleus_store::Projects>()
+        .unwrap();
+    assert_eq!(
+        persisted.value.projects[&alpha].claimed_planner_threads,
+        after.value.projects[&alpha].claimed_planner_threads
+    );
 }
 
 #[tokio::test]

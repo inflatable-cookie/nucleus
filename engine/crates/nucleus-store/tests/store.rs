@@ -9,8 +9,8 @@ use nucleus_core::{
     },
 };
 use nucleus_store::{
-    EngineSettings, EngineStorage, EventDraft, PinnedVolume, SettingsFile, StorageError, Store,
-    StoreError, TaskRow,
+    DependencyEdit, EngineSettings, EngineStorage, EventDraft, PinnedVolume, SettingsFile,
+    StorageError, Store, StoreError, TaskRow,
 };
 
 use rusqlite::Connection;
@@ -1127,6 +1127,43 @@ fn dependency_tables_open_from_the_previous_live_schema() {
     assert_eq!(store.dependents("first").unwrap(), [("second".into(), 1)]);
     assert!(store.dependency_blocked("second").unwrap());
     assert_eq!(store.history("first", None, 1).unwrap().len(), 1);
+}
+
+#[test]
+fn prerequisite_waits_cannot_close_a_cycle() {
+    let home = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&fixture_storage(home.path())).unwrap();
+    for id in ["first", "second", "third"] {
+        store.create(&task(id, id), &event("admitted")).unwrap();
+    }
+    let second = ["second".to_owned()];
+    let third = ["third".to_owned()];
+    let first = ["first".to_owned()];
+    let wait = |ids| DependencyEdit::Wait {
+        ids,
+        reason: "publish the prerequisite",
+    };
+    let audit = event("dependencies_changed");
+    let mut edit =
+        |id, version, edit| store.edit_dependencies(id, version, edit, &audit, &mut |_| false);
+    edit("first", 1, wait(&second)).unwrap();
+    let error = edit("second", 1, wait(&first)).unwrap_err();
+    assert!(
+        matches!(error, StoreError::DependencyCycle { path } if path == ["second", "first", "second"])
+    );
+    edit("second", 1, DependencyEdit::BeforeDispatch(&third))
+        .expect("a refused wait leaves the version unchanged");
+    let error = edit("third", 1, wait(&first)).unwrap_err();
+    assert!(
+        matches!(error, StoreError::DependencyCycle { path } if path == ["third", "first", "second", "third"])
+    );
+    edit("first", 2, wait(&[])).unwrap();
+    edit("third", 1, wait(&first)).expect("clearing the first wait removes the cycle");
+    assert!(store.dependencies("second").unwrap().wait.is_none());
+    assert_eq!(
+        store.dependencies("third").unwrap().wait.unwrap().ids,
+        first
+    );
 }
 
 fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Task) {

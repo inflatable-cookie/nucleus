@@ -97,8 +97,8 @@ pub enum StoreError {
     StaleTask,
     #[error("review publication journal does not match the outstanding intent")]
     ReviewPublicationConflict,
-    #[error("dependency change would create a cycle")]
-    DependencyCycle,
+    #[error("dependency change would create a cycle ({})", .path.join(" -> "))]
+    DependencyCycle { path: Vec<String> },
     #[error("planning record was not found")]
     PlanningMissing,
     #[error("planning input is invalid")]

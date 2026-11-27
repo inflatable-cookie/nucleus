@@ -10,14 +10,17 @@ use nucleus_core::{
     RunState,
 };
 use nucleus_forge::{ForgeError, GitHub};
-use nucleus_hosts::{RunActivity, T3, TaskHost};
+use nucleus_hosts::{Binding, RunActivity, T3, TaskHost};
 use nucleus_store::EventDraft;
 use tower::ServiceExt;
 
 use super::*;
 use crate::{
     event,
-    tests::{REPOSITORY, code_task_at_merge, fixture, forge_pull, reservation, serve_forge},
+    tests::{
+        REPOSITORY, archived_checkout_rows, code_task_at_merge, empty_archive_fixture, fixture,
+        forge_pull, reservation, serve_forge,
+    },
 };
 
 #[path = "tests/briefs.rs"]
@@ -3021,16 +3024,9 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
         nucleus_store::TaskRow { task, .. } if task.hold().is_none()
     ));
     let done = service.task(&done.task.identity().id).await.unwrap();
-    service.host = service.host.with_quiet_fixture_processes();
+    let (native, _archive) = empty_archive_fixture(1).await;
+    service.host = native.with_quiet_fixture_processes();
     service.host.use_held_shell();
-    service.host.fixture_project_shell(
-        &json!({
-            "snapshotSequence": 1,
-            "projects": [{"id": "local-fixture", "workspaceRoot": service.fixture().checkout}],
-            "threads": []
-        }),
-        "fixture-acp",
-    );
     let (forge, readable, _, _, server) = serve_merged_forge(&service.fixture().start).await;
     readable.store(true, Ordering::Relaxed);
     service.forge = forge;
@@ -3045,6 +3041,7 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
         checkout.allocate(&project.start).unwrap();
         checkout.path().to_owned()
     };
+    hold_archived_workspace(&service, &done.task, &checkout_path);
     let deps = checkout_path.join("node_modules/pkg");
     std::fs::create_dir_all(&deps).unwrap();
     std::fs::write(deps.join("index.js"), "ignored build artifact").unwrap();
@@ -3070,9 +3067,26 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
 
     let trash_root = service.storage.work().path().join(".trash");
     assert!(trash_root.is_dir());
-    nucleus_work::prune_trash(service.storage.work(), crate::now_ms()).unwrap();
+    nucleus_work::prune_trash(service.storage.work(), u64::MAX, |_| true).unwrap();
     assert_eq!(std::fs::read_dir(&trash_root).unwrap().count(), 0);
     server.abort();
+}
+
+fn hold_archived_workspace(service: &Service, task: &Task, checkout: &std::path::Path) {
+    let binding = Binding {
+        project_id: service.fixture().host_project.clone(),
+        branch: checkout.file_name().unwrap().to_str().unwrap().into(),
+        worktree_path: checkout.to_str().unwrap().into(),
+    };
+    service.host.fixture_project_shell(
+        &json!({
+            "snapshotSequence":1,
+            "projects":[{"id":binding.project_id,"workspaceRoot":service.fixture().checkout}],
+            "threads":[],
+            "archivedThreads":archived_checkout_rows(&binding, task)
+        }),
+        "fixture-acp",
+    );
 }
 
 async fn reopen_and_finish_review(
@@ -3223,6 +3237,17 @@ async fn archive_shell_fixture(
         }
     };
     let (host, native) = crate::tests::native_fixture(move |request| {
+        if request["tag"] == "orchestration.getArchivedShellSnapshot" {
+            let writes = writes.lock().unwrap();
+            let rows: Vec<_> = writes.iter().map(|id| json!({
+                "id":id, "projectId":"local-fixture", "worktreePath":path, "branch":branch,
+                "archivedAt":"2026-11-23T15:02:00Z", "deletedAt":null, "status":"idle",
+                "activeRunId":null, "pendingRuntimeRequest":null, "pendingBackgroundTasks":[]
+            })).collect();
+            return json!({"_tag":"Exit","requestId":request["id"],"exit":{
+                "_tag":"Success","value":{"snapshotSequence":16 + writes.len(),"projects":[],"threads":rows}
+            }});
+        }
         if request["tag"] == "orchestration.dispatchCommand" {
             let payload = &request["payload"];
             assert_eq!(payload["type"], "thread.archive");
@@ -5033,16 +5058,9 @@ async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_task
             )
             .await
             .unwrap();
-        service.host = service.host.with_quiet_fixture_processes();
+        let (native, _archive) = empty_archive_fixture(1).await;
+        service.host = native.with_quiet_fixture_processes();
         service.host.use_held_shell();
-        service.host.fixture_project_shell(
-            &json!({
-                "snapshotSequence": 1,
-                "projects": [{"id": "local-fixture", "workspaceRoot": service.fixture().checkout}],
-                "threads": []
-            }),
-            "fixture-acp",
-        );
         let (forge, readable, _, _, server) = serve_merged_forge(&service.fixture().start).await;
         readable.store(true, Ordering::Relaxed);
         service.forge = forge;
@@ -5056,6 +5074,7 @@ async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_task
             checkout.allocate(&project.start).unwrap();
             checkout.path().join("unfinished-draft")
         };
+        hold_archived_workspace(&service, &row.task, draft.parent().unwrap());
         std::fs::write(&draft, "keep this draft").unwrap();
         let mut cause = String::new();
 

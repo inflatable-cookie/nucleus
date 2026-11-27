@@ -42,7 +42,9 @@ tag `v0.6.0` and require Rust 1.97.1.
 updates and config backups. `longhorn-storage-layout` resolves their roots and
 the separate engine data root. `longhorn-git-workspace` compares exact worktree
 and repository identity and supplies the bounded Git executor. `nucleus-work` owns allocation
-and retirement. Normal retirement retains dirty work. Before removing a clean checkout, the engine verifies local process inactivity and checks the task row, attached children and retained roles for activity, even if no role was ever bound. Recovery of an interrupted
+and retirement. Normal retirement retains dirty work. The engine checks the
+published Git head, held T3 shell and Dispatch before moving a checkout to
+trash. Recovery of an interrupted
 initial allocation can force removal only after verifying its exact Git registration,
 initialization lock and absent index under the unsent task fence. `longhorn-redact` and
 `longhorn-support-log` cover adapter diagnostics. `longhorn-operation` leaves
@@ -90,8 +92,10 @@ directory in `<scratch-root>/quarantine/<task>-<timestamp>`. The existing
 scheduler archive scan removes engine-owned quarantines seven days after the
 timestamp in their name. Unverified entries stay in place. Verified terminal
 checkout retirement renames the checkout into `<work-root>/.trash/<task>-<timestamp>-<seq>/checkout`,
-removes the Git worktree registration, and deletes owned trash entries
-asynchronously in the background.
+then removes the Git worktree registration. Background pruning keeps retired
+checkouts recoverable for at least 24 hours and waits if a process still has
+its working directory in the entry. See the
+[terminal cleanup contract](../docs/knowledge/contracts/orchestration.md#terminal-workspace-cleanup).
 
 ### Stage an engine release
 
@@ -286,10 +290,8 @@ also check the open PR and clean checkout after native authorization.
   claim and first message.
   [Dispatch receipts](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/Orchestrator.ts#L16305)
   [Launch receipts](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/ThreadLaunchService.ts#L1389)
-- `orchestration.subscribeThread` requests a synchronized, full snapshot of the
-  exact thread. Settlement requires coverage of all provider sessions and turn
-  items. Pending tasks and active command, tool and subagent items keep the
-  thread busy. An omitted or windowed roster leaves settlement unknown.
+- `orchestration.subscribeThread` reads a synchronized, bounded projection of
+  the exact thread. Settlement uses the current bound row in the held shell.
   [T3's background-work derivation](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/shared/src/orchestrationV2PendingBackgroundWork.ts#L225)
 - Planner authority uses only the exact thread record from a compact bounded
   snapshot, on scheduler demand. Only notice routing after confirmed absence
@@ -302,21 +304,11 @@ also check the open PR and clean checkout after native authorization.
   request, decision version and selected choice. When T3 supplies that
   evidence, Nucleus will require a direct UI submission for operator-only
   decisions.
-- One working-directory census serves all checkout checks in a scheduler pass.
-  The Mac adapter compares cwd-only `lsof` output with the local user's PID
-  list and checks missing PIDs once. A process in the checkout or run scratch
-  holds retirement. A missing or ambiguous cwd leaves custody unknown.
-  After a launch, further checks need a fresh pass. Run the engine and T3
-  under the same local user with private task checkout roots.
 - Set `NUCLEUS_ENGINE_T3_RUNTIME_DESCRIPTOR` to the connected T3 server's
-  `userdata/server-runtime.json` to recognise standing provider processes.
-  Each pass verifies the descriptor origin and server PID, then follows only
-  direct app-server and helper ancestry. Shells and work spawned by a helper
-  keep custody. Unreadable process facts and conflicting bindings also hold.
-  A standing helper bound to another recorded role of the same task can be
-  excluded when its cwd is inside this checkout and a fresh exact native read
-  confirms that role is idle with no pending work. At checkout removal, every
-  process with a cwd in the checkout or run scratch holds custody.
+  `userdata/server-runtime.json` to recognise standing provider processes
+  during revoked-run custody checks and protect host processes in the terminal
+  sweep. Run the engine and T3 under the same local user with private task
+  checkout roots.
 - `orchestration.dispatchCommand` with `message.dispatch` starts a new turn in
   a retained, idle thread. Reopen an archived thread before reusing it. On
   revocation, clear an unsent request directly and stop a confirmed delivery
@@ -371,10 +363,9 @@ about the work.
 A step which fails with no more specific wait shows `engine_blocked` with its
 cause, for example a registered checkout on the wrong branch. It retries after
 3 seconds, doubling to 10 minutes while it keeps failing, and offers Recheck.
-A finished task's retained or occupied checkout, Done or Cancelled, shows its
-cause and backs off the same way. A task commit, Recheck, resumed Dispatch or
-an answered process decision starts it again. Dispatch which was never
-configured is running.
+A Done or Cancelled task with a retained checkout shows its cause and backs
+off the same way. A task commit, Recheck or resumed Dispatch starts it again.
+Dispatch which was never configured is running.
 
 Read adapters outside the store lock. Every pass write compares the task row's
 version and run instance with what it read. A stale result drops out and wakes
@@ -445,9 +436,9 @@ The agent moves there at startup and keeps the launch directory only to
 resolve the session. A held presentation turn never needs files in the checkout.
 
 A new run gets its own `<scratch-root>/r/<12-hex-run-key>` directory. The
-assignment gives its recorded path. The cwd census covers that
-run's checkout and scratch. An existing reservation keeps its original
-scratch path. The shared class root hosts temporary files for the census itself.
+assignment gives its recorded path. An existing reservation keeps its original
+scratch path. The terminal sweep covers the task checkout and recorded run
+scratch. The shared class root hosts temporary files for the census itself.
 
 Role assignments use each member lane's title and aim. Explicit
 `queue.laneDocuments` references pin a version at reservation and give that
@@ -526,6 +517,8 @@ It logs each recovery attempt to `acp.log` and backs off between attempts.
 
 Keep the serve launcher's log under the configured log root. On SIGINT,
 SIGTERM or SIGHUP, `serve` logs the signal and its uptime and shuts down.
+If the scheduler stops, `serve` logs the cause and exits with an error so
+clients can restart it.
 Once `serve` holds the profile lock, it records the run before initializing
 the service. The next start reports the last log time and how the previous
 run ended, including errors and SIGKILL during initialization. The pass
@@ -707,13 +700,11 @@ callbacks.
 The fixture uses the `nucleus` binary. Run `configure --home <profile>
 --enable` with an existing fixture directory. Start `serve` with
 that profile, the registered `--acp-provider`, and the local T3
-endpoint. Set the control key, T3 bearer and GitHub token in the environment.
+endpoint. Set the control key, T3 caller key, T3 bearer and GitHub token in
+the environment.
 The CLI's `admit`, `task`, `next`, `history` and task commands use the loopback
 API. Every route requires the configured loopback Host and a same-origin Origin
 when supplied. `report` reads the role's owner-only ticket and the report from stdin.
-For the live proof, bind a separate key to the idle fixture origin thread with
-`--fixture-origin-thread` and `NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY`. Use that key
-to submit and answer as the bound fixture planner.
 
 ## Settings
 

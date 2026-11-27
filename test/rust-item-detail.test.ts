@@ -134,7 +134,9 @@ const footer = (ui: ReturnType<typeof mount>) =>
 
 test("lead · open: Send to planner has one button with no repository or complexity selects, then shows With planner since and Send again", async () => {
   const engine = planningEngine();
-  engine.setRecipient("acowtancy", "planner-acowtancy");
+  const recipient = "01adc496-18f0-4b9e-a22c-d1acb7facdab";
+  engine.setRecipient("acowtancy", recipient);
+  engine.setThreadTitle(recipient, "Acowtancy planner");
   engine.seed("acowtancy", lead({ id: "i-offline", title: "Offline marking queue", repositories: ["example/acowtancy-v2", "example/dairy"] }), {
     actor: "planner",
     atMs: now - 2 * DAY,
@@ -160,7 +162,14 @@ test("lead · open: Send to planner has one button with no repository or complex
     },
   ]);
   assert.equal(state(ui), "State: Open", "item stays open until the planner drops or promotes it");
-  assert.match(ui.text(), /planner-acowtancy/);
+  assert.match(ui.text(), /Acowtancy planner/);
+  assert.doesNotMatch(ui.text(), new RegExp(recipient));
+  ui.press("Activity, collapsed");
+  assert.ok(ui.query("Activity, expanded"), "Activity is open");
+  assert.ok(ui.text().split("Acowtancy planner").length >= 3, "activity repeats the readable recipient label");
+  assert.doesNotMatch(ui.text(), new RegExp(recipient));
+  ui.all(recipient).forEach((node) => node.props.onHoverIn());
+  assert.match(ui.text(), new RegExp(recipient));
   assert.ok(ui.query("Send lead to planner again"), "Send again offered after first send");
   // Sending again sends at the new version and records a second entry.
   const nextVersion = engine.item("acowtancy", "i-offline").version;
@@ -196,6 +205,7 @@ test("papercut · open: Send to planner records new planner thread when no plann
 
 test("lead · parked: reason, who parked it, revisit date, Send to planner and Reopen", async () => {
   const engine = planningEngine();
+  engine.setThreadTitle("Tom", "Tom");
   engine.setRecipient("acowtancy", "planner-acowtancy");
   const revisitAt = new Date(now + 7 * DAY).toISOString();
   const item = lead({ id: "i-fonts", title: "Self-hosted fonts", lanes: [] });
@@ -221,6 +231,8 @@ test("lead · parked: reason, who parked it, revisit date, Send to planner and R
 
 test("lead · promoted: the linked task card opens the task; the body collapses", async () => {
   const engine = planningEngine();
+  engine.setThreadTitle("Tom", "Tom");
+  engine.setProjectSettings("acowtancy", { claimedPlannerThreads: ["planner"] });
   const item = lead({ id: "i-effort", title: "Learner-effort mapping", repositories: ["example/acowtancy-v2"] });
   engine.seed("acowtancy", { ...item, state: "promoted", taskId: "t-promoted", taskLinks: ["t-promoted"] }, { actor: "planner", atMs: now - 3 * DAY }, [
     { actor: "Tom", atMs: now - 3 * HOUR, action: "promote", item: { ...item, state: "promoted", taskId: "t-promoted", taskLinks: ["t-promoted"] } },
@@ -236,7 +248,7 @@ test("lead · promoted: the linked task card opens the task; the body collapses"
   assert.deepEqual(openedTasks, ["t-promoted"]);
   ui.press("Activity, collapsed");
   await waitFor(() => /Promoted\s*Tom/.test(ui.text()), 2000, "activity opens");
-  assert.match(ui.text(), /Filed\s*planner/);
+  assert.match(ui.text(), /Filed\s*Acowtancy planner/);
 });
 
 test("papercut · open: park from the footer with a reason and revisit day", async () => {
@@ -295,6 +307,7 @@ test("papercut · parked and due: warning state; changing the revisit day parks 
 
 test("papercut · dropped as completed: outcome panel with the note and who dropped it; Reopen", async () => {
   const engine = planningEngine();
+  engine.setThreadTitle("Tom", "Tom");
   const item = papercut({ id: "i-count", title: "Header count includes archived tasks" });
   const dropped = { ...item, state: "dropped" as const, disposition: "completed" as const, reason: "Fixed by nucleus#1571." };
   engine.seed("nucleus", dropped, { actor: "planner", atMs: now - 5 * DAY }, [{ actor: "Tom", atMs: now - DAY, action: "drop", item: dropped }]);
@@ -372,28 +385,60 @@ test("after a refusal, Replace writes the operator's draft over the version show
   assert.equal(engine.item("nucleus", "i-replace").body, "My rewrite.");
 });
 
-test("By identifies a registered planner and retains each raw author in its tooltip", async () => {
+test("item authors and activity actors use engine labels with raw IDs in tooltips", async () => {
   const engine = planningEngine();
   const planner = "mcp:launch:planner-example";
   const unknown = "mcp:launch:unknown-example";
-  engine.seed("nucleus", papercut({ id: "known-author", title: "Known author", author: planner }), { actor: planner, atMs: now });
-  engine.seed("nucleus", papercut({ id: "unknown-author", title: "Unknown author", author: unknown }), { actor: unknown, atMs: now });
-  const fetcher: typeof fetch = async (input, init) => {
-    const response = await engine.fetcher(input, init);
-    if (!String(input).endsWith("/settings")) return response;
-    const settings = await response.json();
-    settings.projects.settings.value.projects.acowtancy.plannerClaim = { thread: planner, occurrence: "claim" };
-    return Response.json(settings);
-  };
-  const configured = { ...engine, fetcher };
-  const known = await open(configured, "known-author", "nucleus", "papercut");
+  const titled = "01adc496-18f0-4b9e-a22c-d1acb7facdab";
+  engine.setThreadTitle(titled, "Longhorn papercut details view");
+  engine.setThreadTitle("parked-thread", "Parked by Longhorn");
+  engine.setThreadTitle("dropped-thread", "Dropped by Longhorn");
+  engine.setThreadTitle("archived-thread", "Archived collaborator");
+  engine.setProjectSettings("acowtancy", { claimedPlannerThreads: [planner] });
+  engine.setProjectSettings("legacy", { name: "Longhorn", archived: true, claimedPlannerThreads: ["mcp:launch:old-planner"] });
+  engine.seed("acowtancy", papercut({ id: "known-author", title: "Known author", author: planner }), { actor: planner, atMs: now });
+  engine.seed("acowtancy", papercut({ id: "unknown-author", title: "Unknown author", author: unknown }), { actor: unknown, atMs: now });
+  engine.seed("acowtancy", papercut({ id: "titled-author", title: "Titled author", author: titled }), { actor: titled, atMs: now });
+  engine.seed("acowtancy", papercut({ id: "archived-planner", title: "Archived planner", author: "mcp:launch:old-planner", authorProjectId: "legacy" }), { actor: "mcp:launch:old-planner", atMs: now });
+  engine.seed("acowtancy", papercut({ id: "operator-author", title: "Operator author", author: "operator" }), { actor: "operator", atMs: now });
+  const parkedItem = papercut({ id: "parked-item", title: "Parked item", state: "parked", reason: "Later", revisitAt: null });
+  engine.seed("acowtancy", parkedItem, { actor: planner, atMs: now - 1 }, [
+    { actor: "parked-thread", atMs: now, action: "park", item: parkedItem },
+  ]);
+  const droppedItem = papercut({ id: "dropped-item", title: "Dropped item", state: "dropped", disposition: "completed", reason: "Done" });
+  engine.seed("acowtancy", droppedItem, { actor: planner, atMs: now - 1 }, [
+    { actor: "dropped-thread", atMs: now, action: "drop", item: droppedItem },
+  ]);
+  engine.seed("acowtancy", papercut({ id: "archived-title", title: "Archived title", author: "archived-thread" }), { actor: "archived-thread", atMs: now });
+  const configured = engine;
+  const known = await open(configured, "known-author", "acowtancy", "papercut");
   assert.match(known.ui.text(), /Acowtancy planner/);
   assert.doesNotMatch(known.ui.text(), /mcp:launch:planner-example/);
   known.ui.get(planner).props.onHoverIn();
   assert.match(known.ui.text(), /mcp:launch:planner-example/);
-  const fallback = await open(configured, "unknown-author", "nucleus", "papercut");
-  assert.match(fallback.ui.text(), /Thread/);
+  const fallback = await open(configured, "unknown-author", "acowtancy", "papercut");
+  assert.match(fallback.ui.text(), /Agent thread/);
   assert.doesNotMatch(fallback.ui.text(), /mcp:launch:unknown-example/);
   fallback.ui.get(unknown).props.onHoverIn();
   assert.match(fallback.ui.text(), /mcp:launch:unknown-example/);
+  const oldPlanner = await open(configured, "archived-planner", "acowtancy", "papercut");
+  assert.match(oldPlanner.ui.text(), /Longhorn planner/);
+  const titledItem = await open(configured, "titled-author", "acowtancy", "papercut");
+  assert.match(titledItem.ui.text(), /Longhorn papercut details view/);
+  titledItem.ui.press(/Activity/);
+  assert.match(titledItem.ui.text(), /Longhorn papercut details view/);
+  titledItem.ui.all(titled).forEach((node) => node.props.onHoverIn());
+  assert.match(titledItem.ui.text(), new RegExp(titled));
+  const parked = await open(configured, "parked-item", "acowtancy", "papercut");
+  assert.match(parked.ui.text(), /Parked by Longhorn/);
+  parked.ui.get("parked-thread").props.onHoverIn();
+  assert.match(parked.ui.text(), /parked-thread/);
+  const dropped = await open(configured, "dropped-item", "acowtancy", "papercut");
+  assert.match(dropped.ui.text(), /Dropped by Longhorn/);
+  dropped.ui.get("dropped-thread").props.onHoverIn();
+  assert.match(dropped.ui.text(), /dropped-thread/);
+  const archivedTitle = await open(configured, "archived-title", "acowtancy", "papercut");
+  assert.match(archivedTitle.ui.text(), /Archived collaborator/);
+  const operator = await open(configured, "operator-author", "acowtancy", "papercut");
+  assert.match(operator.ui.text(), /Operator/);
 });

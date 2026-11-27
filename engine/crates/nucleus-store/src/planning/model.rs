@@ -76,6 +76,9 @@ pub struct Item {
     pub id: String,
     pub kind: ItemKind,
     pub author: String,
+    /// The project whose planner claim authenticated the author when filed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_project_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repositories: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

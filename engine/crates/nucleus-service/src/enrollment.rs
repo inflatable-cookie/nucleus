@@ -866,6 +866,7 @@ fn register(
         id,
         ProjectSettings {
             planner_claim: None,
+            claimed_planner_threads: Vec::new(),
             name,
             archived: false,
             repositories: vec![repository],

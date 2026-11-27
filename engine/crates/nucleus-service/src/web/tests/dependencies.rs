@@ -149,9 +149,11 @@ async fn dependencies_admit_resolve_and_edit_without_host_reads() {
     );
     let first_path = "/v1/tasks/first/commands";
     let cycle = json!({"set_dependencies":{"version":first.version,"depends_on":["#2"]}});
+    let response = post_as(&api, first_path, &BOARD_KEY, &cycle).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(
-        post_json(&api, first_path, &BOARD_KEY, &cycle).await,
-        StatusCode::CONFLICT
+        json_body(response).await["error"],
+        "dependency change would create a cycle (nucleus-fixture#1 -> nucleus-fixture#2 -> nucleus-fixture#1)"
     );
     assert_eq!(service.task("first").await.unwrap().version, first.version);
 
@@ -191,6 +193,33 @@ async fn dependencies_admit_resolve_and_edit_without_host_reads() {
     assert_eq!(detail["stateLabel"], "Queued");
     assert!(detail["stateSinceMs"].is_u64());
     assert_eq!(detail["brief"]["text"], brief);
+}
+
+#[tokio::test]
+async fn dispatched_tasks_cannot_wait_on_each_other() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let service = Arc::new(service);
+    for id in ["first", "second"] {
+        let (running, _, _) = reservation(id, Entry::Brief, &service.fixture().start);
+        seed_task(&service, &running).await;
+    }
+    let api = controller(Arc::clone(&service));
+    let wait = |prerequisite| {
+        json!({"set_prerequisite_wait":{
+            "version": 1, "waits_for": [prerequisite], "reason": "publish the prerequisite"
+        }})
+    };
+    assert_eq!(
+        post_json(&api, "/v1/tasks/first/commands", &BOARD_KEY, &wait("#2")).await,
+        StatusCode::OK
+    );
+    let response = post_as(&api, "/v1/tasks/second/commands", &BOARD_KEY, &wait("#1")).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(response).await["error"],
+        "dependency change would create a cycle (nucleus-fixture#2 -> nucleus-fixture#1 -> nucleus-fixture#2)"
+    );
+    assert_eq!(service.task("second").await.unwrap().version, 1);
 }
 
 #[tokio::test]

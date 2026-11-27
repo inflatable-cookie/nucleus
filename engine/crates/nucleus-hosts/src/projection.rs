@@ -40,9 +40,7 @@ pub(crate) struct Projection {
     runs: Vec<Run>,
     messages: Vec<Message>,
     runtime_requests: Vec<Request>,
-    provider_threads: Option<Vec<ProviderThread>>,
     turn_items: Option<Vec<TurnItem>>,
-    subagents: Option<Vec<Subagent>>,
     #[serde(skip)]
     windowed: bool,
     #[serde(skip)]
@@ -51,8 +49,6 @@ pub(crate) struct Projection {
     sequence: u64,
     #[serde(skip)]
     shell_closed: Option<RetainedThread>,
-    #[serde(skip)]
-    shell_background_work: Option<bool>,
     #[serde(skip)]
     shell_failure: Option<ShellFailure>,
 }
@@ -153,25 +149,6 @@ struct Request {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ProviderThread {
-    #[serde(default)]
-    pending_background_tasks: Vec<BackgroundTask>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Subagent {
-    status: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BackgroundTask {
-    task_id: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct TurnItem {
     #[serde(rename = "type")]
     kind: String,
@@ -248,7 +225,7 @@ impl Projection {
         let shell = ShellCustody(row);
         let state = if !row["deletedAt"].is_null() {
             RetainedThread::Gone
-        } else if shell.has_active_turn() || shell.background() == Some(true) {
+        } else if shell.activity() != crate::RowChildren::Quiet {
             RetainedThread::Busy
         } else {
             RetainedThread::Idle
@@ -522,12 +499,10 @@ impl Projection {
             && row["providerInstanceId"].as_str() == self.thread.provider_instance_id.as_deref()
     }
 
-    pub(crate) fn use_shell_background(&mut self, row: &Value, same_revision: bool) {
+    pub(crate) fn use_shell_failure(&mut self, row: &Value, same_revision: bool) {
         let shell = ShellCustody(row);
-        // T3 derives this summary from the full projection for a settled run.
-        // The held shell can publish the same custody revision with a different
-        // presentation timestamp. A matching run alone cannot prove an empty
-        // background roster: an older writer can change without a new run.
+        // The shell retains the failed run's root error when a compact
+        // projection omits it. Match the same custody revision and run.
         if (self.windowed || self.compact_turn_items)
             && (same_revision
                 || self
@@ -553,7 +528,6 @@ impl Projection {
                 .as_str()
                 .is_some_and(|id| self.terminal_run(id))
         {
-            self.shell_background_work = shell.background();
             // T3 selects the last failed error on the presented run's root node
             // for this shell row, including when the compact thread omits it.
             if row["status"] == "failed"
@@ -569,114 +543,11 @@ impl Projection {
         }
     }
 
-    pub(crate) fn delivery_custody(&self) -> Result<(), &'static str> {
-        if self.archived() || self.thread.deleted_at.is_some() {
-            return Err("parent is archived or deleted");
-        }
-        if let Some(reason) = self.busy_reason() {
-            return Err(reason);
-        }
-        if !self.has_idle_coverage() {
-            return Err(
-                "idle custody is unknown (provider roster, turn items or matching shell background coverage missing)",
-            );
-        }
-        let Some(children) = &self.subagents else {
-            return Err("delegated child roster is missing");
-        };
-        for child in children {
-            match child.status.as_deref() {
-                Some("idle" | "completed" | "failed" | "cancelled" | "interrupted") => (),
-                Some("pending" | "queued" | "preparing" | "starting" | "running" | "waiting") => {
-                    return Err("parent has a starting or running child");
-                }
-                _ => return Err("delegated child status is missing or unknown"),
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn retained(&self) -> Result<RetainedThread, HostError> {
-        if let Some(state) = self.shell_closed {
-            return Ok(state);
-        }
-        if self.thread.deleted_at.is_some() {
-            return Ok(RetainedThread::Gone);
-        }
-        if self.busy_reason().is_some() {
-            return Ok(RetainedThread::Busy);
-        }
-        if !self.has_idle_coverage() {
-            return Err(self.idle_coverage_error());
-        }
-        Ok(RetainedThread::Idle)
-    }
-
-    pub(crate) fn terminal_background_pending(&self) -> Result<bool, HostError> {
-        if self.background_work() || self.shell_background_work == Some(true) {
-            return Ok(true);
-        }
-        if self.shell_background_work == Some(false) || self.has_idle_coverage() {
-            return Ok(false);
-        }
-        Err(self.idle_coverage_error())
-    }
-
-    fn idle_coverage_error(&self) -> HostError {
-        HostError::RetainedIdleCoverage {
-            revision: self.sequence,
-            providers: self.provider_threads.is_some(),
-            turn_items: self.turn_items.is_some(),
-            shell_background: !(self.windowed || self.compact_turn_items)
-                || self.shell_background_work.is_some(),
-        }
-    }
-
-    fn busy_reason(&self) -> Option<&'static str> {
-        if self.thread_active() {
-            Some("parent has an active run or runtime request")
-        } else if self.background_work() || self.shell_background_work == Some(true) {
-            Some("parent has a pending background writer")
-        } else {
-            None
-        }
-    }
-
-    const fn has_idle_coverage(&self) -> bool {
-        self.provider_threads.is_some()
-            && self.turn_items.is_some()
-            && (!(self.windowed || self.compact_turn_items) || self.shell_background_work.is_some())
-    }
-
-    // Equivalent presence tests to T3's pending background work derivation.
-    // Keep every active item that could be a writer, including unawaited work.
-    fn background_work(&self) -> bool {
-        self.provider_threads.iter().flatten().any(|thread| {
-            thread
-                .pending_background_tasks
-                .iter()
-                .any(|task| !task.task_id.is_empty())
-        }) || self.turn_items.iter().flatten().any(|item| {
-            matches!(
-                item.kind.as_str(),
-                "command_execution" | "dynamic_tool" | "subagent"
-            ) && matches!(item.status.as_str(), "pending" | "running" | "waiting")
-                && !(item.kind == "dynamic_tool"
-                    && item
-                        .input
-                        .as_ref()
-                        .is_some_and(|input| input["persistent"] == true))
-                && !self.runs.iter().any(|run| {
-                    matches!(run.status, Status::RolledBack)
-                        && item.run_id.as_ref() == Some(&run.id)
-                })
-        })
-    }
-
     pub(crate) fn run(
         &self,
         message_id: &str,
         missing_receipt: MissingReceipt,
+        quiet: impl FnOnce() -> bool,
     ) -> Result<RunState, HostError> {
         if self.shell_closed == Some(RetainedThread::Busy) {
             return Err(HostError::Uncertain);
@@ -694,8 +565,7 @@ impl Projection {
             }
             // T3 deduplicates the frozen queue command even when history is paged.
             if missing_receipt != MissingReceipt::Queue
-                && ((self.windowed && missing_receipt == MissingReceipt::Fresh)
-                    || self.retained()? != RetainedThread::Idle)
+                && ((self.windowed && missing_receipt == MissingReceipt::Fresh) || !quiet())
             {
                 return Err(HostError::Uncertain);
             }
@@ -743,10 +613,6 @@ impl Projection {
 
     pub(crate) const fn deleted(&self) -> bool {
         self.thread.deleted_at.is_some()
-    }
-
-    pub(crate) fn archived_in_shell(&self) -> bool {
-        self.archived() && self.shell_closed == Some(RetainedThread::Idle)
     }
 
     pub(crate) fn activity(&self, message_id: &str) -> Option<RunActivity> {
@@ -883,13 +749,6 @@ impl Projection {
                     .find(|run| linked_id == Some(run.id.as_str()))
             });
         (message, run)
-    }
-
-    fn thread_active(&self) -> bool {
-        self.runtime_requests
-            .iter()
-            .any(|request| request.status == "pending")
-            || self.runs.iter().any(|run| run.status.in_flight())
     }
 }
 
