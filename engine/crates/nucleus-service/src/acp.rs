@@ -99,6 +99,33 @@ fn delivery_prompt(
     }
 }
 
+fn parent_delivery_for_acp(
+    state: &State,
+    row: &TaskRow,
+    parent: &str,
+) -> Result<Option<ParentDelivery>, StoreError> {
+    // The latest hold still owns the parent when a reservation advances the task version.
+    let reservation = row
+        .task
+        .run()
+        .filter(|run| run.last_send_at_ms().is_none())
+        .map(|_| format!("{parent}-"));
+    Ok(state
+        .store
+        .parent_deliveries(&row.task.identity().id, row.version, reservation.as_deref())?
+        .into_iter()
+        .find(|delivery| {
+            !delivery.refresh
+                && !delivery.command.is_empty()
+                && delivery.result != ParentResult::Refused
+                && (delivery.version == row.version
+                    || matches!(
+                        delivery.result,
+                        ParentResult::Pending | ParentResult::Accepted
+                    ))
+        }))
+}
+
 fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
     let task = &row.task;
     let Some(run) = task.run() else {
@@ -170,13 +197,7 @@ impl Service {
         {
             return Ok((None, carry_row));
         }
-        // A remembered child can acquire a new re-entry hold after settlement.
-        // Carrying the prior prompt requires a current role.
-        let mut delivery = state
-            .store
-            .parent_deliveries(id, row.version, None)?
-            .into_iter()
-            .find(|delivery| !delivery.refresh && !delivery.command.is_empty());
+        let mut delivery = parent_delivery_for_acp(state, row, &parent)?;
         if active_in_shell
             && delivery.is_none()
             && let Some((_, instance)) =
@@ -187,7 +208,10 @@ impl Service {
                 .store
                 .parent_deliveries(id, row.version, Some(&prefix))?
                 .into_iter()
-                .find(|delivery| delivery.command.starts_with(&prefix));
+                .find(|delivery| {
+                    delivery.command.starts_with(&prefix)
+                        && delivery.result != ParentResult::Refused
+                });
         }
         let reentry = delivery
             .as_ref()
@@ -220,6 +244,7 @@ impl Service {
             .map(|delivery| delivery_prompt(&delivery, &roles))
             .transpose()?
             .flatten();
+        // Older ACP clients also use child activity to carry an already authenticated turn.
         let carry = prompt.is_none() && (carry_row || active_child && task.run().is_some());
         Ok((prompt, carry))
     }

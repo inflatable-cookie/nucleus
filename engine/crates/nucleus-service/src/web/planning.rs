@@ -115,6 +115,7 @@ pub(super) fn project_routes() -> Router<Api> {
         .route("/items/{id}/park", post(park_item))
         .route("/items/{id}/drop", post(drop_item))
         .route("/items/{id}/reopen", post(reopen_item))
+        .route("/items/{id}/assess", post(assess_item))
         .route("/items/{id}/promote", post(promote))
         .route("/tasks", post(add_task))
         .route("/decisions", get(decisions).post(add_decision))
@@ -640,6 +641,32 @@ async fn reopen_item(
         author_label,
     })
     .into_response())
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AssessItem {
+    version: Option<i64>,
+}
+
+async fn assess_item(
+    State(api): State<Api>,
+    Extension(scope): Extension<ControllerScope>,
+    session: Option<Extension<super::board::BrowserSession>>,
+    ProjectSelector { project }: ProjectSelector,
+    Path(RecordPath { id }): Path<RecordPath>,
+    Extension(caller): Extension<Authority>,
+    input: Result<Json<AssessItem>, JsonRejection>,
+) -> Result<Json<ItemWithTimes>, ApiError> {
+    let input = body(input)?;
+    if session.is_some() && input.version.is_none_or(|version| version <= 0) {
+        return Err(ApiError::Invalid);
+    }
+    let saved = api
+        .service
+        .assess_planning_item(project.as_deref(), &id, input.version, &caller, &scope)
+        .await?;
+    Ok(Json(saved))
 }
 
 #[derive(Default, Deserialize)]

@@ -92,6 +92,19 @@ impl PlannerBinding {
 }
 
 impl State {
+    pub(super) fn enroll_launched_planner(&mut self, identity: PlannerIdentity) {
+        if let Some(binding) = self.planner_binding(&identity.id) {
+            self.enrolled_planners.insert(
+                identity.id.clone(),
+                EnrolledPlanner {
+                    identity,
+                    verified_at: Instant::now(),
+                    binding,
+                },
+            );
+        }
+    }
+
     fn planner_binding(&self, actor: &str) -> Option<PlannerBinding> {
         let (project, repo) = self.settings.planner_route(actor)?;
         Some(PlannerBinding {

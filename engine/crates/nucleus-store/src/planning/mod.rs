@@ -370,6 +370,50 @@ impl Store {
         Ok(saved)
     }
 
+    /// Record an item assessment send and queue its planner tell in one transaction.
+    ///
+    /// # Errors
+    /// Returns an error if the item is missing, closed, at a different version, or the write fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn assess_item(
+        &mut self,
+        project: &str,
+        id: &str,
+        version: Option<i64>,
+        recipient: &str,
+        stamp: WriteAt<'_>,
+        tell: &crate::TellSubmission<'_>,
+        tell_id: &str,
+    ) -> Result<ItemWithTimes, StoreError> {
+        let tx = self.planning_write()?;
+        let mut saved = tx
+            .prepare_cached(&format!("{ITEM_VIEW} WHERE i.project = ?1 AND i.id = ?2"))?
+            .query_row([project, id], item_view)
+            .optional()?
+            .ok_or(StoreError::PlanningMissing)?;
+        if version.is_some_and(|expected| expected != saved.version)
+            || !matches!(saved.item.state, ItemState::Open | ItemState::Parked { .. })
+        {
+            return Err(StoreError::PlanningConflict);
+        }
+        let mut snapshot = serde_json::to_value(&saved.item)?;
+        snapshot["recipient"] = recipient.into();
+        record_history(
+            &tx,
+            ItemRecord,
+            project,
+            id,
+            "assess",
+            &snapshot.to_string(),
+            stamp,
+        )?;
+        saved.version = tx.last_insert_rowid();
+        saved.updated_at_ms = i64::try_from(stamp.at_ms).ok();
+        crate::tells::insert_tell_in_tx(&tx, project, tell, tell_id)?;
+        tx.commit()?;
+        Ok(saved)
+    }
+
     /// Admit the task, link its source and record the item's promotion together.
     ///
     /// # Errors

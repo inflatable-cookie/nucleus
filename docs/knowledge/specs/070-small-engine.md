@@ -142,7 +142,7 @@ Later decisions carry their own attribution.
 10. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
    useful"). Barge provides worktrees when its pool setting is on.
-11. **Keep it light: reads and edits never call the host.** Tom, 2026-11-23: "We need to keep things light and optimised - remember to treat CRUD operations separately from scheduler interactions with the host and to avoid hammering the host with calls". The rules:
+11. **Keep it light: reads and edits never call the host.** (Its operator-snooze send rule is replaced by ruling 62.) Tom, 2026-11-23: "We need to keep things light and optimised - remember to treat CRUD operations separately from scheduler interactions with the host and to avoid hammering the host with calls". The rules:
    - Board, ACP, CLI and settings reads and edits (create, read, update, delete) touch only the store and the in-memory read model. They never call T3, GitHub or the process census. A command writes its row and wakes the task, and the scheduler does any host work on its next pass.
    - Only the scheduler talks to hosts. Each pass makes one bounded set of host reads per host, shared by every task in that pass (for example, one thread listing rather than a read per task). It reads one thread or PR exactly only when a due decision needs it.
    - Host calls are serialized per host. An unavailable host backs off to a due time.
@@ -295,7 +295,7 @@ Later decisions carry their own attribution.
 21. **No machine-load gate.** Tom, 2026-11-24: "running tasks on the queue isn't the load issue, it's them running tests, etc, which is ultimately a separate problem. We shouldn't hold up doing task work because the machine is loaded".
     - Dispatch never reads the machine's load average. Slots and the allowance are the only dispatch limits.
     - Heavy test runs are dealt with where they happen (each repository's test selection and concurrency), not by holding task launches.
-22. **Native task titles.** Tom, 2026-11-24: "We need proper thread titles again - take the naming policy from the TS version".
+22. **Native task titles.** (Its operator-snooze send rule is replaced by ruling 62.) Tom, 2026-11-24: "We need proper thread titles again - take the naming policy from the TS version".
     - Finished task threads archive independently of workspace cleanup. A retained checkout stays visible on the board and in Next.
     - Tom, 2026-11-24: "We'll need the generated project badge icons that match T3 (the screenshot shows a card from rust version and a card from TS version) along with task numbers". Each repository gets its own durable allocator. Seed it from the fenced TypeScript allocator before admitting into a migrated repository and backfill the three pilot tasks in admission order.
     - The task row shows `<State>: #N <brief title>`. Worker children use `#N: <brief title>` and reviewer children use `#N review: <brief title>`. T3 already shows the project. Use the assigned number without padding, and omit the number until it is assigned. Strip a trailing `worker` and fit the title to the host's limit at a word boundary. Update existing live task rows through the title receipt. Already-launched child titles keep their frozen value.
@@ -476,13 +476,13 @@ Later decisions carry their own attribution.
    One exception to protecting T3’s descendants: once every task role has ended, closeout stops the helpers a provider app-server left in the checkout or run scratch. The app-server and T3 stay protected. The [terminal-cleanup contract](../contracts/orchestration.md#terminal-workspace-cleanup) names the evidence. (Planner brief, 2026-11-27, nucleus#1630.)
 
 
-35. **A lubricated workflow.** (Parent-hold delivery parts amended by ruling 57.) Tom, 2026-11-24: "We need to apply this kind of thinking all the way through the workflow - 'lubricate' the whole thing so we stop getting stuck like this." Ruling 34's principle applies to every step:
+35. **A lubricated workflow.** (Parent-hold delivery parts amended by ruling 57; operator-snooze delivery rule replaced by ruling 62.) Tom, 2026-11-24: "We need to apply this kind of thinking all the way through the workflow - 'lubricate' the whole thing so we stop getting stuck like this." Ruling 34's principle applies to every step:
     - Only destructive or irreversible steps (removing a checkout or worktree, merging, closing a PR) prove custody, and they prove it once.
     - Every other step acts on what it can observe now and is idempotent. Repeating it is harmless. A T3 effect is re-sent under its same command ID, which T3 deduplicates, rather than proved absent.
     - An operator-owned future snooze is the delivery exception carried forward from #1445 and the TypeScript `wakeBeforeDelivery`. T3's ordinary message dispatch clears its destination's snooze. Before a parent hold or retained continuation enters the wire, the synchronized shell's future horizon must be absent or match the existing Nucleus ownership record. The operator's horizon stays visible as a timed wait outside **Needs you**. A shell wake or horizon expiry resumes the same command.
     - A bound role's active run or positively observed background work can keep the ACP task turn open, including after an authenticated report. Re-entry uses the same activity evidence. The first hold keys on the role launch and its activity. A successor requires the exact ended parent run and a change in role activity, or evidence of provider loss or a stranded queue. An uncertain reply retains the existing intent and command.
     - A parent turn that ends within one second imposes a three-second backoff from completion. Three consecutive instant turns stop re-entry and show an owner action until new role evidence arrives. Shell updates and startup drive re-entry. The existing three-second recheck for an unproven continuation remains bounded to its first 30 seconds.
-    - After an authenticated report or an observed terminal role, the ACP hold releases when the bound role is quiet. The next engine change for that task rechecks the current hold even if the completion notification was missed. A queued successor owns its own prompt.
+    - After an authenticated report or an observed terminal role, the ACP hold releases when the bound role is quiet. The next engine change for that task rechecks the current hold even if the completion notification was missed. Each frozen hold prompt identifies its command. An older ACP turn yields when the latest hold has a different prompt. The service sends child activity as a carry signal only when there is no current hold.
     - Parent delivery respects operator snoozes and can send across a Nucleus-owned snooze. Task-row visibility follows ruling 22.
     - Held task and Inbox ACP streams use the service's keepalives to detect broken connections. EOF, transport errors and 45 seconds without a complete keepalive or invalidation trigger capped reconnect backoff. The new stream refreshes the view. A task turn can carry its authenticated hold while the restarted engine waits for the first T3 shell snapshot.
     - A failed parent turn can get a fresh journaled hold when its exact command, ACP run and root error prove the provider process exited, the ACP reply stream closed, or Nucleus could not answer. The same evidence can recover an already recorded failure. Other parent failures retain their owner action.
@@ -604,12 +604,16 @@ Later decisions carry their own attribution.
     over". Today a reply goes to project `{from}`, which reaches that project's
     most recently verified planner, often not the sender. The TypeScript design
     (nucleus#1387, `core/questions/agent-messages.ts` at `737246d22`) carries over:
-    - Each delivered message gets an opaque reply handle (`nreply_` and random
-      bytes), never derived from a thread or agent ID. The handle is bound to
-      the sender's verified thread at send time.
-    - The delivered text ends with the exact reply command, for example
-      `Reply: nucleus tell {to:{reply:"nreply_…"}}`, and says the handle
-      reaches this sender, belongs to this recipient and expires after 7 days.
+    - Each delivered message gets an opaque reply handle, never derived from a
+      thread or agent ID. The handle is bound to the sender's verified thread at
+      send time. Handles issued before 2026-11-27 are `nreply_` plus random hex;
+      new ones are `r` plus 8 random hex digits, unique among every issued handle
+      (a collision is retried). Both forms resolve until they expire.
+    - The delivered text opens `From <sender's project name>` and ends with
+      `Reply: nucleus reply <handle> 'your message'`. The text does not restate
+      the reply rules: only the receiving thread can use the handle, it lasts
+      seven days and falls back to the sender's project planner. Those rules
+      live in the Nucleus skill. Old `nucleus tell {to:{reply}}` JSON still works.
     - Only that message's recipient thread can use the handle. An unknown,
       expired or foreign handle sends nothing and reveals nothing about the
       sender.
@@ -794,6 +798,12 @@ Later decisions carry their own attribution.
 59. **Old upgrade paths and the pinned-volume profile go.** Tom, 2026-11-27 ("Remove both (Recommended)"): remove the pre-v14 database upgrades, settings v1 reads, the legacy parent prompt, the legacy reviewer-token import and the pinned-volume storage profile. The live install is on schema 14, settings v2 and Barge placement.
 
 60. **Stop halts merges.** Tom, 2026-11-27 ("Stop halts merges (Recommended)"): when Dispatch is Stopped, nothing outward-facing happens. Approved PRs wait until Dispatch runs again, as review publication and retirement already do.
+
+61. **Nucleus keeps registered checkouts' default branch current.** Tom, 2026-11-27, confirming the planner's proposal: "Yeah confirm - the damage from not keeping up to date is generally worse, it's rare that anything would be working in the main checkout at the same time as Nucleus tasks landing". After Nucleus merges a PR, it fetches and fast-forwards that repository's registered checkout's local default branch to the merged commit. If that branch is checked out, this is a fast-forward-only merge in the working tree, which Git refuses if it would overwrite local changes. If another branch is checked out, only the local default-branch ref moves, also fast-forward only. A refusal, a diverged branch or a dirty conflict leaves the checkout untouched and is recorded in the task's history. It never resets, stashes, rebases or forces. Task starts still use the fetched published base (nucleus#1623), so a lagging checkout never blocks work. This changes #1623's rule that Nucleus never touches the registered checkout.
+
+62. **A snoozed task row is hidden, not paused.** Tom, 2026-11-27, after bovine-accelerator#7302 stopped for three hours because he had snoozed its row: "Nucleus shouldn't treat manually snoozed task rows any differently - I snoozed 7302 to get it out of my visible list, I don't want it to pause for that amount of time." An operator snooze on a task's parent row, or on one of its role threads, only affects visibility. Nucleus never withholds or delays a parent hold, role send, continuation or notice because of it. T3 clears a thread's snooze when a message is dispatched to it. When a Nucleus send clears an operator snooze, Nucleus puts the same snooze horizon back straight afterwards, so the row stays out of the operator's list until the time they chose. After that horizon the row follows ruling 22's visibility rule again. This replaces the operator-snooze exception in rulings 11, 22 and 35 (carried from #1445 and TypeScript's `wakeBeforeDelivery`).
+
+63. **Tasks declare a weight, and heavy work has its own slots.** Tom, 2026-11-27: "right now we have no concept of what a slot will do.. it might be just making changes to the readme, or it might run a 5 hour test suite building multiple rust binaries in a VM! Would it be possible to have an enum on tasks that defines the weight of a task, and then limit the number of heavy slots that can run concurrently?" He named the options `light`, `normal` and `heavy`, asked that it "doesn't block anything and keeps the queue moving", agreed the planner's shape ("yes, that matches"), and asked for the controls in Settings → Limits. A brief declares `queue.weight: light | normal | heavy`, separate from complexity, which picks the model. A missing weight means `normal`. The weight applies to every run of the task, reviews included. Dispatch keeps three slot counts, heavy H, normal M and light L, whose sum is the global slot count. They act as nested caps: heavy runs ≤ H, heavy plus normal runs ≤ H + M, all runs ≤ H + M + L. So light work can use any slot, normal work normal or heavy slots, and heavy work only heavy slots. When a slot frees, the heaviest waiting task that fits takes it. Within one weight, today's order holds (promoted, then admission), and project slot limits still apply. Nothing is preempted, a free slot is always used whenever any waiting task fits it, and a task waiting on its cap says so. The defaults for this machine are heavy 5, normal 8 and light 5.
 
 ## The model
 

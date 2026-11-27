@@ -1,5 +1,5 @@
 use nucleus_core::QuestionDelivery;
-use rusqlite::{OptionalExtension, Row, params};
+use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde::{Deserialize, Serialize};
 
 use crate::{Store, StoreError};
@@ -126,6 +126,25 @@ pub enum TellRows<'a> {
 }
 
 impl Store {
+    /// Whether another planner launch is already in progress for this project.
+    ///
+    /// # Errors
+    /// Returns a storage error if the delivery queue cannot be queried.
+    pub fn has_pending_planner_launch(
+        &self,
+        project: &str,
+        exclude_id: &str,
+    ) -> Result<bool, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM project_tell_deliveries
+                WHERE to_project = ?1 AND id <> ?2 AND command LIKE 'assess-launch-%' AND retry_at IS NOT NULL
+            )",
+            params![project, exclude_id],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Did a durable claim replacement already enqueue its notice?
     ///
     /// # Errors
@@ -158,6 +177,19 @@ impl Store {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?)
+    }
+
+    /// Is this handle already issued? The primary key spans expired handles too,
+    /// so a new handle must avoid every issued one, not only the unexpired ones.
+    ///
+    /// # Errors
+    /// Returns a storage error if the handle index cannot be read.
+    pub fn tell_reply_handle_issued(&self, handle: &str) -> Result<bool, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tell_reply_handles WHERE handle = ?1)",
+            [handle],
+            |row| row.get(0),
+        )?)
     }
 
     /// Recover an identical request's original recipient set and current receipts.
@@ -430,6 +462,47 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+}
+
+pub(crate) fn insert_tell_in_tx(
+    tx: &Transaction<'_>,
+    project: &str,
+    tell: &TellSubmission<'_>,
+    tell_id: &str,
+) -> Result<(), StoreError> {
+    let state = serde_json::to_string(&TellState::Pending)?;
+    tx.execute(
+        "INSERT INTO project_tell_deliveries
+            (id, sender, from_project, to_project, text, recorded_at, state, retry_at, request_key)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?6, ?8)",
+        params![
+            tell_id,
+            tell.sender,
+            tell.from_project,
+            project,
+            tell.text,
+            tell.recorded_at,
+            state,
+            tell.key,
+        ],
+    )?;
+    if let Some(thread) = tell.direct {
+        tx.execute(
+            "INSERT INTO tell_direct_targets (delivery, thread) VALUES (?1, ?2)",
+            params![tell_id, thread],
+        )?;
+    }
+    tx.execute(
+        "INSERT INTO project_tell_requests (key, recorded_at, deliveries, no_live_planners)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            tell.key,
+            tell.recorded_at,
+            serde_json::to_string(&[tell_id])?,
+            serde_json::to_string(tell.no_live_planners)?,
+        ],
+    )?;
+    Ok(())
 }
 
 fn delivery(row: &Row<'_>) -> rusqlite::Result<TellDelivery> {

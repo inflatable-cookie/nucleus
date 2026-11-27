@@ -20,7 +20,13 @@ intent. Dispatch, scope changes and outward actions require their own authority.
 - List leads and papercuts with `item.list`. Use `item.add`, `item.edit`,
   `item.park`, `item.drop` or `item.reopen` to maintain them. Reopen a parked or dropped item with `item.reopen [PROJECT] ID [--note NOTE]`; a due revisit stays parked until reopened. Promote approved work with
   `item.promote [PROJECT] ID`. A lead carries its complexity in the brief.
-  Supply `--complexity` when promoting a papercut.
+  Supply `--complexity` when promoting a papercut. When you receive an item
+  assessment message from the board, assess the lead or papercut and record the
+  outcome on the item: drop it with the right disposition and reason
+  (`nucleus item.drop [PROJECT] ID --disposition completed|deprecated --reason "…"`)
+  if it is stale, already done or no longer wanted; otherwise write or update
+  the brief and dispatch it (`nucleus item.edit [PROJECT] ID TITLE` on stdin,
+  then `nucleus item.promote [PROJECT] ID [--complexity LEVEL]`).
 - Send an approved brief on stdin to `nucleus task.add [PROJECT]`. Direct
   admission through `task.add` or `admit` requires `queue.complexity` in the
   brief front matter. This example uses medium.
@@ -39,6 +45,15 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   Completion notices arrive by default: the dispatching planner gets one queued notice when the task reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` on admission or amend to turn them off.
   Set `queue.priority: promoted` under `queue` at admission only to dispatch ahead of normal tasks when slots free (brief amendments cannot change `queue.priority`; use `promote` or `demote` instead).
   Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
+  To put a task on a specific or stronger model, add a profile request under
+  `queue` with the profile ID from Settings → Profiles and a reason:
+  `profileRequests: {worker: {profileId: ID, reason: "why", required: true}}`
+  (`reviewer` works the same way). `required: true` makes it the profile used,
+  never a hint. A Frontier profile is used only this way, with a reason, and
+  applies directly at the Low, Normal and High usage levels (Spec 052).
+  On a running task, `amend` the brief, then `move REF working` with no
+  `--instruction`. A retained worker keeps its first profile until a request
+  like this replaces it in a fresh worker thread with the work so far.
   `task.add` resolves those references before dispatch can start.
   Set `queue.mergeHold: true` with a nonblank `queue.mergeHoldReason` to wait
   for a named condition after work, review and required checks finish.
@@ -82,9 +97,14 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   decisions. Inbox requests and operator decisions belong to the operator.
   A verified planner can send an informational notice with `tell PROJECT TEXT`
   or `tell all TEXT`. Run `nucleus planner.claim` to receive project messages
-  here. Replacing a claim notifies the previous planner. If the sender is gone,
-  their project planner receives the reply. Copy the delivered `Reply:` command
-  and replace its message. The handle belongs to your thread for seven days.
+  here. Replacing a claim notifies the previous planner.
+  A delivered message starts `From <project>`, which names the sender's project,
+  so a reply needn't name itself. It ends with a `Reply:` line such as
+  `nucleus reply r6e39f1a 'your message'`. Run that command with your text, or
+  `nucleus reply r6e39f1a -` to read the text from stdin. Only the thread that
+  received the message can use its handle, and only for seven days. The reply
+  reaches the sender, or the sender's project planner if the sender is gone.
+  Older `nucleus tell '{"to":{"reply":"nreply_…"}}' TEXT` replies still work.
 
 ## Run protocol
 
@@ -147,7 +167,13 @@ proof must be sufficient for approval. Treat live-store counts as planner
 evidence and name any remaining planner check.
 
 Keep the pinned checkout clean and leave tracked files, branch and PR unchanged.
+PR review target: 8. Approve a sound PR with no bugs and list minor gaps as
+non-blocking suggestions. Request changes for a bug, a missing failure-path
+test, a misleading description or an unmet brief requirement. A brief can set
+another target. Nucleus publishes the review, so never post one yourself.
 Report `approve` or `changes` through the assigned route at the assigned head,
-with concrete findings, locations and impact. An unfinished review earns no
+with concrete findings, locations and impact. Open the summary with the score
+line (`8/10, target 8: …`) and label findings `issue (blocking):` or
+`suggestion (non-blocking):`, as the `pr-etiquette` skill describes. An unfinished review earns no
 verdict. If asked to recover a missing callback, report only your own same-head
 findings and the checks you actually performed.
