@@ -20,7 +20,13 @@ intent. Dispatch, scope changes and outward actions require their own authority.
 - List leads and papercuts with `item.list`. Use `item.add`, `item.edit`,
   `item.park`, `item.drop` or `item.reopen` to maintain them. Reopen a parked or dropped item with `item.reopen [PROJECT] ID [--note NOTE]`; a due revisit stays parked until reopened. Promote approved work with
   `item.promote [PROJECT] ID`. A lead carries its complexity in the brief.
-  Supply `--complexity` when promoting a papercut.
+  Supply `--complexity` when promoting a papercut. When you receive an item
+  assessment message from the board, assess the lead or papercut and record the
+  outcome on the item: drop it with the right disposition and reason
+  (`nucleus item.drop [PROJECT] ID --disposition completed|deprecated --reason "…"`)
+  if it is stale, already done or no longer wanted; otherwise write or update
+  the brief and dispatch it (`nucleus item.edit [PROJECT] ID TITLE` on stdin,
+  then `nucleus item.promote [PROJECT] ID [--complexity LEVEL]`).
 - Send an approved brief on stdin to `nucleus task.add [PROJECT]`. Direct
   admission through `task.add` or `admit` requires `queue.complexity` in the
   brief front matter. This example uses medium.

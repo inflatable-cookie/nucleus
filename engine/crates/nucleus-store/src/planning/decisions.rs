@@ -1,12 +1,12 @@
 use std::collections::BTreeSet;
 
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction};
 
 use super::{
     Decision, DecisionAnswer, DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption,
     DecisionRecord, DecisionTarget, WriteAt, decode, insert, list, read, required, save, valid_key,
 };
-use crate::{Store, StoreError, TellState, TellSubmission, load};
+use crate::{Store, StoreError, TellSubmission, load};
 
 pub(crate) const USAGE_PERMISSION_INDEX: &str =
     "CREATE UNIQUE INDEX IF NOT EXISTS planning_usage_permission
@@ -425,38 +425,8 @@ fn insert_decision_tell(
     tell_id: &str,
 ) -> Result<(), StoreError> {
     // Decision answer notices bypass the hourly recipient cap like claim notices so operator answers always commit.
-    let thread = tell.direct.ok_or(StoreError::PlanningInput)?;
-    let state = serde_json::to_string(&TellState::Pending)?;
-    tx.execute(
-        "INSERT INTO project_tell_deliveries
-            (id, sender, from_project, to_project, text, recorded_at, state, retry_at, request_key)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?6, ?8)",
-        params![
-            tell_id,
-            tell.sender,
-            tell.from_project,
-            project,
-            tell.text,
-            tell.recorded_at,
-            state,
-            tell.key,
-        ],
-    )?;
-    tx.execute(
-        "INSERT INTO tell_direct_targets (delivery, thread) VALUES (?1, ?2)",
-        params![tell_id, thread],
-    )?;
-    tx.execute(
-        "INSERT INTO project_tell_requests (key, recorded_at, deliveries, no_live_planners)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![
-            tell.key,
-            tell.recorded_at,
-            serde_json::to_string(&[tell_id])?,
-            serde_json::to_string(tell.no_live_planners)?,
-        ],
-    )?;
-    Ok(())
+    tell.direct.ok_or(StoreError::PlanningInput)?;
+    crate::tells::insert_tell_in_tx(tx, project, tell, tell_id)
 }
 
 fn new_decision(

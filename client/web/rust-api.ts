@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { CapabilityLevel } from "../../shared/contracts";
 import { capabilityLevels } from "../../shared/schema/settings/capability";
 import {
   CANONICAL_PROVIDERS,
@@ -463,23 +462,14 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
         planning(project, `/items/${encodeURIComponent(id)}/drop`),
         json("POST", { reason, disposition }),
       ),
-    promoteItem: (
+    assessItem: (
       project: string,
       id: string,
-      value: {
-        repository?: string;
-        /** A papercut's level, or a lead's new level (written into its brief with the task). */
-        complexity?: CapabilityLevel;
-        /** The item version the caller saw; a later change refuses the promotion. */
-        version?: number;
-      },
+      value: { version: number },
     ) =>
       board.read(
-        z.object({
-          identity: z.object({ id: z.string() }),
-          reference: z.string(),
-        }),
-        planning(project, `/items/${encodeURIComponent(id)}/promote`),
+        item.extend({ version: z.number().int().positive() }),
+        planning(project, `/items/${encodeURIComponent(id)}/assess`),
         json("POST", value),
       ),
     decisions: (project: string) =>

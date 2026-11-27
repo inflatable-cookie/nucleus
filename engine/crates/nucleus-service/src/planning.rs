@@ -9,7 +9,8 @@ use nucleus_store::{
     StoreError, TaskAdmissionFacts, TaskRow, TellSubmission,
     planning::{
         Decision, DecisionAnswerInput, DecisionInput, DecisionKind, Item, ItemKind, ItemSource,
-        ItemState, PromotionCheck, USAGE_APPROVE, UsagePermission, WriteAt, valid_key,
+        ItemState, ItemWithTimes, PromotionCheck, USAGE_APPROVE, UsagePermission, WriteAt,
+        valid_key,
     },
 };
 use serde::Deserialize;
@@ -176,6 +177,57 @@ impl Service {
             })
             .await?;
         Ok(row)
+    }
+
+    pub(crate) async fn assess_planning_item(
+        &self,
+        project: Option<&str>,
+        id: &str,
+        version: Option<i64>,
+        caller: &Authority,
+        scope: &ControllerScope,
+    ) -> Result<ItemWithTimes, ServiceError> {
+        let (mut state, project) = self.planning_state_in_scope(project, scope).await?;
+        let item = state
+            .store
+            .item(&project, id)?
+            .ok_or(StoreError::PlanningMissing)?;
+        if !matches!(item.state, ItemState::Open | ItemState::Parked { .. }) {
+            return Err(StoreError::PlanningConflict.into());
+        }
+        let recipient = crate::tell::assess_recipient(&state, &project);
+        let project_name = state
+            .settings
+            .projects
+            .as_ref()
+            .and_then(|all| all.projects.get(&project))
+            .map_or(project.as_str(), |p| p.name.as_str());
+        let text = assess_item_text(&project, project_name, &item);
+        let stamp = stamp(caller);
+        let key = new_id("assess")?;
+        let tell_id = new_id("tell")?;
+        let recorded_at = i64::try_from(stamp.at_ms).unwrap_or(i64::MAX);
+        let submission = TellSubmission {
+            key: &key,
+            sender: "Nucleus",
+            direct: None,
+            from_project: &project,
+            text: &text,
+            recorded_at,
+            no_live_planners: &[],
+        };
+        let saved = state.store.assess_item(
+            &project,
+            id,
+            version,
+            &recipient,
+            stamp,
+            &submission,
+            &tell_id,
+        )?;
+        self.planning_changes.send_replace(());
+        self.tell_wake.notify_one();
+        Ok(saved)
     }
 
     pub(crate) async fn promote_planning_item(
@@ -626,6 +678,41 @@ fn format_utc_minute(at_ms: u64) -> String {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = y + i64::from(month <= 2);
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02} UTC")
+}
+
+fn assess_item_text(project_id: &str, project_name: &str, item: &Item) -> String {
+    let kind = match item.kind {
+        ItemKind::Lead => "Lead",
+        ItemKind::Papercut => "Papercut",
+    };
+    let id = &item.id;
+    let title = item.content.title.trim();
+    let body = item.content.body.trim();
+    let (drop_hint, promote_hint) = match item.kind {
+        ItemKind::Lead => (
+            format!(
+                "`nucleus item.drop {project_id} {id} --disposition deprecated --reason \"…\"`"
+            ),
+            format!(
+                "`nucleus item.edit {project_id} {id} \"<title>\"` (brief with `queue.complexity` on stdin) then `nucleus item.promote {project_id} {id}`"
+            ),
+        ),
+        ItemKind::Papercut => (
+            format!(
+                "`nucleus item.drop {project_id} {id} --disposition completed|deprecated --reason \"…\"`"
+            ),
+            format!(
+                "`nucleus item.edit {project_id} {id} \"<title>\"` (brief on stdin) then `nucleus item.promote {project_id} {id} --complexity <level>`"
+            ),
+        ),
+    };
+    format!(
+        "Assess {kind} {id} in {project_name} ({project_id}): {title}\n\n\
+         {body}\n\n\
+         Assess this item:\n\
+         - If it is stale, already done or no longer wanted, drop it with the right disposition and a reason: {drop_hint}\n\
+         - If it is still worth doing, write or update the brief and dispatch it, choosing repository and complexity: {promote_hint}"
+    )
 }
 
 fn decision_answer_text(

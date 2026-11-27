@@ -335,7 +335,7 @@ history, and writes through `item.edit`, `item.park`, `item.drop`,
 | Parked reason, revisit date | `reason`, `revisitAt` | exists |
 | Who parked or dropped | `history/{kind}/{id}` (`actor`, `atMs`, `action`) | board-only |
 | Revisit due | `revisitAt` compared with today | exists (computed) |
-| Promote | `POST …/items/{id}/promote {repository, complexity}` | exists |
+| Send to planner | `POST …/items/{id}/assess {version}` (replaces board-side `promote`; planners keep `item.promote` on CLI/API) | exists |
 | Bound repositories | project `repositories[].hostProject` | exists |
 | Linked task card | `taskId` joined with the board's task list | exists (client join) |
 | Edit | `PUT …/items/{id}` with `version` | exists (both kinds since nucleus#1604) |

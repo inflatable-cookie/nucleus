@@ -571,3 +571,78 @@ fn reopen_retains_history_and_fences_stale_versions() {
         }
     }
 }
+
+#[test]
+fn assess_item_writes_history_and_tell_atomically() {
+    let mut store = Store::open_memory().unwrap();
+    store
+        .add_item(
+            "project",
+            "i-1".into(),
+            ItemKind::Lead,
+            ItemContent {
+                title: "Assess me".into(),
+                body: "Body".into(),
+                lanes: vec![],
+            },
+            STAMP,
+        )
+        .unwrap();
+    let version = store.items_with_times("project").unwrap()[0].version;
+    let tell = nucleus_store::TellSubmission {
+        key: "assess-1",
+        sender: "Nucleus",
+        direct: None,
+        from_project: "project",
+        text: "Assess Lead i-1",
+        recorded_at: 1000,
+        no_live_planners: &[],
+    };
+    let saved = store
+        .assess_item(
+            "project",
+            "i-1",
+            Some(version),
+            "planner-1",
+            STAMP,
+            &tell,
+            "tell-1",
+        )
+        .unwrap();
+    assert!(saved.version > version);
+    assert_eq!(
+        store
+            .planning_history("project", RecordKind::Item, "i-1")
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(store.next_tell().unwrap().unwrap().id, "tell-1");
+
+    // Reusing the same tell ID forces a SQLite constraint error inside the transaction;
+    // the history entry must roll back with it.
+    let duplicate = nucleus_store::TellSubmission {
+        key: "assess-2",
+        ..tell
+    };
+    assert!(
+        store
+            .assess_item(
+                "project",
+                "i-1",
+                Some(saved.version),
+                "planner-1",
+                STAMP,
+                &duplicate,
+                "tell-1"
+            )
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .planning_history("project", RecordKind::Item, "i-1")
+            .unwrap()
+            .len(),
+        2
+    );
+}

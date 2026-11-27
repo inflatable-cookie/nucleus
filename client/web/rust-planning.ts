@@ -230,6 +230,7 @@ const snapshotVersion = z.object({ version: z.number().int() });
 const historySnapshot = z.object({
   note: z.string().optional(),
   disposition: z.enum(["completed", "deprecated"]).optional(),
+  recipient: z.string().optional(),
 });
 
 async function laneRevision(
@@ -500,6 +501,7 @@ export function createRustPlanning(
           note: snapshot?.note ?? null,
           disposition:
             entry.action === "drop" ? (snapshot?.disposition ?? "deprecated") : null,
+          recipient: entry.action === "assess" ? (snapshot?.recipient ?? null) : null,
         };
       }),
     };
@@ -815,16 +817,10 @@ export function createRustPlanning(
       await rust.reopenItem(row.id, record.id, { version: input.version });
       return itemDetail(row, await savedItem(row, record.id));
     },
-    "item.promote": async (input: output<typeof api.itemPromote.input>) => {
+    "item.assess": async (input: output<typeof api.itemAssess.input>) => {
       const { row, record } = await itemOwner(input);
-      // One engine operation: it refuses an item past the version the view showed, and a
-      // lead's chosen level is written into its brief only together with the admitted task.
-      const task = await rust.promoteItem(row.id, record.id, {
-        repository: input.repository,
-        complexity: input.complexity,
-        version: input.version,
-      });
-      return { taskId: task.identity.id, reference: task.reference };
+      await rust.assessItem(row.id, record.id, { version: input.version });
+      return itemDetail(row, await savedItem(row, record.id));
     },
   };
 
