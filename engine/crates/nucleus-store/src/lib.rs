@@ -54,7 +54,7 @@ pub use usage::{ProfileUsage, SubscriptionPause, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 14;
+const SCHEMA_VERSION: i32 = 15;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation, queue_priority, merge_hold";
@@ -223,6 +223,13 @@ pub struct TaskAdmissionFacts<'a> {
     pub affected_tests: bool,
 }
 
+/// Pending completion notice recipient (`None` for the dispatching planner, `Some(thread)` for a watcher).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionNotice {
+    pub watcher: Option<String>,
+    pub retry: bool,
+}
+
 pub type PruneOwners = BTreeMap<String, (String, Option<(i64, u32)>)>;
 
 pub struct Store {
@@ -315,10 +322,21 @@ impl Store {
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;
         tx.execute_batch(tells::SCHEMA)?;
         tx.execute_batch(dependencies::SCHEMA)?;
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS completion_notices (
-            task_id TEXT PRIMARY KEY REFERENCES tasks(id), retry INTEGER CHECK (retry IN (0,1))
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS completion_notices (
+            task_id TEXT NOT NULL REFERENCES tasks(id),
+            recipient TEXT NOT NULL,
+            retry INTEGER CHECK (retry IN (0,1)),
+            PRIMARY KEY (task_id, recipient)
         ) STRICT;
-        CREATE INDEX IF NOT EXISTS pending_completion_notices ON completion_notices(task_id) WHERE retry IS NOT NULL")?;
+        CREATE INDEX IF NOT EXISTS pending_completion_notices ON completion_notices(task_id, recipient) WHERE retry IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS task_watchers (
+            task_id TEXT NOT NULL REFERENCES tasks(id),
+            thread TEXT NOT NULL,
+            added_at_ms INTEGER NOT NULL,
+            PRIMARY KEY (task_id, thread)
+        ) STRICT;",
+        )?;
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS housekeeping_runs (
             name TEXT PRIMARY KEY, started_ms INTEGER NOT NULL, next_batch_ms INTEGER
@@ -392,10 +410,35 @@ impl Store {
             tx.execute_batch(include_str!("parent_delivery_legacy.sql"))?;
         }
         // Earlier schemas rebuild tasks from TASK_SCHEMA above.
-        if version >= 10 {
+        if (10..14).contains(&version) {
             tx.execute(
                 "ALTER TABLE tasks ADD COLUMN merge_hold TEXT CHECK (json_valid(merge_hold))",
                 [],
+            )?;
+        }
+        if version < 15
+            && tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='completion_notices')",
+                [],
+                |r| r.get::<_, bool>(0),
+            )?
+            && !tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('completion_notices') WHERE name='recipient')",
+                [],
+                |r| r.get::<_, bool>(0),
+            )?
+        {
+            tx.execute_batch(
+                "CREATE TABLE completion_notices_v15 (
+                    task_id TEXT NOT NULL REFERENCES tasks(id),
+                    recipient TEXT NOT NULL,
+                    retry INTEGER CHECK (retry IN (0,1)),
+                    PRIMARY KEY (task_id, recipient)
+                ) STRICT;
+                INSERT INTO completion_notices_v15 (task_id, recipient, retry)
+                SELECT task_id, '', retry FROM completion_notices;
+                DROP TABLE completion_notices;
+                ALTER TABLE completion_notices_v15 RENAME TO completion_notices;",
             )?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -729,42 +772,139 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// First attempt (false), sole retry (true), or no pending closeout notice.
+    /// First attempt (false), sole retry (true), or no pending origin closeout notice.
     ///
     /// # Errors
     /// Returns an error if the notice cannot be read.
     pub fn completion_notice(&self, id: &str) -> Result<Option<bool>, StoreError> {
+        self.completion_notice_for(id, None)
+    }
+
+    /// First attempt (false), sole retry (true), or no pending closeout notice for one recipient.
+    ///
+    /// # Errors
+    /// Returns an error if the notice cannot be read.
+    pub fn completion_notice_for(
+        &self,
+        id: &str,
+        watcher: Option<&str>,
+    ) -> Result<Option<bool>, StoreError> {
         Ok(self
             .connection
             .query_row(
-                "SELECT retry FROM completion_notices WHERE task_id=?1 AND retry IS NOT NULL",
-                [id],
+                "SELECT retry FROM completion_notices WHERE task_id=?1 AND recipient=?2 AND retry IS NOT NULL",
+                params![id, watcher.unwrap_or("")],
                 |row| row.get(0),
             )
             .optional()?)
     }
 
-    /// Claim or reopen the exact pending attempt together with its native evidence.
+    /// All pending closeout notice recipients for a task (origin planner first, then watchers).
+    ///
+    /// # Errors
+    /// Returns an error if the notices cannot be read.
+    pub fn completion_notices(&self, id: &str) -> Result<Vec<CompletionNotice>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT CASE WHEN recipient = '' THEN NULL ELSE recipient END, retry
+             FROM completion_notices WHERE task_id=?1 AND retry IS NOT NULL ORDER BY recipient",
+        )?;
+        let rows = query.query_map([id], |row| {
+            Ok(CompletionNotice {
+                watcher: row.get(0)?,
+                retry: row.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Claim or reopen the exact pending attempt for one recipient together with its native evidence.
     ///
     /// # Errors
     /// Returns an error if the occurrence changed or the evidence cannot be saved.
     pub fn set_completion_notice(
         &mut self,
         id: &str,
+        watcher: Option<&str>,
         expected: Option<bool>,
         next: Option<bool>,
         audit: &EventDraft,
     ) -> Result<(), StoreError> {
         let tx = self.connection.transaction()?;
         if tx.execute(
-            "UPDATE completion_notices SET retry=?3 WHERE task_id=?1 AND retry IS ?2",
-            params![id, expected, next],
+            "UPDATE completion_notices SET retry=?4 WHERE task_id=?1 AND recipient=?2 AND retry IS ?3",
+            params![id, watcher.unwrap_or(""), expected, next],
         )? != 1
         {
             return Err(StoreError::StaleTask);
         }
         append(&tx, id, audit)?;
         Ok(tx.commit()?)
+    }
+
+    /// Subscribe `thread` to a non-terminal task's completion notice in one transaction.
+    /// Returns `None` when the task does not exist, or `(row, true)` when subscribed.
+    ///
+    /// # Errors
+    /// Returns an error if the task or watcher table cannot be updated.
+    pub fn watch_task(
+        &mut self,
+        id: &str,
+        thread: &str,
+        now_ms: i64,
+    ) -> Result<Option<(TaskRow, bool)>, StoreError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(row) = load(&tx, id)? else {
+            return Ok(None);
+        };
+        if row.task.phase().is_terminal() {
+            return Ok(Some((row, false)));
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO task_watchers (task_id, thread, added_at_ms) VALUES (?1, ?2, ?3)",
+            params![id, thread, now_ms],
+        )?;
+        tx.commit()?;
+        Ok(Some((row, true)))
+    }
+
+    /// Remove `thread` from a task's watchers in one transaction.
+    /// Returns `None` when the task does not exist.
+    ///
+    /// # Errors
+    /// Returns an error if the task or watcher table cannot be updated.
+    pub fn unwatch_task(&mut self, id: &str, thread: &str) -> Result<Option<TaskRow>, StoreError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(row) = load(&tx, id)? else {
+            return Ok(None);
+        };
+        tx.execute(
+            "DELETE FROM task_watchers WHERE task_id = ?1 AND thread = ?2",
+            params![id, thread],
+        )?;
+        tx.commit()?;
+        Ok(Some(row))
+    }
+
+    /// Watcher count for `id`, and whether `thread` is currently watching.
+    ///
+    /// # Errors
+    /// Returns an error if the watcher summary cannot be read.
+    pub fn watcher_summary(
+        &self,
+        id: &str,
+        thread: Option<&str>,
+    ) -> Result<(usize, bool), StoreError> {
+        let (count, watching): (i64, bool) = self.connection.query_row(
+            "SELECT count(*), coalesce(max(CASE WHEN ?2 IS NOT NULL AND thread = ?2 THEN 1 ELSE 0 END), 0)
+             FROM task_watchers WHERE task_id = ?1",
+            params![id, thread],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((usize::try_from(count).unwrap_or_default(), watching))
     }
 
     /// Append a task effect observation without changing the task version.
@@ -1099,11 +1239,27 @@ impl Store {
         persist(&tx, task, true)?;
         if task.phase().is_terminal() {
             task_rows::forget(&tx, &task.identity().id)?;
-            if !row.task.phase().is_terminal() && Self::completion_notice_owed(task) {
-                tx.execute(
-                    "INSERT OR IGNORE INTO completion_notices (task_id, retry) VALUES (?1, 0)",
-                    [&task.identity().id],
-                )?;
+            if !row.task.phase().is_terminal() {
+                let id = &task.identity().id;
+                if Self::completion_notice_owed(task) {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO completion_notices (task_id, recipient, retry) VALUES (?1, '', 0)",
+                        [id],
+                    )?;
+                    tx.execute(
+                        "INSERT OR IGNORE INTO completion_notices (task_id, recipient, retry)
+                         SELECT task_id, thread, 0 FROM task_watchers
+                         WHERE task_id = ?1 AND (?2 IS NULL OR thread != ?2)",
+                        params![id, task.identity().origin_thread.as_deref()],
+                    )?;
+                } else {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO completion_notices (task_id, recipient, retry)
+                         SELECT task_id, thread, 0 FROM task_watchers WHERE task_id = ?1",
+                        [id],
+                    )?;
+                }
+                tx.execute("DELETE FROM task_watchers WHERE task_id = ?1", [id])?;
             }
         }
         if let Some((prerequisites, clock)) = prerequisites {
@@ -1559,5 +1715,140 @@ mod completion_notice_tests {
 
         assert_eq!(store.completion_notice("unreported").unwrap(), Some(false));
         assert_eq!(store.completion_notice("reported").unwrap(), None);
+    }
+
+    #[test]
+    fn watchers_expand_completion_notices_once_per_recipient() {
+        let (_home, mut store) = fixture();
+        let mut origin_identity = identity("watched");
+        origin_identity.origin_thread = Some("origin-planner".into());
+        store
+            .create(
+                &Task::new(origin_identity, PLAIN.into(), None),
+                &event("admitted"),
+            )
+            .unwrap();
+        store
+            .create(
+                &Task::new(identity("opt-out"), OFF.into(), None),
+                &event("admitted"),
+            )
+            .unwrap();
+
+        for (task, thread, at) in [
+            ("watched", "origin-planner", 10),
+            ("watched", "other-planner", 11),
+            ("watched", "unwatched-planner", 12),
+            ("watched", "other-planner", 13),
+            ("opt-out", "other-planner", 14),
+        ] {
+            assert!(store.watch_task(task, thread, at).unwrap().unwrap().1);
+        }
+        assert!(
+            store
+                .unwatch_task("watched", "unwatched-planner")
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            store
+                .watcher_summary("watched", Some("other-planner"))
+                .unwrap(),
+            (2, true)
+        );
+        assert_eq!(
+            store
+                .watcher_summary("watched", Some("unwatched-planner"))
+                .unwrap(),
+            (2, false)
+        );
+
+        settle(&mut store, "watched", "done");
+        settle(&mut store, "opt-out", "cancelled");
+
+        assert_eq!(
+            store
+                .watcher_summary("watched", Some("other-planner"))
+                .unwrap(),
+            (0, false)
+        );
+        assert_eq!(
+            store.completion_notices("watched").unwrap(),
+            vec![
+                crate::CompletionNotice {
+                    watcher: None,
+                    retry: false,
+                },
+                crate::CompletionNotice {
+                    watcher: Some("other-planner".into()),
+                    retry: false,
+                },
+            ]
+        );
+        assert_eq!(
+            store.completion_notices("opt-out").unwrap(),
+            vec![crate::CompletionNotice {
+                watcher: Some("other-planner".into()),
+                retry: false,
+            }]
+        );
+        assert!(
+            !store
+                .watch_task("watched", "late-planner", 20)
+                .unwrap()
+                .unwrap()
+                .1
+        );
+        assert_eq!(store.completion_notices("watched").unwrap().len(), 2);
+
+        store
+            .set_completion_notice(
+                "watched",
+                Some("other-planner"),
+                Some(false),
+                None,
+                &event("sent"),
+            )
+            .unwrap();
+        assert_eq!(
+            store.completion_notices("watched").unwrap(),
+            vec![crate::CompletionNotice {
+                watcher: None,
+                retry: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn upgrading_schema_14_migrates_completion_notices_per_recipient() {
+        let (home, mut store) = fixture();
+        store
+            .create(
+                &Task::new(identity("watched"), PLAIN.into(), None),
+                &event("admitted"),
+            )
+            .unwrap();
+        settle(&mut store, "watched", "done");
+        drop(store);
+
+        let root = home.path().canonicalize().unwrap().join("engine");
+        let db = rusqlite::Connection::open(root.join("data/databases/engine.sqlite")).unwrap();
+        db.execute_batch(
+            "CREATE TABLE completion_notices_v14 (task_id TEXT PRIMARY KEY REFERENCES tasks(id), retry INTEGER CHECK (retry IN (0,1))) STRICT;
+             INSERT INTO completion_notices_v14 (task_id, retry) SELECT task_id, retry FROM completion_notices WHERE recipient = '' AND retry IS NOT NULL;
+             DROP TABLE completion_notices;
+             ALTER TABLE completion_notices_v14 RENAME TO completion_notices;
+             PRAGMA user_version = 14;",
+        )
+        .unwrap();
+        drop(db);
+        let reopened = crate::settings::test_store(&root);
+        assert_eq!(
+            reopened.completion_notices("watched").unwrap(),
+            vec![crate::CompletionNotice {
+                watcher: None,
+                retry: false,
+            }]
+        );
     }
 }

@@ -444,3 +444,98 @@ async fn item_reopen_cli_round_trips_note_and_response() {
         json!({"id":"idea", "state":"open"})
     );
 }
+
+#[tokio::test]
+async fn watch_and_unwatch_cli_support_t3_identity_and_ticket() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("loopback");
+    let endpoint = listener.local_addr().expect("local address").to_string();
+    let ticket = report_ticket(listener.local_addr().expect("local address"));
+    let t3_key = hex::encode([6; 32]);
+    let expected_t3 = format!("Bearer {t3_key}");
+    let expected_ticket = format!("Bearer {}", hex::encode(REPORT_KEY));
+    let (requests_tx, mut requests_rx) = tokio::sync::mpsc::unbounded_channel();
+    let tx_t3 = requests_tx.clone();
+    let tx_ticket = requests_tx;
+    let app = Router::new()
+        .route(
+            "/v1/tasks/{task}/{verb}",
+            post(
+                move |headers: HeaderMap, Path((task, verb)): Path<(String, String)>| {
+                    let tx = tx_t3.clone();
+                    let expected = expected_t3.clone();
+                    async move {
+                        assert_eq!(headers[AUTHORIZATION], expected);
+                        assert_eq!(headers["x-nucleus-t3-caller"], "planner-thread");
+                        tx.send((verb, task)).unwrap();
+                        Json(json!({"reference": "repo#7", "title": "Fix", "phase": "working", "watching": true}))
+                    }
+                },
+            ),
+        )
+        .route(
+            "/v1/runs/fixture/worker-1/{verb}",
+            post(
+                move |headers: HeaderMap, Path(verb): Path<String>, Json(body): Json<serde_json::Value>| {
+                    let tx = tx_ticket.clone();
+                    let expected = expected_ticket.clone();
+                    async move {
+                        assert_eq!(headers[AUTHORIZATION], expected);
+                        tx.send((format!("ticket-{verb}"), body["task"].as_str().unwrap().to_owned())).unwrap();
+                        Json(json!({"reference": "repo#7", "title": "Fix", "phase": "working", "watching": false}))
+                    }
+                },
+            ),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let ticket_path = ticket.path().to_path_buf();
+    let run = tokio::task::spawn_blocking(move || {
+        for verb in ["watch", "unwatch"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
+                .args(["--endpoint", &endpoint, verb, "other/repo#7"])
+                .env("NUCLEUS_ENGINE_T3_CALLER_KEY", &t3_key)
+                .env("T3CODE_THREAD_ID", "planner-thread")
+                .env("T3CODE_DESKTOP_HOST_SCOPE", "desktop")
+                .env_remove("NUCLEUS_TICKET")
+                .env_remove("NUCLEUS_CONTINUATION_TICKET")
+                .output()
+                .expect("CLI output");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let ticket_output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
+                .args([verb, "other/repo#7"])
+                .env("NUCLEUS_TICKET", &ticket_path)
+                .output()
+                .expect("ticket CLI output");
+            assert!(
+                ticket_output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&ticket_output.stderr)
+            );
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .expect("CLI commands completed")
+        .expect("CLI process ran");
+    server.abort();
+    assert_eq!(
+        requests_rx.recv().await.unwrap(),
+        ("watch".into(), "other/repo#7".into())
+    );
+    assert_eq!(
+        requests_rx.recv().await.unwrap(),
+        ("ticket-watch".into(), "other/repo#7".into())
+    );
+    assert_eq!(
+        requests_rx.recv().await.unwrap(),
+        ("unwatch".into(), "other/repo#7".into())
+    );
+    assert_eq!(
+        requests_rx.recv().await.unwrap(),
+        ("ticket-unwatch".into(), "other/repo#7".into())
+    );
+}

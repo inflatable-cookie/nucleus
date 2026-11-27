@@ -46,12 +46,38 @@ impl Service {
         scope: &ControllerScope,
         default_repository: Option<&str>,
     ) -> Result<String, ServiceError> {
+        self.resolve_reference(
+            state,
+            value,
+            default_repository.or_else(|| self.reference_repository(state, scope).ok()),
+            |identity| scope.task(state, identity).is_ok(),
+        )
+    }
+
+    pub(super) fn resolve_watch_reference(
+        &self,
+        state: &State,
+        value: &str,
+        default_repository: Option<&str>,
+    ) -> Result<String, ServiceError> {
+        if !value.contains('#') {
+            let row = self.lookup(state, value)?;
+            return Ok(row.task.identity().id.clone());
+        }
+        self.resolve_reference(state, value, default_repository, |_| true)
+    }
+
+    fn resolve_reference(
+        &self,
+        state: &State,
+        value: &str,
+        default_repository: Option<&str>,
+        allow: impl Fn(&nucleus_core::Identity) -> bool,
+    ) -> Result<String, ServiceError> {
         let mut reference = TaskReference::parse(value)?;
         if reference.repository.is_none() {
-            reference.repository = Some(match default_repository {
-                Some(repository) => repository,
-                None => self.reference_repository(state, scope)?,
-            });
+            reference.repository =
+                Some(default_repository.ok_or(ServiceError::TaskReferenceNeedsRepository)?);
         }
         let mut selected = None;
         for id in reference.candidates(state)? {
@@ -59,7 +85,7 @@ impl Service {
                 continue;
             };
             let identity = row.task.identity();
-            if self.task_scope(identity).is_ok() && scope.task(state, identity).is_ok() {
+            if self.task_scope(identity).is_ok() && allow(identity) {
                 if selected.is_some() {
                     return Err(ServiceError::TaskReferenceAmbiguous);
                 }
@@ -69,7 +95,7 @@ impl Service {
         selected.ok_or(ServiceError::TaskReferenceMissing)
     }
 
-    fn reference_repository<'a>(
+    pub(super) fn reference_repository<'a>(
         &'a self,
         state: &'a State,
         scope: &ControllerScope,

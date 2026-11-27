@@ -5,12 +5,15 @@ use nucleus_core::{
     Task, WaitReason, Workspace,
 };
 use nucleus_forge::{Branches, ForgeError};
-use nucleus_hosts::{HostError, NoticeOutcome, T3};
+use nucleus_hosts::{HostError, NoticeOutcome, NoticeState, T3};
 use nucleus_store::{
     DispatchMode, EventDraft, StoreError, TaskRow,
     planning::{Lane, WriteAt},
 };
 use nucleus_work::{Checkout, WorkError};
+
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::{
     ControllerScope, Service, ServiceError, State,
@@ -19,6 +22,17 @@ use crate::{
     event, now_ms,
     volume::Limit,
 };
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WatchResponse {
+    pub(crate) reference: String,
+    pub(crate) title: String,
+    pub(crate) phase: Phase,
+    pub(crate) watching: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) outcome: Option<String>,
+}
 
 #[derive(Clone, Copy)]
 pub(super) enum PlannerNotice {
@@ -171,7 +185,7 @@ impl NoticeOccurrence {
                 let mut state = service.state.lock().await;
                 state
                     .store
-                    .set_completion_notice(id, Some(retry), None, audit)?;
+                    .set_completion_notice(id, None, Some(retry), None, audit)?;
                 state.planner_notice_waiters.remove(id);
                 Ok(Some(NoticeClaim::Completion(retry)))
             }
@@ -204,6 +218,7 @@ impl NoticeClaim {
                     Self::ParentRecovery => state.store.record_task_effect(id, outcome)?,
                     Self::Completion(retry) => state.store.set_completion_notice(
                         id,
+                        None,
                         None,
                         Some(retry || rejected),
                         outcome,
@@ -491,43 +506,263 @@ impl Service {
         })
     }
 
+    pub(crate) async fn watch_for_caller(
+        &self,
+        caller: &ControllerScope,
+        authority: &Authority,
+        selector: &str,
+        subscribe: bool,
+    ) -> Result<WatchResponse, ServiceError> {
+        let (actor, default_repo) = match caller.actor() {
+            Some(actor) => {
+                let needs_enrollment = {
+                    let state = self.state.lock().await;
+                    if let Some(project) = state.live_planner_project(actor) {
+                        Some((
+                            actor.to_owned(),
+                            state
+                                .settings
+                                .only_bound_repository(project)
+                                .map(str::to_owned),
+                        ))
+                    } else if state.settings.planner_route(actor).is_some() {
+                        None
+                    } else {
+                        return Err(ServiceError::WatchAgentRequired);
+                    }
+                };
+                if let Some(resolved) = needs_enrollment {
+                    resolved
+                } else {
+                    caller
+                        .with_enrollment(|| async {
+                            let mut state = self.state.lock().await;
+                            self.planning_planner_project(&mut state, actor, None)
+                                .map(|_| ())
+                        })
+                        .await?;
+                    let state = self.state.lock().await;
+                    let project = state
+                        .live_planner_project(actor)
+                        .ok_or(ServiceError::WatchAgentRequired)?;
+                    (
+                        actor.to_owned(),
+                        state
+                            .settings
+                            .only_bound_repository(project)
+                            .map(str::to_owned),
+                    )
+                }
+            }
+            None => match authority {
+                Authority::Planner { actor } => (
+                    actor.clone(),
+                    self.project
+                        .as_ref()
+                        .map(|project| project.repository.clone()),
+                ),
+                Authority::Operator { .. } => return Err(ServiceError::WatchAgentRequired),
+            },
+        };
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        let id = self.resolve_watch_reference(&state, selector, default_repo.as_deref())?;
+        Self::apply_watch(&mut state, &id, &actor, subscribe)
+    }
+
+    pub(crate) async fn watch_with_ticket(
+        &self,
+        task_id: &str,
+        instance: &str,
+        credential: &[u8; 32],
+        selector: &str,
+        subscribe: bool,
+    ) -> Result<WatchResponse, ServiceError> {
+        self.storage.database().verify()?;
+        let mut state = self.state.lock().await;
+        let caller_row = self.lookup(&state, task_id)?;
+        let run = caller_row.task.authenticate_run(instance, credential)?;
+        let actor = run.launch().thread.clone();
+        let default_repo = caller_row.task.identity().repository.clone();
+        let id = self.resolve_watch_reference(&state, selector, Some(&default_repo))?;
+        Self::apply_watch(&mut state, &id, &actor, subscribe)
+    }
+
+    fn apply_watch(
+        state: &mut State,
+        id: &str,
+        actor: &str,
+        subscribe: bool,
+    ) -> Result<WatchResponse, ServiceError> {
+        let (row, watching) = if subscribe {
+            let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
+            state
+                .store
+                .watch_task(id, actor, now)?
+                .ok_or(ServiceError::Missing)?
+        } else {
+            (
+                state
+                    .store
+                    .unwatch_task(id, actor)?
+                    .ok_or(ServiceError::Missing)?,
+                false,
+            )
+        };
+        Ok(WatchResponse {
+            reference: row.reference().into_owned(),
+            title: crate::titles::brief(&row.task),
+            phase: row.task.phase(),
+            watching,
+            outcome: row
+                .task
+                .phase()
+                .is_terminal()
+                .then(|| completion_notice_text(&row)),
+        })
+    }
+
     pub(super) async fn notify_completion(&self, row: &TaskRow) -> Result<(), ServiceError> {
         let id = &row.task.identity().id;
-        if self
+        let pending = self.state.lock().await.store.completion_notices(id)?;
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let text = completion_notice_text(row);
+        let mut recheck = false;
+        for notice in pending {
+            let progress = match notice.watcher {
+                None => {
+                    self.advance_planner_notice(row, PlannerNotice::Completion, &text)
+                        .await
+                }
+                Some(watcher) => {
+                    self.advance_watcher_completion_notice(row, &watcher, &text)
+                        .await
+                }
+            };
+            match progress {
+                Ok(NoticeProgress::Pending) | Err(ServiceError::Host(_)) => recheck = true,
+                Ok(NoticeProgress::Spent | NoticeProgress::NoPlanner) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if recheck {
+            self.recheck_effect(row, WaitReason::Question).await;
+        }
+        Ok(())
+    }
+
+    async fn advance_watcher_completion_notice(
+        &self,
+        row: &TaskRow,
+        watcher: &str,
+        text: &str,
+    ) -> Result<NoticeProgress, ServiceError> {
+        use NoticeProgress::{Pending, Spent};
+
+        let _fence = self.effect(row).await?;
+        let task = &row.task;
+        let id = &task.identity().id;
+        let Some(retry) = self
             .state
             .lock()
             .await
             .store
-            .completion_notice(id)?
-            .is_none()
-        {
-            return Ok(());
-        }
-        let name = row
-            .number
-            .map_or_else(|| row.reference().into_owned(), |n| format!("#{n}"));
-        let title = crate::titles::brief_title(&row.task);
-        let text = if row.task.phase() == Phase::Cancelled {
-            format!("{name} {title} was cancelled")
-        } else {
-            let mut text = format!("{name} {title} is done");
-            if let Some(pr) = row.task.pull_request() {
-                text.push_str(" · ");
-                text.push_str(&pr.url);
-            }
-            text
+            .completion_notice_for(id, Some(watcher))?
+        else {
+            return Ok(Spent);
         };
-        match self
-            .advance_planner_notice(row, PlannerNotice::Completion, &text)
-            .await
-        {
-            Ok(NoticeProgress::Pending) | Err(ServiceError::Host(_)) => {
-                self.recheck_effect(row, WaitReason::Question).await;
+        let command = watcher_completion_command(id, watcher, retry);
+        let mut attempt = T3::prepare_notice(watcher.to_owned(), command, text)?;
+        let observation = self.host.observe_watcher_notice(&attempt).await?;
+        match observation.state {
+            NoticeState::Gone => {
+                let mut audit = event("completion_notice_watcher_dropped");
+                audit.detail = serde_json::json!({
+                    "recipient": watcher,
+                    "reason": "thread_archived_or_gone",
+                })
+                .to_string();
+                self.state.lock().await.store.set_completion_notice(
+                    id,
+                    Some(watcher),
+                    Some(retry),
+                    None,
+                    &audit,
+                )?;
+                return Ok(Spent);
             }
-            Ok(NoticeProgress::Spent | NoticeProgress::NoPlanner) => {}
-            Err(error) => return Err(error),
+            NoticeState::Started | NoticeState::Queued => {
+                self.claim_watcher_notice(id, watcher, &attempt.command, retry)
+                    .await?;
+                return Ok(Spent);
+            }
+            NoticeState::Absent | NoticeState::Undelivered => {}
         }
-        Ok(())
+        let Some(authorization) = observation.authorization else {
+            return Ok(Pending);
+        };
+        let dispatch = {
+            let _projects = self.project_writes.read().await;
+            self.host.check_notice_target(&authorization)?;
+            self.require_unchanged(task).await?;
+            authorization.record(&mut attempt)?
+        };
+        let audit = self
+            .claim_watcher_notice(id, watcher, &attempt.command, retry)
+            .await?;
+        match SendOutcome::classify(self.host.send_notice(dispatch).await, retry) {
+            SendOutcome::Delivered | SendOutcome::Uncertain(_) => Ok(Spent),
+            SendOutcome::RetryRejected => {
+                let mut rejected = audit;
+                rejected.kind = "planner_notice_retry_rejected".into();
+                self.state
+                    .lock()
+                    .await
+                    .store
+                    .record_task_effect(id, &rejected)?;
+                Ok(Spent)
+            }
+            SendOutcome::Reopen { rejected, error } => {
+                let mut outcome = event(if rejected {
+                    "completion_notice_rejected"
+                } else {
+                    "completion_notice_not_sent"
+                });
+                outcome.detail = audit.detail;
+                self.state.lock().await.store.set_completion_notice(
+                    id,
+                    Some(watcher),
+                    None,
+                    Some(retry || rejected),
+                    &outcome,
+                )?;
+                match error {
+                    Some(error) => Err(error.into()),
+                    None => Ok(Pending),
+                }
+            }
+        }
+    }
+
+    async fn claim_watcher_notice(
+        &self,
+        id: &str,
+        watcher: &str,
+        command: &str,
+        retry: bool,
+    ) -> Result<EventDraft, ServiceError> {
+        let mut audit = event("completion_notice_intent");
+        audit.detail = watcher_notice_detail(command, watcher, retry);
+        self.state.lock().await.store.set_completion_notice(
+            id,
+            Some(watcher),
+            Some(retry),
+            None,
+            &audit,
+        )?;
+        Ok(audit)
     }
 
     /// Make one attempt at an informational notice, returning whether it remains pending.
@@ -741,6 +976,40 @@ impl Service {
         }
         Ok(false)
     }
+}
+
+fn completion_notice_text(row: &TaskRow) -> String {
+    let name = row
+        .number
+        .map_or_else(|| row.reference().into_owned(), |n| format!("#{n}"));
+    let title = crate::titles::brief_title(&row.task);
+    if row.task.phase() == Phase::Cancelled {
+        format!("{name} {title} was cancelled")
+    } else {
+        let mut text = format!("{name} {title} is done");
+        if let Some(pr) = row.task.pull_request() {
+            text.push_str(" · ");
+            text.push_str(&pr.url);
+        }
+        text
+    }
+}
+
+fn watcher_completion_command(id: &str, watcher: &str, retry: bool) -> String {
+    let digest = Sha256::digest(watcher.as_bytes());
+    let tag = hex::encode(&digest[..8]);
+    let suffix = if retry { "-retry" } else { "" };
+    format!("task-{id}-watch-{tag}{suffix}")
+}
+
+fn watcher_notice_detail(command: &str, watcher: &str, retry: bool) -> String {
+    serde_json::json!({
+        "command": command,
+        "recipient": watcher,
+        "watcher": true,
+        "retry": retry,
+    })
+    .to_string()
 }
 
 fn report_branches(identity: &Identity, checkout: &Checkout<'_>) -> Result<Branches, ServiceError> {

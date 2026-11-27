@@ -108,6 +108,20 @@ enum Action {
     Task { id: String },
     /// Read the task's next commands and current wait.
     Next { id: String },
+    /// Watch a task to receive one queued notice when it finishes.
+    Watch {
+        id: String,
+        /// Authenticate with this run's report ticket instead of a T3 caller identity.
+        #[arg(long)]
+        ticket: Option<PathBuf>,
+    },
+    /// Stop watching a task for completion.
+    Unwatch {
+        id: String,
+        /// Authenticate with this run's report ticket instead of a T3 caller identity.
+        #[arg(long)]
+        ticket: Option<PathBuf>,
+    },
     /// Read the task's recent activity.
     History { id: String },
     /// Mint an owner-only ACP binding for a task.
@@ -337,6 +351,20 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Action::Report { ticket } => report(&ticket).await,
+        Action::Watch { id, ticket } => {
+            if let Some(path) = ticket_path(ticket.as_deref()) {
+                watch_with_ticket(&path, &id, true).await
+            } else {
+                control(endpoint, Action::Watch { id, ticket }).await
+            }
+        }
+        Action::Unwatch { id, ticket } => {
+            if let Some(path) = ticket_path(ticket.as_deref()) {
+                watch_with_ticket(&path, &id, false).await
+            } else {
+                control(endpoint, Action::Unwatch { id, ticket }).await
+            }
+        }
         Action::Planning(action) if action.uses_ticket() => action.run_ticket().await,
         Action::T3(args) => Box::pin(t3_setup::run(endpoint, args)).await,
         other => control(endpoint, other).await,
@@ -607,6 +635,22 @@ async fn report(path: &Path) -> Result<()> {
     Err(format!("run report was refused ({status})").into())
 }
 
+fn ticket_path(explicit: Option<&Path>) -> Option<PathBuf> {
+    explicit.map(Path::to_path_buf).or_else(|| {
+        env::var_os("NUCLEUS_TICKET")
+            .map(PathBuf::from)
+            .filter(|path| path.exists())
+    })
+}
+
+async fn watch_with_ticket(ticket: &Path, id: &str, subscribe: bool) -> Result<()> {
+    let suffix = if subscribe { "watch" } else { "unwatch" };
+    let response = run_ticket_request(ticket, Method::POST, suffix, Some(json!({ "task": id })))?
+        .send()
+        .await?;
+    print_control_response(response, false).await
+}
+
 fn run_ticket_request(
     path: &Path,
     method: Method,
@@ -678,6 +722,16 @@ async fn control(endpoint: SocketAddr, action: Action) -> Result<()> {
         A::Next { id } => (
             Method::GET,
             format!("/v1/tasks/{}/next", task_segment(&id)?),
+            None,
+        ),
+        A::Watch { id, .. } => (
+            Method::POST,
+            format!("/v1/tasks/{}/watch", task_segment(&id)?),
+            None,
+        ),
+        A::Unwatch { id, .. } => (
+            Method::POST,
+            format!("/v1/tasks/{}/unwatch", task_segment(&id)?),
             None,
         ),
         A::History { id } => (

@@ -159,6 +159,8 @@ pub enum ServiceError {
     TellReply,
     #[error("tell requires a verified planner binding with a sending project")]
     TellPlannerRequired,
+    #[error("watching a task requires a verified planner thread or active run ticket")]
+    WatchAgentRequired,
     #[error("no project named {0}. Use a registered project ID, name or repository.")]
     TellUnknownProject(String),
     #[error("no project named {selector}; repository {repository} belongs to project {project}")]

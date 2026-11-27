@@ -299,6 +299,16 @@ fn routes(
         .merge(tasks)
         .route("/v1/planning/claim", post(claim_planner))
         .route("/v1/planning/tell", post(tell))
+        .route("/v1/tasks/{id}/watch", post(watch_task))
+        .route("/v1/tasks/{id}/unwatch", post(unwatch_task))
+        .route(
+            "/v1/runs/{task}/{instance}/watch",
+            post(watch_task_by_ticket),
+        )
+        .route(
+            "/v1/runs/{task}/{instance}/unwatch",
+            post(unwatch_task_by_ticket),
+        )
         .merge(inbox::routes().layer(middleware::from_fn(log_acp_error)))
         .merge(planning::report_lane_routes())
         .route("/v1/runs/{task}/{instance}/report", post(report));
@@ -371,6 +381,89 @@ async fn tell(
     let caller = request_controller(&api, &supplied, &headers).ok_or(ApiError::Unauthorized)?;
     let input = body(input)?;
     Ok(Json(api.service.tell(&caller.scope, &input).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WatchTicketRequest {
+    task: String,
+}
+
+async fn watch_task(
+    State(api): State<Api>,
+    Path(selector): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<crate::report_only::WatchResponse>, ApiError> {
+    watch_controller(api, selector, headers, true).await
+}
+
+async fn unwatch_task(
+    State(api): State<Api>,
+    Path(selector): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<crate::report_only::WatchResponse>, ApiError> {
+    watch_controller(api, selector, headers, false).await
+}
+
+async fn watch_controller(
+    api: Api,
+    selector: String,
+    headers: HeaderMap,
+    subscribe: bool,
+) -> Result<Json<crate::report_only::WatchResponse>, ApiError> {
+    let supplied = credential(&headers)?;
+    let caller = request_controller(&api, &supplied, &headers).ok_or(ApiError::Unauthorized)?;
+    Ok(Json(
+        api.service
+            .watch_for_caller(
+                &caller.scope,
+                &caller.controller.authority,
+                &selector,
+                subscribe,
+            )
+            .await?,
+    ))
+}
+
+async fn watch_task_by_ticket(
+    State(api): State<Api>,
+    Path((task, instance)): Path<(String, String)>,
+    headers: HeaderMap,
+    input: Result<Json<WatchTicketRequest>, JsonRejection>,
+) -> Result<Json<crate::report_only::WatchResponse>, ApiError> {
+    watch_ticket(api, task, instance, headers, input, true).await
+}
+
+async fn unwatch_task_by_ticket(
+    State(api): State<Api>,
+    Path((task, instance)): Path<(String, String)>,
+    headers: HeaderMap,
+    input: Result<Json<WatchTicketRequest>, JsonRejection>,
+) -> Result<Json<crate::report_only::WatchResponse>, ApiError> {
+    watch_ticket(api, task, instance, headers, input, false).await
+}
+
+async fn watch_ticket(
+    api: Api,
+    task: String,
+    instance: String,
+    headers: HeaderMap,
+    input: Result<Json<WatchTicketRequest>, JsonRejection>,
+    subscribe: bool,
+) -> Result<Json<crate::report_only::WatchResponse>, ApiError> {
+    let credential = credential(&headers)?;
+    let input = body(input)?;
+    Ok(Json(
+        api.service
+            .watch_with_ticket(&task, &instance, &credential, &input.task, subscribe)
+            .await
+            .map_err(|error| match error {
+                ServiceError::Core(nucleus_core::CommandError::InvalidReportCredential) => {
+                    ApiError::Unauthorized
+                }
+                other => other.into(),
+            })?,
+    ))
 }
 
 async fn authorize_address(
@@ -796,6 +889,14 @@ async fn next(
             }
         }
     }
+    let caller_thread = scope.actor().or(match &authority {
+        Authority::Planner { actor } => Some(actor.as_str()),
+        Authority::Operator { .. } => None,
+    });
+    let (watcher_count, watching) = state
+        .store
+        .watcher_summary(&id, caller_thread)
+        .map_err(ServiceError::from)?;
     Ok(Json(NextView {
         last_provider_limit: task.threads().last_provider_limit.clone(),
         version: row.version,
@@ -820,6 +921,10 @@ async fn next(
         allowance: state.allowance_view(task).map_err(ServiceError::from)?,
         dependency_status: summary.dependency_status,
         dependency_edits,
+        watchers: WatcherSummary {
+            count: watcher_count,
+            watching,
+        },
         commands,
     }))
 }
@@ -1480,7 +1585,15 @@ struct NextView {
     dependency_status: DependencyStatus,
     dependency_edits: DependencyEdits,
     allowance: nucleus_store::AllowanceView,
+    watchers: WatcherSummary,
     commands: Vec<CommandView>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WatcherSummary {
+    count: usize,
+    watching: bool,
 }
 
 #[derive(Serialize)]
@@ -1593,6 +1706,7 @@ impl IntoResponse for ApiError {
                     ) => StatusCode::BAD_REQUEST,
                     ServiceError::QuestionPlanner
                     | ServiceError::TellPlannerRequired
+                    | ServiceError::WatchAgentRequired
                     | ServiceError::ControllerProject
                     | ServiceError::UnboundCheckout { planner: true, .. }
                     | ServiceError::PlannerEnrollmentRefused(_)

@@ -270,6 +270,24 @@ impl T3 {
         &self,
         delivery: &QuestionDelivery,
     ) -> Result<NoticeObservation, HostError> {
+        self.observe_notice_inner(delivery, false).await
+    }
+
+    /// Observe a task-watcher's target thread (top-level or child) without fallback.
+    /// # Errors
+    /// Returns an error when the request or the native snapshot is unreadable.
+    pub async fn observe_watcher_notice(
+        &self,
+        delivery: &QuestionDelivery,
+    ) -> Result<NoticeObservation, HostError> {
+        self.observe_notice_inner(delivery, true).await
+    }
+
+    async fn observe_notice_inner(
+        &self,
+        delivery: &QuestionDelivery,
+        allow_child: bool,
+    ) -> Result<NoticeObservation, HostError> {
         let now_ms = clock_ms()?;
         let payload = frozen_payload(delivery)?;
         let id = &delivery.thread;
@@ -281,7 +299,7 @@ impl T3 {
                 authorization: None,
             });
         };
-        if snapshot.thread.planner.is_child() {
+        if !allow_child && snapshot.thread.planner.is_child() {
             return Err(HostError::Binding);
         }
         let state = snapshot.state(delivery)?;
