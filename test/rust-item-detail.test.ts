@@ -256,6 +256,7 @@ test("papercut naming one repository of a project with several bound ones promot
 
 test("lead · parked: reason, who parked it and the revisit date ahead; Reopen returns it to Open", async () => {
   const engine = planningEngine();
+  engine.setThreadTitle("Tom", "Tom");
   const revisitAt = new Date(now + 7 * DAY).toISOString();
   const item = lead({ id: "i-fonts", title: "Self-hosted fonts", lanes: [] });
   engine.seed("acowtancy", { ...item, state: "parked", reason: "Waiting on Ben's type choices.", revisitAt }, { actor: "planner", atMs: now - 6 * DAY }, [
@@ -277,6 +278,8 @@ test("lead · parked: reason, who parked it and the revisit date ahead; Reopen r
 
 test("lead · promoted: the linked task card opens the task; the body collapses", async () => {
   const engine = planningEngine();
+  engine.setThreadTitle("Tom", "Tom");
+  engine.setProjectSettings("acowtancy", { claimedPlannerThreads: ["planner"] });
   const item = lead({ id: "i-effort", title: "Learner-effort mapping", repositories: ["example/acowtancy-v2"] });
   engine.seed("acowtancy", { ...item, state: "promoted", taskId: "t-promoted", taskLinks: ["t-promoted"] }, { actor: "planner", atMs: now - 3 * DAY }, [
     { actor: "Tom", atMs: now - 3 * HOUR, action: "promote", item: { ...item, state: "promoted", taskId: "t-promoted", taskLinks: ["t-promoted"] } },
@@ -292,7 +295,7 @@ test("lead · promoted: the linked task card opens the task; the body collapses"
   assert.deepEqual(openedTasks, ["t-promoted"]);
   ui.press("Activity, collapsed");
   await waitFor(() => /Promoted\s*Tom/.test(ui.text()), 2000, "activity opens");
-  assert.match(ui.text(), /Filed\s*planner/);
+  assert.match(ui.text(), /Filed\s*Acowtancy planner/);
 });
 
 test("papercut · open: one repository, park from the footer with a reason and revisit day", async () => {
@@ -361,6 +364,7 @@ test("papercut · parked and due: warning state; changing the revisit day parks 
 
 test("papercut · dropped as completed: outcome panel with the note and who dropped it; Reopen", async () => {
   const engine = planningEngine();
+  engine.setThreadTitle("Tom", "Tom");
   const item = papercut({ id: "i-count", title: "Header count includes archived tasks" });
   const dropped = { ...item, state: "dropped" as const, disposition: "completed" as const, reason: "Fixed by nucleus#1571." };
   engine.seed("nucleus", dropped, { actor: "planner", atMs: now - 5 * DAY }, [{ actor: "Tom", atMs: now - DAY, action: "drop", item: dropped }]);

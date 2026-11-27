@@ -221,7 +221,7 @@ export function listenForPlanningIssues(
 const history = z.array(
   z.object({
     actor: z.string(),
-    actorLabel: z.string(),
+    actorLabel: z.string().default("Agent thread"),
     atMs: z.number().int(),
     action: z.string(),
     snapshot: z.unknown(),
