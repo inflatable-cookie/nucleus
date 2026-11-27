@@ -160,11 +160,10 @@ impl Service {
     pub(super) fn raise_process_decision(
         &self,
         state: &mut State,
-        blocker: &nucleus_hosts::RetirementBlocker,
+        pid: u32,
+        started: i64,
+        finding: &str,
     ) -> Result<(), StoreError> {
-        let Some(started) = blocker.started else {
-            return Ok(());
-        };
         // A host process can hold checkouts across repositories. Give its
         // operator decision one stable home in this profile's Inbox.
         let Some(project) = state
@@ -174,7 +173,7 @@ impl Service {
         else {
             return Ok(());
         };
-        let id = Decision::process_id(blocker.pid, started);
+        let id = Decision::process_id(pid, started);
         for configured in state.settings.planning_projects(self.project.as_ref()) {
             if let Some(decision) = state.store.decision(configured, &id)? {
                 if (decision.withdrawn || decision.answer.is_some())
@@ -192,7 +191,7 @@ impl Service {
             id,
             DecisionInput {
                 question: format!(
-                    "{blocker} Check the process before Nucleus can retire affected checkouts."
+                    "{finding} Check the process before Nucleus can retire affected checkouts."
                 ),
                 options: vec![
                     DecisionOption {
