@@ -156,86 +156,6 @@ impl Service {
         self.inbox_changed();
     }
 
-    pub(super) fn raise_process_decision(
-        &self,
-        state: &mut State,
-        blocker: &nucleus_hosts::RetirementBlocker,
-    ) -> Result<(), StoreError> {
-        let Some(started) = blocker.started else {
-            return Ok(());
-        };
-        // A host process can hold checkouts across repositories. Give its
-        // operator decision one stable home in this profile's Inbox.
-        let Some(project) = state
-            .settings
-            .planning_projects(self.project.as_ref())
-            .min()
-        else {
-            return Ok(());
-        };
-        let id = Decision::process_id(blocker.pid, started);
-        for configured in state.settings.planning_projects(self.project.as_ref()) {
-            if let Some(decision) = state.store.decision(configured, &id)? {
-                if (decision.withdrawn || decision.answer.is_some())
-                    && state
-                        .store
-                        .reopen_decision(configured, &id, engine_stamp())?
-                {
-                    self.decision_changed();
-                }
-                return Ok(());
-            }
-        }
-        state.store.add_decision(
-            project,
-            id,
-            DecisionInput {
-                question: format!(
-                    "{blocker} Check the process before Nucleus can retire affected checkouts."
-                ),
-                options: vec![
-                    DecisionOption {
-                        id: "checked".into(),
-                        label: "I released the process".into(),
-                    },
-                    DecisionOption {
-                        id: "wait".into(),
-                        label: "Leave closeouts waiting".into(),
-                    },
-                ],
-            },
-            engine_stamp(),
-        )?;
-        self.decision_changed();
-        Ok(())
-    }
-
-    pub(super) fn clear_process_decisions(
-        &self,
-        state: &mut State,
-        unresolved: Vec<(u32, i64)>,
-    ) -> Result<(), StoreError> {
-        let unresolved: BTreeSet<_> = unresolved
-            .into_iter()
-            .map(|(pid, started)| Decision::process_id(pid, started))
-            .collect();
-        let mut changed = false;
-        for project in state.settings.planning_projects(self.project.as_ref()) {
-            for decision in state.store.decisions(project, true)? {
-                if decision.is_process_custody() && !unresolved.contains(&decision.id) {
-                    changed |=
-                        state
-                            .store
-                            .withdraw_decision(project, &decision.id, engine_stamp())?;
-                }
-            }
-        }
-        if changed {
-            self.decision_changed();
-        }
-        Ok(())
-    }
-
     pub(super) fn inbox_changed(&self) {
         if let Some(inbox) = &self.native_inbox {
             self.title_wake.notify_one();
@@ -489,6 +409,22 @@ impl Service {
         }
         self.decision_changed();
     }
+}
+
+// Withdraw decisions left by engines that used process custody as a closeout gate.
+pub(super) fn withdraw_process_decisions(
+    store: &mut nucleus_store::Store,
+    settings: &crate::web::RuntimeSettings,
+    fixture: Option<&crate::Project>,
+) -> Result<(), StoreError> {
+    for project in settings.planning_projects(fixture) {
+        for decision in store.decisions(project, true)? {
+            if decision.is_process_custody() {
+                store.withdraw_decision(project, &decision.id, engine_stamp())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn pending(state: &State, service: &Service) -> Result<Vec<Decision>, StoreError> {

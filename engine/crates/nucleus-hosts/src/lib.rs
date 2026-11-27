@@ -70,8 +70,8 @@ pub fn thread_link(thread: &str) -> Option<String> {
 }
 
 use process::Inventory;
+pub use process::ProcessEvidenceFailure;
 pub use process::orphans::{OrphanProcess, OrphanScan, verify_orphans};
-pub use process::{ProcessEvidenceFailure, RetirementBlocker};
 pub use projection::RunActivity;
 use projection::{MissingReceipt, Projection};
 pub use provider_setup::{
@@ -140,15 +140,6 @@ pub enum HostError {
         "the retained thread read returned no thread while the held shell still listed it (held revision {revision:?})"
     )]
     HeldThreadMissing { revision: Option<u64> },
-    #[error(
-        "the retained thread at revision {revision} lacks idle proof (provider roster {providers}, turn items {turn_items}, shell background coverage {shell_background})"
-    )]
-    RetainedIdleCoverage {
-        revision: u64,
-        providers: bool,
-        turn_items: bool,
-        shell_background: bool,
-    },
     #[error(
         "parent message preflight failed: {predicate} (prepared revision {prepared}, observed revision {observed:?})"
     )]
@@ -332,14 +323,6 @@ pub trait TaskHost: Send + Sync {
     /// Returns an error when the launch is unsupported or cannot be encoded.
     fn prepare_launch(&self, request: LaunchRequest<'_>) -> Result<LaunchInputs, HostError>;
 
-    /// Name a local process whose custody prevents retirement of this task's checkout or scratch.
-    /// # Errors
-    /// Returns an error when the pass cannot establish workspace custody.
-    fn retirement_writer(
-        &self,
-        root: &Path,
-    ) -> impl Future<Output = Result<Option<RetirementBlocker>, HostError>> + Send;
-
     /// Identify checkout-owned orphan trees for a terminal task, and the shared
     /// services that only inherited its cwd.
     /// # Errors
@@ -437,57 +420,6 @@ struct PassEvidence {
     profiles: OnceCell<Result<Arc<ProfileCatalog>, HostError>>,
     processes: OnceCell<Result<Inventory, HostError>>,
     sent: AtomicBool,
-}
-
-#[cfg(any(test, feature = "loopback-fixture"))]
-impl T3Pass<'_> {
-    /// Use one known process cwd in this loopback fixture pass.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn with_fixture_process_cwd(mut self, pid: u32, cwd: &Path) -> Self {
-        self.evidence = Arc::new(PassEvidence {
-            processes: OnceCell::new_with(Some(Ok(Inventory::process_fixture(pid, cwd)))),
-            ..PassEvidence::default()
-        });
-        self
-    }
-
-    /// Run the production cwd follow-up on captured lsof and ps fixture rows.
-    #[doc(hidden)]
-    pub async fn with_fixture_census(
-        mut self,
-        lsof: &[u8],
-        ps: &[u8],
-        scratch: &Path,
-    ) -> Result<Self, HostError> {
-        let mut inventory =
-            Inventory::from_listings(lsof, ps, rustix::process::geteuid().as_raw(), 0)?;
-        inventory.complete_missing(scratch).await;
-        self.evidence = Arc::new(PassEvidence {
-            processes: OnceCell::new_with(Some(Ok(inventory))),
-            ..PassEvidence::default()
-        });
-        Ok(self)
-    }
-
-    /// Apply Darwin cwd follow-up rows to snapshots bracketing the probe.
-    #[cfg(all(target_os = "macos", feature = "loopback-fixture"))]
-    #[doc(hidden)]
-    pub fn with_fixture_cwd_followup(
-        mut self,
-        files: &[u8],
-        ps: &[u8],
-        current_ps: &[u8],
-        observed: i64,
-    ) -> Result<Self, HostError> {
-        self.evidence = Arc::new(PassEvidence {
-            processes: OnceCell::new_with(Some(Ok(Inventory::followup_fixture(
-                files, ps, current_ps, observed,
-            )?))),
-            ..PassEvidence::default()
-        });
-        Ok(self)
-    }
 }
 
 impl T3 {
@@ -797,7 +729,7 @@ impl T3 {
             ThreadReply::Snapshot(value) => {
                 let mut projection = Projection::parse(value, binding, id)?;
                 if let Some(row) = &fence.row {
-                    projection.use_shell_background(row, fence.covers(projection.sequence()));
+                    projection.use_shell_failure(row, fence.covers(projection.sequence()));
                 }
                 Some(projection)
             }
@@ -834,6 +766,7 @@ impl T3 {
             Some(thread) => thread.run(
                 &wire.message_id(&launch.instance),
                 missing_receipt(run, wire),
+                || self.terminal_role_quiet(wire, &launch.thread, thread.sequence()),
             )?,
             None if wire.method == Method::Continue => RunState::Gone,
             None => RunState::ReadyToSend,
@@ -841,14 +774,25 @@ impl T3 {
         Ok((thread, state))
     }
 
-    fn terminal_role_quiet(&self, wire: &Wire, thread: &str, terminal_revision: u64) -> bool {
+    fn terminal_role_quiet(&self, wire: &Wire, thread: &str, revision: u64) -> bool {
+        self.quiet_row_at(thread, revision, |row| retained_row_matches(wire, row))
+    }
+
+    fn quiet_row_at(
+        &self,
+        thread: &str,
+        revision: u64,
+        matches: impl FnOnce(&Value) -> bool,
+    ) -> bool {
         self.rpc.with_shell(|shell| {
-            shell
-                .filter(|shell| shell.revision().is_some_and(|seq| seq >= terminal_revision))
-                .and_then(|shell| shell.marker(thread))
-                .is_some_and(|row| {
-                    retained_row_matches(wire, &row) && row_activity(&row) == RowChildren::Quiet
-                })
+            shell.is_some_and(|shell| {
+                shell
+                    .row_revision(thread)
+                    .is_some_and(|(seq, _)| seq >= revision)
+                    && shell.marker(thread).is_some_and(|row| {
+                        row_activity(&row) == RowChildren::Quiet && matches(&row)
+                    })
+            })
         })
     }
 
@@ -943,7 +887,12 @@ impl T3Pass<'_> {
         projection: Option<&Projection>,
     ) -> Result<bool, HostError> {
         if let Some(projection) = projection
-            && projection.retained()? == RetainedThread::Busy
+            && !projection.deleted()
+            && !self
+                .host
+                .quiet_row_at(thread, projection.sequence(), |row| {
+                    binding.matches_shell_row(row)
+                })
         {
             return Ok(false);
         }
@@ -958,8 +907,9 @@ impl T3Pass<'_> {
         {
             let helpers = inventory.bound_helpers(checkout, sibling);
             if !helpers.is_empty()
-                && let Some(observed) = self.host.thread(binding, sibling).await?
-                && observed.retained()? == RetainedThread::Idle
+                && self.host.quiet_row_at(sibling, 0, |row| {
+                    row["deletedAt"].is_null() && binding.matches_shell_row(row)
+                })
             {
                 runtime.extend(helpers);
             }
@@ -991,20 +941,34 @@ impl T3Pass<'_> {
             .as_ref()
             .map_err(|&error| process::coverage_error(error))
     }
+}
 
-    /// Return unresolved identities from this pass, if it has a complete census.
-    #[must_use]
-    pub fn unresolved_processes(&self) -> Option<Vec<(u32, i64)>> {
-        self.evidence.processes.get()?.as_ref().ok()?.unresolved()
+/// A local cwd census used only to protect trash from deletion.
+pub struct TrashCensus(Inventory);
+
+impl TrashCensus {
+    /// Capture process evidence for one trash sweep.
+    ///
+    /// # Errors
+    /// Returns an error when the local census cannot be read.
+    pub async fn capture(scratch: &Path) -> Result<Self, HostError> {
+        Inventory::capture(None, scratch).await.map(Self)
+    }
+
+    /// Build a scoped census from real wire rows in a fixture.
+    #[cfg(feature = "loopback-fixture")]
+    #[doc(hidden)]
+    pub fn from_fixture_rows(lsof: &[u8], ps: &[u8]) -> Result<Self, HostError> {
+        Inventory::from_listings(lsof, ps, rustix::process::geteuid().as_raw(), 0).map(Self)
+    }
+
+    /// Missing or ambiguous evidence leaves this entry in trash for a later sweep.
+    pub async fn can_remove(&self, entry: &Path) -> bool {
+        self.0.trash_clear(entry).await
     }
 }
 
 impl TaskHost for T3Pass<'_> {
-    async fn retirement_writer(&self, root: &Path) -> Result<Option<RetirementBlocker>, HostError> {
-        let inventory = self.process_inventory().await?;
-        inventory.retirement_blocker(root).await
-    }
-
     async fn terminal_orphans(
         &self,
         checkout: &Path,
@@ -1129,17 +1093,12 @@ impl TaskHost for T3Pass<'_> {
                 });
             }
         }
-        let background_pending = match &thread {
-            Some(thread) if state == RunState::Ended => {
-                // The exact run proves the end. A synchronized, bound shell can
-                // prove an empty background roster at that revision or later.
+        let background_pending = state == RunState::Ended
+            && thread.as_ref().is_some_and(|thread| {
                 !self
                     .host
                     .terminal_role_quiet(&wire, &run.launch().thread, thread.sequence())
-                    && thread.terminal_background_pending()?
-            }
-            _ => false,
-        };
+            });
         if !background_pending
             && state == RunState::Ended
             && thread
@@ -1413,7 +1372,7 @@ impl T3Pass<'_> {
         else {
             return Ok(settled);
         };
-        if thread.retained()? == RetainedThread::Gone {
+        if thread.deleted() {
             return Ok(settled);
         }
         if !self
@@ -1465,9 +1424,7 @@ fn assignment_rejected(run: &Run) -> RunObservation {
 }
 
 fn retained_row_matches(wire: &Wire, row: &Value) -> bool {
-    row["projectId"] == wire.binding.project_id
-        && row["worktreePath"] == wire.binding.worktree_path
-        && row["branch"] == wire.binding.branch
+    wire.binding.matches_shell_row(row)
         && wire
             .parent
             .as_deref()

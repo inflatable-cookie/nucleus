@@ -642,7 +642,7 @@ impl Rpc {
                 if let Some(row) = fence.row.as_deref().filter(|row| closed_row(row)) {
                     let reply = ThreadReply::Closed {
                         row: row.clone(),
-                        sequence: shell.revision(),
+                        sequence: shell.row_revision(id).map(|(revision, _)| revision),
                     };
                     return Ok(ThreadObservation { reply, fence });
                 }

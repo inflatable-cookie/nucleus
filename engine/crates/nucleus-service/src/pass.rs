@@ -14,8 +14,8 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
     ActiveChild, Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest,
-    NoticeAuthorization, NoticeTarget, OrphanProcess, ParentAttempt, ParentRun, ParentStep,
-    SendOutcome, StopProgress, T3, TaskHost, launch_diagnostic,
+    NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
+    StopProgress, T3, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{
     CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, StoreError, TaskRow,
@@ -138,13 +138,16 @@ impl Service {
             return Ok(None);
         }
         let task = task.clone();
-        let id = task.identity().id.clone();
-        self.scratch_job(&id, "finding run scratch", move |root, _| {
-            let found = find_run_scratch(root.path(), &task);
-            // Absence counts only while the root it was read under is still there.
-            root.verify().map_err(WorkError::from)?;
-            Ok(found)
-        })
+        self.scratch_job(
+            "terminal process sweep",
+            "finding run scratch",
+            move |root, _| {
+                let found = find_run_scratch(root.path(), &task);
+                // Absence counts only while the root it was read under is still there.
+                root.verify().map_err(WorkError::from)?;
+                Ok(found)
+            },
+        )
         .await
     }
 
@@ -197,13 +200,9 @@ impl Service {
             DoneArchive::Wait(cause) => return Err(ServiceError::ArchiveEvidence(cause)),
             DoneArchive::Write(write) => {
                 let running = || {
-                    self.state.try_lock().is_ok_and(|state| {
-                        state
-                            .settings
-                            .dispatch
-                            .as_ref()
-                            .is_none_or(|dispatch| dispatch.mode == DispatchMode::Running)
-                    })
+                    self.state
+                        .try_lock()
+                        .is_ok_and(|state| dispatch_running(&state))
                 };
                 if !self.host.write_archive(write, running).await? {
                     return Err(ServiceError::ArchiveEvidence(
@@ -221,7 +220,7 @@ impl Service {
         if workspace == Workspace::Absent {
             if self.has_prunable_registration(&checkout).await?
                 && self
-                    .retire_if_idle(host, task, &binding, &checkout, None)
+                    .retire_if_idle(task, &binding, &checkout, None)
                     .await?
                     .is_none()
             {
@@ -231,7 +230,8 @@ impl Service {
             }
             return Ok(Action::Nothing);
         }
-        self.stop_checkout_orphans(host, task, &checkout).await?;
+        self.sweep_terminal_processes(host, task, &binding, &checkout)
+            .await;
         let head = self
             .archive_retirement_head(row, &route, &checkout, &workspace)
             .await?;
@@ -261,7 +261,7 @@ impl Service {
             }
         }
         match self
-            .retire_if_idle(host, task, &binding, &checkout, Some(&head))
+            .retire_if_idle(task, &binding, &checkout, Some(&head))
             .await?
         {
             Some(Retirement::Retained) if task.report_task().is_some() => Err(
@@ -2192,178 +2192,197 @@ impl Service {
         checkout: &Checkout<'_>,
     ) -> Result<Vec<PathBuf>, ServiceError> {
         let (task, checkout) = (task.clone(), checkout.path().to_owned());
-        let id = task.identity().id.clone();
-        self.scratch_job(&id, "finding run scratch", move |root, _| {
-            let earlier = task
-                .earlier_run_scratch()
-                .filter_map(|(instance, recorded)| {
-                    retained_scratch_path(root.path(), &task.identity().id, &instance, recorded)
-                });
-            let roots = std::iter::once(checkout)
-                .chain(find_run_scratch(root.path(), &task))
-                .chain(earlier)
-                .collect();
-            root.verify().map_err(WorkError::from)?;
-            Ok(roots)
-        })
+        self.scratch_job(
+            "terminal process sweep",
+            "finding run scratch",
+            move |root, _| {
+                let earlier = task
+                    .earlier_run_scratch()
+                    .filter_map(|(instance, recorded)| {
+                        retained_scratch_path(root.path(), &task.identity().id, &instance, recorded)
+                    });
+                let roots = std::iter::once(checkout)
+                    .chain(find_run_scratch(root.path(), &task))
+                    .chain(earlier)
+                    .collect();
+                root.verify().map_err(WorkError::from)?;
+                Ok(roots)
+            },
+        )
         .await
     }
 
-    // Both callers hold the task and project fences and have inspected this owned checkout.
-    async fn stop_checkout_orphans(
-        &self,
-        host: &impl TaskHost,
-        task: &Task,
-        checkout: &Checkout<'_>,
-    ) -> Result<(), ServiceError> {
-        let scratch = self.storage.scratch().path();
-        let roots = self.retirement_roots(task, checkout).await?;
-        let mut retained = Vec::new();
-        let mut found = None;
-        for root in &roots {
-            let root = root.clone();
-            let scan = host.terminal_orphans(&root, scratch).await?;
-            retained.extend(scan.retained);
-            if found.is_none() && !scan.targets.is_empty() {
-                found = Some((root, scan.targets));
-            }
-        }
-        // A shared service keeps its cwd in the checkout and holds retirement by PID.
-        // Identical evidence on a later pass does not add a second record.
-        if !retained.is_empty() {
-            let mut state = self.state.lock().await;
-            let mut record = event("checkout_process_retained");
-            record.detail = serde_json::json!({"processes":retained}).to_string();
-            state
-                .store
-                .claim_task_effect(&task.identity().id, &record, false)?;
-        }
-        let helpers = host.terminal_helpers(&roots, scratch).await?;
-        let parent = nucleus_hosts::parent_thread(checkout.path());
-        let roles: Vec<_> = [
-            Some(parent.as_str()),
-            task.threads().get(Role::Worker),
-            task.threads().get(Role::Reviewer),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        self.hold_helpers_for_live_roles(&parent, &roles, &helpers)?;
-        // Own-code orphans go first; helpers take a pass with no such tree.
-        let (roots, mut targets) = match found {
-            Some((root, targets)) => (vec![root], targets),
-            None if !helpers.is_empty() => (roots, helpers),
-            None => return Ok(()),
-        };
-        for force in [false, true] {
-            if force {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-            let mut state = self.state.lock().await;
-            if !state
-                .settings
-                .dispatch
-                .as_ref()
-                .is_some_and(|d| d.mode == DispatchMode::Running)
-            {
-                return Err(ServiceError::ArchiveEvidence(
-                    "Process cleanup is waiting for Dispatch.".into(),
-                ));
-            }
-            let id = &task.identity().id;
-            let mut intent = event("checkout_process_stop");
-            intent.detail =
-                serde_json::json!({"signal":if force {"KILL"} else {"TERM"},"processes":targets})
-                    .to_string();
-            state.store.claim_task_effect(id, &intent, false)?;
-            drop(state);
-            targets = nucleus_hosts::verify_orphans(&targets, &roots, scratch, force).await?;
-            if targets.is_empty() {
-                break;
-            }
-            // Contended state defers the effect rather than aging the PID verification.
-            let mut state = self.state.try_lock().map_err(|_| {
-                ServiceError::ArchiveEvidence("Checking checkout processes again.".into())
-            })?;
-            if !state
-                .settings
-                .dispatch
-                .as_ref()
-                .is_some_and(|d| d.mode == DispatchMode::Running)
-            {
-                return Err(ServiceError::ArchiveEvidence(
-                    "Process cleanup is waiting for Dispatch.".into(),
-                ));
-            }
-            let mut results = Vec::new();
-            self.host.retire_with_quiet_shell(&parent, &roles, || {
-                targets.retain(|p| {
-                    let result = p.signal(force);
-                    let outcome = match &result {
-                        Ok(true) => "sent".to_owned(),
-                        Ok(false) => "exited".to_owned(),
-                        Err(cause) => cause.to_string(),
-                    };
-                    results.push(serde_json::json!({"process":p,"outcome":outcome}));
-                    matches!(result, Ok(true))
-                });
-            })?;
-            let mut outcome = event("checkout_process_result");
-            outcome.detail = serde_json::json!({"signal":if force {"SIGKILL"} else {"SIGTERM"},"results":results}).to_string();
-            state.store.claim_task_effect(id, &outcome, false)?;
-        }
-        // The pass's census still contains the original PIDs. A fresh pass confirms exit.
-        Err(ServiceError::ArchiveEvidence(
-            "Checking that checkout processes have exited.".into(),
-        ))
-    }
-
-    /// Provider helpers belong to a finished session only once every task role is quiet.
-    fn hold_helpers_for_live_roles(
-        &self,
-        parent: &str,
-        roles: &[&str],
-        helpers: &[OrphanProcess],
-    ) -> Result<(), ServiceError> {
-        if helpers.is_empty() {
-            return Ok(());
-        }
-        self.host
-            .retire_with_quiet_shell(parent, roles, || ())
-            .map_err(|error| match error {
-                HostError::RowChildBusy => {
-                    let names: Vec<_> = helpers.iter().map(OrphanProcess::describe).collect();
-                    ServiceError::ArchiveEvidence(format!(
-                        "A task role is still running. Provider helpers in the task checkout or run scratch stay until it ends: {}.",
-                        names.join(", ")
-                    ))
-                }
-                error => error.into(),
-            })
-    }
-
-    // Both callers hold the current task and project fences through Git retirement.
-    async fn retire_if_idle(
+    // Claim the sweep once, while Dispatch and the held shell permit signalling.
+    async fn sweep_terminal_processes(
         &self,
         host: &impl TaskHost,
         task: &Task,
         binding: &Binding,
         checkout: &Checkout<'_>,
-        head: Option<&Head>,
-    ) -> Result<Option<Retirement>, ServiceError> {
-        let parent = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
-        let threads = [
-            task.threads().get(Role::Reviewer),
-            task.threads().get(Role::Worker),
-            Some(parent.as_str()),
-        ];
-        let threads: Vec<_> = threads.into_iter().flatten().collect();
-        // Each lookup uses the pass's shared process census.
-        for root in self.retirement_roots(task, checkout).await? {
-            if let Some(blocker) = host.retirement_writer(&root).await? {
-                return Err(ServiceError::CheckoutProcess(blocker));
+    ) {
+        let parent = nucleus_hosts::parent_thread(checkout.path());
+        let threads = retirement_threads(task, &parent);
+        let id = &task.identity().id;
+        let sweep = async {
+            let mut state = self.state.lock().await;
+            if !self
+                .checkout_cleanup_allowed(&state, binding, &parent, &threads)
+                .unwrap_or(false)
+            {
+                return Ok(());
+            }
+            let mut claim = event("checkout_process_sweep");
+            if let Some((instance, _)) = task.settled_scratch() {
+                claim.detail = instance;
+            }
+            if state.store.claim_task_effect(id, &claim, false)?.is_none() {
+                return Ok(());
+            }
+            drop(state);
+            self.stop_checkout_processes(host, task, binding, checkout, &parent, &threads)
+                .await
+        };
+        let error = match tokio::time::timeout(Duration::from_secs(20), sweep).await {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error.to_string(),
+            Err(_) => "Process cleanup timed out.".into(),
+        };
+        self.record_process_result(id, "checkout_process_sweep_failed", &error)
+            .await;
+    }
+
+    async fn stop_checkout_processes(
+        &self,
+        host: &impl TaskHost,
+        task: &Task,
+        binding: &Binding,
+        checkout: &Checkout<'_>,
+        parent: &str,
+        threads: &[&str],
+    ) -> Result<(), ServiceError> {
+        let scratch = self.storage.scratch().path();
+        let roots = self.retirement_roots(task, checkout).await?;
+        let id = &task.identity().id;
+        let mut targets = Vec::new();
+        let mut retained = Vec::new();
+        for root in &roots {
+            match host.terminal_orphans(root, scratch).await {
+                Ok(scan) => {
+                    targets.extend(scan.targets);
+                    retained.extend(scan.retained);
+                }
+                Err(error) => {
+                    self.record_process_result(
+                        id,
+                        "checkout_process_sweep_failed",
+                        &error.to_string(),
+                    )
+                    .await;
+                }
             }
         }
+        if !retained.is_empty() {
+            self.record_process_result(
+                id,
+                "checkout_process_retained",
+                &serde_json::json!({"processes":retained}).to_string(),
+            )
+            .await;
+        }
+        match host.terminal_helpers(&roots, scratch).await {
+            Ok(helpers) => targets.extend(helpers),
+            Err(error) => {
+                self.record_process_result(id, "checkout_process_sweep_failed", &error.to_string())
+                    .await;
+            }
+        }
+        for force in [false, true] {
+            if targets.is_empty() {
+                break;
+            }
+            if force {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            let signal = if force { "SIGKILL" } else { "SIGTERM" };
+            let mut intent = event("checkout_process_stop");
+            intent.detail = serde_json::json!({"signal":signal,"processes":targets}).to_string();
+            {
+                let mut state = self.state.lock().await;
+                if !self.checkout_cleanup_allowed(&state, binding, parent, threads)? {
+                    break;
+                }
+                state.store.claim_task_effect(id, &intent, false)?;
+            }
+            targets = nucleus_hosts::verify_orphans(&targets, &roots, scratch, force).await?;
+            if targets.is_empty() {
+                break;
+            }
+            // Skip a contended signal rather than age the process identity evidence.
+            let mut state = self.state.try_lock().map_err(|_| HostError::Uncertain)?;
+            if !dispatch_running(&state) {
+                break;
+            }
+            let results = self
+                .host
+                .retire_with_quiet_shell(binding, parent, threads, || {
+                    let mut results = Vec::new();
+                    targets.retain(|process| {
+                        let result = process.signal(force);
+                        let outcome = match &result {
+                            Ok(true) => "sent".to_owned(),
+                            Ok(false) => "exited".to_owned(),
+                            Err(error) => error.to_string(),
+                        };
+                        results.push(serde_json::json!({"process":process,"outcome":outcome}));
+                        matches!(result, Ok(true))
+                    });
+                    results
+                })?;
+            let mut outcome = event("checkout_process_result");
+            outcome.detail = serde_json::json!({"signal":signal,"results":results}).to_string();
+            state.store.claim_task_effect(id, &outcome, false)?;
+        }
+        Ok(())
+    }
+
+    async fn record_process_result(&self, task: &str, kind: &str, detail: &str) {
+        let mut audit = event(kind);
+        audit.detail = detail.into();
+        if let Err(error) = self
+            .state
+            .lock()
+            .await
+            .store
+            .claim_task_effect(task, &audit, false)
+        {
+            service_log!("{task}: recording terminal process cleanup: {error}");
+        }
+    }
+
+    fn checkout_cleanup_allowed(
+        &self,
+        state: &crate::State,
+        binding: &Binding,
+        parent: &str,
+        threads: &[&str],
+    ) -> Result<bool, HostError> {
+        if !dispatch_running(state) {
+            return Ok(false);
+        }
+        self.host
+            .retire_with_quiet_shell(binding, parent, threads, || true)
+    }
+
+    // Both callers hold the current task and project fences through Git retirement.
+    async fn retire_if_idle(
+        &self,
+        task: &Task,
+        binding: &Binding,
+        checkout: &Checkout<'_>,
+        head: Option<&Head>,
+    ) -> Result<Option<Retirement>, ServiceError> {
+        let parent = nucleus_hosts::parent_thread(checkout.path());
+        let threads = retirement_threads(task, &parent);
         let observed = match head {
             Some(head) => Some((
                 self.observe_checkout_for_retirement(checkout).await?,
@@ -2372,18 +2391,11 @@ impl Service {
             None => None,
         };
         let state = self.state.lock().await;
-        if state
-            .settings
-            .dispatch
-            .as_ref()
-            .is_some_and(|dispatch| dispatch.mode != DispatchMode::Running)
-        {
+        if !self.checkout_cleanup_allowed(&state, binding, &parent, &threads)? {
             return Ok(None);
         }
-        self.host
-            .retire_with_quiet_shell(&parent, &threads, || ())?;
         drop(state);
-        // Recheck Git custody and remove after final writer admission.
+        // Recheck Git custody after final admission from Dispatch and the held shell.
         let outcome = self
             .checkout_job(
                 checkout,
@@ -2430,9 +2442,10 @@ impl Service {
             if self.checkout_binding(task.identity(), &route, checkout)? != *binding {
                 return Err(HostError::Binding.into());
             }
-            self.stop_checkout_orphans(host, task, checkout).await?;
+            self.sweep_terminal_processes(host, task, binding, checkout)
+                .await;
             if self
-                .retire_if_idle(host, task, binding, checkout, Some(head))
+                .retire_if_idle(task, binding, checkout, Some(head))
                 .await?
                 .is_none()
             {
@@ -2454,7 +2467,7 @@ impl Service {
                 return Err(HostError::Binding.into());
             }
             if self
-                .retire_if_idle(host, task, binding, checkout, None)
+                .retire_if_idle(task, binding, checkout, None)
                 .await?
                 .is_none()
             {
@@ -2649,6 +2662,25 @@ fn replay_policy(head: Option<&Head>, observation: &Observation) -> Option<bool>
     let clean_at_head =
         matches!(&observation.workspace, Observed::Known(Workspace::Clean(clean)) if clean == head);
     (open_at_head && clean_at_head).then_some(false)
+}
+
+fn dispatch_running(state: &crate::State) -> bool {
+    state
+        .settings
+        .dispatch
+        .as_ref()
+        .is_none_or(|dispatch| dispatch.mode == DispatchMode::Running)
+}
+
+fn retirement_threads<'a>(task: &'a Task, parent: &'a str) -> Vec<&'a str> {
+    [
+        task.threads().get(Role::Reviewer),
+        task.threads().get(Role::Worker),
+        Some(parent),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 #[cfg(test)]
@@ -2872,414 +2904,6 @@ mod tests {
         derived
     }
 
-    #[tokio::test]
-    async fn writers_in_all_retirement_roots_hold_checkout() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        for legacy in [false, true] {
-            let (home, service) = fixture(GitHub::new("fixture").unwrap());
-            let (row, earlier) = settled_cleanup_task(&service, home.path(), legacy).await;
-            let id = &row.task.identity().id;
-            let head = service.fixture().start.clone();
-            let current = service.existing_run_scratch(&row.task).await.unwrap();
-            let work = service.worktrees();
-            let route = service.project_for(row.task.identity()).await.unwrap();
-            let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();
-            checkout.allocate(&head).unwrap();
-            let binding = service
-                .checkout_binding(row.task.identity(), &route, &checkout)
-                .unwrap();
-            // Legacy rows derive the current path as well as earlier paths.
-            let current = current.unwrap_or_else(|| {
-                let (instance, _) = row.task.settled_scratch().unwrap();
-                let path = service
-                    .storage
-                    .scratch()
-                    .path()
-                    .join(scratch::relative_path(&instance));
-                std::fs::create_dir_all(&path).unwrap();
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-                path
-            });
-            for root in [checkout.path(), current.as_path(), earlier.as_path()] {
-                let mut child = sleep_in_cwd(root);
-                let pid = child.id().unwrap();
-                let host = service
-                    .host
-                    .pass(service.storage.scratch().path())
-                    .with_fixture_process_cwd(pid, root)
-                    .for_task(
-                        &row.task,
-                        service.existing_run_scratch(&row.task).await.unwrap(),
-                    );
-                let result = service
-                    .retire_if_idle(&host, &row.task, &binding, &checkout, Some(&head))
-                    .await;
-                child.kill().await.unwrap();
-                assert!(
-                    matches!(&result, Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid),
-                    "{result:?}"
-                );
-                assert!(checkout.path().exists());
-            }
-        }
-    }
-
-    fn sleep_in_cwd(cwd: &Path) -> tokio::process::Child {
-        tokio::process::Command::new("/bin/sleep")
-            .arg("60")
-            .current_dir(cwd)
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap()
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn process_listing(command: &str, args: &[&str]) -> Vec<u8> {
-        let listing = tokio::process::Command::new(command)
-            .env("LC_ALL", "C")
-            .env("TZ", "UTC")
-            .args(args)
-            .output()
-            .await
-            .unwrap();
-        assert!(listing.status.success(), "{listing:?}");
-        listing.stdout
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn exit_without_reaping(child: &mut tokio::process::Child) {
-        let pid = child.id().unwrap().to_string();
-        child.start_kill().unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let state = process_listing("/bin/ps", &["-p", &pid, "-o", "stat="]).await;
-                if String::from_utf8_lossy(&state)
-                    .trim_start()
-                    .starts_with('Z')
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("fixture child exited");
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn process_rows(pids: &str) -> Vec<u8> {
-        process_listing(
-            "/bin/ps",
-            &[
-                "-ww",
-                "-p",
-                pids,
-                "-o",
-                "pid=,ppid=,uid=,stat=,lstart=,ucomm=",
-            ],
-        )
-        .await
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn before_cwd_followup(unrelated: u32, exited: u32, writer: u32) -> (Vec<u8>, Vec<u8>) {
-        let ps = process_rows(&format!("{unrelated},{exited},{writer}")).await;
-        let lsof = process_listing(
-            "/usr/sbin/lsof",
-            &[
-                "-a",
-                "-p",
-                &unrelated.to_string(),
-                "-d",
-                "cwd",
-                "-n",
-                "-P",
-                "-F0pfn",
-            ],
-        )
-        .await;
-        assert!(String::from_utf8_lossy(&lsof).contains("elsewhere^A"));
-        (lsof, ps)
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn cwd_fields(pid: u32) -> String {
-        let listing = process_listing(
-            "/usr/sbin/lsof",
-            &[
-                "-a",
-                "-p",
-                &pid.to_string(),
-                "-d",
-                "cwd",
-                "-n",
-                "-P",
-                "-F0pfDn",
-            ],
-        )
-        .await;
-        String::from_utf8(listing).unwrap()
-    }
-
-    #[cfg(target_os = "macos")]
-    fn cwd_device(lsof: &str) -> &str {
-        lsof.split('\0')
-            .find(|field| field.starts_with("D0x"))
-            .expect("real cwd device")
-    }
-
-    #[cfg(target_os = "macos")]
-    fn cwd_probe_second() -> i64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        i64::try_from(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        )
-        .unwrap()
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn forked_shell(cwd: &Path) -> (tokio::process::Child, u32) {
-        use std::process::Stdio;
-        use tokio::io::{AsyncBufReadExt, BufReader};
-
-        let mut parent = tokio::process::Command::new("/bin/bash")
-            .args([
-                "-c",
-                r#"exec 3<&0; (cd "$1" && IFS= read -r ignored <&3) & printf '%s\n' "$!"; wait "$!""#,
-                "bash",
-            ])
-            .arg(cwd)
-            .current_dir("/")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let mut pid = String::new();
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            BufReader::new(parent.stdout.take().unwrap()).read_line(&mut pid),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        (parent, pid.trim().parse().unwrap())
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn real_census_rows_allow_unrelated_closeout_and_name_a_live_writer() {
-        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.fixture_mut().acp_provider = Some("fixture".into());
-        let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
-        let id = &row.task.identity().id;
-        let head = &service.fixture().start;
-        let route = service.project_for(row.task.identity()).await.unwrap();
-        let work = service.worktrees();
-        let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();
-        checkout.allocate(head).unwrap();
-        let binding = service
-            .checkout_binding(row.task.identity(), &route, &checkout)
-            .unwrap();
-        service.host.fixture_held_shell(&json!({
-            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
-        }));
-        let scratch = service.storage.scratch().path();
-        let outside = home.path().join("elsewhere^A");
-        std::fs::create_dir(&outside).unwrap();
-        let mut unrelated = sleep_in_cwd(&outside);
-        let mut exited = sleep_in_cwd(checkout.path());
-        let inside = checkout.path().join("writer^A");
-        std::fs::create_dir(&inside).unwrap();
-        let mut writer = sleep_in_cwd(&inside);
-        let (lsof, ps) = before_cwd_followup(
-            unrelated.id().unwrap(),
-            exited.id().unwrap(),
-            writer.id().unwrap(),
-        )
-        .await;
-        // The follow-up identifies a process by its start second.
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let capture = || {
-            service
-                .host
-                .pass(scratch)
-                .with_fixture_census(&lsof, &ps, scratch)
-        };
-
-        // The ps rows still name the exited child, and kill(0) still sees its PID.
-        exit_without_reaping(&mut exited).await;
-        let fixture = capture().await.unwrap();
-        assert_eq!(fixture.unresolved_processes(), Some(vec![]));
-        exited.wait().await.unwrap();
-        let retirement = service
-            .retire_if_idle(&fixture, &row.task, &binding, &checkout, Some(head))
-            .await;
-        let pid = writer.id().unwrap();
-        assert!(
-            matches!(&retirement, Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid && !blocker.unverified)
-        );
-        let result = retirement.map(|_| Action::Nothing);
-        service
-            .schedule_result(&row, &result, crate::schedule::Priority::Closeout)
-            .await
-            .unwrap();
-        {
-            let state = service.state.lock().await;
-            assert!(matches!(
-                state.wait_detail(id),
-                Some(crate::WaitDetail::Archive(message)) if message.contains(&format!("PID {pid} (sleep)")) && message.contains("working directory")
-            ));
-        }
-        assert!(checkout.path().exists());
-
-        writer.kill().await.unwrap();
-        let cleared = capture().await.unwrap();
-        assert_eq!(
-            service
-                .retire_if_idle(&cleared, &row.task, &binding, &checkout, Some(head))
-                .await
-                .unwrap(),
-            Some(Retirement::Removed)
-        );
-        assert!(!checkout.path().exists());
-        assert!(unrelated.try_wait().unwrap().is_none());
-        unrelated.kill().await.unwrap();
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn cwd_metadata_error_still_holds_a_checkout_with_a_live_writer() {
-        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.fixture_mut().acp_provider = Some("fixture".into());
-        let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
-        let project = service.fixture();
-        let work = service.worktrees();
-        let id = &row.task.identity().id;
-        let checkout = work.checkout(&project.checkout, REPOSITORY, id).unwrap();
-        checkout.allocate(&project.start).unwrap();
-        let route = service.project_for(row.task.identity()).await.unwrap();
-        let binding = route.binding(&checkout).unwrap();
-
-        let (mut parent, pid) = forked_shell(checkout.path()).await;
-        let parent_pid = parent.id().unwrap();
-        // ps reports whole seconds and the follow-up must see the same lifetime.
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let pids = format!("{pid},{parent_pid}");
-        let ps = process_rows(&pids).await;
-        let observed = cwd_probe_second();
-        let writer_cwd = cwd_fields(pid).await;
-        assert!(writer_cwd.contains(&format!("n{}\0", checkout.path().display())));
-        let parent_cwd = cwd_fields(parent_pid).await;
-        let current_ps = process_rows(&pids).await;
-        let scratch = service.storage.scratch().path();
-        let capture = |files: &str| {
-            service
-                .host
-                .pass(scratch)
-                .with_fixture_cwd_followup(files.as_bytes(), &ps, &current_ps, observed)
-                .unwrap()
-        };
-
-        // The child is inside the checkout. Its only listed open file is outside.
-        let failure = capture(&format!(
-            "{parent_cwd}p{pid}\0\nfcwd\0ncwd|rtd info error: No such file or directory\0\nftxt\0{}\0n/bin/bash\0\n",
-            cwd_device(&parent_cwd)
-        ));
-        let retirement = service
-            .retire_if_idle(
-                &failure,
-                &row.task,
-                &binding,
-                &checkout,
-                Some(&project.start),
-            )
-            .await;
-        assert!(
-            matches!(&retirement, Err(ServiceError::CheckoutProcess(blocker))
-            if blocker.pid == pid && blocker.unverified)
-        );
-        service
-            .schedule_result(
-                &row,
-                &retirement.map(|_| Action::Nothing),
-                crate::schedule::Priority::Closeout,
-            )
-            .await
-            .unwrap();
-        assert!(matches!(
-            service.state.lock().await.wait_detail(id),
-            Some(crate::WaitDetail::Archive(message))
-                if message.contains(&format!("PID {pid} (bash)")) && message.contains("could not rule out")
-        ));
-
-        // If only the device is readable, a match still holds the checkout.
-        let same_device = capture(&format!(
-            "{parent_cwd}p{pid}\0\nfcwd\0{}\0\n",
-            cwd_device(&writer_cwd)
-        ));
-        assert!(matches!(
-            service.retire_if_idle(&same_device, &row.task, &binding, &checkout, Some(&project.start)).await,
-            Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid && blocker.unverified
-        ));
-        assert!(checkout.path().exists());
-        drop(parent.stdin.take());
-        parent.wait().await.unwrap();
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn pathless_cwd_on_another_device_allows_checkout_retirement() {
-        let (home, service) = fixture(GitHub::new("fixture").unwrap());
-        let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
-        let project = service.fixture();
-        let work = service.worktrees();
-        let checkout = work
-            .checkout(&project.checkout, REPOSITORY, &row.task.identity().id)
-            .unwrap();
-        checkout.allocate(&project.start).unwrap();
-        let route = service.project_for(row.task.identity()).await.unwrap();
-        let binding = route.binding(&checkout).unwrap();
-        service.host.fixture_held_shell(&json!({
-            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
-        }));
-
-        let mut outside = sleep_in_cwd(Path::new("/"));
-        let pid = outside.id().unwrap();
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let ps = process_rows(&pid.to_string()).await;
-        let observed = cwd_probe_second();
-        let outside_cwd = cwd_fields(pid).await;
-        let current_ps = process_rows(&pid.to_string()).await;
-        // Preserve the real device field and omit the pathname and inode.
-        let files = format!("p{pid}\0\nfcwd\0{}\0\n", cwd_device(&outside_cwd));
-        let unrelated = service
-            .host
-            .pass(service.storage.scratch().path())
-            .with_fixture_cwd_followup(files.as_bytes(), &ps, &current_ps, observed)
-            .unwrap();
-        assert_eq!(
-            service
-                .retire_if_idle(
-                    &unrelated,
-                    &row.task,
-                    &binding,
-                    &checkout,
-                    Some(&project.start)
-                )
-                .await
-                .unwrap(),
-            Some(Retirement::Removed)
-        );
-        assert!(outside.try_wait().unwrap().is_none());
-        outside.kill().await.unwrap();
-    }
-
     struct ProtectedTree(Vec<u32>);
 
     impl Drop for ProtectedTree {
@@ -3409,10 +3033,20 @@ mod tests {
         assert_eq!(pids.len(), 3);
         // Orphans must pass the scan's settle margin before closeout reads them.
         tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
-        let outcome = service.archive_done(&terminal).await;
-        assert!(
-            matches!(&outcome, Err(ServiceError::ArchiveEvidence(s)) if s.contains("exited")),
-            "{outcome:?}"
+        for _ in 0..2 {
+            let outcome = service.archive_done(&terminal).await;
+            assert!(
+                matches!(&outcome, Err(ServiceError::ArchiveEvidence(s)) if s.contains("retained")),
+                "{outcome:?}"
+            );
+        }
+        let history = service.history(id, None, 25).await.unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .filter(|entry| entry.content.kind == "checkout_process_sweep")
+                .count(),
+            1
         );
         assert_cleanup_history(&service, id, &pids, protected.as_ref()).await;
         assert!(base.join("unpublished").exists());
@@ -3520,8 +3154,43 @@ mod tests {
         .await
     }
 
+    #[cfg(target_os = "macos")]
+    async fn trash_cwd_clear(pid: u32, trash: &Path) -> bool {
+        let command = |path, args: &[&str]| {
+            let mut command = tokio::process::Command::new(path);
+            command.env("LC_ALL", "C").env("TZ", "UTC").args(args);
+            command
+        };
+        let pid_arg = pid.to_string();
+        let cwd = command(
+            "/usr/sbin/lsof",
+            &["-a", "-p", &pid_arg, "-d", "cwd", "-n", "-P", "-F0pfn"],
+        )
+        .output()
+        .await
+        .unwrap();
+        let ps = command(
+            "/bin/ps",
+            &[
+                "-ww",
+                "-p",
+                &pid_arg,
+                "-o",
+                "pid=,ppid=,uid=,stat=,lstart=,ucomm=",
+            ],
+        )
+        .output()
+        .await
+        .unwrap();
+        assert!(cwd.status.success() && ps.status.success());
+        assert!(String::from_utf8_lossy(&cwd.stdout).contains(trash.to_str().unwrap()));
+        let census =
+            nucleus_hosts::TrashCensus::from_fixture_rows(&cwd.stdout, &ps.stdout).unwrap();
+        census.can_remove(trash).await
+    }
+
     #[tokio::test]
-    async fn an_external_orphan_in_the_checkout_is_retained_and_holds_retirement() {
+    async fn terminal_cleanup_leaves_a_shared_service_running_in_trash() {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let head = service.fixture().start.clone();
         let (forge, _server) = publish_checkout_forge(head).await;
@@ -3532,8 +3201,6 @@ mod tests {
         );
         service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}}));
         service.fixture_mut().acp_provider = Some("fixture".into());
-        service.state.lock().await.settings.dispatch =
-            Some(nucleus_store::DispatchSettings::default());
         let terminal = cancelled_cleanup_task(&service).await;
         let id = &terminal.task.identity().id;
         let work = service.worktrees();
@@ -3563,15 +3230,23 @@ mod tests {
             .await
             .unwrap();
         let history = service.history(id, None, 25).await.unwrap();
+        let trash_root = service.storage.work().path().join(".trash");
+        let trash = std::fs::read_dir(trash_root)
+            .ok()
+            .and_then(|mut entries| entries.next())
+            .and_then(Result::ok)
+            .map(|entry| entry.path());
+        #[cfg(target_os = "macos")]
+        let can_remove = trash_cwd_clear(pid, trash.as_deref().expect("retired checkout")).await;
         tokio::process::Command::new("/bin/kill")
             .arg(pid.to_string())
             .status()
             .await
             .unwrap();
-        assert!(
-            matches!(&outcome, Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid),
-            "{outcome:?}"
-        );
+        assert_eq!(outcome.unwrap(), Action::Nothing);
+        assert!(trash.is_some());
+        #[cfg(target_os = "macos")]
+        assert!(!can_remove);
         assert!(
             !String::from_utf8_lossy(&alive.stdout).trim().is_empty(),
             "the external service must keep running"
@@ -3598,71 +3273,72 @@ mod tests {
                 .any(|e| e.content.kind == "checkout_process_result"),
             "no signal may be sent to a retained service"
         );
-        assert!(base.exists());
+        assert!(!base.exists());
     }
 
     #[tokio::test]
-    async fn unbound_review_checkout_survives_a_local_writer_and_an_active_child() {
-        let (_home, service) = fixture(GitHub::new("fixture").unwrap());
-        let project = service.fixture();
-        let head = &project.start;
-        let task = Task::new(
-            nucleus_core::Identity {
-                id: "unbound".into(),
-                reference: "unbound".into(),
-                repository: REPOSITORY.into(),
-                base: "main".into(),
-                entry: Entry::ReviewEntry,
-                origin_thread: None,
-            },
-            "Review an existing PR".into(),
-            Some(PullRequest {
-                url: format!("https://github.com/{REPOSITORY}/pull/1"),
-                head: head.clone(),
-            }),
-        );
+    async fn retirement_requires_running_dispatch_quiet_shell_and_published_git_head() {
+        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let head = service.fixture().start.clone();
+        let (forge, _server) = publish_checkout_forge(head.clone()).await;
+        service.forge = forge;
+        service.fixture_mut().acp_provider = Some("fixture".into());
+        let row = cancelled_cleanup_task(&service).await;
         let work = service.worktrees();
         let checkout = work
-            .checkout(&project.checkout, REPOSITORY, "unbound")
+            .checkout(
+                &service.fixture().checkout,
+                REPOSITORY,
+                &row.task.identity().id,
+            )
             .unwrap();
-        checkout.allocate(head).unwrap();
-        let route = service.project_for(task.identity()).await.unwrap();
+        checkout.allocate(&head).unwrap();
+        let route = service.project_for(row.task.identity()).await.unwrap();
         let binding = route.binding(&checkout).unwrap();
         let parent = nucleus_hosts::parent_thread(checkout.path());
-        let shell = |threads| {
+        let mut child = json!({
+            "id":"nested-child", "projectId":binding.project_id,
+            "branch":binding.branch, "worktreePath":binding.worktree_path,
+            "lineage":{"rootThreadId":parent,"parentThreadId":"worker","relationshipToParent":"subagent"},
+            "status":"running", "activeRunId":"active-run",
+            "pendingRuntimeRequest":null,"pendingBackgroundTasks":[]
+        });
+        let shell = |child: &serde_json::Value| {
             service.host.fixture_held_shell(&json!({
-                "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":threads}
+                "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[child]}
             }));
         };
-        shell(json!([]));
-        let mut writer = sleep_in_cwd(checkout.path());
-        let writer_host = service
-            .host
-            .pass(service.storage.scratch().path())
-            .with_fixture_process_cwd(writer.id().unwrap(), checkout.path())
-            .for_task(&task, None);
-        assert!(
-            matches!(service.retire_if_idle(&writer_host, &task, &binding, &checkout, Some(head)).await, Err(ServiceError::CheckoutProcess(blocker)) if Some(blocker.pid) == writer.id())
-        );
-        assert!(checkout.path().exists());
-        writer.kill().await.unwrap();
-        let quiet_host = service.host.fixture_pass().for_task(&task, None);
-        shell(json!([{"id":"active-child","parentThreadId":parent,"status":"running"}]));
+        shell(&child);
         assert!(matches!(
-            service
-                .retire_if_idle(&quiet_host, &task, &binding, &checkout, Some(head))
-                .await,
+            service.archive_done(&row).await,
             Err(ServiceError::Host(HostError::RowChildBusy))
         ));
         assert!(checkout.path().exists());
-        shell(json!([]));
-        assert_eq!(
-            service
-                .retire_if_idle(&quiet_host, &task, &binding, &checkout, Some(head))
-                .await
-                .unwrap(),
-            Some(Retirement::Removed)
-        );
+
+        child["status"] = json!("completed");
+        child["activeRunId"] = serde_json::Value::Null;
+        shell(&child);
+        service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+            mode: DispatchMode::Paused,
+            ..Default::default()
+        });
+        assert!(matches!(
+            service.archive_done(&row).await,
+            Err(ServiceError::ArchiveEvidence(_))
+        ));
+        assert!(checkout.path().exists());
+        service.state.lock().await.settings.dispatch = None;
+
+        let draft = checkout.path().join("unpublished");
+        std::fs::write(&draft, "keep this").unwrap();
+        assert!(matches!(
+            service.archive_done(&row).await,
+            Err(ServiceError::ArchiveEvidence(_))
+        ));
+        assert_eq!(std::fs::read_to_string(&draft).unwrap(), "keep this");
+        std::fs::remove_file(&draft).unwrap();
+
+        assert_eq!(service.archive_done(&row).await.unwrap(), Action::Nothing);
         assert!(!checkout.path().exists());
         assert!(service.host.host_calls().is_empty());
     }

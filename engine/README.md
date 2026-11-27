@@ -90,8 +90,10 @@ directory in `<scratch-root>/quarantine/<task>-<timestamp>`. The existing
 scheduler archive scan removes engine-owned quarantines seven days after the
 timestamp in their name. Unverified entries stay in place. Verified terminal
 checkout retirement renames the checkout into `<work-root>/.trash/<task>-<timestamp>-<seq>/checkout`,
-removes the Git worktree registration, and deletes owned trash entries
-asynchronously in the background.
+then removes the Git worktree registration. Background pruning keeps retired
+checkouts recoverable for at least 24 hours and waits if a process still has
+its working directory in the entry. See the
+[terminal cleanup contract](../docs/knowledge/contracts/orchestration.md#terminal-workspace-cleanup).
 
 ### Stage an engine release
 
@@ -286,10 +288,8 @@ also check the open PR and clean checkout after native authorization.
   claim and first message.
   [Dispatch receipts](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/Orchestrator.ts#L16305)
   [Launch receipts](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/apps/server/src/orchestration-v2/ThreadLaunchService.ts#L1389)
-- `orchestration.subscribeThread` requests a synchronized, full snapshot of the
-  exact thread. Settlement requires coverage of all provider sessions and turn
-  items. Pending tasks and active command, tool and subagent items keep the
-  thread busy. An omitted or windowed roster leaves settlement unknown.
+- `orchestration.subscribeThread` reads a synchronized, bounded projection of
+  the exact thread. Settlement uses the current bound row in the held shell.
   [T3's background-work derivation](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/shared/src/orchestrationV2PendingBackgroundWork.ts#L225)
 - Planner authority uses only the exact thread record from a compact bounded
   snapshot, on scheduler demand. Only notice routing after confirmed absence
@@ -302,21 +302,11 @@ also check the open PR and clean checkout after native authorization.
   request, decision version and selected choice. When T3 supplies that
   evidence, Nucleus will require a direct UI submission for operator-only
   decisions.
-- One working-directory census serves all checkout checks in a scheduler pass.
-  The Mac adapter compares cwd-only `lsof` output with the local user's PID
-  list and checks missing PIDs once. A process in the checkout or run scratch
-  holds retirement. A missing or ambiguous cwd leaves custody unknown.
-  After a launch, further checks need a fresh pass. Run the engine and T3
-  under the same local user with private task checkout roots.
 - Set `NUCLEUS_ENGINE_T3_RUNTIME_DESCRIPTOR` to the connected T3 server's
-  `userdata/server-runtime.json` to recognise standing provider processes.
-  Each pass verifies the descriptor origin and server PID, then follows only
-  direct app-server and helper ancestry. Shells and work spawned by a helper
-  keep custody. Unreadable process facts and conflicting bindings also hold.
-  A standing helper bound to another recorded role of the same task can be
-  excluded when its cwd is inside this checkout and a fresh exact native read
-  confirms that role is idle with no pending work. At checkout removal, every
-  process with a cwd in the checkout or run scratch holds custody.
+  `userdata/server-runtime.json` to recognise standing provider processes
+  during revoked-run custody checks and protect host processes in the terminal
+  sweep. Run the engine and T3 under the same local user with private task
+  checkout roots.
 - `orchestration.dispatchCommand` with `message.dispatch` starts a new turn in
   a retained, idle thread. Reopen an archived thread before reusing it. On
   revocation, clear an unsent request directly and stop a confirmed delivery
@@ -437,9 +427,9 @@ The agent moves there at startup and keeps the launch directory only to
 resolve the session. A held presentation turn never needs files in the checkout.
 
 A new run gets its own `<scratch-root>/r/<12-hex-run-key>` directory. The
-assignment gives its recorded path. The cwd census covers that
-run's checkout and scratch. An existing reservation keeps its original
-scratch path. The shared class root hosts temporary files for the census itself.
+assignment gives its recorded path. An existing reservation keeps its original
+scratch path. The terminal sweep covers the task checkout and recorded run
+scratch. The shared class root hosts temporary files for the census itself.
 
 Role assignments use each member lane's title and aim. Explicit
 `queue.laneDocuments` references pin a version at reservation and give that

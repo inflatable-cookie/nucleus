@@ -160,9 +160,10 @@ Later decisions carry their own attribution.
 
    `hasMoreHistory` describes the history window. `turnItemsOmitLocalVisible`
    describes the compact timeline representation. Native run and request
-   evidence keeps its meaning in either form. Custody checks use the rosters and
-   the held shell's background-work summary for the same settled revision.
-   Workspace custody also needs a quiet local process census. Delivery follows
+   evidence keeps its meaning in either form. Settlement of an observed native
+   run, parent refresh and parent unarchive use the bound held shell row. The
+   row must show no active turn, outstanding request or pending background work
+   at a revision at or after the observed run or thread. Delivery follows
    the matching native run or the command receipt. A missing timeline item
    cannot prove past delivery or absence. T3's `message.dispatch` deduplicates
    the exact frozen command ID, so a parent hold pinned to the ACP provider and
@@ -184,18 +185,6 @@ Later decisions carry their own attribution.
    synchronized shell supplies the known task, reviewer and worker rows and
    rechecks the target before dispatch. Closure follows when all three are
    archived, deleted or absent from the shell.
-
-   The census discards PIDs confirmed absent or zombie at the cwd follow-up.
-   On macOS, the working directory's device and inode can recover its path.
-   If that fails, a device reported for the working directory can rule out an
-   unrelated checkout or run scratch after a bounded directory walk verifies
-   that the device is absent, including from any nested mount. A failed cwd
-   metadata probe supplies no device evidence. An incomplete walk preserves
-   the custody fence.
-   A task's retirement wait names the PID, command and reason. If the census
-   cannot establish a process's cwd, it holds affected retirement and surfaces
-   one Inbox decision for that process across the engine profile. Answers go
-   into history and the decision stays open until fresh evidence clears it.
 
    The same synchronized row keys a decision and its final write fence. It
    confirms a presentation write when it shows the intended change. Planning
@@ -397,10 +386,8 @@ Later decisions carry their own attribution.
     next eligible pass, even at the same task version. Ambiguous delivery keeps
     its readback deadline and may block if it stays unresolved. A completed
     hold uses its own native outcome across subsequent retries and restarts.
-    Retained reads record a missing bounded projection separately from missing
-    idle coverage. Before a missing working directory leaves local custody
-    unknown, the existing targeted cwd check removes exited PIDs and reports
-    the census stage and one still-unverified PID.
+    Retained reads record a missing bounded projection when the shell still
+    lists the thread. Revoked-run custody can still require a local writer check.
     Title, settle and snooze changes preserve matching custody evidence.
     Delivery still checks current binding, requests, children, background
     work and row visibility, including ownership of any snooze it clears.
@@ -423,12 +410,9 @@ Later decisions carry their own attribution.
     background coverage. A stale report about an earlier PR head carries no
     authority at the current head. Fresh role sends can proceed while a
     retained role or local process is still active. A reviewer still needs the
-    exact clean head. Checkout removal and revoked runs still check writer
-    custody. An exact terminal role with no pending native background work
-    releases the parent. A synchronized bound shell can establish an empty
-    background roster after the exact run is terminal. A prepared report
-    reminder does not extend that hold.
-    Local process custody is checked at checkout removal.
+    exact clean head. Revoked runs still check local writer custody. A terminal
+    role releases the parent once the held shell confirms settlement under
+    ruling 11. A prepared report reminder does not extend that hold.
 
     Child activity remains evidence for checkout custody and parent release.
     Task-row visibility follows ruling 22. Operator snoozes keep their horizon.
@@ -469,11 +453,15 @@ Later decisions carry their own attribution.
 
 33. **Sibling sources are pinned, not linked.** Tom, 2026-11-24, to the Acowtancy planner (relayed to the Nucleus planner): "We should be pinning them properly rather than using siblings - longhorn has a newer release (we cut 0.6.0 today and working towards 0.7.0), poodle is fairly stable on its current version..". A task worktree's sibling sources are materialized at the revision the repository pins in its `effigy.toml` `[sources]`, not linked to the operator's local checkout. This differs from TypeScript's `nucleus worktree prepare` symlinks on purpose. A stale pin is the consuming repository's to update. Tom, 2026-11-25, on tasks that pin different revisions of the same sibling: one copy per pin. Each pinned revision materializes in its own directory keyed by commit, so tasks on different pins never share a stale copy.
 
-34. **Archiving a Done task is housekeeping.** (The rule that a process cwd holds checkout removal is amended by ruling 58.) Tom, 2026-11-24: "it shouldn't matter that the workers are archived already. We're just archiving task containers! It's all getting too fiddly." Custody is proven once, when a task's checkout is removed. After that, archiving its threads proves nothing further. The archive step archives each of the task's threads that the held shell shows as present, unarchived and idle. A thread that is already archived, absent or deleted counts as done, with no read. A thread showing activity waits with a plain cause. The task is closed when none of its threads remain unarchived. This replaces family-closure receipts and archive proofs. For owner acceptance of an exact report, the synchronized shell must identify the bound worker and show no running turn or outstanding input. Missing background metadata leaves that acceptance available. Checkout retirement retains its writer and cwd checks.
-   On the volume-wide open-file scan, Tom, 2026-11-25: "That's way too heavy a check - we need to find a better way of doing that". At retirement the held shell supplies role activity, Git supplies publication and worktree state, and one cwd census per pass covers every closing task. A process with its working directory in the checkout or any retained run scratch for the task holds removal. An open file alone does not.
-   At terminal closeout, stop an orphaned process tree only when its root has parent PID 1, its working directory is in the task’s verified checkout or its settled run scratch, and one of its processes runs the task’s own code. Own code means the process’s executable path, or an absolute path argument on its command line, is inside that checkout or scratch. A relative argument does not count, because the inherited cwd would place it in the checkout. Protect T3 and its descendants. Record each process, signal and outcome in task history. This also applies to retained terminal checkouts.
-   A tree whose processes all run external programs and only inherited the cwd is a shared service that merely started there. Leave it running and record each process’s PID and command in task history as `checkout_process_retained`. Its cwd keeps the checkout held, and the wait names the PID. The operator restarts that service; Nucleus never stops it. (Clarified 2026-11-26, nucleus#1594.)
-   One exception to protecting T3’s descendants: once every task role has ended, closeout stops the helpers a provider app-server left in the checkout or run scratch. The app-server and T3 stay protected. The [terminal-cleanup contract](../contracts/orchestration.md#terminal-workspace-cleanup) names the evidence. (Planner brief, 2026-11-27, nucleus#1630.)
+34. **Archiving a Done task is housekeeping.** Tom, 2026-11-24. The held
+    shell identifies the task's unarchived idle threads. An already archived,
+    absent or deleted thread counts as done without a read. An active thread
+    waits with a plain cause. For owner acceptance of an exact report, the
+    synchronized shell must identify the bound worker and show no running turn
+    or outstanding input. Missing background metadata leaves that acceptance
+    available. Ruling 58 owns checkout retirement. The
+    [terminal-cleanup contract](../contracts/orchestration.md#terminal-workspace-cleanup)
+    specifies which processes the sweep can signal and what evidence it records.
 
 
 35. **A lubricated workflow.** (Parent-hold delivery parts amended by ruling 57; operator-snooze delivery rule replaced by ruling 62.) Tom, 2026-11-24: "We need to apply this kind of thinking all the way through the workflow - 'lubricate' the whole thing so we stop getting stuck like this." Ruling 34's principle applies to every step:

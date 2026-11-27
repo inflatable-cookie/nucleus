@@ -268,18 +268,11 @@ when to ask the planner.
 
 Archive a terminal task’s exact idle thread from its synchronized T3 project, worktree and branch binding. Recheck Dispatch and the idle thread at the write. The registered directory may have moved.
 The board and Next retain the workspace outcome. Before removing a checkout,
-verify idle participants in the held shell, Dispatch, the Git registration and
-published head. Each pass shares one census of the local user’s working
-directories. A PID in the checkout or run scratch holds removal and appears in
-the wait detail. At terminal closeout, Nucleus stops a process tree rooted in the checkout
-or the task’s recorded run scratch, orphaned to PID 1, when one of its processes
-runs the task’s own code: its executable or an absolute argument names a path
-inside that checkout or scratch. It records the signal outcomes in task history.
-A tree that only inherited the cwd is a shared service. Nucleus leaves it running,
-records its PIDs and commands in task history, and keeps the checkout held by
-PID until the operator restarts it. Host processes and their descendants stay
-protected, apart from finished provider helpers. An incomplete census keeps the
-checkout.
+verify Dispatch, quiet participants in the held shell, the Git registration
+and the published head. One best-effort sweep while all task threads are quiet
+stops orphaned process trees rooted in the verified checkout or recorded run
+scratch when an executable or absolute argument names the task's own code
+there. Nucleus records signal outcomes and leaves shared services running.
 A provider app-server starts MCP helpers in a session’s working directory and can
 leave them running after the session ends. At terminal closeout, once the held
 shell shows every task role and the parent’s children quiet, Nucleus stops a
@@ -289,9 +282,8 @@ than the checkout directory was created. A provider app-server is a direct child
 of the verified T3 server whose executable is named `codex` and whose first
 argument is `app-server`. The helper’s descendants with a cwd in those roots stop
 with it. Each signal rechecks identity, parentage and cwd, and task history records
-the PID, command, signal and outcome. A running role keeps the helpers and the
-wait names them. Nucleus never signals the app-server, T3, or a process whose cwd
-is outside those roots. T3 unloads the Codex thread itself when it idles, settles
+the PID, command, signal and outcome. Nucleus leaves helpers running while a role
+is active and protects the app-server and T3. T3 unloads the Codex thread itself when it idles, settles
 or archives, and only T3 holds the app-server connection, so the signals cover
 what that leaves behind. See
 [provider helpers](../../../engine/crates/nucleus-hosts/src/process/orphans/helpers.rs).
@@ -300,14 +292,18 @@ head to the task’s recorded head. An unavailable read leaves the checkout in
 place. The task and project fences span removal. Clean worktrees and checkouts
 with only unstaged deletions of files at that exact published head retire by
 atomically renaming the directory into same-volume trash under the work root,
-removing the Git worktree registration, and deleting the trash asynchronously.
+then removing the Git worktree registration. The trash is recoverable for at
+least 24 hours. The background prune keeps entries with a process working
+directory or unresolved cwd evidence. An incomplete process sweep or census
+does not delay task closeout.
 An interrupted cleanup whose `.git` file was already unlinked still proves
 custody through its matching prunable Git registration. Git-ignored output goes
 with the checkout. Modified, added, non-ignored untracked or uncertain contents
 retain it. A cancelled task retires a clean or deletion-only checkout once its
 HEAD is proved published on an origin branch.
-Already archived, absent and deleted threads count
-as settled. An active thread waits. See [Spec 070 rulings 34 and 35](../specs/070-small-engine.md#rulings)
+Already archived, absent and deleted threads count as settled for archival.
+Retirement waits while a listed task thread is active or has unknown activity.
+See [Spec 070 rulings 34 and 58](../specs/070-small-engine.md#rulings)
 and [worktree custody](../../../engine/crates/nucleus-work/src/lib.rs).
 
 ### Published source

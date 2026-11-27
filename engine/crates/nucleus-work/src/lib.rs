@@ -30,8 +30,7 @@ const QUARANTINE_REF: &str = "--format=%(refname)%00%(objectname)%00%(symref)%00
 const TRASH: &str = ".trash";
 const TRASH_CHECKOUT: &str = "checkout";
 const TRASH_MARKER: &str = ".nucleus-trash";
-// Grace window before sweeping a trash entry whose checkout rename has not completed yet.
-const TRASH_ORPHAN_GRACE_MS: u64 = 60_000;
+const TRASH_RETENTION_MS: u64 = 24 * 60 * 60 * 1000;
 static TRASH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 // Keep Git's bounded command runner without collecting one filename per entry.
 // `ls-files` quotes embedded newlines. Its records cannot look like the marker
@@ -333,11 +332,15 @@ pub fn prune_quarantines(scratch: &StorageDirectory, now_ms: u64) -> Result<(), 
     Ok(())
 }
 
-/// Remove owned retired checkout trees staged in the work volume's trash directory.
+/// Remove owned trash entries at least 24 hours old when the caller clears their custody.
 ///
 /// # Errors
 /// Returns an error if the work root or a verified trash removal cannot be completed.
-pub fn prune_trash(work: &StorageDirectory, now_ms: u64) -> Result<(), WorkError> {
+pub fn prune_trash(
+    work: &StorageDirectory,
+    now_ms: u64,
+    mut can_remove: impl FnMut(&Path) -> bool,
+) -> Result<(), WorkError> {
     let root = work.path().join(TRASH);
     if missing(&root)? {
         return Ok(());
@@ -354,9 +357,10 @@ pub fn prune_trash(work: &StorageDirectory, now_ms: u64) -> Result<(), WorkError
         let Some(name) = name.to_str() else {
             continue;
         };
-        let Some(at) = trash_timestamp_ms(name) else {
+        if trash_timestamp_ms(name).is_none_or(|at| now_ms.saturating_sub(at) < TRASH_RETENTION_MS)
+        {
             continue;
-        };
+        }
         let entry_path = entry.path();
         let Ok(entry_info) = entry_path.symlink_metadata() else {
             continue;
@@ -370,12 +374,10 @@ pub fn prune_trash(work: &StorageDirectory, now_ms: u64) -> Result<(), WorkError
             Err(error) if error.kind() == ErrorKind::NotFound => None,
             Ok(_) | Err(_) => continue,
         };
-        // Avoid racing with an in-progress move into a newly created trash entry.
-        if checkout_info.is_none() && now_ms.saturating_sub(at) < TRASH_ORPHAN_GRACE_MS {
-            continue;
-        }
         let marker = entry_path.join(TRASH_MARKER);
-        if !owns_trash(&marker, name, &entry_info, checkout_info.as_ref()) {
+        if !owns_trash(&marker, name, &entry_info, checkout_info.as_ref())
+            || !can_remove(&entry_path)
+        {
             continue;
         }
         if checkout_info.is_some() {
@@ -686,7 +688,7 @@ impl Checkout<'_> {
         };
         self.require_unlocked(&admin)?;
         let _step = self.admit()?;
-        self.remove(&["--force"])?;
+        self.remove(&[])?;
         Ok(Retirement::Removed)
     }
 
@@ -993,7 +995,7 @@ impl Checkout<'_> {
     }
 
     /// Remove an idle checkout only if it is still clean at the published head.
-    /// The caller establishes that its turn and tools have stopped.
+    /// The caller establishes quiet task threads and current Dispatch admission.
     ///
     /// # Errors
     /// Returns an error if the checkout cannot be verified or Git refuses removal.
@@ -1096,9 +1098,10 @@ impl Checkout<'_> {
         if !missing(&self.path)? {
             return Err(WorkError::WrongCheckout);
         }
-        // A refusal here leaves a prunable registration, which the next pass retires.
+        // A refusal leaves a prunable registration. Git must also refuse a
+        // directory recreated by a late write between the path check and removal.
         let _step = self.admit()?;
-        self.remove(&["--force"])?;
+        self.remove(&[])?;
         Ok(Retirement::Removed)
     }
 

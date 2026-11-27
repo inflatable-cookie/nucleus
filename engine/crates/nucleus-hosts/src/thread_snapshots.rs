@@ -71,7 +71,7 @@ impl<'a> ShellCustody<'a> {
             && row.get("pendingRuntimeRequest").is_some_and(Value::is_null)
             && matches!(
                 row["status"].as_str(),
-                Some("idle" | "completed" | "failed" | "interrupted" | "cancelled")
+                Some("idle" | "completed" | "failed" | "interrupted" | "cancelled" | "rolled_back")
             )
         {
             RowChildren::Quiet
@@ -259,7 +259,9 @@ impl ThreadSnapshots {
     pub(crate) fn children(&self, parent: &str) -> impl Iterator<Item = &str> {
         self.rows.iter().filter_map(move |(id, row)| {
             (row["deletedAt"].is_null()
-                && (row["parentThreadId"] == parent || row["lineage"]["parentThreadId"] == parent))
+                && (row["parentThreadId"] == parent
+                    || row["lineage"]["parentThreadId"] == parent
+                    || (id != parent && row["lineage"]["rootThreadId"] == parent)))
                 .then_some(id.as_str())
         })
     }

@@ -3070,7 +3070,7 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
 
     let trash_root = service.storage.work().path().join(".trash");
     assert!(trash_root.is_dir());
-    nucleus_work::prune_trash(service.storage.work(), crate::now_ms()).unwrap();
+    nucleus_work::prune_trash(service.storage.work(), u64::MAX, |_| true).unwrap();
     assert_eq!(std::fs::read_dir(&trash_root).unwrap().count(), 0);
     server.abort();
 }

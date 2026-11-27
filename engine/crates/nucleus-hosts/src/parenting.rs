@@ -5,10 +5,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use nucleus_core::{
-    RetainedThread,
-    acp::{REFRESH_TASK_ROW, session_id},
-};
+use nucleus_core::acp::{REFRESH_TASK_ROW, session_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -306,9 +303,7 @@ fn parent_hold(
 }
 
 fn parent_row_matches(row: &Value, binding: &Binding, provider: &str) -> bool {
-    row["projectId"] == binding.project_id
-        && row["worktreePath"] == binding.worktree_path
-        && row["branch"] == binding.branch
+    binding.matches_shell_row(row)
         && row["parentThreadId"].is_null()
         && row["lineage"]["parentThreadId"].is_null()
         && row["providerInstanceId"] == provider
@@ -365,9 +360,14 @@ async fn initial_parent<'a>(
     Ok(ParentStep::Write(write))
 }
 
-fn unarchive_parent(binding: &Binding, thread: String, sequence: u64) -> ParentWrite {
+fn unarchive_parent(
+    binding: &Binding,
+    provider: &str,
+    thread: String,
+    sequence: u64,
+) -> ParentWrite {
     let payload = json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")});
-    let mut write = ParentWrite::new(binding, "", Method::Continue, payload);
+    let mut write = ParentWrite::new(binding, provider, Method::Continue, payload);
     write.idle_at = Some((thread, sequence));
     write
 }
@@ -385,23 +385,22 @@ impl T3 {
     /// Returns an error if the shell lost synchronization or a listed thread is not quiet.
     pub fn retire_with_quiet_shell<T>(
         &self,
+        binding: &Binding,
         parent: &str,
         roles: &[&str],
         retire: impl FnOnce() -> T,
     ) -> Result<T, HostError> {
         self.rpc.with_shell(|shell| {
             let shell = shell.ok_or(HostError::Uncertain)?;
-            let quiet = roles
-                .iter()
-                .copied()
-                .chain(shell.children(parent))
-                .all(|id| {
-                    shell.marker(id).is_none_or(|row| {
-                        !row["deletedAt"].is_null() || row_activity(&row) == RowChildren::Quiet
-                    })
-                });
-            if !quiet {
-                return Err(HostError::RowChildBusy);
+            for id in roles.iter().copied().chain(shell.children(parent)) {
+                if let Some(row) = shell.marker(id).filter(|row| row["deletedAt"].is_null()) {
+                    if row_activity(&row) != RowChildren::Quiet {
+                        return Err(HostError::RowChildBusy);
+                    }
+                    if !binding.matches_shell_row(&row) {
+                        return Err(HostError::Binding);
+                    }
+                }
             }
             Ok(retire())
         })
@@ -422,31 +421,17 @@ impl T3 {
             return Ok(None);
         };
         projection.require_parent_provider(provider)?;
-        if projection.archived()
-            || matches!(
-                projection.retained(),
-                Ok(RetainedThread::Busy | RetainedThread::Gone)
-            )
-        {
-            return Ok(None);
-        }
         let Some(row) = projection.row_observation()? else {
             return Ok(None);
         };
         let Some(shell) = fence.row.filter(|listed| {
             projection.matches_shell_revision(listed)
-                && row_activity(listed) == RowChildren::Quiet
+                && self.quiet_row_at(&thread, projection.sequence(), |row| row == listed.as_ref())
                 && crate::task_row::visibility(listed).ok() == Some(row.visibility)
         }) else {
             return Ok(None);
         };
-        projection
-            .delivery_custody()
-            .map_err(|predicate| HostError::ParentPreflight {
-                predicate,
-                prepared: row.sequence,
-                observed: Some(row.sequence),
-            })?;
+        self.retire_with_quiet_shell(binding, &thread, &[&thread], || ())?;
         let command = format!("{thread}-refresh-{}", row.sequence);
         let mut write = ParentWrite::new(
             binding,
@@ -759,11 +744,15 @@ impl T3 {
             }
             let sequence = projection.sequence();
             if projection.archived() {
-                if projection.retained()? != RetainedThread::Idle {
+                if !self.quiet_row_at(&thread, sequence, |row| {
+                    !row["archivedAt"].is_null()
+                        && row["deletedAt"].is_null()
+                        && parent_row_matches(row, binding, provider)
+                }) {
                     return Ok(ParentStep::Wait);
                 }
                 return Ok(ParentStep::Write(unarchive_parent(
-                    binding, thread, sequence,
+                    binding, provider, thread, sequence,
                 )));
             }
             if replay
@@ -1035,19 +1024,24 @@ impl T3 {
         self.observe_thread(binding, thread, policy).await
     }
 
-    async fn check_unarchive(&self, write: &ParentWrite) -> Result<(), HostError> {
-        if let Some((thread, sequence)) = &write.idle_at {
-            let fresh = self.thread(&write.wire.binding, thread).await?;
-            let observed = fresh.as_ref().map(Projection::sequence);
-            if fresh.is_none_or(|fresh| fresh.retained().ok() != Some(RetainedThread::Idle))
-                || observed != Some(*sequence)
-            {
-                return Err(HostError::ParentPreflight {
-                    predicate: "idle custody or exact revision changed for unarchive",
-                    prepared: *sequence,
-                    observed,
-                });
-            }
+    fn check_unarchive(
+        &self,
+        binding: &Binding,
+        provider: &str,
+        idle_at: Option<&(String, u64)>,
+    ) -> Result<(), HostError> {
+        if let Some((thread, sequence)) = idle_at
+            && !self.quiet_row_at(thread, *sequence, |row| {
+                !row["archivedAt"].is_null()
+                    && row["deletedAt"].is_null()
+                    && parent_row_matches(row, binding, provider)
+            })
+        {
+            return Err(HostError::ParentPreflight {
+                predicate: "held shell has no current quiet archived row",
+                prepared: *sequence,
+                observed: self.rpc.thread_row_with_revision(thread).1,
+            });
         }
         Ok(())
     }
@@ -1080,9 +1074,6 @@ impl T3 {
         if write.ended_hold().is_some_and(|ended| ended.unchanged) {
             return Err(ParentSendError::NotSent(HostError::Uncertain));
         }
-        self.check_unarchive(&write)
-            .await
-            .map_err(ParentSendError::NotSent)?;
         let expects_receipt = write.starts_turn();
         let thread_id = write.thread_id().map(str::to_owned);
         let launch_provider =
@@ -1099,6 +1090,11 @@ impl T3 {
                 Read::One,
                 write.runtime.as_deref(),
                 || {
+                    self.check_unarchive(
+                        &write.wire.binding,
+                        &write.wire.provider,
+                        write.idle_at.as_ref(),
+                    )?;
                     if let Some(runtime) = &write.runtime
                         && self.parent_runtime_hint().as_ref() != Some(runtime)
                     {
@@ -1116,6 +1112,12 @@ impl T3 {
                     if let (Some(delivery), Some(thread)) = (&write.delivery, thread_id.as_deref())
                     {
                         self.check_delivery_shell(thread, delivery, &write.owned_snoozes)?;
+                        self.retire_with_quiet_shell(
+                            &write.wire.binding,
+                            thread,
+                            &[thread],
+                            || (),
+                        )?;
                     }
                     if hold.is_some() && self.rpc.uses_held_shell() {
                         let thread = thread_id.as_deref().ok_or(HostError::Binding)?;
