@@ -358,12 +358,12 @@ impl Service {
                         && let Err(error) =
                             self.save_tell(tell_rows(&row), TellDispatch::Defer).await
                     {
-                        eprintln!("project tell {}: {error}", row.id);
+                        nucleus_hosts::service_log!("project tell {}: {error}", row.id);
                         tokio::time::sleep(Duration::from_secs(5)).await;
                     }
                 }
                 Err(error) => {
-                    eprintln!("project tell queue: {error}");
+                    nucleus_hosts::service_log!("project tell queue: {error}");
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             }
@@ -669,7 +669,9 @@ impl Service {
             repo.path.clone()
         };
         if let Some(path) = &target.worktree_path {
-            return Ok(self.verify_linked_checkout(root, path.into()).await?);
+            return Ok(self
+                .verify_linked_checkout(&row.id, root, path.into())
+                .await?);
         }
         Ok(true)
     }

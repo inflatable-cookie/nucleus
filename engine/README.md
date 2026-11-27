@@ -514,7 +514,8 @@ as `nucleus serve`. It reuses a healthy listener only when its controller
 credential and database path match. When the port is absent, it serializes
 startup and passes the lock to the detached engine. A later ACP launch can
 recover a stopped service. Keep the serve launcher's log under the configured
-log root.
+log root. Each service log line starts with a UTC timestamp. The pass also logs
+once when one task has held it for a minute, naming the task and the step.
 
 ### Set up T3
 

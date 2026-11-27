@@ -1,0 +1,1 @@
+The engine keeps answering when the work volume drops out. Health, task reads and run reports no longer wait on checkout work, affected tasks retry until the volume returns (including after a remount, with no restart), and service log lines carry UTC timestamps.

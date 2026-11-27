@@ -48,6 +48,22 @@ pub use parenting::{
     ParentSendError, ParentStep, ParentWrite, is_parent_reentry, is_pinned_parent_hold,
     parent_thread,
 };
+/// Write one timestamped line to the service log. Use [`service_log!`].
+pub fn write_service_log(message: std::fmt::Arguments<'_>) {
+    let at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default();
+    eprintln!("{at} {message}");
+}
+
+/// A timestamped `eprintln!` for the running service.
+#[macro_export]
+macro_rules! service_log {
+    ($($message:tt)*) => {
+        $crate::write_service_log(format_args!($($message)*))
+    };
+}
+
 /// A link within the same T3 environment as the task thread.
 #[must_use]
 pub fn thread_link(thread: &str) -> Option<String> {
@@ -914,9 +930,11 @@ impl T3Pass<'_> {
                 runtime.extend(helpers);
             }
         }
-        Ok(inventory
-            .writer(checkout, self.run_scratch.as_deref(), &runtime)?
-            .is_none())
+        let scratch = self.run_scratch.as_deref();
+        process::verify_roots(&[Some(checkout), scratch])
+            .await
+            .map_err(process::coverage_error)?;
+        Ok(inventory.writer(checkout, scratch, &runtime)?.is_none())
     }
 
     async fn process_inventory(&self) -> Result<&Inventory, HostError> {
@@ -943,9 +961,11 @@ impl T3Pass<'_> {
 
 impl TaskHost for T3Pass<'_> {
     async fn retirement_writer(&self, root: &Path) -> Result<Option<u32>, HostError> {
-        self.process_inventory()
-            .await?
-            .writer(root, None, &std::collections::HashSet::new())
+        let inventory = self.process_inventory().await?;
+        process::verify_roots(&[Some(root)])
+            .await
+            .map_err(process::coverage_error)?;
+        inventory.writer(root, None, &std::collections::HashSet::new())
     }
 
     async fn terminal_orphans(
@@ -1250,13 +1270,15 @@ impl TaskHost for T3Pass<'_> {
             })
             .await;
         match &reply {
-            Ok(Reply::Failure(cause)) => eprintln!(
+            Ok(Reply::Failure(cause)) => crate::service_log!(
                 "{}: T3 {} refused with {:?}",
                 dispatch.instance,
                 wire.diagnostic(),
                 self.host.rpc.failure_detail(cause)
             ),
-            Err(error) => eprintln!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic()),
+            Err(error) => {
+                crate::service_log!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic());
+            }
             Ok(Reply::Value(_)) => {}
         }
         if matches!(&reply, Ok(Reply::Failure(cause)) if rejected(cause, &wire, &dispatch.instance))

@@ -979,7 +979,7 @@ async fn persistent_workspace_error_parks_and_owner_recheck_observes_one_repair(
     .await;
     let (_home, service) = fixture(forge);
     let head = &service.fixture().start;
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, "unreadable")
         .unwrap();
@@ -2898,7 +2898,7 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
     let (forge, readable, _, reads, server) = serve_merged_forge(&service.fixture().start).await;
     service.forge = forge;
     let draft = {
-        let work = service.worktrees().unwrap();
+        let work = service.worktrees();
         let project = service.fixture();
         let identity = second.task.identity();
         let checkout = work
@@ -3018,7 +3018,7 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
     service.forge = forge;
 
     let checkout_path = {
-        let work = service.worktrees().unwrap();
+        let work = service.worktrees();
         let project = service.fixture();
         let identity = done.task.identity();
         let checkout = work
@@ -3163,7 +3163,7 @@ async fn archive_shell_fixture(
     impl Fn(&T3, Option<&str>) + use<>,
     tokio::task::JoinHandle<()>,
 ) {
-    let worktrees = service.worktrees().expect("worktree scope");
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(
             &service.fixture().checkout,

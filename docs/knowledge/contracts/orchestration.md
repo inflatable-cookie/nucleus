@@ -128,6 +128,21 @@ start. Workspace observation errors receive the bounded recheck in
 [Spec 070 ruling 37](../specs/070-small-engine.md#rulings).
 After repairing the checkout, the owner can use Recheck at the version shown by Next. See the [worktree implementation](../../../engine/crates/nucleus-work/src/lib.rs).
 
+### Work volume outages
+
+Checkout, run scratch and checkout Git calls run off the engine's request
+threads, outside the state lock and under a deadline. API reads and run reports
+answer while such a call waits, and the pass rechecks the task row before its
+next send. A call past its deadline keeps its task waiting until it returns, and
+it starts no removal or rename afterwards.
+
+A task whose work volume or layout cannot be verified waits with that reason and
+retries with a delay that doubles to one minute. This wait never becomes a
+blocked checkout, and an absent path under an unverified root is not evidence of
+absence. The engine creates the work root at startup and during allocation. A
+remounted Barge class resumes when it has the same directory and volume ID. See
+the [work volume gate](../../../engine/crates/nucleus-service/src/volume.rs).
+
 ## Worker run
 
 [The Nucleus skill](../../../skills/nucleus/SKILL.md#run-protocol) owns shared

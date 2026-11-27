@@ -10,13 +10,14 @@ use nucleus_store::{
     DispatchMode, EventDraft, StoreError, TaskRow,
     planning::{Lane, WriteAt},
 };
-use nucleus_work::Checkout;
+use nucleus_work::{Checkout, WorkError};
 
 use crate::{
     ControllerScope, Service, ServiceError, State,
     acp::{self, WriteAccess},
     diagnostics::StateGuard,
     event, now_ms,
+    volume::Limit,
 };
 
 #[derive(Clone, Copy)]
@@ -246,7 +247,7 @@ impl Service {
         expected: Option<&Head>,
     ) -> Result<Head, ServiceError> {
         let route = self.project_for(identity).await?;
-        let worktrees = self.worktrees()?;
+        let worktrees = self.worktrees();
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
         let local = self.verify_route(identity, &route).await?;
         let branches = report_branches(identity, &checkout)?;
@@ -256,13 +257,30 @@ impl Service {
                 "origin integration head changed from the requested planning commit".into(),
             ));
         }
-        if checkout.require_commit(&head).is_err() {
-            return Err(ServiceError::ReportInput(format!(
-                "fetch origin/{} in the registered repository to make the pinned commit {head} available",
-                identity.base
-            )));
+        let step = "reading the integration checkout";
+        let pinned = head.clone();
+        let present = self
+            .checkout_job(&checkout, step, Limit::Check, move |checkout| {
+                checkout.require_commit(&pinned)
+            })
+            .await;
+        match present {
+            Ok(()) => {}
+            Err(error @ WorkError::Storage(_)) => return Err(error.into()),
+            Err(_) => {
+                return Err(ServiceError::ReportInput(format!(
+                    "fetch origin/{} in the registered repository to make the pinned commit {head} available",
+                    identity.base
+                )));
+            }
         }
-        if !checkout.integration_clean()? || !checkout.contains(&local, &head)? {
+        let pinned = head.clone();
+        let published = self
+            .checkout_job(&checkout, step, Limit::Check, move |checkout| {
+                Ok(checkout.integration_clean()? && checkout.contains(&local, &pinned)?)
+            })
+            .await?;
+        if !published {
             return Err(ServiceError::ReportInput(
                 "report-only admission requires a clean, published integration checkout".into(),
             ));
@@ -285,7 +303,7 @@ impl Service {
         key: &str,
         update: Option<(u64, String)>,
     ) -> Result<Lane, ServiceError> {
-        let _fence = self.fence(id).await;
+        let _fence = self.report_fence(id).await;
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let row = self.lookup(&state, id)?;
@@ -424,7 +442,7 @@ impl Service {
     async fn verify_report_completion(&self, task: &Task) -> Result<(), ServiceError> {
         let identity = task.identity();
         let route = self.project_for(identity).await?;
-        let worktrees = self.worktrees()?;
+        let worktrees = self.worktrees();
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
         let binding = self.checkout_binding(identity, &route, &checkout)?;
         let branches = report_branches(identity, &checkout)?;
@@ -623,8 +641,8 @@ impl Service {
         let head = match self.observe_checkout_for_retirement(checkout).await? {
             Workspace::Absent => return Ok(None),
             Workspace::Dirty => {
-                checkout
-                    .deletion_only_head()?
+                self.deletion_only_head(checkout)
+                    .await?
                     .ok_or(ServiceError::ReportCheckout(
                         "the retained checkout contains local changes",
                     ))?
@@ -635,12 +653,30 @@ impl Service {
         let route = self.project_for(identity).await?;
         self.checkout_binding(identity, &route, checkout)?;
         self.verify_route(identity, &route).await?;
-        for bound in std::iter::once(&report.planning_base).chain(&report.reported_heads) {
-            if !checkout.contains(bound, &head)? {
-                return Err(ServiceError::ReportCheckout(
-                    "the checkout does not contain its planning and authenticated report heads",
-                ));
-            }
+        let bounds: Vec<_> = std::iter::once(&report.planning_base)
+            .chain(&report.reported_heads)
+            .cloned()
+            .collect();
+        let tip = head.clone();
+        let contains = self
+            .checkout_job(
+                checkout,
+                "comparing report heads",
+                Limit::Check,
+                move |checkout| {
+                    for bound in &bounds {
+                        if !checkout.contains(bound, &tip)? {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                },
+            )
+            .await?;
+        if !contains {
+            return Err(ServiceError::ReportCheckout(
+                "the checkout does not contain its planning and authenticated report heads",
+            ));
         }
         if self
             .is_published_checkout(identity, checkout, &head)
@@ -686,7 +722,16 @@ impl Service {
             }
         });
         for (branch, tip) in advertised {
-            let contained = match checkout.contains(head, &tip) {
+            let (ancestor, descendant) = (head.clone(), tip.clone());
+            let local = self
+                .checkout_job(
+                    checkout,
+                    "comparing published heads",
+                    Limit::Check,
+                    move |checkout| checkout.contains(&ancestor, &descendant),
+                )
+                .await;
+            let contained = match local {
                 Ok(contained) => contained,
                 Err(_) => self.forge.contains(branches, head, &tip).await?,
             };

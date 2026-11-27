@@ -2,6 +2,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use longhorn_git_workspace::{GitCredential, GitFailure, GitPolicy};
@@ -49,7 +50,8 @@ fn worktrees_with_policy<'a>(
         })
         .expect("save fixture settings");
     let storage = settings.storage().expect("resolve storage");
-    Worktrees::new(&storage, policy, redactor).expect("work root")
+    storage.work().ensure().expect("work root");
+    Worktrees::new(&storage, policy, redactor)
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -719,12 +721,15 @@ fn a_clean_head_moved_after_preparation_remains_in_custody() {
         .checkout(&repo, "example/fixture", "task-moved")
         .unwrap();
     checkout.allocate(&published).unwrap();
-    let retire = checkout.prepare_retirement(&published).unwrap();
+    let observed = checkout.observe_for_retirement().unwrap();
     git(
         checkout.path(),
         &["commit", "--allow-empty", "-m", "Unpublished"],
     );
-    assert_eq!(retire().unwrap(), Retirement::Retained);
+    assert_eq!(
+        checkout.finish_retirement(observed, &published).unwrap(),
+        Retirement::Retained
+    );
     assert!(checkout.path().is_dir());
 }
 
@@ -952,4 +957,54 @@ fn retire_refuses_locked_worktree_without_moving_directory() {
     assert!(checkout.retire(&head).is_err());
     assert!(checkout.path().is_dir());
     assert!(checkout.path().join("README.md").is_file());
+}
+
+#[test]
+fn an_abandoned_job_removes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let head = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-abandoned")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    let observed = checkout.observe_for_retirement().unwrap();
+    let redactor = Redactor::new([], RedactionRules::common());
+    let published = head.clone();
+    let job = checkout.job(LocalGit, redactor, move |checkout| {
+        checkout.finish_retirement(observed, &published)
+    });
+
+    // The caller stopped waiting before the call reached its rename.
+    let abandoned = Arc::new(AtomicBool::new(true));
+    assert!(matches!(job(abandoned), Err(WorkError::Storage(_))));
+    assert!(checkout.path().join(".git").is_file());
+    assert_eq!(checkout.retire(&head).unwrap(), Retirement::Removed);
+}
+
+#[test]
+fn a_missing_work_root_is_unavailable_rather_than_an_absent_checkout() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let head = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-outage")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    let work = checkout.path().ancestors().nth(2).unwrap().to_owned();
+    let away = root.path().join("work-away");
+    fs::rename(&work, &away).unwrap();
+
+    assert!(matches!(checkout.observe(), Err(WorkError::Storage(_))));
+    assert!(matches!(
+        checkout.allocate(&head),
+        Err(WorkError::Storage(_))
+    ));
+    assert!(matches!(checkout.retire(&head), Err(WorkError::Storage(_))));
+    assert!(!work.exists());
+
+    fs::rename(&away, &work).unwrap();
+    assert_eq!(checkout.observe().unwrap(), Workspace::Clean(head));
 }

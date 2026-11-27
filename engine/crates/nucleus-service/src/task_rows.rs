@@ -244,7 +244,7 @@ impl Service {
             let due = match Box::pin(self.reconcile_task_row(&id, provider, thread)).await {
                 Ok(due) => due,
                 Err(error) => {
-                    eprintln!("{thread}: {error}");
+                    nucleus_hosts::service_log!("{thread}: {error}");
                     Some(self.visibility_now() + RECHECK_MS)
                 }
             };
@@ -315,7 +315,7 @@ impl Service {
         let task = &row.task;
         let identity = task.identity();
         let route = self.project_for(identity).await?;
-        let work = self.worktrees()?;
+        let work = self.worktrees();
         let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
         let binding = route.binding(&checkout)?;
         let Some(target) = route

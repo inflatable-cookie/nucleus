@@ -10,9 +10,9 @@ use nucleus_core::{Head, Identity, Role};
 use nucleus_forge::Branches;
 use nucleus_hosts::{Binding, HostError, RoleProfile};
 use nucleus_store::RepositorySettings;
-use nucleus_work::Checkout;
+use nucleus_work::{Checkout, WorkError};
 
-use crate::{Service, ServiceError, State};
+use crate::{Service, ServiceError, State, volume::Limit};
 
 const FIXTURE_REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 
@@ -165,18 +165,31 @@ impl Service {
         let checkout = route.checkout.clone();
         let base = identity.base.clone();
         let git = self.git.clone();
-        tokio::task::spawn_blocking(move || verify_repository(&repository, &checkout, &base, &git))
+        self.volume
+            .run(
+                &identity.id,
+                "verifying the project checkout",
+                Limit::Check,
+                move |_| verify_repository(&repository, &checkout, &base, &git),
+            )
             .await
-            .map_err(|_| ServiceError::Project)?
+            .map_err(WorkError::from)?
     }
 
     pub(super) async fn verify_linked_checkout(
         &self,
+        owner: &str,
         project: PathBuf,
         checkout: PathBuf,
     ) -> Result<bool, HostError> {
         let git = self.git.clone();
-        tokio::task::spawn_blocking(move || linked_checkout(&project, &checkout, &git))
+        self.volume
+            .run(
+                owner,
+                "verifying a linked checkout",
+                Limit::Check,
+                move |_| linked_checkout(&project, &checkout, &git),
+            )
             .await
             .map_err(|_| HostError::Uncertain)?
     }
@@ -563,7 +576,7 @@ mod tests {
             "Add a synthetic greeting.".into(),
             None,
         );
-        let worktrees = service.worktrees().expect("worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,

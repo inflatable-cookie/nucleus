@@ -6,7 +6,10 @@ use std::{
     io::{ErrorKind, Read, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -129,19 +132,11 @@ pub enum Retirement {
     Removed,
 }
 
-/// Select the checkout evidence required by a read-only observation.
-#[derive(Debug, Clone, Copy)]
-pub enum CheckoutObservation {
-    /// Require the normal linked checkout.
-    Standard,
-    /// Also recognize interrupted removal with a prunable Git registration.
-    Retirement,
-}
-
 pub struct Worktrees<'a> {
     root: StorageDirectory,
     scratch: StorageDirectory,
     git: Git<'a>,
+    abandoned: Arc<AtomicBool>,
 }
 
 pub struct Checkout<'a> {
@@ -336,22 +331,17 @@ pub fn checkout_path(root: &Path, repository: &str, task: &str) -> PathBuf {
 }
 
 impl<'a> Worktrees<'a> {
-    /// Bind all checkouts to the configured root and caller's Git policy.
-    ///
-    /// # Errors
-    /// Returns an error if the root cannot be created or resolved.
-    pub fn new(
-        storage: &EngineStorage,
-        policy: &'a dyn GitPolicy,
-        redactor: Redactor,
-    ) -> Result<Self, WorkError> {
-        let root = storage.work().clone();
-        root.ensure()?;
-        Ok(Self {
-            root,
+    /// Bind all checkouts to the configured root and caller's Git policy. This
+    /// touches nothing: each operation verifies the root, which only an
+    /// allocation recreates.
+    #[must_use]
+    pub fn new(storage: &EngineStorage, policy: &'a dyn GitPolicy, redactor: Redactor) -> Self {
+        Self {
+            root: storage.work().clone(),
             scratch: storage.scratch().clone(),
             git: Git::new(policy, redactor),
-        })
+            abandoned: Arc::default(),
+        }
     }
 
     /// Resolve a deterministic path and branch for a task without allocating it.
@@ -397,60 +387,49 @@ impl Checkout<'_> {
         &self.branch
     }
 
-    /// Prepare a read-only checkout observation for a blocking executor.
-    pub fn observation_job<P: GitPolicy + Send + 'static>(
-        &self,
-        policy: P,
-        redactor: Redactor,
-        observation: CheckoutObservation,
-    ) -> impl FnOnce() -> Result<Workspace, WorkError> + Send + 'static + use<P> {
-        self.blocking_job(policy, redactor, move |checkout| match observation {
-            CheckoutObservation::Standard => checkout.observe(),
-            CheckoutObservation::Retirement => checkout.observe_for_retirement(),
-        })
+    /// The task this checkout belongs to.
+    #[must_use]
+    pub fn task(&self) -> &str {
+        &self.branch["ns-".len()..]
     }
 
-    /// Prepare the fetch which picks a new task checkout's start from the
-    /// published base. See [`Checkout::published_start`].
-    pub fn published_start_job<P: GitPolicy + Send + 'static>(
+    /// Own this checkout for a blocking executor. The caller sets `abandoned`
+    /// when it stops waiting, which refuses any destructive step still ahead. A
+    /// failure with the work root unverified reports the volume, whatever the
+    /// operation saw.
+    pub fn job<P, T, F>(
         &self,
         policy: P,
         redactor: Redactor,
-        base: String,
-        landings: Vec<Landing>,
-    ) -> impl FnOnce() -> Result<Head, WorkError> + Send + 'static + use<P> {
-        self.blocking_job(policy, redactor, move |checkout| {
-            checkout.published_start(&base, &landings)
-        })
-    }
-
-    fn blocking_job<P, T, J>(
-        &self,
-        policy: P,
-        redactor: Redactor,
-        job: J,
-    ) -> impl FnOnce() -> Result<T, WorkError> + Send + 'static + use<P, T, J>
+        operation: F,
+    ) -> impl FnOnce(Arc<AtomicBool>) -> Result<T, WorkError> + Send + 'static + use<P, T, F>
     where
         P: GitPolicy + Send + 'static,
-        J: FnOnce(&Checkout<'_>) -> Result<T, WorkError> + Send + 'static,
+        F: FnOnce(&Checkout<'_>) -> Result<T, WorkError> + Send + 'static,
     {
         let root = self.worktrees.root.clone();
         let scratch = self.worktrees.scratch.clone();
         let repository = self.repository.clone();
         let path = self.path.clone();
         let branch = self.branch.clone();
-        move || {
+        move |abandoned| {
             let worktrees = Worktrees {
                 root,
                 scratch,
                 git: Git::new(&policy, redactor),
+                abandoned,
             };
-            job(&Checkout {
+            let checkout = Checkout {
                 worktrees: &worktrees,
                 repository,
                 path,
                 branch,
-            })
+            };
+            let result = operation(&checkout);
+            if result.is_err() {
+                worktrees.root.verify()?;
+            }
+            result
         }
     }
 
@@ -535,6 +514,7 @@ impl Checkout<'_> {
         let metadata = match fs::symlink_metadata(&self.path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.worktrees.root.verify()?;
                 return Ok(Workspace::Absent);
             }
             Err(error) => return Err(error.into()),
@@ -571,6 +551,7 @@ impl Checkout<'_> {
         let metadata = match fs::symlink_metadata(&self.path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => {
+                self.worktrees.root.verify()?;
                 return Ok(Workspace::Absent);
             }
             Err(error) => return Err(error.into()),
@@ -621,6 +602,7 @@ impl Checkout<'_> {
             return Ok(Retirement::Absent);
         };
         self.require_unlocked(&admin)?;
+        self.admit_change()?;
         self.remove(&["--force"])?;
         Ok(Retirement::Removed)
     }
@@ -638,6 +620,7 @@ impl Checkout<'_> {
         }
         if let Some((admin, _)) = self.prunable_identity()? {
             self.require_unlocked(&admin)?;
+            self.admit_change()?;
             self.remove(&["--force"])?;
         }
         let parent = self.path.parent().ok_or(WorkError::InvalidPath)?;
@@ -688,6 +671,10 @@ impl Checkout<'_> {
         let mut marker = fs::File::create_new(&pending)?;
         marker.write_all(quarantine_stamp(&name, &metadata).as_bytes())?;
         marker.sync_all()?;
+        if let Err(error) = self.admit_change() {
+            let _ = fs::remove_file(&pending);
+            return Err(error);
+        }
         if let Err(error) =
             renameat_with(CWD, &self.path, CWD, &destination, RenameFlags::NOREPLACE)
         {
@@ -908,25 +895,25 @@ impl Checkout<'_> {
     /// # Errors
     /// Returns an error if the checkout cannot be verified or Git refuses removal.
     pub fn retire(&self, published: &Head) -> Result<Retirement, WorkError> {
-        self.prepare_retirement(published)?()
+        self.finish_retirement(self.observe_for_retirement()?, published)
     }
 
-    /// Observe cleanliness, then recheck ownership and the exact head before final admission.
+    /// Finish a retirement after the caller's final admission, rechecking
+    /// ownership and the exact head observed by `observe_for_retirement`.
     ///
     /// # Errors
-    /// Returns an error if either observation fails or Git refuses removal.
-    pub fn prepare_retirement<'a>(
-        &'a self,
+    /// Returns an error if the recheck fails or Git refuses removal.
+    pub fn finish_retirement(
+        &self,
+        initial: Workspace,
         published: &Head,
-    ) -> Result<impl FnOnce() -> Result<Retirement, WorkError> + 'a, WorkError> {
-        let initial = self.observe_for_retirement()?;
-        let published = published.clone();
-        Ok(move || match initial {
+    ) -> Result<Retirement, WorkError> {
+        match initial {
             Workspace::Absent => self.retire_prunable_registration(),
-            Workspace::Clean(head) if head == published => match self.observe_for_retirement()? {
+            Workspace::Clean(head) if head == *published => match self.observe_for_retirement()? {
                 Workspace::Absent => self.retire_prunable_registration(),
-                Workspace::Clean(current) if current == published => {
-                    self.retire_to_trash(&published)
+                Workspace::Clean(current) if current == *published => {
+                    self.retire_to_trash(published)
                 }
                 Workspace::Clean(_) | Workspace::Dirty => Ok(Retirement::Retained),
             },
@@ -934,13 +921,13 @@ impl Checkout<'_> {
                 if missing(&self.path)? {
                     return self.retire_prunable_registration();
                 }
-                if self.deletion_only_head()?.as_ref() != Some(&published) {
+                if self.deletion_only_head()?.as_ref() != Some(published) {
                     return Ok(Retirement::Retained);
                 }
-                self.retire_to_trash(&published)
+                self.retire_to_trash(published)
             }
             Workspace::Clean(_) => Ok(Retirement::Retained),
-        })
+        }
     }
 
     fn retire_to_trash(&self, published: &Head) -> Result<Retirement, WorkError> {
@@ -983,6 +970,7 @@ impl Checkout<'_> {
             let mut marker = fs::File::create_new(entry.join(TRASH_MARKER))?;
             marker.write_all(trash_stamp(&name, &entry_info, &checkout_info).as_bytes())?;
             marker.sync_all()?;
+            self.admit_change()?;
             renameat_with(
                 CWD,
                 &self.path,
@@ -1012,6 +1000,15 @@ impl Checkout<'_> {
             return Ok((admin, identity.head_oid().parse()?));
         }
         self.prunable_identity()?.ok_or(WorkError::WrongCheckout)
+    }
+
+    // The last check before a removal or rename.
+    fn admit_change(&self) -> Result<(), WorkError> {
+        self.worktrees.root.verify()?;
+        if self.worktrees.abandoned.load(Ordering::SeqCst) {
+            return Err(StorageError::VolumeUnavailable.into());
+        }
+        Ok(())
     }
 
     fn require_unlocked(&self, admin: &Path) -> Result<(), WorkError> {

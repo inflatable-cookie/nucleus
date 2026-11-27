@@ -274,7 +274,7 @@ impl Service {
                 Ok(()) => None,
                 Err(error) => {
                     inbox.unobserved();
-                    eprintln!("Nucleus Inbox: {error}");
+                    nucleus_hosts::service_log!("Nucleus Inbox: {error}");
                     Some(match error {
                         ServiceError::Host(HostError::Deferred { until }) => until,
                         _ => Instant::now() + T3_RETRY_DELAY,
@@ -405,7 +405,7 @@ impl Service {
                 .withdraw_task_decision(&project, &task_target(row), engine_stamp())
         {
             // The old row version is already fenced by the shared pending and answer paths.
-            eprintln!("{}: {error}", row.task.identity().id);
+            nucleus_hosts::service_log!("{}: {error}", row.task.identity().id);
         }
         self.decision_changed();
     }

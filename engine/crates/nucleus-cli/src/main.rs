@@ -18,7 +18,7 @@ use std::{
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use nucleus_core::{Answer, Authority, Command, Head, Phase, Report};
 use nucleus_forge::GitHub;
-use nucleus_hosts::T3;
+use nucleus_hosts::{T3, service_log};
 use nucleus_service::{
     Controller, DependencyCommand, MAX_BRIEF_BYTES, ReportTicket, Service, check_brief_size,
     router_with_board_and_t3_callers, router_with_t3_callers,
@@ -456,18 +456,18 @@ async fn serve(
                 Ok(outcomes) => {
                     for outcome in outcomes {
                         if let Err(error) = outcome.result {
-                            eprintln!("{}: {error}", outcome.task);
+                            service_log!("{}: {error}", outcome.task);
                         }
                     }
                 }
                 Err(error) => {
-                    eprintln!("{error}");
+                    service_log!("{error}");
                     tokio::time::sleep(Duration::from_secs(3)).await;
                 }
             }
         }
     });
-    println!("Nucleus engine listening on http://{}", tcp.local_addr()?);
+    service_log!("Nucleus engine listening on http://{}", tcp.local_addr()?);
     let result = tokio::select! {
         result = axum::serve(tcp, api) => result,
         result = tokio::signal::ctrl_c() => result,

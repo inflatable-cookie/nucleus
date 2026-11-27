@@ -1,9 +1,10 @@
 use std::{
+    fs::File,
     os::fd::OwnedFd,
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     process::Command,
-    sync::Arc,
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use rustix::fs::{Mode, OFlags, fstat, mkdirat, open, openat};
@@ -104,8 +105,62 @@ enum DirectoryRoot {
     },
     Barge {
         class_root: PathBuf,
-        anchor: Arc<OwnedFd>,
+        anchor: Arc<Mutex<Anchor>>,
     },
+}
+
+/// The Barge class directory the engine is using. A remount gives the same
+/// directory a new device number, accepted only on proof of the same volume.
+#[derive(Debug)]
+struct Anchor {
+    // Held open so the inode cannot be reused while the engine runs.
+    _directory: File,
+    device: u64,
+    inode: u64,
+    volume_id: Option<String>,
+}
+
+impl Anchor {
+    fn new(directory: File, volume_id: Option<String>) -> Result<Self, StorageError> {
+        let found = directory.metadata()?;
+        Ok(Self {
+            _directory: directory,
+            device: found.dev(),
+            inode: found.ino(),
+            volume_id,
+        })
+    }
+
+    fn open(anchor: &Mutex<Self>, class_root: &Path) -> Result<OwnedFd, StorageError> {
+        let current = open(class_root, DIRECTORY, Mode::empty()).map_err(|error| {
+            if error == rustix::io::Errno::NOENT {
+                StorageError::VolumeUnavailable
+            } else {
+                error.into()
+            }
+        })?;
+        let current = File::from(current);
+        let found = current.metadata()?;
+        let (device, inode, volume_id) = {
+            let held = anchor.lock().unwrap_or_else(PoisonError::into_inner);
+            (held.device, held.inode, held.volume_id.clone())
+        };
+        if (found.dev(), found.ino()) != (device, inode) {
+            // Another directory at this path is never adopted.
+            let expected = volume_id
+                .filter(|_| found.ino() == inode)
+                .ok_or(StorageError::VolumeUnavailable)?;
+            if !PinnedVolume::detect(class_root)?
+                .volume_id
+                .eq_ignore_ascii_case(&expected)
+            {
+                return Err(StorageError::VolumeUnavailable);
+            }
+            let adopted = Self::new(current.try_clone()?, Some(expected))?;
+            *anchor.lock().unwrap_or_else(PoisonError::into_inner) = adopted;
+        }
+        Ok(current.into())
+    }
 }
 
 impl StorageDirectory {
@@ -124,11 +179,15 @@ impl StorageDirectory {
         }
         let class = Self::native(class_root.to_path_buf())?;
         class.verify()?;
-        let anchor = open(class_root, DIRECTORY, Mode::empty())?;
+        let directory = File::from(open(class_root, DIRECTORY, Mode::empty())?);
+        // Without a volume ID a remounted class stays unavailable until restart.
+        let volume_id = PinnedVolume::detect(class_root)
+            .ok()
+            .map(|volume| volume.volume_id);
         Ok(Self {
             root: DirectoryRoot::Barge {
                 class_root: class_root.to_path_buf(),
-                anchor: Arc::new(anchor),
+                anchor: Arc::new(Mutex::new(Anchor::new(directory, volume_id)?)),
             },
             path,
         })
@@ -185,21 +244,7 @@ impl StorageDirectory {
         let root = match &self.root {
             DirectoryRoot::Native => open(self.root(), DIRECTORY, Mode::empty())?,
             DirectoryRoot::Pinned { volume, scratch } => volume.open_mount(Some(scratch))?,
-            DirectoryRoot::Barge { class_root, anchor } => {
-                let current = open(class_root, DIRECTORY, Mode::empty()).map_err(|error| {
-                    if error == rustix::io::Errno::NOENT {
-                        StorageError::VolumeUnavailable
-                    } else {
-                        error.into()
-                    }
-                })?;
-                let expected = fstat(anchor.as_ref())?;
-                let identity = fstat(&current)?;
-                if (identity.st_dev, identity.st_ino) != (expected.st_dev, expected.st_ino) {
-                    return Err(StorageError::VolumeUnavailable);
-                }
-                current
-            }
+            DirectoryRoot::Barge { class_root, anchor } => Anchor::open(anchor, class_root)?,
         };
         self.walk_from(root, path, create)
     }
@@ -331,4 +376,56 @@ fn detect_volume(path: &Path, scratch: Option<&Path>) -> Result<PinnedVolume, St
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn detect_volume(_: &Path, _: Option<&Path>) -> Result<PinnedVolume, StorageError> {
     Err(StorageError::VolumeUnavailable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_remounted_barge_class_is_adopted_and_a_replaced_one_is_refused() {
+        let volume = tempfile::tempdir().unwrap();
+        let root = volume.path().canonicalize().unwrap();
+        let class = root.join("worktrees");
+        std::fs::create_dir(&class).unwrap();
+        let directory = StorageDirectory::barge(class.join("engine")).unwrap();
+        directory.ensure().unwrap();
+        let DirectoryRoot::Barge { anchor, .. } = &directory.root else {
+            panic!("Barge directory");
+        };
+
+        // A remount keeps the inode and volume ID but changes the device number.
+        let device = anchor.lock().unwrap().device;
+        anchor.lock().unwrap().device = device + 1;
+        directory.clone().verify().unwrap();
+        assert_eq!(anchor.lock().unwrap().device, device);
+
+        // A new device number on another volume is refused.
+        let volume_id = anchor.lock().unwrap().volume_id.clone();
+        anchor.lock().unwrap().device = device + 1;
+        anchor.lock().unwrap().volume_id = Some("another-volume".into());
+        assert!(matches!(
+            directory.verify(),
+            Err(StorageError::VolumeUnavailable)
+        ));
+        anchor.lock().unwrap().volume_id = volume_id;
+        directory.verify().unwrap();
+
+        // The root renamed away is unavailable, and returns without a restart.
+        let away = root.join("away");
+        std::fs::rename(&class, &away).unwrap();
+        assert!(matches!(
+            directory.verify(),
+            Err(StorageError::VolumeUnavailable)
+        ));
+        std::fs::create_dir_all(class.join("engine")).unwrap();
+        assert!(matches!(
+            directory.ensure(),
+            Err(StorageError::VolumeUnavailable)
+        ));
+        std::fs::remove_dir_all(&class).unwrap();
+        std::fs::rename(&away, &class).unwrap();
+        directory.verify().unwrap();
+    }
 }

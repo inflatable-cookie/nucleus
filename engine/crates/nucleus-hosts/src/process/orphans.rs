@@ -11,7 +11,7 @@ use rustix::process::{Pid, Signal, kill_process};
 use serde::Serialize;
 use std::io;
 
-use super::{HostError, Inventory, MAX_PROBE_OUTPUT, read_listing, verify_root};
+use super::{HostError, Inventory, MAX_PROBE_OUTPUT, read_listing, verify_roots};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct OrphanProcess {
@@ -37,7 +37,7 @@ impl Inventory {
         checkout: &Path,
         scratch: &Path,
     ) -> Result<OrphanScan, HostError> {
-        verify_root(checkout)?;
+        verify_roots(&[Some(checkout)]).await?;
         let mut trees: Vec<Vec<u32>> = Vec::new();
         for (&root, paths) in &self.processes {
             if root <= 1
@@ -315,7 +315,7 @@ pub async fn verify_orphans(
     scratch: &Path,
     force: bool,
 ) -> Result<Vec<OrphanProcess>, HostError> {
-    verify_root(checkout)?;
+    verify_roots(&[Some(checkout)]).await?;
     let now =
         process_identities(&targets.iter().map(|p| (p.pid, p.root)).collect(), scratch).await?;
     let mut allowed = BTreeSet::new();

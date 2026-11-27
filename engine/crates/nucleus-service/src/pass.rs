@@ -5,7 +5,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Action, CallbackCredential, CheckState, CloseWorkspace, Forge, Head, Host, Launch,
     LaunchInputs, Observation, Observed, Phase, Report, Role, Run, RunState, Task, WaitReason,
@@ -15,9 +14,11 @@ use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
     ActiveChild, Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest,
     NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
-    StopProgress, T3, TaskHost, launch_diagnostic,
+    StopProgress, T3, TaskHost, launch_diagnostic, service_log,
 };
-use nucleus_store::{CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, TaskRow};
+use nucleus_store::{
+    CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, StoreError, TaskRow,
+};
 use nucleus_work::{Checkout, Retirement, WorkError};
 use tokio::sync::RwLockReadGuard;
 
@@ -27,31 +28,71 @@ use crate::{
     project::ProjectRoute,
     prompt::{Assignment, LaneContext, Prompt, PromptSize, report_reminder},
     scratch, ticket,
+    volume::{Limit, Step},
 };
 
 const MAX_FORGE_RETRY: Duration = Duration::from_mins(4);
-
-struct PromptArtifacts<'a> {
-    lanes: &'a LaneContext,
-    size: &'a PromptSize,
-}
 
 fn write_prompt_artifacts(
     root: &nucleus_store::StorageDirectory,
     run: &Run,
     task: &Task,
-    prompt: &PromptArtifacts<'_>,
+    lanes: &LaneContext,
+    size: &PromptSize,
 ) -> Result<(), ServiceError> {
     let launch = run.launch();
     scratch::allocate(root, launch)?;
-    scratch::materialize_lane_documents(root, launch, &prompt.lanes.pins)?;
+    scratch::materialize_lane_documents(root, launch, &lanes.pins)?;
     let role = match launch.role {
         Role::Reviewer => "reviewer",
         Role::Worker if task.threads().get(Role::Worker).is_some() => "revision",
         Role::Worker => "worker",
     };
     let directory = launch.scratch.as_deref().ok_or(ServiceError::Ticket)?;
-    scratch::write_prompt_size(directory, &launch.instance, role, prompt.size)
+    scratch::write_prompt_size(directory, &launch.instance, role, size)
+}
+
+/// The scratch directory of the current or settled run. This can read the volume.
+fn find_run_scratch(root: &Path, task: &Task) -> Option<PathBuf> {
+    let id = &task.identity().id;
+    if let Some(run) = task.run() {
+        let launch = run.launch();
+        return Some(scratch::bound_path(
+            root,
+            id,
+            &launch.instance,
+            launch.scratch.as_deref(),
+        ));
+    }
+    if !matches!(
+        task.phase(),
+        Phase::Closing | Phase::Done | Phase::Cancelled
+    ) {
+        return None;
+    }
+    let (instance, recorded) = task.settled_scratch()?;
+    retained_scratch_path(root, id, &instance, recorded)
+}
+
+fn retained_scratch_path(
+    root: &Path,
+    id: &str,
+    instance: &str,
+    recorded: Option<&Path>,
+) -> Option<PathBuf> {
+    let path = if let Some(path) = recorded {
+        path.to_owned()
+    } else {
+        // Pre-upgrade settled rows retain the sequence but omit the absolute path.
+        let short = root.join(scratch::relative_path(instance));
+        if matches!(short.try_exists(), Ok(false)) {
+            scratch::bound_path(root, id, instance, None)
+        } else {
+            short
+        }
+    };
+    // Retention may already have removed the directory. Other errors stay fenced.
+    (!matches!(path.try_exists(), Ok(false))).then_some(path)
 }
 
 enum SendAttempt {
@@ -80,58 +121,49 @@ pub(super) struct DispatchPermit<'a> {
 }
 
 impl Service {
-    pub(super) fn existing_run_scratch(&self, task: &Task) -> Option<PathBuf> {
-        let root = self.storage.scratch().path();
-        let id = &task.identity().id;
-        if let Some(run) = task.run() {
-            let launch = run.launch();
-            return Some(scratch::bound_path(
-                root,
-                id,
-                &launch.instance,
-                launch.scratch.as_deref(),
-            ));
+    pub(super) async fn existing_run_scratch(
+        &self,
+        task: &Task,
+    ) -> Result<Option<PathBuf>, ServiceError> {
+        if let Some(path) = task.run().and_then(|run| run.launch().scratch.clone()) {
+            return Ok(Some(path));
         }
-        if !matches!(
-            task.phase(),
-            Phase::Closing | Phase::Done | Phase::Cancelled
-        ) {
-            return None;
+        if task.run().is_none()
+            && !matches!(
+                task.phase(),
+                Phase::Closing | Phase::Done | Phase::Cancelled
+            )
+        {
+            return Ok(None);
         }
-        let (instance, recorded) = task.settled_scratch()?;
-        self.retained_scratch_path(id, &instance, recorded)
+        let task = task.clone();
+        let id = task.identity().id.clone();
+        self.scratch_job(&id, "finding run scratch", move |root| {
+            let found = find_run_scratch(root.path(), &task);
+            // Absence counts only while the root it was read under is still there.
+            root.verify().map_err(WorkError::from)?;
+            Ok(found)
+        })
+        .await
     }
 
-    fn retained_scratch_path(
-        &self,
-        id: &str,
-        instance: &str,
-        recorded: Option<&Path>,
-    ) -> Option<PathBuf> {
-        let root = self.storage.scratch().path();
-        let path = if let Some(path) = recorded {
-            path.to_owned()
-        } else {
-            // Pre-upgrade settled rows retain the sequence but omit the absolute path.
-            let short = root.join(scratch::relative_path(instance));
-            if matches!(short.try_exists(), Ok(false)) {
-                scratch::bound_path(root, id, instance, None)
-            } else {
-                short
-            }
-        };
-        // Retention may already have removed the directory. Other errors stay fenced.
-        (!matches!(path.try_exists(), Ok(false))).then_some(path)
+    pub(super) async fn clear_ticket(&self, task: &str, run: &Run) {
+        let run = run.clone();
+        // A ticket left behind names no current run, so it cannot report.
+        let _ = self
+            .scratch_job(task, "clearing a report ticket", move |root| {
+                ticket::clear(root, &run);
+                Ok(())
+            })
+            .await;
     }
 
     #[cfg(test)]
     pub(super) async fn archive_done(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let pass = self.host.pass(self.storage.scratch().path());
-        self.archive_done_in_pass(
-            row,
-            &pass.for_task(&row.task, self.existing_run_scratch(&row.task)),
-        )
-        .await
+        let scratch = self.existing_run_scratch(&row.task).await?;
+        self.archive_done_in_pass(row, &pass.for_task(&row.task, scratch))
+            .await
     }
 
     pub(super) async fn archive_done_in_pass(
@@ -178,12 +210,12 @@ impl Service {
                 return Ok(Action::Wait(WaitReason::Stopping));
             }
         }
-        let worktrees = self.worktrees()?;
+        let worktrees = self.worktrees();
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
         let binding = self.checkout_binding(identity, &route, &checkout)?;
         let workspace = self.observe_checkout_for_retirement(&checkout).await?;
         if workspace == Workspace::Absent {
-            if checkout.has_prunable_registration()?
+            if self.has_prunable_registration(&checkout).await?
                 && self
                     .retire_if_idle(host, task, &binding, &checkout, None)
                     .await?
@@ -207,7 +239,9 @@ impl Service {
         let Some(head) = head else {
             return Err(retained());
         };
-        if workspace == Workspace::Dirty && checkout.deletion_only_head()?.as_ref() != Some(&head) {
+        if workspace == Workspace::Dirty
+            && self.deletion_only_head(&checkout).await?.as_ref() != Some(&head)
+        {
             return Err(retained());
         }
         if task.phase() == Phase::Done && task.report_task().is_none() {
@@ -235,6 +269,37 @@ impl Service {
             )),
             Some(Retirement::Removed | Retirement::Absent) => Ok(Action::Nothing),
         }
+    }
+
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method path is not general over the checkout's lifetime"
+    )]
+    async fn has_prunable_registration(&self, checkout: &Checkout<'_>) -> Result<bool, WorkError> {
+        self.checkout_job(
+            checkout,
+            "reading the Git registration",
+            Limit::Check,
+            |checkout| checkout.has_prunable_registration(),
+        )
+        .await
+    }
+
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method path is not general over the checkout's lifetime"
+    )]
+    pub(super) async fn deletion_only_head(
+        &self,
+        checkout: &Checkout<'_>,
+    ) -> Result<Option<Head>, WorkError> {
+        self.checkout_job(
+            checkout,
+            "checking for deleted files",
+            Limit::Check,
+            |checkout| checkout.deletion_only_head(),
+        )
+        .await
     }
 
     fn prepare_terminal_archive(
@@ -271,7 +336,7 @@ impl Service {
         if task.phase() == Phase::Cancelled {
             let candidate = match workspace {
                 Workspace::Clean(head) => Some(head.clone()),
-                Workspace::Dirty => checkout.deletion_only_head()?,
+                Workspace::Dirty => self.deletion_only_head(checkout).await?,
                 Workspace::Absent => None,
             };
             let Some(head) = candidate else {
@@ -330,7 +395,7 @@ impl Service {
         } else {
             None
         };
-        let worktrees = self.worktrees()?;
+        let worktrees = self.worktrees();
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
         let (forge, target, forge_error) = if task.report_task().is_some() {
             (Observed::Unknown, None, None)
@@ -532,6 +597,7 @@ impl Service {
         host: &impl TaskHost,
         route: &ProjectRoute,
     ) -> Result<(Observed<Host>, Option<HostError>, Option<serde_json::Value>), ServiceError> {
+        let _step = Step::enter("observing the T3 run");
         let mut limited = None;
         let mut limit_fact = None;
         // Only a continuing worker reuses a parent turn that may already have ended.
@@ -579,7 +645,7 @@ impl Service {
             }
             Err(error) => {
                 if run.last_send_at_ms().is_none() {
-                    eprintln!(
+                    service_log!(
                         "{}: before reading T3 launch state for {}: {error}",
                         run.launch().instance,
                         launch_diagnostic(run)
@@ -613,7 +679,7 @@ impl Service {
     pub(super) async fn command_forge(&self, task: &Task) -> Result<Forge, ServiceError> {
         let identity = task.identity();
         let route = self.project_for(identity).await?;
-        let worktrees = self.worktrees()?;
+        let worktrees = self.worktrees();
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
         self.read_forge(task, &checkout)
             .await
@@ -626,6 +692,7 @@ impl Service {
         checkout: &Checkout<'_>,
     ) -> Result<(Forge, Option<PullTarget>), ServiceError> {
         self.check_forge_ready()?;
+        let _step = Step::enter("reading GitHub");
         let identity = task.identity();
         let route = self.project_for(identity).await?;
         route.binding(checkout)?;
@@ -721,7 +788,16 @@ impl Service {
         }
         self.checkout_binding(identity, &route, checkout)?;
         let base_head = self.verify_route(identity, &route).await?;
-        if checkout.path().exists() && self.initialization_due(task).await {
+        if self.initialization_due(task).await
+            && self
+                .checkout_job(
+                    checkout,
+                    "reading the task checkout",
+                    Limit::Check,
+                    |checkout| Ok(checkout.path().try_exists()?),
+                )
+                .await?
+        {
             if !self
                 .dispatch_mode()
                 .await
@@ -730,10 +806,21 @@ impl Service {
             {
                 return Ok(None);
             }
-            checkout.quarantine_initialization(now_ms())?;
+            self.checkout_job(
+                checkout,
+                "quarantining the interrupted checkout",
+                Limit::Change,
+                |checkout| checkout.quarantine_initialization(now_ms()),
+            )
+            .await?;
         }
+        let step = "allocating the task checkout";
         let workspace = if let Some((head, pull)) = review {
-            checkout.allocate_review(head, pull)?
+            let head = head.clone();
+            self.checkout_job(checkout, step, Limit::Change, move |checkout| {
+                checkout.allocate_review(&head, pull)
+            })
+            .await?
         } else {
             let start = if let Some(report) = task.report_task() {
                 report.planning_base.clone()
@@ -744,7 +831,10 @@ impl Service {
             } else {
                 base_head
             };
-            checkout.allocate(&start)?
+            self.checkout_job(checkout, step, Limit::Change, move |checkout| {
+                checkout.allocate(&start)
+            })
+            .await?
         };
         Ok(Some(workspace))
     }
@@ -758,25 +848,30 @@ impl Service {
         checkout: &Checkout<'_>,
     ) -> Result<Head, ServiceError> {
         let landings = self.prerequisite_landings(identity).await?;
-        let fetch = checkout.published_start_job(
-            self.git.clone(),
-            Redactor::new([], RedactionRules::common()),
-            identity.base.clone(),
-            landings,
-        );
-        Ok(tokio::task::spawn_blocking(fetch)
-            .await
-            .map_err(std::io::Error::other)??)
+        let base = identity.base.clone();
+        Ok(self
+            .checkout_job(
+                checkout,
+                "fetching the published base",
+                Limit::Check,
+                move |checkout| checkout.published_start(&base, &landings),
+            )
+            .await?)
     }
 
     async fn initialization_due(&self, task: &Task) -> bool {
         // A possible send binds its role durably, even after the run settles.
+        // A volume wait carries a detail and says nothing about initialization.
+        let id = &task.identity().id;
         (task.first_launch() || task.phase() == Phase::Reviewing)
             && task.run().is_none()
             && task.threads().get(Role::Worker).is_none()
             && task.threads().get(Role::Reviewer).is_none()
-            && self.state.lock().await.wait_reason(&task.identity().id)
-                == Some(WaitReason::WorkspaceUnknown)
+            && {
+                let state = self.state.lock().await;
+                state.wait_reason(id) == Some(WaitReason::WorkspaceUnknown)
+                    && state.wait_detail(id).is_none()
+            }
     }
 
     pub(super) async fn workspace_capacity(
@@ -791,16 +886,26 @@ impl Service {
             .await
             .store
             .project_workspace_candidates(&identity.id, &route.repositories)?;
-        self.storage.work().verify()?;
-        let mut in_flight = 0;
-        for (task, repository) in candidates {
-            let path = nucleus_work::checkout_path(self.storage.work().path(), &repository, &task);
-            match std::fs::symlink_metadata(path) {
-                Ok(_) => in_flight += 1,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(nucleus_work::WorkError::from(error).into()),
+        let work = self.storage.work().clone();
+        let count = move |_| {
+            work.verify()?;
+            let mut in_flight = 0_u32;
+            for (task, repository) in candidates {
+                let path = nucleus_work::checkout_path(work.path(), &repository, &task);
+                match std::fs::symlink_metadata(path) {
+                    Ok(_) => in_flight += 1,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(WorkError::from(error)),
+                }
             }
-        }
+            work.verify()?;
+            Ok(in_flight)
+        };
+        let in_flight = self
+            .volume
+            .run(&identity.id, "counting task checkouts", Limit::Check, count)
+            .await
+            .map_err(WorkError::from)??;
         Ok(in_flight < slots.saturating_mul(2))
     }
 
@@ -1017,11 +1122,8 @@ impl Service {
         inputs.scratch = Some(scratch);
         let (updated, credential) =
             freeze_launch(task, &observation, inputs, selection, &profile.instance_id)?;
-        let artifacts = PromptArtifacts {
-            lanes: &lanes,
-            size: &assignment.size,
-        };
-        self.persist_reservation(row, &updated, &credential, selection, (via, artifacts))
+        let prompt = (lanes, assignment.size);
+        self.persist_reservation(row, &updated, credential, selection, (via, prompt))
             .await
     }
 
@@ -1053,35 +1155,22 @@ impl Service {
         let mut updated = task.clone();
         let credential = updated.reserve_report_reminder(observation, inputs, &seed)?;
         let run = updated.run().ok_or(ServiceError::Input)?;
-        let root = self.storage.scratch();
         self.storage.database().verify()?;
-        write_prompt_artifacts(
-            root,
-            run,
-            task,
-            &PromptArtifacts {
-                lanes: &LaneContext::default(),
-                size: &assignment.size,
-            },
-        )?;
-        ticket::prepare(
-            root,
-            &updated,
-            run,
-            &credential,
-            &format!("http://{}", self.callback),
-        )?;
+        let prompt = (LaneContext::default(), assignment.size);
+        self.write_run_files(task, &updated, credential, prompt)
+            .await?;
         let mut audit = event("run_reserved");
         audit.detail = serde_json::json!({
             "reportReminderFor": prior.launch().instance,
             "instance": instance,
         })
         .to_string();
+        let id = &task.identity().id;
         if let Err(error) = self.save(row, updated.clone(), &audit).await {
-            ticket::clear(root, run);
+            self.clear_ticket(id, run).await;
             return Err(error);
         }
-        ticket::clear(root, prior);
+        self.clear_ticket(id, prior).await;
         Ok(Action::RemindReport)
     }
 
@@ -1119,7 +1208,7 @@ impl Service {
             .claim_task_effect(id, &audit, false)?
             .is_some()
         {
-            eprintln!(
+            service_log!(
                 "{id}: assignment exceeds the T3 message limit: {}",
                 audit.detail
             );
@@ -1158,7 +1247,7 @@ impl Service {
             return Ok(());
         };
         let route = self.project_for(identity).await?;
-        let worktrees = self.worktrees()?;
+        let worktrees = self.worktrees();
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
         let binding = self.checkout_binding(identity, &route, &checkout)?;
         if let Some(child) = self
@@ -1243,7 +1332,7 @@ impl Service {
         {
             self.accept_parent_readback(row, prior.as_ref()).await?;
         }
-        let worktrees = self.worktrees()?;
+        let worktrees = self.worktrees();
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
         let _ = self.send_run_parent(row, &checkout, write, prior).await?;
         Ok(())
@@ -1449,27 +1538,21 @@ impl Service {
         &self,
         row: &TaskRow,
         updated: &Task,
-        credential: &CallbackCredential,
+        credential: CallbackCredential,
         selection: Option<&SelectedLaunch>,
-        (via, prompt): (Launch, PromptArtifacts<'_>),
+        (via, prompt): (Launch, (LaneContext, PromptSize)),
     ) -> Result<Action, ServiceError> {
         let run = updated.run().ok_or(ServiceError::Input)?;
         self.storage.database().verify()?;
-        write_prompt_artifacts(self.storage.scratch(), run, &row.task, &prompt)?;
-        ticket::prepare(
-            self.storage.scratch(),
-            updated,
-            run,
-            credential,
-            &format!("http://{}", self.callback),
-        )?;
         let mut audit = event("run_reserved");
         let pins: Vec<_> = prompt
-            .lanes
+            .0
             .pins
             .iter()
             .map(nucleus_store::planning::Lane::artifact)
             .collect();
+        self.write_run_files(&row.task, updated, credential, prompt)
+            .await?;
         let mut detail = serde_json::Map::new();
         if !pins.is_empty() {
             detail.insert("laneDocumentPins".into(), serde_json::json!(pins));
@@ -1524,9 +1607,28 @@ impl Service {
             }
         };
         if !matches!(saved, Ok(Action::Launch { .. })) {
-            ticket::clear(self.storage.scratch(), run);
+            self.clear_ticket(&row.task.identity().id, run).await;
         }
         saved
+    }
+
+    /// Write the reserved run's prompt artifacts and report ticket.
+    async fn write_run_files(
+        &self,
+        prior: &Task,
+        reserved: &Task,
+        credential: CallbackCredential,
+        (lanes, size): (LaneContext, PromptSize),
+    ) -> Result<(), ServiceError> {
+        let (prior, reserved) = (prior.clone(), reserved.clone());
+        let endpoint = format!("http://{}", self.callback);
+        let id = prior.identity().id.clone();
+        self.scratch_job(&id, "writing run scratch", move |root| {
+            let run = reserved.run().ok_or(ServiceError::Input)?;
+            write_prompt_artifacts(root, run, &prior, &lanes, &size)?;
+            ticket::prepare(root, &reserved, run, &credential, &endpoint)
+        })
+        .await
     }
 
     async fn send_prepared(
@@ -1555,7 +1657,7 @@ impl Service {
                     "command": run.launch().instance, "reason": "continuation provider was not pinned",
                 }).to_string();
                 self.save(row, updated, &audit).await?;
-                ticket::clear(self.storage.scratch(), run);
+                self.clear_ticket(&task.identity().id, run).await;
                 return Ok(Action::Nothing);
             }
         }
@@ -1614,11 +1716,12 @@ impl Service {
         checkout: &Checkout<'_>,
         host: &impl TaskHost,
     ) -> Result<SendAttempt, ServiceError> {
+        let _step = Step::enter("sending to T3");
         let task = &row.task;
         let run = task.run().ok_or(ServiceError::Input)?;
         let _fence = self.effect(row).await?;
         let authorization = host.authorize_send(run).await.inspect_err(|error| {
-            eprintln!(
+            service_log!(
                 "{}: before sending T3 {}: {error}",
                 run.launch().instance,
                 launch_diagnostic(run)
@@ -1690,7 +1793,7 @@ impl Service {
             && run.last_send_at_ms().is_none()
             && let Err(error) = self.reflect_role_admission(&sent, checkout, provider).await
         {
-            eprintln!("{}: {error}", task.identity().id);
+            service_log!("{}: {error}", task.identity().id);
         }
         let result = match host.send(dispatch).await {
             Err(
@@ -1841,7 +1944,7 @@ impl Service {
                 self.host.check_notice_target(authorization)?;
                 if let Some(path) = &target.worktree_path
                     && !self
-                        .verify_linked_checkout(root, PathBuf::from(path))
+                        .verify_linked_checkout(&identity.id, root, PathBuf::from(path))
                         .await?
                 {
                     return Err(HostError::Binding.into());
@@ -1849,10 +1952,22 @@ impl Service {
                 Some(false)
             }
         };
+        self.require_unchanged(task).await?;
         Ok(result.map(|superseded| DispatchPermit {
             _projects: projects,
             superseded,
         }))
+    }
+
+    // A report is accepted while an effect waits on the work volume. Such an
+    // effect may not send for the row it saw before that wait.
+    async fn require_unchanged(&self, task: &Task) -> Result<(), ServiceError> {
+        let state = self.state.lock().await;
+        let current = state.store.row(&task.identity().id)?;
+        if current.is_some_and(|row| row.task != *task) {
+            return Err(StoreError::StaleTask.into());
+        }
+        Ok(())
     }
 
     pub(super) fn checkout_binding(
@@ -2051,19 +2166,27 @@ impl Service {
         self.apply(row, &observation, next).await
     }
 
-    fn retirement_roots<'a>(
-        &'a self,
-        task: &'a Task,
+    async fn retirement_roots(
+        &self,
+        task: &Task,
         checkout: &Checkout<'_>,
-    ) -> impl Iterator<Item = PathBuf> + 'a {
-        let earlier = task
-            .earlier_run_scratch()
-            .filter_map(|(instance, recorded)| {
-                self.retained_scratch_path(&task.identity().id, &instance, recorded)
-            });
-        std::iter::once(checkout.path().to_owned())
-            .chain(self.existing_run_scratch(task))
-            .chain(earlier)
+    ) -> Result<Vec<PathBuf>, ServiceError> {
+        let (task, checkout) = (task.clone(), checkout.path().to_owned());
+        let id = task.identity().id.clone();
+        self.scratch_job(&id, "finding run scratch", move |root| {
+            let earlier = task
+                .earlier_run_scratch()
+                .filter_map(|(instance, recorded)| {
+                    retained_scratch_path(root.path(), &task.identity().id, &instance, recorded)
+                });
+            let roots = std::iter::once(checkout)
+                .chain(find_run_scratch(root.path(), &task))
+                .chain(earlier)
+                .collect();
+            root.verify().map_err(WorkError::from)?;
+            Ok(roots)
+        })
+        .await
     }
 
     // Both callers hold the task and project fences and have inspected this owned checkout.
@@ -2074,7 +2197,7 @@ impl Service {
         checkout: &Checkout<'_>,
     ) -> Result<(), ServiceError> {
         let scratch = self.storage.scratch().path();
-        let roots = self.retirement_roots(task, checkout);
+        let roots = self.retirement_roots(task, checkout).await?;
         let mut retained = Vec::new();
         let mut found = None;
         for root in roots {
@@ -2186,16 +2309,20 @@ impl Service {
         ];
         let threads: Vec<_> = threads.into_iter().flatten().collect();
         // Each lookup uses the pass's shared process census.
-        for root in self.retirement_roots(task, checkout) {
+        for root in self.retirement_roots(task, checkout).await? {
             if let Some(pid) = host.retirement_writer(&root).await? {
                 return Err(ServiceError::ArchiveEvidence(format!(
                     "PID {pid} has its working directory in the task checkout or run scratch."
                 )));
             }
         }
-        let remove = head
-            .map(|head| checkout.prepare_retirement(head))
-            .transpose()?;
+        let observed = match head {
+            Some(head) => Some((
+                self.observe_checkout_for_retirement(checkout).await?,
+                head.clone(),
+            )),
+            None => None,
+        };
         let state = self.state.lock().await;
         if state
             .settings
@@ -2208,11 +2335,18 @@ impl Service {
         self.host
             .retire_with_quiet_shell(&parent, &threads, || ())?;
         drop(state);
-        // Recheck Git custody and remove synchronously after final writer admission.
-        let outcome = match remove {
-            Some(remove) => remove()?,
-            None => checkout.retire_prunable_registration()?,
-        };
+        // Recheck Git custody and remove after final writer admission.
+        let outcome = self
+            .checkout_job(
+                checkout,
+                "removing the task checkout",
+                Limit::Change,
+                move |checkout| match observed {
+                    Some((initial, head)) => checkout.finish_retirement(initial, &head),
+                    None => checkout.retire_prunable_registration(),
+                },
+            )
+            .await?;
         if outcome == Retirement::Removed {
             self.trash_wake.notify_one();
         }
@@ -2263,7 +2397,7 @@ impl Service {
                 workspace: CloseWorkspace::AlreadyAbsent,
                 ..
             }
-        ) && checkout.has_prunable_registration()?
+        ) && self.has_prunable_registration(checkout).await?
         {
             let _fence = self.effect(row).await?;
             let _projects = self.project_writes.read().await;
@@ -2697,8 +2831,8 @@ mod tests {
             let (row, earlier) = settled_cleanup_task(&service, home.path(), legacy).await;
             let id = &row.task.identity().id;
             let head = service.fixture().start.clone();
-            let current = service.existing_run_scratch(&row.task);
-            let work = service.worktrees().unwrap();
+            let current = service.existing_run_scratch(&row.task).await.unwrap();
+            let work = service.worktrees();
             let route = service.project_for(row.task.identity()).await.unwrap();
             let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();
             checkout.allocate(&head).unwrap();
@@ -2729,7 +2863,10 @@ mod tests {
                     .host
                     .pass(service.storage.scratch().path())
                     .with_fixture_process_cwd(pid, root)
-                    .for_task(&row.task, service.existing_run_scratch(&row.task));
+                    .for_task(
+                        &row.task,
+                        service.existing_run_scratch(&row.task).await.unwrap(),
+                    );
                 let result = service
                     .retire_if_idle(&host, &row.task, &binding, &checkout, Some(&head))
                     .await;
@@ -2818,7 +2955,7 @@ mod tests {
         let id = &terminal.task.identity().id;
         assert_eq!(terminal.task.phase(), Phase::Cancelled);
         let base = {
-            let work = service.worktrees().unwrap();
+            let work = service.worktrees();
             let checkout = work
                 .checkout(&service.fixture().checkout, REPOSITORY, id)
                 .unwrap();
@@ -2999,7 +3136,7 @@ mod tests {
             Some(nucleus_store::DispatchSettings::default());
         let terminal = cancelled_cleanup_task(&service).await;
         let id = &terminal.task.identity().id;
-        let work = service.worktrees().unwrap();
+        let work = service.worktrees();
         let checkout = work
             .checkout(&service.fixture().checkout, REPOSITORY, id)
             .unwrap();
@@ -3084,7 +3221,7 @@ mod tests {
                 head: head.clone(),
             }),
         );
-        let work = service.worktrees().unwrap();
+        let work = service.worktrees();
         let checkout = work
             .checkout(&project.checkout, REPOSITORY, "unbound")
             .unwrap();
@@ -3184,7 +3321,7 @@ mod tests {
             .unwrap();
         assert!(service.dependencies_blocked(&dependent).await.unwrap());
 
-        let workspace = service.worktrees().unwrap();
+        let workspace = service.worktrees();
         let checkout = workspace
             .checkout(&project.checkout, REPOSITORY, "pinned")
             .unwrap();
@@ -3254,7 +3391,7 @@ mod tests {
             ]
         })).expect("profile settings")));
         let pass = service.host.fixture_pass();
-        let worktrees = service.worktrees().expect("worktrees");
+        let worktrees = service.worktrees();
         let mut selected = Vec::new();
         for id in ["worker-one", "worker-two"] {
             let mut task = Task::new(
@@ -3334,7 +3471,7 @@ mod tests {
         let head = service.fixture().start.clone();
         let (forge, forge_reads, forge_server) = forge_fixture(&head).await;
         service.forge = forge;
-        let worktrees = service.worktrees().expect("worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,
@@ -3533,8 +3670,7 @@ mod tests {
             &service.storage,
             &git,
             crate::Redactor::new([], crate::RedactionRules::common()),
-        )
-        .expect("worktrees");
+        );
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,
@@ -3608,8 +3744,7 @@ mod tests {
                 &service.storage,
                 &git,
                 crate::Redactor::new([], crate::RedactionRules::common()),
-            )
-            .expect("worktrees");
+            );
             let checkout = worktrees
                 .checkout(
                     &service.fixture().checkout,
@@ -3733,7 +3868,7 @@ mod tests {
         let project = service.fixture().clone();
         let old_head = project.start.clone();
         let (task, _) = code_task_at_merge("worker", &old_head);
-        let worktrees = service.worktrees().unwrap();
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(&project.checkout, REPOSITORY, "worker")
             .unwrap();
@@ -4279,7 +4414,7 @@ mod tests {
             };
             let (forge, reads, server) = forge_fixture(&latest).await;
             service.forge = forge;
-            let worktrees = service.worktrees().expect("worktrees");
+            let worktrees = service.worktrees();
             let checkout = worktrees
                 .checkout(
                     &service.fixture().checkout,
@@ -4392,7 +4527,7 @@ mod tests {
 
         let (task, _) = code_task_at_merge("worker", &head);
         {
-            let worktrees = service.worktrees().unwrap();
+            let worktrees = service.worktrees();
             worktrees
                 .checkout(&project.checkout, REPOSITORY, "worker")
                 .unwrap()
@@ -4445,7 +4580,7 @@ mod tests {
             .await;
             service.forge = forge;
             let (observed, _) = {
-                let worktrees = service.worktrees().unwrap();
+                let worktrees = service.worktrees();
                 let checkout = worktrees
                     .checkout(&project.checkout, REPOSITORY, "worker")
                     .unwrap();

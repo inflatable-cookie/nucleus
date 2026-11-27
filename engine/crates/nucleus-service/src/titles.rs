@@ -338,7 +338,7 @@ impl Service {
             }
             Ok(false) => false,
             Err(error) => {
-                eprintln!("{id}: {error}");
+                nucleus_hosts::service_log!("{id}: {error}");
                 false
             }
         }
@@ -432,7 +432,7 @@ impl Service {
                         self.desire_title(&mut state, &row.task, row.number);
                     }
                 }
-                Err(error) => eprintln!("{error}"),
+                Err(error) => nucleus_hosts::service_log!("{error}"),
             }
         }
         loop {
@@ -447,7 +447,7 @@ impl Service {
                         Some(Duration::from_millis(receipt.retry_at.abs_diff(now)))
                     } else {
                         if let Err(error) = self.apply_title(provider, &receipt, now).await {
-                            eprintln!("{}: {error}", receipt.thread);
+                            nucleus_hosts::service_log!("{}: {error}", receipt.thread);
                         }
                         // The next due candidate can run before this title retries.
                         continue;
@@ -455,14 +455,14 @@ impl Service {
                 }
                 Ok(None) => None,
                 Err(error) => {
-                    eprintln!("{error}");
+                    nucleus_hosts::service_log!("{error}");
                     Some(Duration::from_secs(5))
                 }
             };
             let row_wait = match self.reconcile_task_rows(provider, &threads).await {
                 Ok(wait) => wait,
                 Err(error) => {
-                    eprintln!("{error}");
+                    nucleus_hosts::service_log!("{error}");
                     Some(Duration::from_secs(15))
                 }
             };
@@ -550,9 +550,13 @@ impl Service {
     ) -> Result<Option<TitleTarget>, ServiceError> {
         let identity = task.identity();
         let route = self.resolve_project(state, identity)?;
-        let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
-        let binding = route.binding(&checkout)?;
+        // The state lock is held here, so this touches no checkout.
+        let path = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &identity.repository,
+            &identity.id,
+        );
+        let binding = route.thread_binding(&path, &format!("ns-{}", identity.id))?;
         Ok(route
             .checkout
             .to_str()
@@ -679,7 +683,7 @@ impl Service {
         }
         let identity = row.task.identity();
         let route = self.project_for(identity).await?;
-        let worktrees = self.worktrees()?;
+        let worktrees = self.worktrees();
         let checkout = worktrees.checkout(&route.checkout, &identity.repository, task_id)?;
         let binding = route.binding(&checkout)?;
         let Some(target) = route
@@ -1228,7 +1232,7 @@ mod tests {
         );
         assert!(subject.ask_allowance(1, 1));
         let id = &subject.identity().id;
-        let worktrees = service.worktrees().expect("fixture worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,
@@ -1378,7 +1382,7 @@ mod tests {
             None,
         );
         let id = subject.identity().id.clone();
-        let worktrees = service.worktrees().expect("fixture worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,

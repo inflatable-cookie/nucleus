@@ -170,7 +170,7 @@ impl Registered {
     }
 
     async fn allocate(&self, row: &TaskRow) -> Result<Option<Workspace>, ServiceError> {
-        let worktrees = self.service.worktrees().expect("worktrees");
+        let worktrees = self.service.worktrees();
         let checkout = worktrees
             .checkout(&self.checkout, REPOSITORY, &row.task.identity().id)
             .expect("checkout");
@@ -191,7 +191,7 @@ impl Registered {
     fn assert_no_task_branch(&self, id: &str) {
         let branch = format!("refs/heads/ns-{id}");
         assert_eq!(git(&self.checkout, &["for-each-ref", &branch]), "");
-        let worktrees = self.service.worktrees().expect("worktrees");
+        let worktrees = self.service.worktrees();
         let checkout = worktrees
             .checkout(&self.checkout, REPOSITORY, id)
             .expect("checkout");
