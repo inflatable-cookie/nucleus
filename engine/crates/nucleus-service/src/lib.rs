@@ -82,6 +82,8 @@ pub use web::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
+    #[error("Waiting for Dispatch to run before merging.")]
+    MergeDispatchStopped,
     #[error("{0}")]
     ArchiveEvidence(String),
     /// A checkout stays until its changes, publication, roles or Dispatch move.
@@ -2236,6 +2238,10 @@ fn task_wait(
     let pre_wire = |cause| (Some(Wait::HostUnknown), Some(WaitDetail::BeforeSend(cause)));
     let observation = |wait, cause| (Some(wait), Some(WaitDetail::Observation(cause)));
     match result {
+        Err(ServiceError::MergeDispatchStopped) => observation(
+            Wait::Capacity,
+            "Waiting for Dispatch to run before merging.",
+        ),
         Err(
             error @ (ServiceError::ArchiveEvidence(_)
             | ServiceError::CheckoutRetained(_)

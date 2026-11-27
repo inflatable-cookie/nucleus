@@ -2072,6 +2072,9 @@ impl Service {
             return Ok(Action::Wait(WaitReason::Prerequisite));
         }
         self.require_published_approval(row, target).await?;
+        if self.dispatch_mode().await == DispatchMode::Stopped {
+            return Err(ServiceError::MergeDispatchStopped);
+        }
         let attempt = self
             .forge
             .merge(task, target)
@@ -4182,6 +4185,84 @@ mod tests {
 
         native_server.abort();
         forge_server.abort();
+    }
+
+    #[tokio::test]
+    async fn stopped_dispatch_waits_then_merges_the_approved_head() {
+        let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+        let head = service.fixture().start.clone();
+        let (task, _) = code_task_at_merge("worker", &head);
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .unwrap();
+        let merged = Arc::new(AtomicBool::new(false));
+        let puts = Arc::new(AtomicUsize::new(0));
+        let read_merged = Arc::clone(&merged);
+        let write_merged = Arc::clone(&merged);
+        let writes = Arc::clone(&puts);
+        let mut pull = forge_pull(&head);
+        pull["head"]["ref"] = json!("ns-worker");
+        let checks = forge_checks(&head);
+        let app = Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async move {
+                    let mut pull = pull;
+                    if read_merged.load(Ordering::Relaxed) {
+                        pull["merged"] = json!(true);
+                        pull["state"] = json!("closed");
+                        pull["merge_commit_sha"] = json!("f".repeat(40));
+                    }
+                    Json(pull)
+                }),
+            )
+            .route("/graphql", post(move || async move { Json(checks) }))
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1/merge"),
+                put(move || async move {
+                    writes.fetch_add(1, Ordering::Relaxed);
+                    write_merged.store(true, Ordering::Relaxed);
+                    Json(json!({"sha": "f".repeat(40), "merged": true, "message": "merged"}))
+                }),
+            );
+        let (forge, server) = serve_forge(app).await;
+        service.forge = forge;
+        service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+            mode: DispatchMode::Stopped,
+            ..Default::default()
+        });
+        let host = service.host.fixture_pass();
+        let row = service.task("worker").await.unwrap();
+        let result = Box::pin(service.advance(&row, &host)).await;
+        assert!(matches!(result, Err(ServiceError::MergeDispatchStopped)));
+        assert_eq!(puts.load(Ordering::Relaxed), 0);
+        let (wait, detail) = crate::task_wait(&row, &result);
+        assert_eq!(wait, Some(WaitReason::Capacity));
+        assert!(
+            matches!(detail, Some(crate::WaitDetail::Observation(cause)) if cause.contains("Dispatch"))
+        );
+        assert_eq!(
+            service.task("worker").await.unwrap().task.phase(),
+            Phase::Merging
+        );
+
+        service
+            .state
+            .lock()
+            .await
+            .settings
+            .dispatch
+            .as_mut()
+            .unwrap()
+            .mode = DispatchMode::Running;
+        let result = Box::pin(service.advance(&row, &host)).await.unwrap();
+        assert_eq!(result, Action::Advance(Phase::Closing));
+        assert_eq!(puts.load(Ordering::Relaxed), 1);
+        server.abort();
     }
 
     #[tokio::test]
