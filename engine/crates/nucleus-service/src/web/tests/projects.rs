@@ -383,6 +383,7 @@ fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
             "product".into(),
             nucleus_store::ProjectSettings {
                 planner_claim: None,
+                claimed_planner_threads: Vec::new(),
                 name: "Imported product".into(),
                 archived: false,
                 repositories: [ALPHA_REPO, BETA_REPO]
@@ -2147,6 +2148,7 @@ async fn project_tell_retries_an_empty_snapshot_and_reuses_real_receipts() {
                     "unbound".into(),
                     nucleus_store::ProjectSettings {
                         planner_claim: None,
+                        claimed_planner_threads: Vec::new(),
                         name: "Unbound project".into(),
                         archived: false,
                         repositories: Vec::new(),

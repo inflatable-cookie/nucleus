@@ -404,7 +404,7 @@ export function RustItemDialog({
         />
       )}
       {item.state === "parked" && (
-        <Panel c={c} label="Parked" tone={revisitDue(item.revisitAt) ? "warning" : "muted"} eyebrow="Parked" by={entry?.actor}>
+        <Panel c={c} label="Parked" tone={revisitDue(item.revisitAt) ? "warning" : "muted"} eyebrow="Parked" by={entry?.actorLabel} byHint={entry?.actor}>
           <Text selectable style={{ ...typeScale.body, color: r.foreground }}>{item.reason || "Parked without a reason."}</Text>
           <View style={{ ...row, gap: space.xs }}>
             <Text style={metaText(c)}>Revisit</Text>
@@ -434,7 +434,8 @@ export function RustItemDialog({
           label={item.disposition === "completed" ? "Completed" : "Deprecated"}
           tone={item.disposition === "completed" ? "success" : "muted"}
           eyebrow={item.disposition === "completed" ? "Completed" : "Deprecated"}
-          by={entry?.actor}
+          by={entry?.actorLabel}
+          byHint={entry?.actor}
         >
           <Text selectable style={{ ...typeScale.body, color: item.reason ? r.foreground : metaText(c).color }}>
             {item.reason || "No note."}
@@ -520,7 +521,7 @@ function ItemAge({ c, item, entry }: { c: Colors; item: ItemDetail; entry: ItemH
   const filed = item.createdAtMs;
   const edited = item.history.findLast((record) => record.action === "edit")?.atMs ?? null;
   const tip = [
-    entry ? `${verb} ${clockTime(entry.atMs)}${entry.actor ? ` · ${entry.actor}` : ""}` : null,
+    entry ? `${verb} ${clockTime(entry.atMs)}${entry.actorLabel ? ` · ${entry.actorLabel}` : ""}${entry.actor ? ` (${entry.actor})` : ""}` : null,
     filed !== null && (entry || item.state === "open") ? `Filed ${clockTime(filed)}` : null,
     edited !== null ? `Edited ${clockTime(edited)}` : null,
   ]
@@ -540,6 +541,7 @@ function Panel({
   tone,
   eyebrow,
   by,
+  byHint,
   help,
   children,
 }: {
@@ -548,6 +550,7 @@ function Panel({
   tone: TimelineTone;
   eyebrow: string;
   by?: string;
+  byHint?: string;
   help?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -572,7 +575,11 @@ function Panel({
         </Text>
         {help}
         <View style={{ flex: 1 }} />
-        {by ? <Text style={metaText(c)}>{by}</Text> : null}
+        {by ? (
+          byHint ? (
+            <Hint c={c} text={byHint} focusable><Text style={metaText(c)}>{by}</Text></Hint>
+          ) : <Text style={metaText(c)}>{by}</Text>
+        ) : null}
       </View>
       {children}
     </View>

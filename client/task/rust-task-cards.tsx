@@ -546,14 +546,14 @@ export function ActivityList({
           <View style={{ marginTop: space.xs - 1 }}>
             <Dot c={c} tone={entry.tone} />
           </View>
-          <Text style={{ ...typeScale.body, color: r.foreground, flex: 1, minWidth: 0 }}>
-            {entry.text}
+          <View style={{ flex: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap" }}>
+            <Text style={{ ...typeScale.body, color: r.foreground }}>{entry.text}</Text>
             {entry.detail ? (
               entry.detailHint ? (
-                <Hint c={c} text={entry.detailHint} focusable><Text style={{ color: metaText(c).color }}>{`  ${entry.detail}`}</Text></Hint>
-              ) : <Text style={{ color: metaText(c).color }}>{`  ${entry.detail}`}</Text>
+                <Hint c={c} text={entry.detailHint} focusable><Text style={{ ...typeScale.body, color: metaText(c).color }}>{`  ${entry.detail}`}</Text></Hint>
+              ) : <Text style={{ ...typeScale.body, color: metaText(c).color }}>{`  ${entry.detail}`}</Text>
             ) : null}
-          </Text>
+          </View>
         </View>
       ))}
     </View>

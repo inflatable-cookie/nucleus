@@ -27,7 +27,6 @@ const PLANNING_BODY_LIMIT: usize = 6 * MAX_TEXT_BYTES + 64 * 1024;
 
 pub(super) fn routes() -> Router<Api> {
     Router::new()
-        .route("/v1/thread-titles", get(thread_titles))
         .route(
             "/v1/planning/tasks",
             post(add_task).layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT)),
@@ -36,29 +35,6 @@ pub(super) fn routes() -> Router<Api> {
         .nest("/v1/planning/{project}", project_routes())
         // A separate prefix keeps unqualified record paths out of the project namespace.
         .nest("/v1/planning-current", project_routes())
-}
-
-#[derive(Deserialize)]
-struct ThreadTitleQuery {
-    ids: Vec<String>,
-}
-
-async fn thread_titles(
-    State(api): State<Api>,
-    Query(query): Query<ThreadTitleQuery>,
-) -> Json<std::collections::BTreeMap<String, String>> {
-    let titles = query
-        .ids
-        .into_iter()
-        .take(100)
-        .filter_map(|id| {
-            api.service
-                .host
-                .cached_thread_title(&id)
-                .map(|title| (id, title))
-        })
-        .collect();
-    Json(titles)
 }
 
 /// GET and PUT are bound to one run and its one durable delivery lane.
@@ -310,15 +286,28 @@ async fn items(
         .await?;
     let store = &state.store;
     if session.is_some() {
+        let projects = state.settings.projects.as_ref();
         let items: Vec<BoardItem> = store
             .items_with_times(&project)
             .map_err(ServiceError::from)?
             .into_iter()
-            .map(BoardItem::from)
+            .map(|item| {
+                let author_label = item_author_label(&api, projects, &project, &item.item);
+                BoardItem::new(item, author_label)
+            })
             .collect();
         Ok(Json(items).into_response())
     } else {
-        let items = store.items(&project).map_err(ServiceError::from)?;
+        let projects = state.settings.projects.as_ref();
+        let items: Vec<LabeledItem<Item>> = store
+            .items(&project)
+            .map_err(ServiceError::from)?
+            .into_iter()
+            .map(|item| {
+                let author_label = item_author_label(&api, projects, &project, &item);
+                LabeledItem { item, author_label }
+            })
+            .collect();
         Ok(Json(items).into_response())
     }
 }
@@ -336,21 +325,20 @@ async fn add_item(
     ProjectSelector { project }: ProjectSelector,
     Extension(caller): Extension<Authority>,
     input: Result<Json<ItemInput>, JsonRejection>,
-) -> Result<(StatusCode, Json<Item>), ApiError> {
+) -> Result<Response, ApiError> {
     let input = body(input)?;
     let (mut state, project) = api
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
     let actor = stamp(&caller).actor;
-    let author_project_id = state.settings.projects.as_ref().and_then(|projects| {
-        let project_settings = projects.projects.get(&project)?;
-        project_settings
-            .planner_claim
-            .as_ref()
-            .is_some_and(|claim| claim.thread == actor || claim.replaced.as_deref() == Some(actor))
-            .then(|| project.clone())
-    });
+    let author_project_id = state
+        .settings
+        .projects
+        .as_ref()
+        .and_then(|projects| projects.projects.get(&project))
+        .filter(|project_settings| is_claimed_planner(project_settings, actor))
+        .map(|_| project.clone());
     let item = state
         .store
         .add_item_with_author_project(
@@ -362,8 +350,13 @@ async fn add_item(
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;
+    let author_label = item_author_label(&api, state.settings.projects.as_ref(), &project, &item);
     api.service.planning_changes.send_replace(());
-    Ok((StatusCode::CREATED, Json(item)))
+    Ok((
+        StatusCode::CREATED,
+        Json(LabeledItem { item, author_label }),
+    )
+        .into_response())
 }
 
 /// A board item with the complexity its brief declares, read by the same brief
@@ -373,18 +366,94 @@ async fn add_item(
 struct BoardItem {
     #[serde(flatten)]
     item: ItemWithTimes,
+    author_label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     complexity: Option<Complexity>,
 }
 
-impl From<ItemWithTimes> for BoardItem {
-    fn from(item: ItemWithTimes) -> Self {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LabeledItem<T> {
+    #[serde(flatten)]
+    item: T,
+    author_label: String,
+}
+
+impl BoardItem {
+    fn new(item: ItemWithTimes, author_label: String) -> Self {
         let complexity = (item.item.kind == ItemKind::Lead)
             .then(|| BriefPolicy::submitted(&item.item.content.body).ok())
             .flatten()
             .and_then(|policy| policy.complexity);
-        Self { item, complexity }
+        Self {
+            item,
+            author_label,
+            complexity,
+        }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardHistory {
+    #[serde(flatten)]
+    history: History,
+    actor_label: String,
+}
+
+fn is_claimed_planner(project: &nucleus_store::ProjectSettings, actor: &str) -> bool {
+    project
+        .claimed_planner_threads
+        .iter()
+        .any(|thread| thread == actor)
+        || project
+            .planner_claim
+            .as_ref()
+            .is_some_and(|claim| claim.thread == actor || claim.replaced.as_deref() == Some(actor))
+}
+
+fn is_operator_actor(actor: &str) -> bool {
+    actor.eq_ignore_ascii_case("operator")
+        || actor.eq_ignore_ascii_case("nucleus:operator")
+        || actor.eq_ignore_ascii_case("fixture-operator")
+        || actor.to_ascii_lowercase().starts_with("operator via ")
+}
+
+fn actor_label(
+    api: &Api,
+    projects: Option<&nucleus_store::Projects>,
+    project_id: &str,
+    actor: &str,
+) -> String {
+    if is_operator_actor(actor) {
+        return "Operator".into();
+    }
+    if let Some(project) = projects
+        .and_then(|projects| projects.projects.get(project_id))
+        .filter(|project| is_claimed_planner(project, actor))
+    {
+        return format!("{} planner", project.name);
+    }
+    api.service
+        .host
+        .cached_thread_title(actor)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| "Agent thread".into())
+}
+
+fn item_author_label(
+    api: &Api,
+    projects: Option<&nucleus_store::Projects>,
+    project_id: &str,
+    item: &Item,
+) -> String {
+    item.author_project_id
+        .as_deref()
+        .and_then(|project_id| projects?.projects.get(project_id))
+        .map_or_else(
+            || actor_label(api, projects, project_id, &item.author),
+            |project| format!("{} planner", project.name),
+        )
 }
 
 #[derive(Deserialize)]
@@ -420,9 +489,29 @@ async fn edit_item(
         .map_err(ServiceError::from)?;
     api.service.planning_changes.send_replace(());
     Ok(if input.version.is_some() {
-        Json(saved).into_response()
+        let author_label = item_author_label(
+            &api,
+            state.settings.projects.as_ref(),
+            &resolved,
+            &saved.item,
+        );
+        Json(LabeledItem {
+            item: saved,
+            author_label,
+        })
+        .into_response()
     } else {
-        Json(saved.item).into_response()
+        let author_label = item_author_label(
+            &api,
+            state.settings.projects.as_ref(),
+            &resolved,
+            &saved.item,
+        );
+        Json(LabeledItem {
+            item: saved.item,
+            author_label,
+        })
+        .into_response()
     })
 }
 
@@ -440,7 +529,7 @@ async fn park_item(
     Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<Park>, JsonRejection>,
-) -> Result<Json<Item>, ApiError> {
+) -> Result<Response, ApiError> {
     let Park { reason, revisit_at } = body(input)?;
     let (mut state, project) = api
         .service
@@ -455,8 +544,13 @@ async fn park_item(
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;
+    let author_label = item_author_label(&api, state.settings.projects.as_ref(), &project, &saved);
     api.service.planning_changes.send_replace(());
-    Ok(Json(saved))
+    Ok(Json(LabeledItem {
+        item: saved,
+        author_label,
+    })
+    .into_response())
 }
 
 #[derive(Deserialize)]
@@ -474,7 +568,7 @@ async fn drop_item(
     Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<DropItem>, JsonRejection>,
-) -> Result<Json<Item>, ApiError> {
+) -> Result<Response, ApiError> {
     let DropItem {
         reason,
         disposition,
@@ -495,8 +589,13 @@ async fn drop_item(
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;
+    let author_label = item_author_label(&api, state.settings.projects.as_ref(), &project, &saved);
     api.service.planning_changes.send_replace(());
-    Ok(Json(saved))
+    Ok(Json(LabeledItem {
+        item: saved,
+        author_label,
+    })
+    .into_response())
 }
 
 #[derive(Default, Deserialize)]
@@ -513,7 +612,7 @@ async fn reopen_item(
     Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<ReopenItem>, JsonRejection>,
-) -> Result<Json<ItemWithTimes>, ApiError> {
+) -> Result<Response, ApiError> {
     let input = body(input)?;
     let (mut state, project) = api
         .service
@@ -529,8 +628,18 @@ async fn reopen_item(
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;
+    let author_label = item_author_label(
+        &api,
+        state.settings.projects.as_ref(),
+        &project,
+        &saved.item,
+    );
     api.service.planning_changes.send_replace(());
-    Ok(Json(saved))
+    Ok(Json(LabeledItem {
+        item: saved,
+        author_label,
+    })
+    .into_response())
 }
 
 #[derive(Default, Deserialize)]
@@ -661,15 +770,22 @@ async fn history(
     Extension(scope): Extension<ControllerScope>,
     ProjectSelector { project }: ProjectSelector,
     Path(HistoryPath { kind, id }): Path<HistoryPath>,
-) -> Result<Json<Vec<History>>, ApiError> {
+) -> Result<Response, ApiError> {
     let (state, project) = api
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
-    Ok(Json(
-        state
-            .store
-            .planning_history(&project, kind, &id)
-            .map_err(ServiceError::from)?,
-    ))
+    let history = state
+        .store
+        .planning_history(&project, kind, &id)
+        .map_err(ServiceError::from)?;
+    let projects = state.settings.projects.as_ref();
+    let history: Vec<BoardHistory> = history
+        .into_iter()
+        .map(|history| BoardHistory {
+            actor_label: actor_label(&api, projects, &project, &history.actor),
+            history,
+        })
+        .collect();
+    Ok(Json(history).into_response())
 }

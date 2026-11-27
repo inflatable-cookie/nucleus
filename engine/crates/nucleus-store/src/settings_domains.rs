@@ -237,6 +237,9 @@ pub struct RepositorySettings {
 pub struct ProjectSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planner_claim: Option<PlannerClaim>,
+    /// Threads that have held this project's planner claim, including cleared claims.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claimed_planner_threads: Vec<String>,
     pub name: String,
     #[serde(default)]
     pub archived: bool,
@@ -327,6 +330,10 @@ impl SettingsValue for Projects {
             check(
                 key(id)
                     && text(&project.name)
+                    && project
+                        .claimed_planner_threads
+                        .iter()
+                        .all(|thread| text(thread) && thread.trim() == thread)
                     && self
                         .removed
                         .get(id)

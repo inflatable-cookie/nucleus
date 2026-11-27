@@ -599,6 +599,7 @@ async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
                     project.into(),
                     ProjectSettings {
                         planner_claim: None,
+                        claimed_planner_threads: Vec::new(),
                         name: project.into(),
                         archived: false,
                         repositories: vec![],

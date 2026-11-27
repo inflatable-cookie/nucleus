@@ -33,9 +33,16 @@ export type StoredItem = {
   | { state: "dropped"; disposition: "completed" | "deprecated"; reason: string | null }
 );
 
-type History = { sequence: number; actor: string; atMs: number; action: string; snapshot: unknown };
+type History = { sequence: number; actor: string; actorLabel: string; atMs: number; action: string; snapshot: unknown };
 
 type Repository = { origin: string; path: string; base: string; hostProject?: string };
+type PlanningProject = {
+  name: string;
+  archived: boolean;
+  repositories: Repository[];
+  plannerClaim?: { thread: string; occurrence: string; replaced?: string };
+  claimedPlannerThreads?: string[];
+};
 
 export const planningProjects: Record<string, { name: string; archived: boolean; repositories: Repository[] }> = {
   nucleus: {
@@ -92,7 +99,7 @@ function withComplexity(body: string, complexity: string): string {
 
 const snapshot = (value: unknown) => ({ value, revision: "1", configured: true });
 
-const settings = () => ({
+const settings = (projects: Record<string, PlanningProject> = planningProjects) => ({
   profiles: { ...snapshot({ profiles: [], pausedGroups: [] }), effectiveGroups: {} },
   dispatch: snapshot({
     usage: "normal",
@@ -102,7 +109,7 @@ const settings = () => ({
     projectSlotOverrides: {},
     mode: "running",
   }),
-  projects: { settings: snapshot({ projects: planningProjects }), resolvedPlanners: {} },
+  projects: { settings: snapshot({ projects }), resolvedPlanners: {} },
   hosts: {
     settings: snapshot({ t3: { endpoint: "http://127.0.0.1:3773/", credentialRef: "T3" } }),
     active: { endpoint: "http://127.0.0.1:3773/", status: "reachable" },
@@ -116,6 +123,9 @@ const settings = () => ({
 });
 
 export function planningEngine(now: () => number = Date.now) {
+  const projectSettings: Record<string, PlanningProject> = Object.fromEntries(
+    Object.entries(planningProjects).map(([id, project]) => [id, { ...project }]),
+  );
   const items = new Map<string, { project: string; item: StoredItem; createdAtMs: number }>();
   const history: Array<History & { project: string; id: string }> = [];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
@@ -124,8 +134,15 @@ export function planningEngine(now: () => number = Date.now) {
   let refusal: string | null = null;
   let tasks = 0;
 
+  const actorLabel = (project: string, actor: string) => {
+    if (/^(operator|nucleus:operator|fixture-operator)$/i.test(actor) || /^operator via /i.test(actor)) return "Operator";
+    const settings = projectSettings[project];
+    if (settings?.claimedPlannerThreads?.includes(actor) || settings?.plannerClaim?.thread === actor || settings?.plannerClaim?.replaced === actor)
+      return `${settings.name} planner`;
+    return threadTitles.get(actor) || "Agent thread";
+  };
   const record = (project: string, id: string, actor: string, atMs: number, action: string, snapshot: unknown) =>
-    history.push({ project, id, sequence: ++sequence, actor, atMs, action, snapshot });
+    history.push({ project, id, sequence: ++sequence, actor, actorLabel: actorLabel(project, actor), atMs, action, snapshot });
 
   /** Files an item at `atMs` and replays `steps` as later history, as the store would have recorded them. */
   function seed(
@@ -146,6 +163,9 @@ export function planningEngine(now: () => number = Date.now) {
     const complexity = entry.item.kind === "lead" ? declaredComplexity(entry.item.body) : null;
     return {
       ...entry.item,
+      authorLabel: entry.item.authorProjectId
+        ? `${projectSettings[entry.item.authorProjectId]?.name ?? "Agent thread"} planner`
+        : actorLabel(project, entry.item.author),
       version: own.at(-1)!.sequence,
       createdAtMs: entry.createdAtMs,
       updatedAtMs: own.at(-1)!.atMs,
@@ -160,14 +180,7 @@ export function planningEngine(now: () => number = Date.now) {
     const path = String(input).replace("/api/engine", "");
     const method = init?.method ?? "GET";
     if (path === "/session") return json({ id: "operator-session", canEditSettings: true, planningProjects: null });
-    if (path === "/settings") return json(settings());
-    if (path.startsWith("/thread-titles?")) {
-      const ids = new URL(`http://nucleus${path}`).searchParams.getAll("ids");
-      return json(Object.fromEntries(ids.flatMap((id) => {
-        const title = threadTitles.get(id);
-        return title ? [[id, title]] : [];
-      })));
-    }
+    if (path === "/settings") return json(settings(projectSettings));
     if (path === "/tasks") return json([]);
     const match = /^\/planning\/([^/]+)\/(items|history\/item)(?:\/([^/]+))?(?:\/(park|drop|reopen|promote))?$/.exec(path);
     if (!match) return json({ error: `no route ${path}` }, 404);
@@ -177,7 +190,7 @@ export function planningEngine(now: () => number = Date.now) {
       return json(
         history
           .filter((row) => row.project === project && row.id === id)
-          .map(({ sequence, actor, atMs, action, snapshot }) => ({ sequence, actor, atMs, action, snapshot })),
+          .map(({ sequence, actor, actorLabel, atMs, action, snapshot }) => ({ sequence, actor, actorLabel, atMs, action, snapshot })),
       );
     if (!id) return json([...items.values()].filter((entry) => entry.project === project).map((entry) => withTimes(project, entry.item.id)));
     const entry = items.get(key(project, id));
@@ -251,6 +264,12 @@ export function planningEngine(now: () => number = Date.now) {
     fetcher,
     seed,
     setThreadTitle: (id: string, title: string) => threadTitles.set(id, title),
+    setProjectSettings: (id: string, change: Partial<PlanningProject>) => {
+      projectSettings[id] = {
+        ...(projectSettings[id] ?? { name: id, archived: false, repositories: [] }),
+        ...change,
+      };
+    },
     writes,
     editElsewhere,
     refuseNextAdmission: (error: string) => {

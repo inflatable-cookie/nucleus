@@ -280,10 +280,33 @@ impl Service {
                         .as_ref()
                         .is_none_or(|claim| claim.thread != claimed)
                     {
+                        let previous = entry.planner_claim.take();
+                        if let Some(previous) = &previous {
+                            for thread in
+                                [Some(previous.thread.as_str()), previous.replaced.as_deref()]
+                                    .into_iter()
+                                    .flatten()
+                            {
+                                if !entry
+                                    .claimed_planner_threads
+                                    .iter()
+                                    .any(|known| known == thread)
+                                {
+                                    entry.claimed_planner_threads.push(thread.to_owned());
+                                }
+                            }
+                        }
+                        if !entry
+                            .claimed_planner_threads
+                            .iter()
+                            .any(|known| known == &claimed)
+                        {
+                            entry.claimed_planner_threads.push(claimed.clone());
+                        }
                         entry.planner_claim = Some(nucleus_store::PlannerClaim {
                             thread: claimed,
                             occurrence,
-                            replaced: entry.planner_claim.take().map(|claim| claim.thread),
+                            replaced: previous.map(|claim| claim.thread),
                         });
                     }
                     Ok(())
