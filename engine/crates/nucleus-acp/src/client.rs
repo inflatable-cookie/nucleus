@@ -24,6 +24,8 @@ use rustix::{
 };
 use serde::{Deserialize, de::DeserializeOwned};
 
+use crate::recovery::{Recovery, connection_refused};
+
 const DEADLINE: Duration = Duration::from_secs(5);
 // Allow three of the service's 15-second SSE keepalive intervals.
 const STREAM_DEADLINE: Duration = Duration::from_secs(45);
@@ -129,6 +131,7 @@ pub(crate) struct ServiceClient {
     task: Option<String>,
     auth: HeaderValue,
     attempt: Arc<Mutex<HashMap<String, usize>>>,
+    recovery: Option<Arc<Recovery>>,
     #[cfg(test)]
     log: Arc<std::sync::Mutex<Vec<String>>>,
 }
@@ -156,7 +159,10 @@ pub(crate) struct Report {
 }
 
 impl ServiceClient {
-    pub(crate) fn new(binding: &SessionBinding) -> Result<Self, Failure> {
+    pub(crate) fn new(
+        binding: &SessionBinding,
+        recovery: Option<Arc<Recovery>>,
+    ) -> Result<Self, Failure> {
         let http = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -174,6 +180,7 @@ impl ServiceClient {
             task,
             auth: authorization(key)?,
             attempt: Arc::default(),
+            recovery,
             #[cfg(test)]
             log: Arc::default(),
         })
@@ -232,10 +239,13 @@ impl ServiceClient {
             *attempt
         };
         let mut outcome = String::from("transport");
+        let mut refused = false;
         let work = async {
             let response = request.send().await.map_err(|error| {
                 if error.is_timeout() {
                     outcome = "timeout".into();
+                } else {
+                    refused = connection_refused(&error);
                 }
                 Failure::Unavailable
             })?;
@@ -263,6 +273,9 @@ impl ServiceClient {
         }
         if result.is_ok() {
             self.attempt.lock().expect("attempt lock").remove(path);
+        }
+        if let Some(recovery) = &self.recovery {
+            recovery.observe(self.endpoint, refused);
         }
         result
     }
@@ -436,7 +449,7 @@ mod tests {
             endpoint,
             inbox_credential: [0; 32],
         });
-        (ServiceClient::new(&binding).unwrap(), server)
+        (ServiceClient::new(&binding, None).unwrap(), server)
     }
 
     fn check_log(client: &ServiceClient, outcome: &str) {
@@ -497,11 +510,14 @@ mod tests {
             socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n: keepalive\n\nevent: partial").await.unwrap();
             std::future::pending::<()>().await;
         });
-        let client = ServiceClient::new(&SessionBinding::Inbox(nucleus_core::acp::InboxBinding {
-            session_id: "fixture".into(),
-            endpoint,
-            inbox_credential: [0; 32],
-        }))
+        let client = ServiceClient::new(
+            &SessionBinding::Inbox(nucleus_core::acp::InboxBinding {
+                session_id: "fixture".into(),
+                endpoint,
+                inbox_credential: [0; 32],
+            }),
+            None,
+        )
         .unwrap();
         let mut stream = client.stream().await.unwrap();
         tokio::time::pause();

@@ -1,3 +1,4 @@
+import { Markdown } from "../markdown";
 /** The cards of the Rust task view (Spec 071): progress, pull request, activity and brief. */
 import { useRef, useState, type ReactNode } from "react";
 import { Linking, Pressable, Text, View } from "react-native";
@@ -331,18 +332,14 @@ function ReviewBody({ c, review }: { c: Colors; review: ReviewRound }) {
   return (
     <>
       {Boolean(review.summary) && (
-        <Text selectable style={{ ...typeScale.body, color: r.foreground }}>
-          {review.summary}
-        </Text>
+        <Markdown text={review.summary} c={c} />
       )}
       {review.findings.map((finding, index) => (
         <View key={index} style={{ flexDirection: "row", gap: space.xs }}>
           <View style={{ marginTop: space.xs - 1 }}>
             <Dot c={c} tone="warning" />
           </View>
-          <Text selectable style={{ ...typeScale.body, color: r.foreground, flex: 1 }}>
-            {finding}
-          </Text>
+          <View style={{ flex: 1 }}><Markdown text={finding} c={c} /></View>
         </View>
       ))}
     </>

@@ -13,7 +13,7 @@ import { BoardLiveContext } from "../board-live";
 import { Button, Dialog, DropdownSelect, Field, HelpTip, row, type Colors } from "../controls";
 import { radius, roles, space, taskDetail, toneSurface, wash, type as typeScale } from "../design";
 import { errorText } from "../error-text";
-import { Readable } from "../readable-text";
+import { Markdown } from "../markdown";
 import * as api from "../../shared/contracts";
 import type { ItemDetail, ItemHistoryEntry } from "../../shared/contracts";
 import { defaultRecheckDate, recheckDateLabel, recheckIsoFromDate } from "../../shared/parking";
@@ -345,7 +345,7 @@ export function RustItemDialog({
 
   const body = (
     <>
-      <Readable text={item.body} c={c} />
+      <Markdown text={item.body} c={c} />
       <ContextLine c={c} item={item} laneName={laneName} />
     </>
   );
@@ -724,7 +724,7 @@ function EditForm({
         >
           <Text style={{ ...metaText(c), fontWeight: "600" }}>Saved version</Text>
           <Text selectable style={{ ...typeScale.body, fontWeight: "600", color: r.foreground }}>{saved.title}</Text>
-          <Readable text={saved.body} c={c} />
+          <Markdown text={saved.body} c={c} />
         </View>
       )}
       <View style={{ ...row, gap: space.xs }}>
@@ -770,7 +770,7 @@ function ContextLine({ c, item, laneName }: { c: Colors; item: ItemDetail; laneN
       {item.author ? (
         <View style={{ ...row, gap: space.xs }}>
           {label("By")}
-          <Text style={metaText(c)}>{item.author}</Text>
+          <Hint c={c} text={item.author} focusable><Text style={metaText(c)}>{item.authorLabel ?? (item.author.startsWith("mcp:launch:") ? "Thread" : item.author)}</Text></Hint>
         </View>
       ) : null}
     </View>

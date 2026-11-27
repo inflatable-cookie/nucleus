@@ -462,7 +462,8 @@ export function createRustPlanning(
 
   /** The item as the detail view reads it, with its history. */
   async function itemDetail(row: ProjectRow, record: RustItem): Promise<api.ItemDetail> {
-    const records = await planningRead(row, `history/item/${encodeURIComponent(record.id)}`, history);
+    const [records, projectRows] = await Promise.all([planningRead(row, `history/item/${encodeURIComponent(record.id)}`, history), projects()]);
+    const authorProject = projectRows.find((candidate) => candidate.project.plannerClaim?.thread === record.author);
     if (record.version === undefined)
       throw new Error("The engine did not supply the item version.");
     const bound = new Set(
@@ -483,6 +484,7 @@ export function createRustPlanning(
         bound: bound.has(repo.origin.toLowerCase()),
       })),
       author: record.author,
+      authorLabel: authorProject ? `${authorProject.project.name} planner` : undefined,
       state: record.state,
       reason: record.reason ?? null,
       disposition: record.state === "dropped" ? (record.disposition ?? "deprecated") : null,
