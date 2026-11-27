@@ -5,6 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Action, CallbackCredential, CheckState, CloseWorkspace, Forge, Head, Host, Launch,
     LaunchInputs, Observation, Observed, Phase, Report, Role, Run, RunState, Task, WaitReason,
@@ -734,17 +735,38 @@ impl Service {
         let workspace = if let Some((head, pull)) = review {
             checkout.allocate_review(head, pull)?
         } else {
-            let start = task.report_task().map_or_else(
-                || {
-                    self.project
-                        .as_ref()
-                        .map_or(&base_head, |project| &project.start)
-                },
-                |report| &report.planning_base,
-            );
-            checkout.allocate(start)?
+            let start = if let Some(report) = task.report_task() {
+                report.planning_base.clone()
+            } else if let Some(project) = &self.project {
+                project.start.clone()
+            } else if identity.entry == nucleus_core::Entry::Brief {
+                self.published_start(identity, checkout).await?
+            } else {
+                base_head
+            };
+            checkout.allocate(&start)?
         };
         Ok(Some(workspace))
+    }
+
+    /// A brief task starts from the fetched published base, which must hold
+    /// every landed prerequisite. The registered checkout's local branch can be
+    /// behind it.
+    async fn published_start(
+        &self,
+        identity: &nucleus_core::Identity,
+        checkout: &Checkout<'_>,
+    ) -> Result<Head, ServiceError> {
+        let landings = self.prerequisite_landings(identity).await?;
+        let fetch = checkout.published_start_job(
+            self.git.clone(),
+            Redactor::new([], RedactionRules::common()),
+            identity.base.clone(),
+            landings,
+        );
+        Ok(tokio::task::spawn_blocking(fetch)
+            .await
+            .map_err(std::io::Error::other)??)
     }
 
     async fn initialization_due(&self, task: &Task) -> bool {
@@ -2446,6 +2468,9 @@ fn replay_policy(head: Option<&Head>, observation: &Observation) -> Option<bool>
         matches!(&observation.workspace, Observed::Known(Workspace::Clean(clean)) if clean == head);
     (open_at_head && clean_at_head).then_some(false)
 }
+
+#[cfg(test)]
+mod start_tests;
 
 #[cfg(test)]
 mod tests {

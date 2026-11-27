@@ -803,6 +803,7 @@ async fn next(
         queue_priority: summary.card.queue_priority,
         state_label: summary.card.state_label,
         state_since_ms: summary.card.state_since_ms,
+        hold: task.hold().or(task.merge_hold()).cloned(),
         wait: summary.card.wait,
         wait_detail: summary.card.wait_detail,
         attention: summary.card.attention,
@@ -833,7 +834,7 @@ fn command_options(
     let mut commands = vec![
         ("cancel", Command::Cancel),
         ("amend", Command::Amend(task.brief().text.clone())),
-        if task.hold().is_some() {
+        if task.hold().is_some() || task.merge_hold().is_some() {
             ("release", Command::Release)
         } else {
             ("hold", Command::Hold(String::new()))
@@ -1350,15 +1351,20 @@ impl Card {
             _ if task.question().is_some() => Some(WaitReason::Question),
             _ => wait,
         };
-        let wait_detail = archive_detail.or_else(|| {
-            if wait != reason
-                || task.hold().is_some()
-                || (task.question().is_some() && wait != Some(WaitReason::ExternalMergeBlocked))
-            {
-                return None;
-            }
-            board_wait_detail(detail?)
-        });
+        let merge_hold = task
+            .merge_hold()
+            .filter(|_| wait == Some(WaitReason::MergeHold));
+        let wait_detail = archive_detail
+            .or(merge_hold.map(|hold| hold.reason.as_str()))
+            .or_else(|| {
+                if wait != reason
+                    || task.hold().is_some()
+                    || (task.question().is_some() && wait != Some(WaitReason::ExternalMergeBlocked))
+                {
+                    return None;
+                }
+                board_wait_detail(detail?)
+            });
         Ok(Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
@@ -1383,7 +1389,7 @@ impl Card {
             wait,
             wait_detail: wait_detail.map(str::to_owned),
             question: task.question().cloned(),
-            hold: task.hold().cloned(),
+            hold: task.hold().or(merge_hold).cloned(),
         })
     }
 
@@ -1459,6 +1465,8 @@ struct NextView {
     queue_priority: QueuePriority,
     state_label: String,
     state_since_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hold: Option<Hold>,
     wait: Option<WaitReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     wait_detail: Option<String>,

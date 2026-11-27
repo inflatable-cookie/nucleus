@@ -26,6 +26,8 @@ mod briefs;
 mod dependencies;
 #[path = "tests/github_accounts.rs"]
 mod github_accounts;
+#[path = "tests/merge_holds.rs"]
+mod merge_holds;
 #[path = "tests/planning.rs"]
 mod planning;
 #[path = "tests/projects.rs"]

@@ -17,5 +17,6 @@ CREATE TABLE tasks (
   report_task TEXT CHECK (json_valid(report_task)),
   work_continuation TEXT CHECK (json_valid(work_continuation)),
   queue_priority TEXT NOT NULL DEFAULT 'normal' CHECK (queue_priority IN ('normal','promoted')),
+  merge_hold TEXT CHECK (json_valid(merge_hold)),
   UNIQUE (repository, reference)
 ) STRICT;

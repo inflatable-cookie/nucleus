@@ -57,6 +57,7 @@ impl State {
         } else if prior.phase() == task.phase()
             && run_basis(prior) == run_basis(task)
             && prior.hold() == task.hold()
+            && prior.merge_hold() == task.merge_hold()
             && prior.question() == task.question()
             && prior.operator_decline() == task.operator_decline()
             && prior.pull_request() == task.pull_request()

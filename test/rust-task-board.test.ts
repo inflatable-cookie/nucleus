@@ -1021,7 +1021,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     path: string;
     body: { version: number; title: string; body: string; lanes: string[] };
   }> = [];
-  const held = {
+  let held = {
     ...task("held-task", "queued", "board-fixture#81"),
     number: 81,
     reference: "board-fixture#81",
@@ -1422,9 +1422,21 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.doesNotMatch(capacityCard.textContent ?? "", /Queued|work slot/);
   assert.ok(selector("Queue controls menu"), "the shared pause split button renders");
   assert.ok(text().includes("All projects"), "the shared project filter renders");
+  const mergeHoldReason = "Verify the release evidence";
+  held = {
+    ...held,
+    phase: "merging",
+    lifecycle: task("held-task", "merging").lifecycle,
+    wait: "merge_hold",
+    hold: { reason: mergeHoldReason },
+    stateLabel: "Merge held by planner",
+  };
   taskPhase = "working";
   const beforeTransition = routes.map(count);
   emit("invalidate", { taskId: "board-task", version: 9 });
+  await click("Merging, 1");
+  const mergeStatus = selector("#81, Held task")?.querySelector(`[title="${mergeHoldReason}"]`);
+  assert.equal(mergeStatus?.textContent, "Merge held by planner");
   await click("Working, 1");
   await eventually(() => Boolean(selector("#80, Standalone task")), "working view renders");
   const workingCard = selector("#80, Standalone task")!;

@@ -1681,7 +1681,7 @@ impl Service {
             })
             .flatten();
         let mut observation = state.command_observation(&prior);
-        let task = if let Some(task) = self.prepare_command(
+        let mut task = if let Some(task) = self.prepare_command(
             &mut state,
             &prior.task,
             authority,
@@ -1731,7 +1731,7 @@ impl Service {
             presentation::note_merge(&mut audit, &observation.forge);
         }
         let version = if amendment {
-            self.commit_amendment(&mut state, &prior, &task, audit, scope)?
+            self.commit_amendment(&mut state, &prior, &mut task, audit, scope, authority)?
         } else if explicit_move || prior.task != task {
             self.commit(&mut state, &prior, &task, &audit, None)?
         } else {
@@ -1882,11 +1882,28 @@ impl Service {
         &self,
         state: &mut State,
         prior: &TaskRow,
-        task: &Task,
+        task: &mut Task,
         mut audit: EventDraft,
         scope: &ControllerScope,
+        authority: &Authority,
     ) -> Result<i64, ServiceError> {
-        let Some(ids) = self.amended_dependencies(state, scope, &prior.task, task)? else {
+        use nucleus_core::profiles::BriefPolicy;
+
+        let before = BriefPolicy::parse(&prior.task.brief().text).unwrap_or_default();
+        let after = before.amended(&task.brief().text)?;
+        let reason = after.merge_hold_reason();
+        if before.merge_hold_reason() != reason {
+            task.set_brief_merge_hold(reason, authority, now_ms())?;
+            audit.kind = "brief_merge_hold_changed".into();
+        }
+        let Some(ids) = self.amended_dependencies(
+            state,
+            scope,
+            &prior.task,
+            &before.depends_on,
+            &after.depends_on,
+        )?
+        else {
             return self.commit(state, prior, task, &audit, None);
         };
         audit.detail = serde_json::json!({ "prerequisites": ids }).to_string();
@@ -2304,7 +2321,7 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
         return Priority::Effect;
     }
     match audit.kind.as_str() {
-        "command" | "reported" => Priority::Wake,
+        "command" | "brief_merge_hold_changed" | "reported" => Priority::Wake,
         "queue_admitted"
         | "run_reserved"
         | "host_send"

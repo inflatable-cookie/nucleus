@@ -164,6 +164,37 @@ async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
 }
 
 #[tokio::test]
+async fn a_live_brief_can_be_amended_with_its_existing_scope() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let service = Arc::new(service);
+    let api = settings_api(&service);
+    let (legacy, _, _) = reservation("legacy-scope", Entry::Brief, &service.fixture().start);
+    let brief = "---\nqueue:\n  complexity: high\n  scope: complex\n---\n# Original work";
+    seed_task(
+        &service,
+        &Task::new(legacy.identity().clone(), brief.into(), None),
+    )
+    .await;
+
+    let path = "/v1/tasks/legacy-scope/commands";
+    let amended = brief.replace("Original work", "Updated work");
+    let response = post_as(&api, path, &BOARD_KEY, &json!({"amend": amended})).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = service.task("legacy-scope").await.unwrap();
+    assert_eq!(saved.task.brief().text, amended);
+    assert_eq!(saved.task.brief().version, 2);
+
+    let extra = amended.replace("scope: complex", "scope: complex\n  mergeHlod: true");
+    let response = post_as(&api, path, &BOARD_KEY, &json!({"amend": extra})).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(response).await["error"],
+        "unknown queue key: queue.mergeHlod"
+    );
+    assert_eq!(service.task("legacy-scope").await.unwrap(), saved);
+}
+
+#[tokio::test]
 async fn promotion_checks_the_final_brief_without_limiting_lane_documents() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let service = Arc::new(service);

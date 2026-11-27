@@ -81,6 +81,15 @@ pub(super) fn task_state_label(
     if let Some(label) = task_label_from_facts(task) {
         return label;
     }
+    if wait == Some(WaitReason::MergeHold)
+        && let Some(hold) = task.merge_hold()
+    {
+        return match hold.by {
+            Some(HoldBy::Operator) => "Merge held by operator",
+            _ => "Merge held by planner",
+        }
+        .into();
+    }
     if matches!(detail, Some(WaitDetail::OperatorSnoozed { .. })) {
         return phase_with_delay(task, None);
     }
@@ -184,7 +193,7 @@ fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
         Some(WaitReason::AssignmentTooLarge) => "size",
         Some(WaitReason::Stopping) => "stopping",
         Some(WaitReason::OperatorDeclined) => "declined",
-        Some(WaitReason::Running | WaitReason::Hold) | None => return None,
+        Some(WaitReason::Running | WaitReason::Hold | WaitReason::MergeHold) | None => return None,
     })
 }
 
@@ -840,7 +849,9 @@ mod tests {
                 assert_eq!(
                     held_label(&Hold {
                         by,
-                        reason: reason.into()
+                        reason: reason.into(),
+                        actor: None,
+                        since_ms: None,
                     })
                     .split_whitespace()
                     .count(),
