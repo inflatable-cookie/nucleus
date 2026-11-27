@@ -532,7 +532,7 @@ impl Service {
             .map_or_else(|error| format!("failed: {error}"), |()| "bound".to_owned());
         let stamp =
             |ms: Option<u64>| ms.map_or_else(|| "unresolved".to_owned(), |ms| ms.to_string());
-        nucleus_hosts::service_log!(
+        service_log!(
             "T3 planner enrollment for {actor:?}: requested_ms={requested_ms} identity_resolved_ms={} checkout_verified_ms={} binding_saved_ms={} state_lock_wait_ms={} finished_ms={} {outcome}",
             stamp(timing.identity),
             stamp(timing.checkout),

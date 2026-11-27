@@ -1,5 +1,12 @@
 //! Host observation and delivery for the isolated Rust task engine.
 
+macro_rules! host_log {
+    ($($arg:tt)*) => {{
+        let message = format!($($arg)*).replace(['\r', '\n'], " ");
+        eprintln!("{} {message}", ::time::OffsetDateTime::now_utc());
+    }};
+}
+
 mod admission;
 mod assignment;
 mod catalog;
@@ -48,22 +55,6 @@ pub use parenting::{
     ParentSendError, ParentStep, ParentWrite, is_parent_reentry, is_pinned_parent_hold,
     parent_thread,
 };
-/// Write one timestamped line to the service log. Use [`service_log!`].
-pub fn write_service_log(message: std::fmt::Arguments<'_>) {
-    let at = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_default();
-    eprintln!("{at} {message}");
-}
-
-/// A timestamped `eprintln!` for the running service.
-#[macro_export]
-macro_rules! service_log {
-    ($($message:tt)*) => {
-        $crate::write_service_log(format_args!($($message)*))
-    };
-}
-
 /// A link within the same T3 environment as the task thread.
 #[must_use]
 pub fn thread_link(thread: &str) -> Option<String> {
@@ -1270,15 +1261,13 @@ impl TaskHost for T3Pass<'_> {
             })
             .await;
         match &reply {
-            Ok(Reply::Failure(cause)) => crate::service_log!(
+            Ok(Reply::Failure(cause)) => host_log!(
                 "{}: T3 {} refused with {:?}",
                 dispatch.instance,
                 wire.diagnostic(),
                 self.host.rpc.failure_detail(cause)
             ),
-            Err(error) => {
-                crate::service_log!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic());
-            }
+            Err(error) => host_log!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic()),
             Ok(Reply::Value(_)) => {}
         }
         if matches!(&reply, Ok(Reply::Failure(cause)) if rejected(cause, &wire, &dispatch.instance))

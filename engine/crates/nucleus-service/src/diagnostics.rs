@@ -31,8 +31,23 @@ pub(super) async fn scheduler<F: Future>(work: F) -> F::Output {
     }
 }
 
+fn format_line(message: std::fmt::Arguments<'_>) -> String {
+    let message = message.to_string().replace(['\r', '\n'], " ");
+    format!("{} {message}", time::OffsetDateTime::now_utc())
+}
+
+#[cfg(test)]
+pub(super) static TEST_LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub(super) fn line(message: std::fmt::Arguments<'_>) {
+    let formatted = format_line(message);
+    #[cfg(test)]
+    TEST_LINES.lock().unwrap().push(formatted.clone());
+    let _ = writeln!(std::io::stderr().lock(), "{formatted}");
+}
+
 pub(super) fn record(event: &Value) {
-    let _ = writeln!(std::io::stderr().lock(), "nucleus_diagnostic {event}");
+    line(format_args!("nucleus_diagnostic {event}"));
 }
 
 pub(super) struct StateMutex(Mutex<State>);
@@ -48,6 +63,11 @@ impl StateMutex {
             SCHEDULER.try_with(|()| "scheduler").ok(),
             Location::caller(),
         )
+    }
+
+    #[track_caller]
+    pub(super) fn lock_for_detail(&self) -> impl Future<Output = StateGuard<'_>> {
+        self.acquire(Some("acp_detail"), Location::caller())
     }
 
     #[track_caller]
@@ -131,7 +151,9 @@ impl Drop for StateGuard<'_> {
             .as_ref()
             .map(|timing| timing.acquired.elapsed().as_micros());
         drop(self.guard.take());
-        if let Some((timing, hold_us)) = self.timing.as_ref().zip(hold_us) {
+        if let Some((timing, hold_us)) = self.timing.as_ref().zip(hold_us)
+            && (timing.operation != "acp_detail" || timing.wait_us + hold_us > 2_000_000)
+        {
             record(&json!({
                 "kind": "state_lock",
                 "operation": timing.operation,

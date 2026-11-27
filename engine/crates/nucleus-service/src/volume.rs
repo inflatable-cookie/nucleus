@@ -14,7 +14,6 @@ use std::{
 };
 
 use longhorn_redact::{RedactionRules, Redactor};
-use nucleus_hosts::service_log;
 use nucleus_store::{StorageDirectory, StorageError};
 use nucleus_work::{Checkout, Custody, WorkError};
 use tokio::{

@@ -244,7 +244,7 @@ impl Service {
             let due = match Box::pin(self.reconcile_task_row(&id, provider, thread)).await {
                 Ok(due) => due,
                 Err(error) => {
-                    nucleus_hosts::service_log!("{thread}: {error}");
+                    service_log!("{thread}: {error}");
                     Some(self.visibility_now() + RECHECK_MS)
                 }
             };

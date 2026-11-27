@@ -88,7 +88,7 @@ impl Service {
                 })
                 .await;
             if let Err(error) = &result {
-                nucleus_hosts::service_log!("Nucleus Inbox board: {error}");
+                service_log!("Nucleus Inbox board: {error}");
             }
             match result {
                 Ok(()) => format!("Board at {board_url}"),

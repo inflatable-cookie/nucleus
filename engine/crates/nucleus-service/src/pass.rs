@@ -14,7 +14,7 @@ use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
     ActiveChild, Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest,
     NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
-    StopProgress, T3, TaskHost, launch_diagnostic, service_log,
+    StopProgress, T3, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{
     CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, StoreError, TaskRow,

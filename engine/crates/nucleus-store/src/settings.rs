@@ -890,9 +890,7 @@ impl<S: SettingsValue> SettingsDomain<S> {
                     .map_or_else(BTreeSet::new, RefCell::take);
                 eprintln!(
                     "{} Upgraded {} to settings version {}. Removed keys {keys:?}. Verified backup at {}",
-                    time::OffsetDateTime::now_utc()
-                        .format(&time::format_description::well_known::Rfc3339)
-                        .unwrap_or_default(),
+                    time::OffsetDateTime::now_utc(),
                     S::FILE,
                     receipt.to(),
                     receipt.safety_backup().path.display()

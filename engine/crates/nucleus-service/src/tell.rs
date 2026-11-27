@@ -358,12 +358,12 @@ impl Service {
                         && let Err(error) =
                             self.save_tell(tell_rows(&row), TellDispatch::Defer).await
                     {
-                        nucleus_hosts::service_log!("project tell {}: {error}", row.id);
+                        service_log!("project tell {}: {error}", row.id);
                         tokio::time::sleep(Duration::from_secs(5)).await;
                     }
                 }
                 Err(error) => {
-                    nucleus_hosts::service_log!("project tell queue: {error}");
+                    service_log!("project tell queue: {error}");
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             }

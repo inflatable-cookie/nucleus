@@ -1,5 +1,11 @@
 //! Service entry points for the isolated Rust task engine.
 
+macro_rules! service_log {
+    ($($arg:tt)*) => {
+        crate::diagnostics::line(format_args!($($arg)*))
+    };
+}
+
 mod acp;
 mod allowance;
 mod attention;
@@ -50,9 +56,7 @@ use nucleus_core::{
     OperatorDecline, Phase, QueuePriority, Report, Task, WaitReason, Workspace,
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
-use nucleus_hosts::{
-    HostCalls, HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint, service_log,
-};
+use nucleus_hosts::{HostCalls, HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
 use nucleus_store::{
     DispatchMode, EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError,
     TaskRow,
