@@ -461,14 +461,11 @@ locally. A terminal task renders its final view and ends normally. T3's ACP
 prompt carries text without sender attestation, so task text prompts refresh
 the view. Task commands remain available from the CLI and board.
 
-The scheduler records the exact launch-preparation prompt before sending it.
-The bound task view identifies that prompt while preparation is active.
-Its turn follows task invalidations while the launch is being prepared or
-its role child is active. A wait without a child ends the turn. Pausing
-Dispatch keeps active turns open. A failed snapshot or interrupted event
-stream retries with backoff. A failed native turn is recorded for
-the task version and T3 session. Normal reconciliation can retry if either
-changes.
+The scheduler records one fingerprinted hold prompt per task. The hold starts
+during delegated launch preparation and follows pending reservations and
+active bound roles. The synchronized T3 shell supplies activity and completion
+evidence. An unconfirmed send retains the same command ID. Short turns retry
+automatically with a delay that grows to five minutes.
 
 If the local reader is refused, the adapter checks the owner-only binding
 file again. It can use a rotated key for the same task and session. Only a

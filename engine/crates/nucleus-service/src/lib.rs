@@ -96,11 +96,7 @@ pub enum ServiceError {
     },
     #[error("T3 parent send will retry: {source}")]
     ParentRetry { source: HostError, until: Instant },
-    #[error(
-        "The T3 task turn ended immediately three times. Check the task thread, then use Recheck after the role changes."
-    )]
-    ParentHoldLoop,
-    #[error("The T3 task turn ended immediately. Waiting briefly for role activity to change.")]
+    #[error("The T3 task turn ended in under a second. The next hold is scheduled automatically.")]
     ParentHoldBackoff { until: Instant },
     #[error("You snoozed this thread until {}. Nucleus resumes when it wakes.", nucleus_hosts::snooze_deadline(*until))]
     OperatorSnoozed { thread: String, until: u64 },
@@ -310,7 +306,6 @@ struct State {
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
-    parent_hold_breakers: BTreeMap<String, ParentHoldBreaker>,
     acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: BTreeSet<(QueuePriority, i64, String)>,
     group_waits: BTreeMap<String, profiles::GroupPause>,
@@ -333,29 +328,8 @@ struct State {
 #[derive(Default)]
 struct TrackedThread {
     seen: Option<ThreadHint>,
-    activity: Option<String>,
     role: bool,
     due: bool,
-}
-
-struct ParentHoldBreaker {
-    command: String,
-    evidence: String,
-    thread: String,
-}
-
-impl ParentHoldBreaker {
-    fn new(write: &nucleus_hosts::ParentWrite, command: &str, evidence: &str) -> Self {
-        Self {
-            command: command.into(),
-            evidence: evidence.into(),
-            thread: write
-                .freeze()
-                .child_thread()
-                .expect("re-entry proof has a child")
-                .into(),
-        }
-    }
 }
 
 enum Preflight {
@@ -503,7 +477,6 @@ impl Service {
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
-                parent_hold_breakers: BTreeMap::new(),
                 acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: BTreeSet::new(),
                 group_waits: BTreeMap::new(),
@@ -740,7 +713,7 @@ impl Service {
             }
             return Ok(Action::Nothing);
         }
-        self.reenter_retained_parent(row).await?;
+        let parent = self.reconcile_live_parent(row).await;
         if self.reconcile_prerequisites(row).await? {
             return Ok(Action::Nothing);
         }
@@ -781,7 +754,15 @@ impl Service {
             }
         }
         self.refresh_acp_if_requested(row).await?;
-        self.advance(row, host).await
+        let action = self.advance(row, host).await?;
+        if matches!(
+            action,
+            Action::Wait(WaitReason::Running | WaitReason::Starting | WaitReason::HostUnknown)
+                | Action::Nothing
+        ) {
+            parent?;
+        }
+        Ok(action)
     }
 
     /// Use native thread changes to advance due times. Exact reads still own
@@ -892,27 +873,17 @@ impl Service {
             }
             if let Some(tracked) = threads.get_mut(&hint.thread) {
                 let prior = tracked.seen.as_ref();
-                let activity = tracked
-                    .role
-                    .then(|| self.host.child_activity_hint(&hint.thread))
-                    .flatten();
-                let activity_changed = tracked.activity != activity;
                 if tracked.role && prior != Some(&hint) {
                     self.title_wake.notify_one();
                 }
                 let still_snoozed = matches!(waits.get(id).and_then(|wait| wait.detail.as_ref()),
                     Some(WaitDetail::OperatorSnoozed { thread, until, .. })
                     if thread != &hint.thread || (hint.snoozed_until() == Some(*until) && !hint.closed()));
-                if activity_changed
-                    || !still_snoozed
-                        && (tracked.due || (tracked.role && hint.positive_role_activity()))
-                        && prior != Some(&hint)
-                {
+                if !still_snoozed && (tracked.due || tracked.role) && prior != Some(&hint) {
                     schedule.wake(id, now, Priority::Decision);
                     self.wake.notify_one();
                 }
                 tracked.seen = Some(hint.clone());
-                tracked.activity = activity;
             }
         }
     }
@@ -1338,16 +1309,6 @@ impl Service {
         );
         if owner_action {
             state.schedule.park(id);
-            // A shell update can arrive between the breaker read and parking.
-            if matches!(result, Err(ServiceError::ParentHoldLoop))
-                && state.parent_hold_breakers.get(id).is_some_and(|stopped| {
-                    self.host.child_activity_hint(&stopped.thread).as_ref()
-                        != Some(&stopped.evidence)
-                })
-            {
-                state.schedule.wake(id, now, Priority::Decision);
-                self.wake.notify_one();
-            }
         } else if !checking_workspace {
             let (mut delay, priority) = schedule::retry(wait);
             if matches!(&detail, Some(WaitDetail::Observation(_)))
@@ -2020,7 +1981,6 @@ impl Service {
         if task.phase().is_terminal() {
             state.planner_authority.remove(id);
             state.planner_requests.remove(id);
-            state.parent_hold_breakers.remove(id);
         }
         if task.run().is_none_or(nucleus_core::Run::revoked)
             || task.run().map(|run| &run.launch().instance)
@@ -2096,19 +2056,6 @@ impl Service {
                 .load(Ordering::Relaxed)
                 .saturating_sub(now_ms()),
         )
-    }
-
-    /// Observe a live role again soon, so an unproven parent hold is not left
-    /// until the normal live check after a short run has already ended. This
-    /// uses Decision, not Refresh: a Refresh pass defers while a fresh running
-    /// hint is held, and would never reach the observation that schedules it.
-    async fn recheck_reentry(&self, row: &TaskRow) {
-        self.state.lock().await.schedule.wake(
-            &row.task.identity().id,
-            Instant::now() + schedule::REENTRY_CHECK,
-            Priority::Decision,
-        );
-        self.wake.notify_one();
     }
 
     async fn recheck_effect(&self, row: &TaskRow, wait: WaitReason) {
@@ -2250,13 +2197,9 @@ fn task_wait(
             Some(Wait::Stopping),
             Some(WaitDetail::Blocked(error.to_string())),
         ),
-        Err(error @ ServiceError::ParentHoldLoop) => (
-            Some(Wait::HostObservationBlocked),
-            Some(WaitDetail::Blocked(error.to_string())),
-        ),
         Err(ServiceError::ParentHoldBackoff { .. }) => observation(
             Wait::HostUnknown,
-            "Waiting briefly for role activity to change.",
+            "The T3 task turn ended in under a second. The next hold is scheduled automatically.",
         ),
         Ok(Action::Wait(Wait::HostObservationBlocked)) => observation(
             Wait::HostObservationBlocked,

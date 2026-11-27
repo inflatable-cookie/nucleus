@@ -1,5 +1,4 @@
 use std::{
-    future::Future,
     hash::{BuildHasher, RandomState},
     path::Path,
     sync::{Arc, OnceLock},
@@ -12,7 +11,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Binding, HostError, ProfileCatalog, RowChildren, RowObservation, T3, clock_ms,
+    Binding, HostError, RowChildren, RowObservation, T3, clock_ms,
     launch::Method,
     message_id,
     projection::Projection,
@@ -29,52 +28,69 @@ pub struct ParentRun {
     pub(crate) node: String,
 }
 
-/// An exact active run created by the current role's native user message.
-#[derive(Clone, Debug)]
-pub struct ActiveChild {
-    pub(crate) binding: Binding,
-    pub(crate) thread: String,
-    pub(crate) instance: String,
-    pub(crate) native: Option<String>,
-}
-
-impl ActiveChild {
-    #[must_use]
-    pub const fn binding(&self) -> &Binding {
-        &self.binding
-    }
-
-    /// Prefix of the owned parent commands for this exact child launch.
-    #[must_use]
-    pub fn parent_command_prefix(&self) -> String {
-        Self::command_prefix(Path::new(&self.binding.worktree_path), &self.instance)
-    }
-
-    #[must_use]
-    pub fn command_prefix(checkout: &Path, instance: &str) -> String {
-        let thread = parent_thread(checkout);
-        format!("{thread}-hold-acp-child-{:x}", Sha256::digest(instance))
-    }
-}
-
 pub struct PruneWrite {
     pub thread: String,
     pub archived_ms: i64,
     inventory: ThreadFence,
 }
 
-pub enum ParentStep {
-    Live(ParentRun),
-    Failed,
-    Delivered,
-    Write(ParentWrite),
-    AfterDelivery(ParentWrite),
-    Wait,
+/// Parent turn evidence from the synchronized shell.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ParentTurn {
+    pub latest_run: Option<String>,
+    pub finished_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
+    pub queued: bool,
+    pub busy: bool,
 }
 
-pub struct ParentAttempt<'a> {
-    pub command: &'a str,
-    pub released: bool,
+impl ParentTurn {
+    fn read(row: &Value) -> Self {
+        let time = |field: &str| row[field].as_str().and_then(|at| timestamp_ms(at).ok());
+        let status = row["status"].as_str();
+        let finished_ms = matches!(
+            status,
+            Some("completed" | "failed" | "interrupted" | "cancelled" | "rolled_back")
+        )
+        .then(|| time("latestRunCompletedAt"))
+        .flatten();
+        Self {
+            latest_run: row["latestRunId"].as_str().map(str::to_owned),
+            finished_ms,
+            duration_ms: time("latestRunStartedAt")
+                .zip(finished_ms)
+                .and_then(|(start, end)| end.checked_sub(start)),
+            queued: status == Some("queued"),
+            busy: status.is_none() || has_provider_turn(row),
+        }
+    }
+}
+
+fn has_provider_turn(row: &Value) -> bool {
+    !row["activeRunId"].is_null()
+        || !row["pendingRuntimeRequest"].is_null()
+        || matches!(
+            row["activityRunStatus"].as_str().or(row["status"].as_str()),
+            Some("preparing" | "starting" | "pending" | "running" | "waiting")
+        )
+}
+
+/// The shell baseline carried by a frozen parent hold.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HoldCheckpoint {
+    pub after_run: Option<String>,
+    pub recorded_at_ms: u64,
+    pub short_turns: u8,
+    pub preparing_launch: bool,
+}
+
+/// Shell choice for the task parent. Only the quiet case can start a turn.
+#[derive(Debug)]
+pub enum ParentShell {
+    Missing,
+    Archived,
+    Deleted,
+    Listed(ParentTurn),
 }
 
 /// Whether T3 could have delivered the write.
@@ -83,13 +99,14 @@ pub enum ParentSendError {
     NotSent(HostError),
     Unknown(HostError),
     Rejected,
+    InitialMessageRejected,
 }
 
 impl From<ParentSendError> for HostError {
     fn from(error: ParentSendError) -> Self {
         match error {
             ParentSendError::NotSent(cause) | ParentSendError::Unknown(cause) => cause,
-            ParentSendError::Rejected => Self::Uncertain,
+            ParentSendError::Rejected | ParentSendError::InitialMessageRejected => Self::Uncertain,
         }
     }
 }
@@ -112,26 +129,10 @@ pub struct ArchiveWrite {
 pub struct ParentWrite {
     wire: FrozenParentWrite,
     unarchive_fence: Option<ThreadFence>,
-    stranded_at: Option<Arc<Value>>,
     delivery: Option<Box<ParentDelivery>>,
     owned_snoozes: Vec<u64>,
-    reentry: Option<Box<ActiveChild>>,
-    child_evidence: Option<String>,
-    ended_hold: Option<Box<EndedHold>>,
+    turn: Option<ParentTurn>,
 }
-
-/// Readback of an exact prior re-entry hold, before choosing whether to send.
-pub struct EndedHold {
-    pub command: String,
-    pub evidence: String,
-    pub unchanged: bool,
-    pub breaker: bool,
-    pub retry_at_ms: Option<u64>,
-}
-
-const INSTANT_HOLD_MS: u64 = 1_000;
-const HOLD_BACKOFF_MS: u64 = 3_000;
-const INSTANT_HOLD_LIMIT: u8 = 3;
 
 /// Operator visibility intent captured before a parent message can clear it.
 #[derive(Serialize, Deserialize)]
@@ -160,7 +161,7 @@ pub struct FrozenParentWrite {
     payload: Value,
     provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    child_thread: Option<String>,
+    checkpoint: Option<HoldCheckpoint>,
 }
 
 impl FrozenParentWrite {
@@ -178,26 +179,43 @@ impl FrozenParentWrite {
         }
     }
 
-    /// Advance to a fresh ID after T3 proves it rejected a message command.
-    pub fn replace_rejected_command(&mut self) -> Option<String> {
+    /// Advance to a fresh ID after T3 proves it rejected a turn command.
+    pub fn replace_rejected_command(&mut self, initial_message: bool) -> Option<String> {
         let previous = self.payload["commandId"].as_str()?;
         let base = previous.split_once('~').map_or(previous, |(base, _)| base);
-        let fingerprint = format!("{:x}", Sha256::digest(previous));
-        let command = format!("{base}~{}", &fingerprint[..16]);
-        if base.contains("-hold-") {
-            let old_marker = hold_marker(previous);
-            let prompt = self.prompt()?;
-            let text = prompt.strip_suffix(&old_marker).unwrap_or(prompt);
-            self.payload["text"] = json!(format!("{text}{}", hold_marker(&command)));
+        let command = successor_command(base, previous);
+        let prompt = self.prompt()?;
+        let old_marker = hold_marker(previous);
+        let prompt = prompt.strip_suffix(&old_marker).unwrap_or(prompt);
+        if initial_message {
+            let thread = self.payload["threadId"].as_str()?;
+            let base = format!("{thread}-hold-acp-0:{}", self.provider);
+            let command = successor_command(&base, previous);
+            let mut replacement =
+                parent_hold(&self.binding, thread, &self.provider, &command, prompt);
+            replacement.wire.checkpoint = self.checkpoint.take();
+            *self = replacement.wire;
+            return Some(command);
         }
+        let prompt = if self.checkpoint.is_some() || previous.contains("-hold-") {
+            format!("{prompt}{}", hold_marker(&command))
+        } else {
+            prompt.to_owned()
+        };
         self.payload["commandId"] = json!(command);
-        self.payload["messageId"] = json!(message_id(&command));
+        let message = if self.method == Method::Create {
+            &mut self.payload["initialMessage"]
+        } else {
+            &mut self.payload
+        };
+        message["messageId"] = json!(message_id(&command));
+        message["text"] = json!(prompt);
         Some(command)
     }
 
     #[must_use]
-    pub fn child_thread(&self) -> Option<&str> {
-        self.child_thread.as_deref()
+    pub const fn checkpoint(&self) -> Option<&HoldCheckpoint> {
+        self.checkpoint.as_ref()
     }
 }
 
@@ -214,21 +232,13 @@ impl ParentWrite {
                 method,
                 payload,
                 provider: provider.into(),
-                child_thread: None,
+                checkpoint: None,
             },
             unarchive_fence: None,
-            stranded_at: None,
             delivery: None,
             owned_snoozes: Vec::new(),
-            reentry: None,
-            child_evidence: None,
-            ended_hold: None,
+            turn: None,
         }
-    }
-
-    #[must_use]
-    pub fn ended_hold(&self) -> Option<&EndedHold> {
-        self.ended_hold.as_deref()
     }
 
     #[must_use]
@@ -273,7 +283,14 @@ impl ParentWrite {
         Ok(())
     }
 
-    pub fn use_legacy_intent(&mut self, command: &str, prompt: &str) {
+    /// Reconstruct a pre-wire hold while keeping its original provider and message ID.
+    ///
+    /// # Errors
+    /// Returns a binding error if a pinned command names another provider.
+    pub fn use_legacy_intent(&mut self, command: &str, prompt: &str) -> Result<(), HostError> {
+        if parent_hold_provider(command).is_some_and(|provider| provider != self.wire.provider) {
+            return Err(HostError::Binding);
+        }
         self.wire.payload["commandId"] = json!(command);
         if self.wire.method == Method::Create {
             self.wire.payload["initialMessage"]["text"] = json!(prompt);
@@ -282,6 +299,7 @@ impl ParentWrite {
             self.wire.payload["text"] = json!(prompt);
             self.wire.payload["messageId"] = json!(message_id(command));
         }
+        Ok(())
     }
 
     /// The row bound to a prepared message.
@@ -290,9 +308,15 @@ impl ParentWrite {
         self.delivery.as_ref().map(|delivery| delivery.row)
     }
 
+    /// Whether this write creates the task's visible T3 thread.
+    #[must_use]
+    pub fn creates_thread(&self) -> bool {
+        self.wire.method == Method::Create
+    }
+
     #[must_use]
     pub fn starts_turn(&self) -> bool {
-        self.wire.method == Method::Create || self.wire.payload["type"] == "message.dispatch"
+        self.creates_thread() || self.wire.payload["type"] == "message.dispatch"
     }
 }
 
@@ -313,9 +337,9 @@ fn parent_hold_provider(command: &str) -> Option<&str> {
         .filter(|provider| !provider.is_empty())
 }
 
-#[must_use]
-pub fn is_parent_reentry(command: &str) -> bool {
-    is_pinned_parent_hold(command) && command.contains("-hold-acp-child-")
+fn successor_command(base: &str, previous: &str) -> String {
+    let fingerprint = format!("{:x}", Sha256::digest(previous));
+    format!("{base}~{}", &fingerprint[..16])
 }
 
 fn hold_marker(command: &str) -> String {
@@ -359,10 +383,11 @@ fn parent_launch(
     binding: &Binding,
     provider: &str,
     thread: &str,
+    command: &str,
     title: &str,
     start_line: &str,
 ) -> ParentWrite {
-    let command = format!("{thread}-launch");
+    let prompt = format!("{start_line}{}", hold_marker(command));
     ParentWrite::new(
         binding,
         provider,
@@ -374,28 +399,9 @@ fn parent_launch(
             "workspaceStrategy":{
                 "type":"existing_worktree", "worktreePath":binding.worktree_path,"branch":binding.branch,
             },
-            "initialMessage":{"messageId":message_id(&command),"text":start_line,"attachments":[]}
+            "initialMessage":{"messageId":message_id(command),"text":prompt,"attachments":[]}
         }),
     )
-}
-
-async fn initial_parent<'a>(
-    binding: &Binding,
-    provider: &str,
-    thread: &str,
-    title: &str,
-    prompt: &str,
-    attempt: Option<ParentAttempt<'_>>,
-    catalogue: impl Future<Output = Result<&'a ProfileCatalog, HostError>> + Send,
-) -> Result<ParentStep, HostError> {
-    let write = parent_launch(binding, provider, thread, title, prompt);
-    if attempt.is_some_and(|attempt| Some(attempt.command) != write.command_id()) {
-        return Ok(ParentStep::Wait);
-    }
-    if !catalogue.await?.supports_parent(provider) {
-        return Err(HostError::Configuration);
-    }
-    Ok(ParentStep::Write(write))
 }
 
 fn unarchive_parent(
@@ -772,338 +778,160 @@ impl T3 {
         }
     }
 
-    /// Read the parent, or prepare one guarded write to establish its held turn.
-    /// A missing root or uncertain projection waits for another pass.
+    /// Read the task parent's turn from the held shell.
+    ///
     /// # Errors
-    /// Returns an error for a failed native read or a mismatched parent.
-    pub async fn prepare_parent<'a>(
+    /// Returns an error if the shell is unavailable or the parent belongs to another binding.
+    pub fn parent_shell(
         &self,
+        binding: &Binding,
+        provider: &str,
+    ) -> Result<ParentShell, HostError> {
+        let thread = parent_thread(Path::new(&binding.worktree_path));
+        self.rpc.with_shell(|shell| {
+            let Some(row) = shell.ok_or(HostError::Uncertain)?.marker(&thread) else {
+                return Ok(ParentShell::Missing);
+            };
+            if !parent_row_matches(&row, binding, provider) {
+                return Err(HostError::Binding);
+            }
+            Ok(if !row["deletedAt"].is_null() {
+                ParentShell::Deleted
+            } else if !row["archivedAt"].is_null() {
+                ParentShell::Archived
+            } else {
+                ParentShell::Listed(ParentTurn::read(&row))
+            })
+        })
+    }
+
+    /// A fresh parent needs the installed Nucleus ACP model.
+    ///
+    /// # Errors
+    /// Returns an error if the provider is unavailable or cannot run that model.
+    pub async fn check_parent_provider(&self, provider: &str) -> Result<(), HostError> {
+        if !self.rpc.profile_catalog().await?.supports_parent(provider) {
+            return Err(HostError::Configuration);
+        }
+        Ok(())
+    }
+
+    /// Construct the immutable parent message. The caller decides whether an ID may advance.
+    #[must_use]
+    pub fn prepare_parent_hold(
         binding: &Binding,
         provider: &str,
         title: &str,
-        start_line: &str,
-        prior_turn: Option<ParentAttempt<'_>>,
-        catalogue: impl Future<Output = Result<&'a ProfileCatalog, HostError>> + Send,
-    ) -> Result<ParentStep, HostError> {
+        prompt: &str,
+        shell: ParentShell,
+        previous: Option<(&str, bool)>,
+        checkpoint: HoldCheckpoint,
+    ) -> Option<ParentWrite> {
         let thread = parent_thread(Path::new(&binding.worktree_path));
-        if prior_turn.is_none()
-            && let Some(write) = self.prepare_held_parent(binding, provider, &thread, start_line)?
-        {
-            return Ok(ParentStep::Write(write));
-        }
-        let (projection, fence) = self.observe_parent(binding, &thread).await?;
-        if let Some(projection) = projection {
-            projection.require_parent_provider(provider)?;
-            let mut replay = None;
-            let mut completed_prior = false;
-            let mut stranded = false;
-            if let Some((run, node)) = prior_turn
-                .as_ref()
-                .and_then(|attempt| projection.live_parent_run(&message_id(attempt.command)))
-            {
-                return Ok(ParentStep::Live(ParentRun {
-                    thread,
-                    run: run.into(),
-                    node: node.into(),
-                }));
+        let launch = format!("{thread}-launch");
+        let replay_launch = previous.is_some_and(|(prior, replace)| {
+            !replace && prior.split_once('~').map_or(prior, |(base, _)| base) == launch
+        });
+        let mut write = match shell {
+            ParentShell::Missing => {
+                let base = launch;
+                let command = hold_command(base, previous);
+                parent_launch(binding, provider, &thread, &command, title, prompt)
             }
-            if let Some(attempt) = prior_turn.as_ref()
-                && !(attempt.released && projection.archived())
-            {
-                let message = message_id(attempt.command);
-                let recoverable = projection.parent_recoverable(&message, provider);
-                if !recoverable && projection.turn_failed(&message) {
-                    return Ok(ParentStep::Failed);
-                }
-                stranded = parent_hold_provider(attempt.command) == Some(provider)
-                    && fence
-                        .row
-                        .as_ref()
-                        .is_none_or(|row| row["activeRunId"].is_null())
-                    && projection.stranded_parent_queue(&message).is_some();
-                completed_prior = recoverable || stranded || projection.turn_completed(&message);
-                if !completed_prior {
-                    if projection.has_delivery(&message) {
-                        return Ok(ParentStep::Delivered);
-                    }
-                    // The bounded window cannot prove absence. T3 deduplicates
-                    // this exact message command, including a delayed receipt.
-                    if attempt.command == format!("{thread}-launch") {
-                        return initial_parent(
-                            binding, provider, &thread, title, start_line, prior_turn, catalogue,
-                        )
-                        .await;
-                    }
-                    if !attempt.command.starts_with(&format!("{thread}-hold-")) {
-                        return Ok(ParentStep::Wait);
-                    }
-                    replay = Some(attempt.command);
-                }
-            }
-            if projection.deleted() {
-                return Ok(ParentStep::Wait);
-            }
-            let sequence = projection.sequence();
-            if projection.archived() {
-                let Some(fence) = self
-                    .quiet_archive_at(&thread, sequence, |row| {
-                        parent_row_matches(row, binding, provider)
-                    })
-                    .await?
-                else {
-                    return Ok(ParentStep::Wait);
+            ParentShell::Listed(turn) if !turn.busy => {
+                let base = format!("{thread}-hold-acp-0:{provider}");
+                let command = hold_command(base, previous);
+                let mut write = if replay_launch {
+                    parent_launch(binding, provider, &thread, &command, title, prompt)
+                } else {
+                    parent_hold(binding, &thread, provider, &command, prompt)
                 };
-                return Ok(ParentStep::Write(unarchive_parent(
-                    binding, provider, &thread, sequence, fence,
-                )));
+                write.turn = Some(turn);
+                write
             }
-            if replay
-                .and_then(parent_hold_provider)
-                .is_some_and(|frozen| frozen != provider)
-            {
-                return Err(HostError::Binding);
-            }
-            let command = replay.map_or_else(
-                || format!("{thread}-hold-acp-{sequence}:{provider}"),
-                str::to_owned,
-            );
-            let mut write = parent_hold(binding, &thread, provider, &command, start_line);
-            if stranded {
-                write.stranded_at = fence.row;
-            }
-            return Ok(if completed_prior {
-                ParentStep::AfterDelivery(write)
-            } else {
-                ParentStep::Write(write)
-            });
-        }
-
-        initial_parent(
-            binding, provider, &thread, title, start_line, prior_turn, catalogue,
-        )
-        .await
+            _ => return None,
+        };
+        write.wire.checkpoint = Some(checkpoint);
+        Some(write)
     }
 
-    fn prepare_held_parent(
+    /// Find the exact live parent run and node needed by a delegated launch.
+    ///
+    /// # Errors
+    /// Returns an error if a listed parent cannot be read with the configured binding.
+    pub async fn live_parent(
         &self,
         binding: &Binding,
         provider: &str,
-        thread: &str,
-        start_line: &str,
-    ) -> Result<Option<ParentWrite>, HostError> {
-        if !self.rpc.uses_held_shell() {
-            return Ok(None);
-        }
-        let (Some(row), Some(revision)) = self.rpc.thread_row_with_revision(thread) else {
-            return Ok(None);
-        };
-        if !row["archivedAt"].is_null() || !row["deletedAt"].is_null() {
-            return Ok(None);
-        }
-        if !parent_row_matches(&row, binding, provider) {
-            return Err(HostError::Binding);
-        }
-        let command = format!("{thread}-hold-acp-{revision}:{provider}");
-        Ok(Some(parent_hold(
-            binding, thread, provider, &command, start_line,
-        )))
-    }
-
-    /// A bound child is active only on positive run or background evidence.
-    #[must_use]
-    pub fn bound_child_active(&self, thread: &str, checkout: &Path) -> bool {
-        self.held_child(thread, checkout, None).is_some()
-    }
-
-    /// Compare role activity on shell deltas without a native request.
-    #[must_use]
-    pub fn child_activity_hint(&self, thread: &str) -> Option<String> {
-        let row = self.rpc.thread_row(thread)?;
-        child_activity(&row, row["activeRunId"].as_str()).then(|| activity_digest(&row))
-    }
-
-    #[must_use]
-    pub fn retained_reentry_due(&self, thread: &str, checkout: &Path) -> bool {
-        self.bound_child_active(thread, checkout)
-            && self
-                .rpc
-                .thread_row(&parent_thread(checkout))
-                .is_some_and(|row| parent_accepts_reentry(&row))
-    }
-
-    /// Recover the exact active role from a retained binding and its launch journal.
-    ///
-    /// # Errors
-    /// Returns an error when the retained binding cannot be read.
-    pub async fn retained_active_child(
-        &self,
-        binding: Binding,
-        thread: String,
-        instance: String,
-    ) -> Result<Option<ActiveChild>, HostError> {
-        let mut child = ActiveChild {
-            binding,
-            thread,
-            instance,
-            native: None,
-        };
-        // Background-only custody is already established by the bound shell.
-        if self.active_child_in_shell(&child) {
-            return Ok(Some(child));
-        }
+        command: &str,
+    ) -> Result<Option<ParentRun>, HostError> {
+        let thread = parent_thread(Path::new(&binding.worktree_path));
         let Some(projection) = self
-            .read_thread(&child.binding, &child.thread, ThreadRead::Observation)
+            .read_thread(binding, &thread, ThreadRead::Observation)
             .await?
         else {
             return Ok(None);
         };
-        let message =
-            if crate::child_origin_instance(&child.thread) == Some(child.instance.as_str()) {
-                format!("message:delegated-task:{}", child.instance)
-            } else {
-                message_id(&child.instance)
-            };
-        child.native = projection.owned_active_run(&message).map(str::to_owned);
-        Ok(self.active_child_in_shell(&child).then_some(child))
+        projection.require_parent_provider(provider)?;
+        Ok(projection
+            .live_parent_run(&message_id(command))
+            .map(|(run, node)| ParentRun {
+                thread,
+                run: run.into(),
+                node: node.into(),
+            }))
     }
 
-    /// Prepare a hold and attach readback of any exact prior ended hold.
-    /// A bounded read can confirm a matching command, but cannot authorize a new ID
-    /// solely from the absence of the prior command.
+    /// Recover an archived task parent from the held or archived shell.
     ///
     /// # Errors
-    /// Returns an error when the observed parent does not match the configured ACP binding.
-    pub async fn prepare_parent_reentry(
+    /// Returns an error when the archived inventory cannot be read.
+    pub async fn prepare_parent_unarchive(
         &self,
-        child: &ActiveChild,
+        binding: &Binding,
         provider: &str,
-        prompt: &str,
-        prior: Option<&str>,
     ) -> Result<Option<ParentWrite>, HostError> {
-        let binding = &child.binding;
-        let Some(child_row) = self.held_child(
-            &child.thread,
-            Path::new(&binding.worktree_path),
-            Some(child),
-        ) else {
-            return Ok(None);
-        };
         let thread = parent_thread(Path::new(&binding.worktree_path));
-        let Some(row) = self.rpc.thread_row(&thread) else {
+        let revision = self
+            .rpc
+            .with_shell(|shell| shell.and_then(ThreadSnapshots::revision));
+        let Some(sequence) = revision else {
             return Ok(None);
         };
-        if !parent_accepts_reentry(&row) {
-            return Ok(None);
-        }
-        if !parent_row_matches(&row, binding, provider) {
-            return Err(HostError::Binding);
-        }
-        let latest = row["latestRunId"].as_str();
-        let prefix = child.parent_command_prefix();
-        let prior = prior.filter(|command| child_reentry_command(command, &prefix));
-        if prior
-            .and_then(parent_hold_provider)
-            .is_some_and(|frozen| frozen != provider)
-        {
-            return Err(HostError::Binding);
-        }
-        // Only an idle shell can reach this read. Reuse the corresponding
-        // projection until the parent row changes, including a waiting parent
-        // whose own background list still shows its child.
-        let (projection, _) = self
-            .observe_thread(binding, &thread, ThreadRead::Inbox)
-            .await?;
-        let Some(projection) = projection else {
-            return Ok(None);
-        };
-        projection.require_parent_provider(provider)?;
-        let stranded =
-            prior.and_then(|command| projection.stranded_parent_queue(&message_id(command)));
-        if (stranded.is_none() && projection.has_pending_turn())
-            || latest.is_some_and(|run| !projection.terminal_run(run))
-        {
-            return Ok(None);
-        }
-        let ended_owned = ended_reentry(&projection, prior, latest, &prefix);
-        let evidence = activity_digest(&child_row);
-        let mut ended_hold = None;
-        let command = match (prior, ended_owned) {
-            (_, _) if let Some(native) = stranded => format!(
-                "{prefix}-after-{:x}-{evidence}-0:{provider}",
-                Sha256::digest(native)
-            ),
-            (Some(prior), _) if !projection.has_delivery(&message_id(prior)) => prior.to_owned(),
-            (_, Some((native, command))) => {
-                let timing = (latest == Some(native))
-                    .then(|| instant_hold_end(&row))
-                    .flatten();
-                let recorded = hold_evidence(command, &prefix);
-                let count = timing.map_or(0, |_| recorded.map_or(1, |(_, count)| count + 1));
-                let unchanged = recorded.is_some_and(|(prior, _)| prior == evidence)
-                    && !projection.parent_recoverable(&message_id(command), provider);
-                ended_hold = Some(Box::new(EndedHold {
-                    command: command.into(),
-                    evidence: evidence.clone(),
-                    unchanged,
-                    breaker: count >= INSTANT_HOLD_LIMIT,
-                    retry_at_ms: timing.map(|end| end.saturating_add(HOLD_BACKOFF_MS)),
-                }));
-                if unchanged {
-                    command.to_owned()
-                } else {
-                    let count = if count >= INSTANT_HOLD_LIMIT {
-                        0
-                    } else {
-                        count
-                    };
-                    format!(
-                        "{prefix}-after-{:x}-{evidence}-{count}:{provider}",
-                        Sha256::digest(native)
-                    )
-                }
-            }
-            (None, None) => format!("{prefix}-after-start-{evidence}-0:{provider}"),
-            (Some(_), None) => return Ok(None),
-        };
-        let mut write = parent_hold(binding, &thread, provider, &command, prompt);
-        write.stranded_at = stranded.map(|_| row);
-        write.wire.child_thread = Some(child.thread.clone());
-        write.reentry = Some(Box::new(child.clone()));
-        // Uncertain delivery keeps its original command even if the activity
-        // changed. A new command must still cover the activity seen at prep.
-        if prior != Some(command.as_str()) {
-            write.child_evidence = Some(evidence);
-        }
-        write.ended_hold = ended_hold;
-        Ok(Some(write))
+        Ok(self
+            .quiet_archive_at(&thread, sequence, |row| {
+                parent_row_matches(row, binding, provider)
+            })
+            .await?
+            .map(|fence| unarchive_parent(binding, provider, &thread, sequence, fence)))
     }
 
-    pub(crate) fn active_child_in_shell(&self, child: &ActiveChild) -> bool {
-        self.held_child(
-            &child.thread,
-            Path::new(&child.binding.worktree_path),
-            Some(child),
-        )
-        .is_some()
+    /// A role with positive activity can still own its checkout during project removal.
+    #[must_use]
+    pub fn bound_child_active(&self, thread: &str, checkout: &Path) -> bool {
+        self.rpc.thread_row(thread).is_some_and(|row| {
+            !closed_row(&row)
+                && row["worktreePath"].as_str().map(Path::new) == Some(checkout)
+                && (ShellCustody(&row).background() == Some(true)
+                    || (row["activeRunId"].is_string()
+                        && matches!(row["status"].as_str(), Some("running" | "waiting"))))
+        })
     }
 
-    fn held_child(
-        &self,
-        thread: &str,
-        checkout: &Path,
-        exact: Option<&ActiveChild>,
-    ) -> Option<Arc<Value>> {
-        self.rpc.thread_row(thread).filter(|row| match exact {
-            Some(child) => {
-                row["projectId"] == child.binding.project_id
-                    && row["worktreePath"] == child.binding.worktree_path
-                    && row["branch"] == child.binding.branch
-                    && child_activity(row, child.native.as_deref())
-            }
-            None => {
-                row["worktreePath"].as_str().map(Path::new) == Some(checkout)
-                    && child_activity(row, row["activeRunId"].as_str())
-            }
+    /// Whether a bound role in this task's checkout has a live turn or background work.
+    #[must_use]
+    pub fn parent_role_active(&self, thread: &str, checkout: &Path) -> bool {
+        self.rpc.with_shell(|shell| {
+            let Some(shell) = shell else { return false };
+            let Some(child) = shell.marker(thread) else {
+                return false;
+            };
+            !closed_row(&child)
+                && child["worktreePath"].as_str().map(Path::new) == Some(checkout)
+                && shell.marker(&parent_thread(checkout)).is_none_or(|parent| {
+                    child["projectId"] == parent["projectId"] && child["branch"] == parent["branch"]
+                })
+                && (has_provider_turn(&child) || ShellCustody(&child).background() == Some(true))
         })
     }
 
@@ -1120,26 +948,6 @@ impl T3 {
         self.observe_thread(binding, thread, policy).await
     }
 
-    fn check_reentry(
-        &self,
-        child: &ActiveChild,
-        evidence: Option<&str>,
-        parent: &Value,
-    ) -> Result<(), HostError> {
-        let current = self.held_child(
-            &child.thread,
-            Path::new(&child.binding.worktree_path),
-            Some(child),
-        );
-        if parent_accepts_reentry(parent)
-            && current
-                .is_some_and(|row| evidence.is_none_or(|prior| prior == activity_digest(&row)))
-        {
-            return Ok(());
-        }
-        Err(HostError::Uncertain)
-    }
-
     /// Send a verified parent effect and require the native sequence for any turn.
     ///
     /// # Errors
@@ -1147,17 +955,23 @@ impl T3 {
     pub async fn write_parent(
         &self,
         write: ParentWrite,
-        record_snooze: impl FnOnce(ParentSnooze) -> Result<(), HostError> + Send,
+        authorize: impl FnOnce(Option<ParentSnooze>) -> Result<(), HostError> + Send,
     ) -> Result<(), ParentSendError> {
-        if write.ended_hold().is_some_and(|ended| ended.unchanged) {
-            return Err(ParentSendError::NotSent(HostError::Uncertain));
-        }
         let expects_receipt = write.starts_turn();
         let thread_id = write.thread_id().map(str::to_owned);
         let launch_provider =
             (write.wire.method == Method::Create).then_some(write.wire.provider.as_str());
-        let message = (write.wire.payload["type"] == "message.dispatch")
-            .then(|| write.command_id().map(str::to_owned))
+        let command = expects_receipt
+            .then(|| {
+                write.command_id().map(|id| {
+                    let kind = if write.wire.method == Method::Create {
+                        "thread.create"
+                    } else {
+                        "message.dispatch"
+                    };
+                    (id.to_owned(), kind)
+                })
+            })
             .flatten();
         let delivered_message = write.wire.payload["messageId"]
             .as_str()
@@ -1191,7 +1005,7 @@ impl T3 {
                         self.check_delivery_shell(thread, delivery)?;
                         self.check_quiet_parent(&write.wire.binding, thread)?;
                     }
-                    if message.is_some() && write.delivery.is_none() && self.rpc.uses_held_shell() {
+                    if let Some(before) = &write.turn {
                         let thread = thread_id.as_deref().ok_or(HostError::Binding)?;
                         let row = self.rpc.thread_row(thread).ok_or(HostError::Uncertain)?;
                         if !row["archivedAt"].is_null()
@@ -1200,18 +1014,11 @@ impl T3 {
                         {
                             return Err(HostError::Binding);
                         }
-                        if let Some(child) = &write.reentry {
-                            self.check_reentry(child, write.child_evidence.as_deref(), &row)?;
-                        }
-                        if write
-                            .stranded_at
-                            .as_ref()
-                            .is_some_and(|before| !Arc::ptr_eq(before, &row))
-                        {
+                        if ParentTurn::read(&row) != *before {
                             return Err(HostError::Uncertain);
                         }
                     }
-                    if let (Some(thread), Some(message)) =
+                    let snooze = if let (Some(thread), Some(message)) =
                         (thread_id.as_deref(), delivered_message.as_deref())
                         && let Some(row) = self.rpc.thread_row(thread)
                         && let Some(until) = row["snoozedUntil"].as_str()
@@ -1219,7 +1026,7 @@ impl T3 {
                         && until_ms > clock_ms()?
                         && !write.owned_snoozes.contains(&until_ms)
                     {
-                        record_snooze(ParentSnooze {
+                        Some(ParentSnooze {
                             binding: write.wire.binding.clone(),
                             provider: write.wire.provider.clone(),
                             thread: thread.into(),
@@ -1229,9 +1036,11 @@ impl T3 {
                             snoozed_at_ms: row["snoozedAt"]
                                 .as_str()
                                 .and_then(|at| timestamp_ms(at).ok()),
-                        })?;
-                    }
-                    Ok(())
+                        })
+                    } else {
+                        None
+                    };
+                    authorize(snooze)
                 },
             )
             .await;
@@ -1239,7 +1048,8 @@ impl T3 {
             reply?,
             expects_receipt,
             thread_id.as_deref(),
-            message.as_deref(),
+            command.as_ref().map(|(id, kind)| (id.as_str(), *kind)),
+            &write.wire.binding.project_id,
         )
     }
 
@@ -1342,106 +1152,20 @@ impl T3 {
     }
 }
 
-fn ended_reentry<'a>(
-    projection: &'a Projection,
-    prior: Option<&'a str>,
-    latest: Option<&'a str>,
-    prefix: &str,
-) -> Option<(&'a str, &'a str)> {
-    prior
-        .and_then(|command| {
-            projection
-                .ended_run_for_message(&message_id(command))
-                .map(|run| (run, command))
-        })
-        .or_else(|| {
-            let run = latest?;
-            let command = projection
-                .ended_parent_message(run)?
-                .strip_suffix("-message")?;
-            child_reentry_command(command, prefix).then_some((run, command))
-        })
-}
-
-fn child_reentry_command(command: &str, prefix: &str) -> bool {
-    command
-        .strip_prefix(prefix)
-        .is_some_and(|suffix| suffix.starts_with(':') || suffix.starts_with("-after-"))
-}
-
-fn child_activity(row: &Value, native: Option<&str>) -> bool {
-    !closed_row(row)
-        && (ShellCustody(row).background() == Some(true)
-            || (native.is_some_and(|run| row["activeRunId"] == run)
-                && matches!(row["status"].as_str(), Some("running" | "waiting"))))
-}
-
-fn activity_digest(row: &Value) -> String {
-    let mut background: Vec<_> = row["pendingBackgroundTasks"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|task| json!([task["kind"], task["taskId"], task["awaited"]]).to_string())
-        .collect();
-    background.sort_unstable();
-    background.dedup();
-    let activity = json!([
-        row["status"],
-        row["activeRunId"],
-        row["latestRunId"],
-        row["latestRunStartedAt"],
-        row["latestRunCompletedAt"],
-        row["latestUserMessageAt"],
-        row["pendingRuntimeRequest"]["id"],
-        background,
-    ]);
-    format!("{:x}", Sha256::digest(activity.to_string()))
-}
-
-fn hold_evidence<'a>(command: &'a str, prefix: &str) -> Option<(&'a str, u8)> {
-    let (suffix, _) = command
-        .strip_prefix(prefix)?
-        .strip_prefix("-after-")?
-        .split_once(':')?;
-    let mut fields = suffix.rsplitn(3, '-');
-    let count = fields.next()?.parse::<u8>().ok()?.min(INSTANT_HOLD_LIMIT);
-    let evidence = fields.next()?;
-    fields.next()?;
-    Some((evidence, count))
-}
-
-fn instant_hold_end(row: &Value) -> Option<u64> {
-    let start = crate::task_row::timestamp_ms(row["latestRunStartedAt"].as_str()?).ok()?;
-    let end = crate::task_row::timestamp_ms(row["latestRunCompletedAt"].as_str()?).ok()?;
-    (end.checked_sub(start)? <= INSTANT_HOLD_MS && end <= clock_ms().ok()?).then_some(end)
-}
-
-fn parent_accepts_reentry(row: &Value) -> bool {
-    if closed_row(row) || !row["activeRunId"].is_null() || !row["pendingRuntimeRequest"].is_null() {
-        return false;
+fn hold_command(base: String, previous: Option<(&str, bool)>) -> String {
+    match previous {
+        Some((prior, false)) => prior.into(),
+        Some((prior, true)) => successor_command(&base, prior),
+        None => base,
     }
-    matches!(
-        (row["status"].as_str(), row["latestRunId"].as_str()),
-        (Some("idle"), None)
-            | (
-                Some(
-                    "waiting"
-                        | "completed"
-                        | "failed"
-                        | "interrupted"
-                        | "cancelled"
-                        | "rolled_back"
-                ),
-                Some(_)
-            )
-    )
 }
 
 fn parent_send_result(
     reply: Reply,
     expects_receipt: bool,
     thread: Option<&str>,
-    message: Option<&str>,
+    command: Option<(&str, &str)>,
+    project: &str,
 ) -> Result<(), ParentSendError> {
     match reply {
         Reply::Value(value) => {
@@ -1455,11 +1179,18 @@ fn parent_send_result(
             }
             Ok(())
         }
-        Reply::Failure(cause)
-            if message.is_some_and(|command| crate::dispatch_rejected(&cause, command)) =>
-        {
-            Err(ParentSendError::Rejected)
-        }
-        Reply::Failure(_) => Err(ParentSendError::Unknown(HostError::Uncertain)),
+        Reply::Failure(cause) => Err(command
+            .and_then(|(id, kind)| parent_rejection(&cause, id, kind, project))
+            .unwrap_or(ParentSendError::Unknown(HostError::Uncertain))),
     }
+}
+
+fn parent_rejection(cause: &Value, id: &str, kind: &str, project: &str) -> Option<ParentSendError> {
+    if kind != "thread.create" {
+        return crate::command_rejected(cause, id, kind).then_some(ParentSendError::Rejected);
+    }
+    crate::launch_rejection(cause, id, project).map(|rejected| match rejected {
+        crate::LaunchRejection::Create => ParentSendError::Rejected,
+        crate::LaunchRejection::InitialMessage => ParentSendError::InitialMessageRejected,
+    })
 }

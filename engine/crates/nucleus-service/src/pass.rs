@@ -13,9 +13,9 @@ use nucleus_core::{
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
-    ActiveChild, Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest,
-    NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, QuietCheckout,
-    SendOutcome, StopProgress, T3, TaskHost, launch_diagnostic,
+    Binding, ControlDispatch, DoneArchive, FrozenParentWrite, HoldCheckpoint, HostError,
+    LaunchRequest, NoticeAuthorization, NoticeTarget, ParentRun, ParentShell, ParentTurn,
+    QuietCheckout, SendOutcome, StopProgress, T3, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{
     CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, StoreError, TaskRow,
@@ -94,6 +94,109 @@ fn retained_scratch_path(
     };
     // Retention may already have removed the directory. Other errors stay fenced.
     (!matches!(path.try_exists(), Ok(false))).then_some(path)
+}
+
+const SHORT_HOLD_MS: u64 = 1_000;
+const HOLD_BACKOFF_BASE_MS: u64 = 3_000;
+const HOLD_BACKOFF_CAP_MS: u64 = 5 * 60_000;
+
+enum HoldAction {
+    Wait,
+    Replay,
+    Replace(u8),
+}
+
+fn next_parent_hold(
+    turn: &ParentTurn,
+    prior: Option<&ParentDelivery>,
+    checkpoint: Option<&HoldCheckpoint>,
+    now: u64,
+) -> Result<HoldAction, ServiceError> {
+    if turn.busy {
+        return Ok(HoldAction::Wait);
+    }
+    let Some(prior) = prior else {
+        return Ok(if turn.queued {
+            HoldAction::Wait
+        } else {
+            HoldAction::Replace(0)
+        });
+    };
+    if let Some(checkpoint) = checkpoint
+        && turn.latest_run != checkpoint.after_run
+        && let Some(end) = turn
+            .finished_ms
+            .filter(|&end| end >= checkpoint.recorded_at_ms)
+    {
+        if turn
+            .duration_ms
+            .is_none_or(|duration| duration >= SHORT_HOLD_MS)
+        {
+            return Ok(HoldAction::Replace(0));
+        }
+        let count = checkpoint.short_turns.saturating_add(1);
+        let delay =
+            (HOLD_BACKOFF_BASE_MS << count.saturating_sub(1).min(7)).min(HOLD_BACKOFF_CAP_MS);
+        let remaining = end.saturating_add(delay).saturating_sub(now);
+        if remaining > 0 {
+            return Err(ServiceError::ParentHoldBackoff {
+                until: tokio::time::Instant::now() + std::time::Duration::from_millis(remaining),
+            });
+        }
+        return Ok(HoldAction::Replace(count));
+    }
+    if prior.result == ParentResult::Pending {
+        crate::acp::parent_due(prior)?;
+        return Ok(HoldAction::Replay);
+    }
+    if crate::acp::ms(now) < prior.due_ms {
+        return Err(crate::acp::parent_delivery_retry(
+            HostError::Uncertain,
+            prior.due_ms,
+        ));
+    }
+    // A visible queued run can already have a new ID. It has no start time.
+    // Only an accepted command with an expired start deadline can advance here.
+    Ok(HoldAction::Replace(0))
+}
+
+fn parent_hold_write(
+    binding: &Binding,
+    provider: &str,
+    title: &str,
+    prompt: &str,
+    shell: ParentShell,
+    prior: Option<&ParentDelivery>,
+    preparing_launch: bool,
+) -> Result<Option<nucleus_hosts::ParentWrite>, ServiceError> {
+    let frozen = prior.map(crate::acp::frozen_parent).transpose()?.flatten();
+    let checkpoint = frozen.as_ref().and_then(FrozenParentWrite::checkpoint);
+    let empty = ParentTurn::default();
+    let turn = match &shell {
+        ParentShell::Listed(turn) => turn,
+        _ => &empty,
+    };
+    let now = now_ms();
+    let planned = |short_turns| HoldCheckpoint {
+        after_run: turn.latest_run.clone(),
+        recorded_at_ms: now,
+        short_turns,
+        preparing_launch,
+    };
+    let (replace, checkpoint) = match next_parent_hold(turn, prior, checkpoint, now)? {
+        HoldAction::Wait => return Ok(None),
+        HoldAction::Replay => (false, checkpoint.cloned().unwrap_or_else(|| planned(0))),
+        HoldAction::Replace(short_turns) => (true, planned(short_turns)),
+    };
+    Ok(T3::prepare_parent_hold(
+        binding,
+        provider,
+        title,
+        prompt,
+        shell,
+        prior.map(|record| (record.command.as_str(), replace)),
+        checkpoint,
+    ))
 }
 
 enum SendAttempt {
@@ -388,7 +491,7 @@ impl Service {
             .run()
             .filter(|run| !run.revoked() && run.report().is_none())
         {
-            let (state, error, limit) = self.read_current_run(row, run, host, &route).await?;
+            let (state, error, limit) = self.read_current_run(row, run, host).await?;
             if !forge_requested
                 && run.last_send_at_ms().is_some()
                 && task.question().is_none()
@@ -601,16 +704,11 @@ impl Service {
         row: &TaskRow,
         run: &Run,
         host: &impl TaskHost,
-        route: &ProjectRoute,
     ) -> Result<(Observed<Host>, Option<HostError>, Option<serde_json::Value>), ServiceError> {
         let _step = Step::enter("observing the T3 run");
         let mut limited = None;
         let mut limit_fact = None;
-        // Only a continuing worker reuses a parent turn that may already have ended.
-        let reuses_parent =
-            self.acp_provider().is_some() && nucleus_hosts::retained_worker_continuation(run);
-        let mut unproven = false;
-        let (state, activity, error, active_child) = match host.observe_run(run, now_ms()).await {
+        let (state, activity, error) = match host.observe_run(run, now_ms()).await {
             Ok(seen) => {
                 if run.launch().role == Role::Worker
                     && let Some(routing) = &seen.routing
@@ -634,20 +732,7 @@ impl Service {
                         }));
                     }
                 }
-                unproven = reuses_parent
-                    && matches!(
-                        &seen.host,
-                        Host::Current {
-                            state: RunState::Running,
-                            ..
-                        }
-                    );
-                (
-                    Observed::Known(seen.host),
-                    seen.activity,
-                    None,
-                    seen.active_child,
-                )
+                (Observed::Known(seen.host), seen.activity, None)
             }
             Err(error) => {
                 if run.last_send_at_ms().is_none() {
@@ -657,18 +742,11 @@ impl Service {
                         launch_diagnostic(run)
                     );
                 }
-                (Observed::Unknown, None, Some(error), None)
+                (Observed::Unknown, None, Some(error))
             }
         };
         self.observe_role_state(row, &state).await?;
         self.observe_activity(row, activity).await?;
-        if let Some(child) = active_child {
-            self.reenter_active_parent(row, route, &child).await?;
-        } else if crate::schedule::reentry_recheck_due(unproven, run.last_send_at_ms(), now_ms()) {
-            // The continuation's native run may not be visible yet. Look again
-            // soon instead of waiting for the live check that may come after it ends.
-            self.recheck_reentry(row).await;
-        }
         Ok((limited.unwrap_or(state), error, limit_fact))
     }
 
@@ -1118,7 +1196,7 @@ impl Service {
         let binding = route.binding(checkout)?;
         let continuing_worker = role == Role::Worker && matches!(via, Launch::Continue { .. });
         let parent = match self
-            .prepare_run_parent(row, checkout, &binding, host, continuing_worker)
+            .prepare_run_parent(row, checkout, &binding, continuing_worker)
             .await?
         {
             ControlFlow::Continue(parent) => parent,
@@ -1232,106 +1310,36 @@ impl Service {
         Ok(true)
     }
 
-    pub(super) async fn reenter_retained_parent(&self, row: &TaskRow) -> Result<(), ServiceError> {
-        let task = &row.task;
-        if self.acp_provider().is_none()
-            || task.hold().is_some()
-            || task.operator_decline().is_some()
-        {
+    pub(super) async fn reconcile_live_parent(&self, row: &TaskRow) -> Result<(), ServiceError> {
+        let Some(provider) = self.acp_provider() else {
             return Ok(());
-        }
+        };
+        let task = &row.task;
         let identity = task.identity();
         let path = nucleus_work::checkout_path(
             self.storage.work().path(),
             &identity.repository,
             &identity.id,
         );
-        let threads: Vec<_> = [Role::Worker, Role::Reviewer]
-            .into_iter()
-            .filter_map(|role| task.threads().get(role))
-            .filter(|thread| task.run().is_none_or(|run| run.launch().thread != *thread))
-            .filter(|thread| self.host.retained_reentry_due(thread, &path))
-            .collect();
-        if threads.is_empty() {
+        if !self.host.projects_synchronized()
+            || !crate::acp::wants_parent_hold(
+                row,
+                self.dispatch_mode().await,
+                false,
+                self.active_parent_role(task, &path),
+                now_ms(),
+            )
+        {
             return Ok(());
         }
-        let launch = {
-            let state = self.state.lock().await;
-            crate::presentation::retained_launch(&state.store, &identity.id, &threads)?
-        };
-        let Some((thread, instance)) = launch else {
-            return Ok(());
-        };
+
+        let _fence = self.effect(row).await?;
         let route = self.project_for(identity).await?;
         let worktrees = self.worktrees();
         let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         let binding = self.checkout_binding(identity, &route, &checkout)?;
-        if let Some(child) = self
-            .host
-            .retained_active_child(binding, thread, instance)
-            .await?
-        {
-            self.reenter_active_parent(row, &route, &child).await?;
-        }
-        Ok(())
-    }
-
-    async fn reenter_active_parent(
-        &self,
-        row: &TaskRow,
-        route: &ProjectRoute,
-        child: &ActiveChild,
-    ) -> Result<(), ServiceError> {
-        let task = &row.task;
-        let Some(provider) = self.acp_provider().filter(|_| {
-            !task.phase().is_terminal()
-                && task.hold().is_none()
-                && task.operator_decline().is_none()
-        }) else {
-            return Ok(());
-        };
-        let _fence = self.effect(row).await?;
-        if !self.dispatch_mode().await.allows_launch(false) {
-            return Ok(());
-        }
-        let identity = task.identity();
-        let prefix = child.parent_command_prefix();
-        let (prior, start_line) = {
-            let state = self.state.lock().await;
-            (
-                state
-                    .store
-                    .parent_deliveries(&identity.id, row.version, Some(&prefix))?
-                    .into_iter()
-                    .find(|value| {
-                        value.command.strip_prefix(&prefix).is_some_and(|tail| {
-                            tail.starts_with(':') || tail.starts_with("-after-")
-                        })
-                    }),
-                crate::presentation::role_start_line(task, &state.store),
-            )
-        };
-        let Some(write) = self
-            .host
-            .prepare_parent_reentry(
-                child,
-                provider,
-                &start_line,
-                prior.as_ref().map(|value| value.command.as_str()),
-            )
-            .await?
-        else {
-            return Ok(());
-        };
-        if prior
-            .as_ref()
-            .is_some_and(|record| Some(record.command.as_str()) != write.command_id())
-        {
-            self.accept_parent_readback(row, prior.as_ref()).await?;
-        }
-        let worktrees = self.worktrees();
-        let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
-        let _ = self.send_run_parent(row, &checkout, write, prior).await?;
+        self.reconcile_parent_hold(row, &checkout, &binding, provider, false)
+            .await?;
         Ok(())
     }
 
@@ -1340,79 +1348,130 @@ impl Service {
         row: &TaskRow,
         checkout: &Checkout<'_>,
         binding: &Binding,
-        host: &impl TaskHost,
         continuing_worker: bool,
     ) -> Result<ControlFlow<WaitReason, Option<ParentRun>>, ServiceError> {
         let Some(provider) = self.acp_provider().filter(|_| !continuing_worker) else {
             return Ok(ControlFlow::Continue(None));
         };
-        let task = &row.task;
-        let identity = task.identity();
-        if !self.launch_capacity(identity, false).await? {
+        if !self.launch_capacity(row.task.identity(), false).await? {
             return Ok(ControlFlow::Break(WaitReason::Capacity));
         }
-        let (prior, released_at, start_line) = {
-            let state = self.state.lock().await;
-            (
-                state
-                    .store
-                    .parent_deliveries(&identity.id, row.version, None)?
-                    .into_iter()
-                    .find(|value| !value.refresh && !value.command.is_empty()),
-                state.wait_reason(&identity.id).filter(|reason| {
-                    !matches!(reason, WaitReason::Starting | WaitReason::HostUnknown)
-                }),
-                crate::presentation::role_start_line(task, &state.store),
-            )
-        };
-        let attempt = prior.as_ref();
-        let step = self
-            .host
-            .prepare_parent(
-                binding,
-                provider,
-                &identity.reference,
-                &start_line,
-                attempt.map(|value| ParentAttempt {
-                    command: &value.command,
-                    released: released_at.is_some(),
-                }),
-                host.profile_catalog(),
-            )
-            .await
-            .map_err(|error| self.parent_not_sent(error))?;
-        if matches!(
-            step,
-            ParentStep::Live(_)
-                | ParentStep::Delivered
-                | ParentStep::AfterDelivery(_)
-                | ParentStep::Failed
-        ) {
-            self.accept_parent_readback(row, attempt).await?;
-        }
-        match step {
-            ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
-            ParentStep::Delivered => Ok(ControlFlow::Break(WaitReason::Starting)),
-            ParentStep::Wait => Ok(ControlFlow::Break(
-                released_at.unwrap_or(WaitReason::Starting),
-            )),
-            ParentStep::Failed => Ok(ControlFlow::Break(WaitReason::HostObservationBlocked)),
-            ParentStep::Write(write) | ParentStep::AfterDelivery(write) => {
-                self.send_run_parent(row, checkout, write, prior).await
-            }
+        match self
+            .reconcile_parent_hold(row, checkout, binding, provider, true)
+            .await?
+        {
+            Some(parent) => Ok(ControlFlow::Continue(Some(parent))),
+            None => Ok(ControlFlow::Break(WaitReason::Starting)),
         }
     }
 
-    async fn accept_parent_readback(
+    async fn reconcile_parent_hold(
         &self,
         row: &TaskRow,
-        record: Option<&ParentDelivery>,
-    ) -> Result<(), ServiceError> {
-        if let Some(record) = record.filter(|record| record.result == ParentResult::Pending) {
-            self.finish_parent_delivery(row, record, ParentResult::Accepted, 0)
-                .await?;
+        checkout: &Checkout<'_>,
+        binding: &Binding,
+        provider: &str,
+        preparing_launch: bool,
+    ) -> Result<Option<ParentRun>, ServiceError> {
+        let task = &row.task;
+        let id = &task.identity().id;
+        let now = now_ms();
+        let (prior, prompt) = {
+            let state = self.state.lock().await;
+            if !crate::acp::wants_parent_hold(
+                row,
+                state.dispatch_mode(),
+                preparing_launch && state.dispatch_mode().allows_launch(task.first_launch()),
+                self.active_parent_role(task, checkout.path()),
+                now,
+            ) {
+                return Ok(None);
+            }
+            (
+                state.store.current_parent_hold(id)?,
+                crate::presentation::role_start_line(task, &state.store),
+            )
+        };
+        let shell = self
+            .host
+            .parent_shell(binding, provider)
+            .map_err(|error| self.parent_not_sent(error))?;
+        if let ParentShell::Listed(turn) = &shell
+            && turn.busy
+            && preparing_launch
+            && let Some(prior) = &prior
+        {
+            return self
+                .live_parent_for_launch(row, binding, provider, prior)
+                .await;
         }
-        Ok(())
+        if matches!(shell, ParentShell::Deleted) {
+            return Ok(None);
+        }
+        let launch = format!("{}-launch", nucleus_hosts::parent_thread(checkout.path()));
+        let missing_dispatch = matches!(shell, ParentShell::Missing)
+            && prior
+                .as_ref()
+                .is_some_and(|record| !record.command.starts_with(&launch));
+        let missing_after_start_deadline = matches!(shell, ParentShell::Missing)
+            && prior.as_ref().is_some_and(|record| {
+                record.result == ParentResult::Accepted && record.due_ms <= crate::acp::ms(now)
+            });
+        if matches!(shell, ParentShell::Archived)
+            || missing_dispatch
+            || missing_after_start_deadline
+        {
+            if let Some(write) = self
+                .host
+                .prepare_parent_unarchive(binding, provider)
+                .await?
+            {
+                self.send_run_parent(row, checkout, write, None).await?;
+                return Ok(None);
+            }
+            if !missing_after_start_deadline || missing_dispatch {
+                return Ok(None);
+            }
+        }
+        if let Some(write) = parent_hold_write(
+            binding,
+            provider,
+            &task.identity().reference,
+            &prompt,
+            shell,
+            prior.as_ref(),
+            preparing_launch,
+        )? {
+            if write.creates_thread() {
+                self.host.check_parent_provider(provider).await?;
+            }
+            self.send_run_parent(row, checkout, write, prior).await?;
+        }
+        Ok(None)
+    }
+
+    async fn live_parent_for_launch(
+        &self,
+        row: &TaskRow,
+        binding: &Binding,
+        provider: &str,
+        prior: &ParentDelivery,
+    ) -> Result<Option<ParentRun>, ServiceError> {
+        let parent = self
+            .host
+            .live_parent(binding, provider, &prior.command)
+            .await?;
+        if parent.is_some() && prior.result == ParentResult::Pending {
+            let deadline = now_ms().saturating_add(crate::acp::PARENT_START_TIMEOUT_MS);
+            self.finish_parent_delivery(
+                row,
+                prior,
+                ParentResult::Accepted,
+                crate::acp::ms(deadline),
+            )
+            .await?;
+        }
+        Ok(parent)
     }
 
     async fn send_run_parent(
@@ -1421,7 +1480,7 @@ impl Service {
         checkout: &Checkout<'_>,
         write: nucleus_hosts::ParentWrite,
         prior: Option<ParentDelivery>,
-    ) -> Result<ControlFlow<WaitReason, Option<ParentRun>>, ServiceError> {
+    ) -> Result<(), ServiceError> {
         let Some(_permit) = self
             .dispatch_gate(
                 &row.task,
@@ -1433,18 +1492,13 @@ impl Service {
             )
             .await?
         else {
-            return Ok(ControlFlow::Break(WaitReason::WorkspaceUnknown));
+            return Err(self.parent_not_sent(HostError::Uncertain));
         };
         self.ensure_parent_reader(&row.task.identity().id, checkout.path())
             .await?;
-        let reentry = write
-            .command_id()
-            .is_some_and(nucleus_hosts::is_parent_reentry);
         self.deliver_parent(row, write, prior, false).await?;
-        if row.task.run().is_none() && !reentry {
-            self.recheck_effect(row, WaitReason::HostUnknown).await;
-        }
-        Ok(ControlFlow::Break(WaitReason::Starting))
+        self.recheck_effect(row, WaitReason::HostUnknown).await;
+        Ok(())
     }
 
     async fn prompt_context(
@@ -4131,17 +4185,6 @@ mod tests {
             advance(&service).await.unwrap(),
             Action::Wait(WaitReason::Running)
         );
-        // The continued run is not yet proven on its parent. The next look is a
-        // Decision wake, so a fresh running hint cannot defer it past the live check.
-        let recheck = service
-            .state
-            .lock()
-            .await
-            .schedule
-            .due_at("worker", crate::schedule::Priority::Decision);
-        assert!(recheck.is_some_and(|due| {
-            due <= tokio::time::Instant::now() + crate::schedule::REENTRY_CHECK
-        }));
         // The rest of this fixture models the no-ACP path; the probe above was the ACP case.
         service.fixture_mut().acp_provider = None;
 
