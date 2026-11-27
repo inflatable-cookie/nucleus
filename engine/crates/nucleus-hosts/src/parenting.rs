@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Binding, HostError, RowChildren, RowObservation, T3, clock_ms,
+    Binding, HostError, RowChildren, RowObservation, T3,
     launch::Method,
     message_id,
     projection::Projection,
