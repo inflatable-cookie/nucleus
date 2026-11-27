@@ -340,3 +340,48 @@ impl Invalidations {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nucleus_core::acp::InboxBinding;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    #[tokio::test]
+    async fn incomplete_frame_expires_even_after_keepalive() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            socket.read(&mut request).await.unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n: keepalive\n\nevent: partial").await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let client = ServiceClient::new(&SessionBinding::Inbox(InboxBinding {
+            session_id: "fixture".into(),
+            endpoint,
+            inbox_credential: [5; 32],
+        }))
+        .unwrap();
+        let mut stream = client.stream().await.unwrap();
+        // Set the same deadline used in production to a short interval for this test.
+        stream.deadline = tokio::time::Instant::now() + Duration::from_millis(50);
+        // Consume the keepalive before setting the deadline for the incomplete frame.
+        // The parser refreshes the deadline on that complete frame.
+        {
+            let read = stream.next();
+            tokio::pin!(read);
+            tokio::select! {
+                result = &mut read => panic!("partial event completed early: {result:?}"),
+                () = tokio::time::sleep(Duration::from_millis(20)) => {}
+            }
+        }
+        stream.deadline = tokio::time::Instant::now() + Duration::from_millis(50);
+        assert!(matches!(stream.next().await, Err(Failure::Unavailable)));
+        server.abort();
+    }
+}
