@@ -1934,7 +1934,7 @@ impl Service {
 
     // A report is accepted while an effect waits on the work volume. Such an
     // effect may not send for the row it saw before that wait.
-    async fn require_unchanged(&self, task: &Task) -> Result<(), ServiceError> {
+    pub(super) async fn require_unchanged(&self, task: &Task) -> Result<(), ServiceError> {
         let state = self.state.lock().await;
         let current = state.store.row(&task.identity().id)?;
         if current.is_some_and(|row| row.task != *task) {

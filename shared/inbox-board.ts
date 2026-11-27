@@ -3,7 +3,8 @@ import type {
   PipelineCard,
   PipelineColumn,
 } from "./pipeline-board";
-import { triageKind } from "./pipeline-board";
+import { pipelineBoard, triageKind } from "./pipeline-board";
+import type { BoardLead, Project } from "./contracts";
 
 /**
  * The inbox board (Tom, 2026-11-21): a menu, a list and a detail pane replace the
@@ -47,13 +48,37 @@ export function triageCards(
     (card) =>
       card.kind === "lead" &&
       triageKind(card.value) === kind &&
-      (filter === "All" || Boolean(card.value.parked) === (filter === "Parked")),
+      (filter === "All" ||
+        Boolean(card.value.parked) === (filter === "Parked")),
   );
 }
 
 /** Menu counts use the same open-plus-parked set as each list's default view. */
-export const leadsCards = (board: PipelineBoard) => triageCards(board, "leads", "All");
-export const papercutCards = (board: PipelineBoard) => triageCards(board, "papercuts", "All");
+export const leadsCards = (board: PipelineBoard) =>
+  triageCards(board, "leads", "All");
+export const papercutCards = (board: PipelineBoard) =>
+  triageCards(board, "papercuts", "All");
+
+/**
+ * One project's Leads and Papercuts totals (nucleus#1666): the same projection and
+ * default set the lists read, with the project filter on that project alone.
+ */
+export function projectTriageCounts(
+  projects: Project[],
+  leads: readonly BoardLead[],
+  project: string,
+) {
+  const board = pipelineBoard({
+    projects,
+    selection: [project],
+    leads,
+    tasks: [],
+  });
+  return {
+    leads: leadsCards(board).length,
+    papercuts: papercutCards(board).length,
+  };
+}
 
 /**
  * When a Needs you card began to need the operator: a decision's ask, a drained
@@ -65,9 +90,9 @@ export function needsActionAt(card: PipelineCard): number {
   const at =
     card.kind === "decision"
       ? card.value.createdAt
-        : card.kind === "task" || card.kind === "raised"
-          ? card.value.hold?.since
-          : undefined;
+      : card.kind === "task" || card.kind === "raised"
+        ? card.value.hold?.since
+        : undefined;
   return Date.parse(at ?? "") || 0;
 }
 
@@ -93,10 +118,20 @@ export function inboxSections(
     case "needs":
       return [{ id: "needs", label: "Needs you", cards: needsCards(board) }];
     case "leads":
-      return [{ id: "leads", label: "Leads", cards: triageCards(board, view, triageFilter) }];
+      return [
+        {
+          id: "leads",
+          label: "Leads",
+          cards: triageCards(board, view, triageFilter),
+        },
+      ];
     case "papercuts":
       return [
-        { id: "papercuts", label: "Papercuts", cards: triageCards(board, view, triageFilter) },
+        {
+          id: "papercuts",
+          label: "Papercuts",
+          cards: triageCards(board, view, triageFilter),
+        },
       ];
     case "queue":
       return [column("queued", "Queued", "Queued")];
@@ -144,3 +179,5 @@ export function inboxLayout(width: number, hostCompact = false): InboxLayout {
 /** Pane widths: the menu and the list are fixed; the detail takes the rest. */
 export const inboxMenuWidth = { wide: 220, medium: 200 } as const;
 export const inboxListWidth = 420;
+/** A Projects overview column (nucleus#1666). A narrow board shows one column at its own width. */
+export const projectColumnWidth = 320;

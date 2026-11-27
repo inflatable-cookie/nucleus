@@ -1,0 +1,1 @@
+- Added `nucleus watch` and `nucleus unwatch` so any known agent thread can subscribe to or unsubscribe from any task's completion notice across projects (Spec 070 ruling 56), and `nucleus next` now reports the watcher count and whether the caller is watching.

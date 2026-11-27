@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, path::Path, sync::Mutex as SyncMutex, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    sync::Mutex as SyncMutex,
+    time::Duration,
+};
 
 use nucleus_core::{Head, Observation, Report, ReportArtifact, ReportDelivery, Workspace};
 use nucleus_hosts::HostError;
@@ -24,6 +29,8 @@ pub(super) struct NoticeFixture {
     pub(super) next_reply: NoticeReply,
     settled: bool,
     uncertain_planner: bool,
+    archived_threads: BTreeSet<String>,
+    missing_threads: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -44,6 +51,7 @@ impl NoticeFixture {
             .unwrap_or(match id {
                 "beta-planner" => "beta-native",
                 "missing-root" => "missing-native",
+                "standalone-agent" => "external-native",
                 _ => "alpha-native",
             });
         let provider = launched
@@ -52,8 +60,8 @@ impl NoticeFixture {
         let (messages, runs) = self.projection(id);
         json!({"kind": "snapshot", "snapshotSequence": 16, "projection": {"thread": {
             "id": id, "projectId": project,
-            "archivedAt": (id == "closed" || id == "alpha-planner" && archived).then_some("2026-11-23T18:10:00Z"),
-            "parentThreadId": (id == "child").then_some("parent"),
+            "archivedAt": (id == "closed" || (id == "alpha-planner" && archived) || self.archived_threads.contains(id)).then_some("2026-11-23T18:10:00Z"),
+            "parentThreadId": (id == "child" || id == "worker-thread").then_some("parent"),
             "providerInstanceId": provider,
             "settledAt": self.settled.then_some("2026-11-23T18:10:00Z"),
         }, "messages": messages, "runs": runs}})
@@ -305,6 +313,18 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
                 if id == "alpha-planner" && notices.uncertain_planner {
                     return json!({"_tag":"Exit", "requestId":request["id"], "exit":{
                         "_tag":"Failure", "cause":[{"_tag":"Fail", "error":{"_tag":"ReadUnavailable"}}]
+                    }});
+                }
+                if id == "unknown-caller" || notices.missing_threads.contains(id) {
+                    return json!({"_tag":"Exit", "requestId":request["id"], "exit":{
+                        "_tag":"Failure", "cause":[{"_tag":"Fail", "error":{
+                            "_tag":"OrchestrationV2GetThreadProjectionError",
+                            "threadId": id,
+                            "cause": {
+                                "name": "ProjectionStoreThreadNotFoundError",
+                                "message": format!("No orchestration projection exists for thread {id}.")
+                            }
+                        }}]
                     }});
                 }
                 notices.thread_snapshot(id, closed.load(Ordering::Relaxed))
@@ -4727,5 +4747,554 @@ async fn item_assess_with_archived_claimed_planner_and_no_fallback_records_new_t
     assert_eq!(
         project.planner_claim.as_ref().map(|c| c.thread.as_str()),
         Some(launched_thread.as_str())
+    );
+}
+async fn watch_via(api: &Router, actor: &str, selector: &str, verb: &str) -> Response {
+    let encoded = selector.replace('/', "%2F").replace('#', "%23");
+    caller_request(
+        api,
+        Method::POST,
+        &format!("/v1/tasks/{encoded}/{verb}"),
+        actor,
+        Value::Null,
+    )
+    .await
+}
+
+async fn settle_phase(service: &Service, id: &str, phase: &str, pr: Option<&str>) {
+    let row = service.task(id).await.unwrap();
+    let mut value = serde_json::to_value(&row.task).unwrap();
+    value["phase"] = json!(phase);
+    value["run"] = Value::Null;
+    if let Some(url) = pr {
+        value["pr"] = json!({"url": url, "head": "a".repeat(40)});
+    }
+    service
+        .save(&row, serde_json::from_value(value).unwrap(), &event(phase))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn unknown_caller_cannot_watch_or_unwatch_and_makes_no_t3_calls() {
+    let registry = registry().await;
+    let reads = registry.reads.load(Ordering::Relaxed);
+    assert_eq!(
+        post_as(
+            &registry.api,
+            "/v1/tasks/missing/watch",
+            &BOARD_KEY,
+            &Value::Null
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        get_as(&registry.api, "/v1/tasks/missing/watchers", &BOARD_KEY)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // Both unknown callers and callers absent from the synchronized shell are refused with 0 T3 calls.
+    for actor in ["unknown-caller", "uncached-agent"] {
+        for verb in ["watch", "unwatch"] {
+            assert_eq!(
+                watch_via(&registry.api, actor, "missing", verb)
+                    .await
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+        assert_eq!(
+            caller_request(
+                &registry.api,
+                Method::GET,
+                "/v1/tasks/missing/watchers",
+                actor,
+                Value::Null,
+            )
+            .await
+            .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    let alpha_root = registry
+        .service
+        .host
+        .cached_project("alpha-native")
+        .unwrap()
+        .root;
+    registry.service.host.fixture_project_shell(
+        &json!({
+            "projects": [{"id": "alpha-native", "workspaceRoot": alpha_root}],
+            "threads": [{
+                "id": "archived-agent",
+                "projectId": "external-native",
+                "updatedAt": "2026-11-27T12:00:00Z",
+                "archivedAt": "2026-11-27T12:01:00Z",
+                "deletedAt": null,
+            }]
+        }),
+        "fixture-acp",
+    );
+    assert_eq!(
+        watch_via(&registry.api, "archived-agent", "missing", "watch")
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+}
+
+#[tokio::test]
+async fn watchers_notify_across_projects_dedupe_origin_and_skip_unwatched() {
+    let registry = registry().await;
+    for actor in ["alpha-planner", "beta-planner", "next-planner"] {
+        registry.enroll(actor).await;
+    }
+    registry.task("alpha-planner", "alpha-done").await;
+    registry.task("alpha-planner", "alpha-cancel").await;
+    let done_number = registry
+        .service
+        .task("alpha-done")
+        .await
+        .unwrap()
+        .number
+        .unwrap();
+    let done_ref = format!("{ALPHA_REPO}#{done_number}");
+    let cancel_ref = format!(
+        "{ALPHA_REPO}#{}",
+        registry
+            .service
+            .task("alpha-cancel")
+            .await
+            .unwrap()
+            .number
+            .unwrap()
+    );
+
+    let w1 = json_body(watch_via(&registry.api, "beta-planner", &done_ref, "watch").await).await;
+    assert_eq!(w1["watching"], true);
+    assert_eq!(w1["reference"], format!("nucleus-fixture#{done_number}"));
+    assert!(w1.get("outcome").is_none());
+
+    for (actor, target, verb) in [
+        ("alpha-planner", "alpha-done", "watch"),
+        ("beta-planner", "alpha-done", "watch"),
+        ("next-planner", "alpha-done", "watch"),
+        ("next-planner", "alpha-done", "unwatch"),
+        ("beta-planner", &cancel_ref, "watch"),
+    ] {
+        assert_eq!(
+            watch_via(&registry.api, actor, target, verb).await.status(),
+            StatusCode::OK
+        );
+    }
+
+    for (actor, watching) in [("alpha-planner", true), ("next-planner", false)] {
+        let next = json_body(
+            caller_request(
+                &registry.api,
+                Method::GET,
+                "/v1/tasks/alpha-done/next",
+                actor,
+                Value::Null,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(next["watchers"], json!({"count": 2, "watching": watching}));
+    }
+
+    settle_phase(&registry.service, "alpha-done", "done", Some(PR)).await;
+    settle_phase(&registry.service, "alpha-cancel", "cancelled", None).await;
+    let done_row = registry.service.task("alpha-done").await.unwrap();
+    let cancel_row = registry.service.task("alpha-cancel").await.unwrap();
+    for row in [&done_row, &cancel_row] {
+        registry.service.notify_completion(row).await.unwrap();
+    }
+    let reads = registry.reads.load(Ordering::Relaxed);
+    for row in [&done_row, &cancel_row] {
+        registry.service.notify_completion(row).await.unwrap();
+    }
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+
+    let sends = &registry.notices.lock().unwrap().sends;
+    for needle in [
+        format!("#{}", done_row.number.unwrap()),
+        "was cancelled".into(),
+    ] {
+        let recipients: Vec<_> = sends
+            .iter()
+            .filter(|s| s["text"].as_str().unwrap().contains(&needle))
+            .map(|s| s["threadId"].as_str().unwrap())
+            .collect();
+        assert_eq!(recipients, ["alpha-planner", "beta-planner"]);
+    }
+}
+
+#[tokio::test]
+async fn watching_a_finished_task_returns_its_outcome_and_records_nothing() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    registry.task("alpha-planner", "alpha-done").await;
+    settle_phase(&registry.service, "alpha-done", "done", Some(PR)).await;
+
+    let late =
+        json_body(watch_via(&registry.api, "beta-planner", "alpha-done", "watch").await).await;
+    assert_eq!(late["watching"], false);
+    assert_eq!(late["phase"], "done");
+    assert!(late["outcome"].as_str().unwrap().contains(PR));
+    assert_eq!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .watcher_summary("alpha-done", Some("beta-planner"))
+            .unwrap(),
+        (0, false)
+    );
+    assert_eq!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .completion_notices("alpha-done")
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn ticket_caller_watches_across_projects_and_receives_completion_notice() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.task("alpha-planner", "alpha-target").await;
+    registry.task("alpha-planner", "alpha-runner").await;
+
+    let mut runner = registry.service.task("alpha-runner").await.unwrap();
+    let credential = [11; 32];
+    let observation = Observation {
+        forge: Observed::Known(Forge::Absent),
+        host: Observed::Unknown,
+        workspace: Observed::Known(Workspace::Clean("a".repeat(40).parse().unwrap())),
+    };
+    let mut runner_task = runner.task.clone();
+    let _ = runner_task.reconcile(&observation);
+    let bearer = runner_task
+        .reserve_launch(
+            &observation,
+            LaunchInputs {
+                scratch: None,
+                thread: "worker-thread".into(),
+                started_at: 1,
+                input: "fixture-only wire".into(),
+            },
+            &credential,
+        )
+        .unwrap();
+    let instance = runner_task.run().unwrap().launch().instance.clone();
+    runner = registry
+        .service
+        .save(&runner, runner_task, &event("reserved"))
+        .await
+        .unwrap();
+
+    let resp = registry
+        .api
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/v1/runs/alpha-runner/{instance}/watch"))
+                .header(HOST, LOCAL_HOST)
+                .header(
+                    AUTHORIZATION,
+                    format!("Bearer {}", hex::encode(bearer.as_bytes())),
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"task": "alpha-target"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ticket_watchers = json_body(
+        registry
+            .api
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/v1/runs/alpha-runner/{instance}/watchers"))
+                    .header(HOST, LOCAL_HOST)
+                    .header(
+                        AUTHORIZATION,
+                        format!("Bearer {}", hex::encode(bearer.as_bytes())),
+                    )
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"task": "alpha-target"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        ticket_watchers["watchers"],
+        json!({"count": 1, "watching": true})
+    );
+    assert!(ticket_watchers.get("commands").is_none());
+    let _ = runner;
+
+    settle_phase(&registry.service, "alpha-target", "done", Some(PR)).await;
+    let target_row = registry.service.task("alpha-target").await.unwrap();
+    registry
+        .service
+        .notify_completion(&target_row)
+        .await
+        .unwrap();
+
+    let sends = &registry.notices.lock().unwrap().sends;
+    let recipients: Vec<_> = sends
+        .iter()
+        .map(|s| s["threadId"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(recipients, vec!["alpha-planner", "worker-thread"]);
+}
+
+#[tokio::test]
+async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.task("alpha-planner", "alpha-task").await;
+    let number = registry
+        .service
+        .task("alpha-task")
+        .await
+        .unwrap()
+        .number
+        .unwrap();
+    let target_ref = format!("{ALPHA_REPO}#{number}");
+
+    let alpha_root = registry
+        .service
+        .host
+        .cached_project("alpha-native")
+        .unwrap()
+        .root;
+    // "standalone-agent" has no planner_route and no run ticket, only a synchronized shell thread.
+    registry.service.host.fixture_project_shell(
+        &json!({
+            "projects": [{"id": "alpha-native", "workspaceRoot": alpha_root}],
+            "threads": [{
+                "id": "standalone-agent",
+                "projectId": "external-native",
+                "updatedAt": "2026-11-27T12:00:00Z",
+                "archivedAt": null,
+                "deletedAt": null,
+            }]
+        }),
+        "fixture-acp",
+    );
+    let reads = registry.reads.load(Ordering::Relaxed);
+    let watched =
+        json_body(watch_via(&registry.api, "standalone-agent", &target_ref, "watch").await).await;
+    assert_eq!(watched["watching"], true);
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            "/v1/tasks/alpha-task/next",
+            "standalone-agent",
+            Value::Null,
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    let status = json_body(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            "/v1/tasks/alpha-task/watchers",
+            "standalone-agent",
+            Value::Null,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status["watchers"], json!({"count": 1, "watching": true}));
+    assert!(status.get("commands").is_none());
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+
+    settle_phase(&registry.service, "alpha-task", "done", Some(PR)).await;
+    let row = registry.service.task("alpha-task").await.unwrap();
+    registry.service.notify_completion(&row).await.unwrap();
+    {
+        let sends = &registry.notices.lock().unwrap().sends;
+        let recipients: Vec<_> = sends
+            .iter()
+            .map(|s| s["threadId"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(recipients, vec!["alpha-planner", "standalone-agent"]);
+    }
+
+    let reads = registry.reads.load(Ordering::Relaxed);
+    assert_eq!(
+        watch_via(&registry.api, "standalone-agent", &target_ref, "unwatch")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
+}
+
+#[tokio::test]
+async fn cross_project_planner_reads_scoped_watchers_without_next_details() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    registry.task("alpha-planner", "alpha-scoped").await;
+    let number = registry
+        .service
+        .task("alpha-scoped")
+        .await
+        .unwrap()
+        .number
+        .unwrap();
+    let target_ref = format!("{ALPHA_REPO}#{number}");
+    let encoded = target_ref.replace('/', "%2F").replace('#', "%23");
+
+    assert_eq!(
+        watch_via(&registry.api, "beta-planner", &target_ref, "watch")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            "/v1/tasks/alpha-scoped/next",
+            "beta-planner",
+            Value::Null,
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            &format!("/v1/tasks/{encoded}/next"),
+            "beta-planner",
+            Value::Null,
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    let scoped = json_body(
+        caller_request(
+            &registry.api,
+            Method::GET,
+            &format!("/v1/tasks/{encoded}/watchers"),
+            "beta-planner",
+            Value::Null,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(scoped["watchers"], json!({"count": 1, "watching": true}));
+    assert!(scoped.get("commands").is_none());
+    assert!(scoped.get("hold").is_none());
+    assert!(scoped.get("allowance").is_none());
+}
+
+#[tokio::test]
+async fn gone_watcher_is_dropped_and_recorded_while_origin_falls_back() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("next-planner").await;
+    claim(&registry, "next-planner").await;
+    registry.enroll("beta-planner").await;
+
+    let task = registry.task("alpha-planner", "alpha-gone").await;
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/tasks/alpha-gone/watch",
+            "beta-planner",
+            Value::Null
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    // Archive both alpha-planner (origin) and beta-planner (watcher) before closeout.
+    registry.archived.store(true, Ordering::Relaxed);
+    registry
+        .notices
+        .lock()
+        .unwrap()
+        .archived_threads
+        .insert("beta-planner".into());
+
+    let row = registry.service.task("alpha-gone").await.unwrap();
+    let mut cancelled = serde_json::to_value(&task).unwrap();
+    cancelled["phase"] = json!("cancelled");
+    registry
+        .service
+        .save(
+            &row,
+            serde_json::from_value(cancelled).unwrap(),
+            &event("cancelled"),
+        )
+        .await
+        .unwrap();
+
+    let row = registry.service.task("alpha-gone").await.unwrap();
+    registry.service.notify_completion(&row).await.unwrap();
+
+    {
+        let sends = &registry.notices.lock().unwrap().sends;
+        assert_eq!(sends.len(), 1);
+        assert_eq!(sends[0]["threadId"], "next-planner");
+    }
+
+    let history = registry
+        .service
+        .history("alpha-gone", None, 20)
+        .await
+        .unwrap();
+    let dropped = history
+        .iter()
+        .find(|entry| entry.content.kind == "completion_notice_watcher_dropped")
+        .expect("dropped watcher recorded in task history");
+    let detail: Value = serde_json::from_str(&dropped.content.detail).unwrap();
+    assert_eq!(detail["recipient"], "beta-planner");
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .completion_notices("alpha-gone")
+            .unwrap()
+            .is_empty()
     );
 }
