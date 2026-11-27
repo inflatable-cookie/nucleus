@@ -317,21 +317,17 @@ async fn main() -> Result<()> {
                     info.to_string().replace(['\r', '\n'], " ")
                 ));
             }));
-            let result = async {
-                let provider = acp_provider.ok_or("supply the T3 ACP provider")?;
-                serve(
-                    endpoint,
-                    home.as_deref(),
-                    provider,
-                    t3.as_deref(),
-                    authority,
-                    fixture_origin_thread,
-                    board_assets.as_deref(),
-                )
-                .await
-            }
-            .await;
-            if let Err(error) = result {
+            if let Err(error) = serve(
+                endpoint,
+                home.as_deref(),
+                acp_provider,
+                t3.as_deref(),
+                authority,
+                fixture_origin_thread,
+                board_assets.as_deref(),
+            )
+            .await
+            {
                 serve_log::line(format_args!(
                     "{}",
                     error.to_string().replace(['\r', '\n'], " ")
@@ -416,7 +412,7 @@ fn configured_host(settings: &SettingsFile, host: Option<&str>) -> Result<T3> {
 async fn serve(
     endpoint: SocketAddr,
     home: Option<&Path>,
-    provider: String,
+    provider: Option<String>,
     host: Option<&str>,
     authority: Authority,
     fixture_origin_thread: Option<String>,
@@ -425,45 +421,48 @@ async fn serve(
     let started = Instant::now();
     let signals = ShutdownSignals::new()?;
     loopback(endpoint)?;
-    let actor = match &authority {
-        Authority::Operator { actor } | Authority::Planner { actor } => actor,
-    };
-    if actor.trim().is_empty() {
-        return Err("supply the controller identity".into());
-    }
     let settings = open_settings(home)?;
-    let host = configured_host(&settings, host)?;
-    let forge = GitHub::new(&secret("NUCLEUS_ENGINE_GITHUB_TOKEN")?)?;
-    let credential = control_key(CONTROL_KEY)?;
-    if !matches!(authority, Authority::Operator { .. }) || fixture_origin_thread.is_some() {
-        return Err("use the T3 caller credential with the Projects registry".into());
-    }
-    let t3_caller_key = control_key(T3_CALLER_KEY)?;
-    if t3_caller_key == credential {
-        return Err("supply a distinct T3 caller credential".into());
-    }
-    let mut controllers = vec![Controller {
-        credential,
-        authority,
-    }];
-    if let Some(actor) = fixture_origin_thread {
-        let origin = control_key(FIXTURE_ORIGIN_KEY)?;
-        if origin == credential || actor.trim().is_empty() {
-            return Err("supply a distinct key and identity for the fixture origin".into());
-        }
-        controllers.push(Controller {
-            credential: origin,
-            authority: Authority::Planner { actor },
-        });
-    }
-    let callback = endpoint;
-    let command = env::current_exe()?.canonicalize()?;
-    let service = Service::open_projects(&settings, provider, host, forge, callback, command)?;
-    let service = service.with_inbox_from_env()?;
-    let service = Arc::new(service);
+    let profile = settings.lock_profile()?;
+    // Initialization can drop the service before there is an exit to record.
+    let _profile_lock = profile.retain_lock();
     serve_log::start(settings.home())?;
-    // Keep the service's profile lock through the final log and disposition.
     let result = async {
+        let provider = provider.ok_or("supply the T3 ACP provider")?;
+        let actor = match &authority {
+            Authority::Operator { actor } | Authority::Planner { actor } => actor,
+        };
+        if actor.trim().is_empty() {
+            return Err("supply the controller identity".into());
+        }
+        let host = configured_host(&settings, host)?;
+        let forge = GitHub::new(&secret("NUCLEUS_ENGINE_GITHUB_TOKEN")?)?;
+        let credential = control_key(CONTROL_KEY)?;
+        if !matches!(authority, Authority::Operator { .. }) || fixture_origin_thread.is_some() {
+            return Err("use the T3 caller credential with the Projects registry".into());
+        }
+        let t3_caller_key = control_key(T3_CALLER_KEY)?;
+        if t3_caller_key == credential {
+            return Err("supply a distinct T3 caller credential".into());
+        }
+        let mut controllers = vec![Controller {
+            credential,
+            authority,
+        }];
+        if let Some(actor) = fixture_origin_thread {
+            let origin = control_key(FIXTURE_ORIGIN_KEY)?;
+            if origin == credential || actor.trim().is_empty() {
+                return Err("supply a distinct key and identity for the fixture origin".into());
+            }
+            controllers.push(Controller {
+                credential: origin,
+                authority: Authority::Planner { actor },
+            });
+        }
+        let command = env::current_exe()?.canonicalize()?;
+        let service = Arc::new(
+            Service::open_projects(profile, provider, host, forge, endpoint, command)?
+                .with_inbox_from_env()?,
+        );
         let api = match board_assets {
             Some(path) => router_with_board_and_t3_callers(
                 Arc::clone(&service),
@@ -474,7 +473,7 @@ async fn serve(
             None => router_with_t3_callers(Arc::clone(&service), controllers, Some(t3_caller_key)),
         };
         let tcp = TcpListener::bind(endpoint).await?;
-        serve_http(tcp, api, Arc::clone(&service), signals, started).await
+        serve_http(tcp, api, service, signals, started).await
     }
     .await;
     if let Err(error) = &result {

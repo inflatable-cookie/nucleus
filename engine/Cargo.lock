@@ -1645,6 +1645,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.3.4",
  "hex",
+ "log",
  "longhorn-core",
  "longhorn-credential-keyring",
  "longhorn-git-workspace",

@@ -518,10 +518,10 @@ It logs each recovery attempt to `acp.log` and backs off between attempts.
 
 Keep the serve launcher's log under the configured log root. On SIGINT,
 SIGTERM or SIGHUP, `serve` logs the signal and its uptime and shuts down.
-The profile records the last service log time and the exit status so the
-next start can report a clean shutdown, a logged error or an unannounced
-exit such as SIGKILL. The pass logs once when one task has held it for a
-minute, naming the task and the step.
+Once `serve` holds the profile lock, it records the run before initializing
+the service. The next start reports the last log time and how the previous
+run ended, including errors and SIGKILL during initialization. The pass
+logs once when one task has held it for a minute, naming the task and the step.
 
 ### Set up T3
 

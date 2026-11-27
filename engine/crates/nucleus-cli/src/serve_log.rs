@@ -33,7 +33,7 @@ impl log::Log for ServiceLogger {
     fn flush(&self) {}
 }
 
-// The service already holds the profile lock. Position zero records the
+// The caller holds the profile lock. Position zero records the
 // disposition, and the rest records the last emitted service log timestamp.
 pub(super) fn start(home: &Path) -> Result<()> {
     let file = File::from(open(
@@ -70,6 +70,7 @@ pub(super) fn start(home: &Path) -> Result<()> {
             ));
         }
     }
+    line(format_args!("Nucleus engine initializing"));
     Ok(())
 }
 

@@ -393,11 +393,43 @@ impl SettingsFile {
     /// # Errors
     /// Returns an error if the engine is disabled or the pinned volume cannot be used.
     pub fn storage(&self) -> Result<EngineStorage, StorageError> {
+        let settings = self.enabled_settings()?;
+        EngineStorage::resolve(&self.layout, &self.home, &settings)
+    }
+
+    /// Claim the exclusive service lock on the durable profile before opening runtime roots.
+    ///
+    /// # Errors
+    /// Returns an error if the engine is disabled or its durable directory or lock is unavailable.
+    pub fn lock_profile(&self) -> Result<LockedProfile, StorageError> {
+        let settings = self.enabled_settings()?;
+        let database = storage_dir(
+            settings.work_volume.as_ref(),
+            self.layout.durable_database_dir(),
+            &scratch_path(&self.layout, &settings),
+        )?;
+        database.ensure()?;
+        let lock = open(
+            database.path().join("service.lock"),
+            OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map_err(|_| StorageError::ProfileLock)?;
+        flock(&lock, FlockOperation::NonBlockingLockExclusive)
+            .map_err(|_| StorageError::ProfileLock)?;
+        Ok(LockedProfile {
+            file: self.clone(),
+            settings,
+            lock: Arc::new(lock),
+        })
+    }
+
+    fn enabled_settings(&self) -> Result<EngineSettings, StorageError> {
         let settings = self.load()?;
         if !settings.enabled {
             return Err(StorageError::Disabled);
         }
-        EngineStorage::resolve(&self.layout, &self.home, &settings)
+        Ok(settings)
     }
 
     /// Resolve configured roots for status, including when the engine is disabled.
@@ -440,6 +472,30 @@ fn register<S: SettingsValue>(store: &mut ConfigStore) -> Result<SettingsDomain<
     domain.retired_keys = Some(RefCell::default());
     store.register(&domain).map_err(|_| StorageError::Layout)?;
     Ok(domain)
+}
+
+/// An enabled profile held exclusively while its service starts and runs.
+pub struct LockedProfile {
+    file: SettingsFile,
+    settings: EngineSettings,
+    lock: Arc<OwnedFd>,
+}
+
+impl LockedProfile {
+    /// Keep the profile locked while handling an initialization failure or exit.
+    #[must_use]
+    pub fn retain_lock(&self) -> Arc<OwnedFd> {
+        Arc::clone(&self.lock)
+    }
+
+    /// Resolve runtime storage from the same settings used to claim the service lock.
+    ///
+    /// # Errors
+    /// Returns an error if the configured storage cannot be used.
+    pub fn into_storage(self) -> Result<(SettingsFile, EngineStorage, Arc<OwnedFd>), StorageError> {
+        let storage = EngineStorage::resolve(&self.file.layout, &self.file.home, &self.settings)?;
+        Ok((self.file, storage, self.lock))
+    }
 }
 
 pub struct EngineStorage {
@@ -621,23 +677,6 @@ impl EngineStorage {
     #[must_use]
     pub const fn database(&self) -> &StorageDirectory {
         &self.database
-    }
-
-    /// Claim the same exclusive profile lock used by the running service.
-    ///
-    /// # Errors
-    /// Returns an error if the profile directory or its lock is unavailable.
-    pub fn lock_profile(&self) -> Result<OwnedFd, StorageError> {
-        self.database.ensure()?;
-        let lock = open(
-            self.database.path().join("service.lock"),
-            OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::RUSR | Mode::WUSR,
-        )
-        .map_err(|_| StorageError::ProfileLock)?;
-        flock(&lock, FlockOperation::NonBlockingLockExclusive)
-            .map_err(|_| StorageError::ProfileLock)?;
-        Ok(lock)
     }
 
     #[must_use]

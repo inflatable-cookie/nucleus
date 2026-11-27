@@ -129,9 +129,9 @@ exec "$NUCLEUS_FIXTURE_BINARY" --endpoint "$NUCLEUS_FIXTURE_ENDPOINT" ensure \
             .expect("open the fixture log")
     }
 
-    async fn serve(&self, endpoint: SocketAddr) -> Child {
-        let child = self
-            .command(endpoint)
+    fn serve_command(&self, endpoint: SocketAddr) -> Command {
+        let mut command = self.command(endpoint);
+        command
             .args(["serve", "--home"])
             .arg(&self.home)
             .args([
@@ -143,9 +143,12 @@ exec "$NUCLEUS_FIXTURE_BINARY" --endpoint "$NUCLEUS_FIXTURE_ENDPOINT" ensure \
                 "http://127.0.0.1:9",
             ])
             .stderr(self.append_log("serve.log"))
-            .stdout(self.append_log("serve.log"))
-            .spawn()
-            .expect("start serve");
+            .stdout(self.append_log("serve.log"));
+        command
+    }
+
+    async fn serve(&self, endpoint: SocketAddr) -> Child {
+        let child = self.serve_command(endpoint).spawn().expect("start serve");
         let http = reqwest::Client::builder()
             .no_proxy()
             .timeout(Duration::from_secs(1))
@@ -334,6 +337,40 @@ async fn serve_records_clean_and_unannounced_exits() {
             .log("serve.log")
             .contains("shutting down on SIGHUP after ")
     );
+}
+
+#[tokio::test]
+async fn a_failed_initialization_replaces_the_earlier_clean_run_record() {
+    let fixture = Profile::new().await;
+    let endpoint = free_endpoint().await;
+    let mut first = fixture.serve(endpoint).await;
+    kill_process(pid(&first), Signal::TERM).expect("stop the first run");
+    assert!(exit(&mut first).await.success());
+
+    let mut failed = fixture
+        .serve_command(endpoint)
+        .env("NUCLEUS_RUST_NATIVE_INBOX", "invalid")
+        .spawn()
+        .expect("start serve with an invalid Inbox configuration");
+    assert!(!exit(&mut failed).await.success());
+    let before = fixture.log("serve.log");
+    let failure = before.lines().last().expect("initialization error");
+    assert!(
+        failure.contains("set NUCLEUS_RUST_NATIVE_INBOX to 0 or 1"),
+        "{failure}"
+    );
+
+    let last_time = last_log_time(&before);
+    let mut third = fixture.serve(endpoint).await;
+    let log = fixture.log("serve.log");
+    assert!(
+        log[before.len()..].contains(&format!(
+            "Previous Nucleus engine run exited with an error (last log at {last_time})"
+        )),
+        "{log}"
+    );
+    kill_process(pid(&third), Signal::TERM).expect("stop the fixture engine");
+    assert!(exit(&mut third).await.success());
 }
 
 struct Acp {
