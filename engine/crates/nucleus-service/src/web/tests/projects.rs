@@ -319,7 +319,10 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
                         "_tag":"Failure", "cause":[{"_tag":"Fail", "error":{
                             "_tag":"OrchestrationV2GetThreadProjectionError",
                             "threadId": id,
-                            "cause": {"name": "ProjectionStoreThreadNotFoundError", "message": "missing"}
+                            "cause": {
+                                "name": "ProjectionStoreThreadNotFoundError",
+                                "message": format!("No orchestration projection exists for thread {id}.")
+                            }
                         }}]
                     }});
                 }
@@ -4781,6 +4784,16 @@ async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
     assert_eq!(status["watchers"], json!({"count": 1, "watching": true}));
     assert!(status.get("commands").is_none());
 
+    settle_phase(&registry.service, "alpha-task", "done", Some(PR)).await;
+    let row = registry.service.task("alpha-task").await.unwrap();
+    registry.service.notify_completion(&row).await.unwrap();
+    let sends = &registry.notices.lock().unwrap().sends;
+    let recipients: Vec<_> = sends
+        .iter()
+        .map(|s| s["threadId"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(recipients, vec!["alpha-planner", "standalone-agent"]);
+
     // Cached shell threads do not trigger an extra T3 subscribeThread call.
     registry.service.host.fixture_project_shell(
         &json!({
@@ -4809,16 +4822,6 @@ async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
             .status(),
         StatusCode::OK
     );
-
-    settle_phase(&registry.service, "alpha-task", "done", Some(PR)).await;
-    let row = registry.service.task("alpha-task").await.unwrap();
-    registry.service.notify_completion(&row).await.unwrap();
-    let sends = &registry.notices.lock().unwrap().sends;
-    let recipients: Vec<_> = sends
-        .iter()
-        .map(|s| s["threadId"].as_str().unwrap().to_owned())
-        .collect();
-    assert_eq!(recipients, vec!["alpha-planner", "standalone-agent"]);
 }
 
 #[tokio::test]
@@ -4865,7 +4868,7 @@ async fn cross_project_planner_reads_scoped_watchers_without_next_details() {
         )
         .await
         .status(),
-        StatusCode::UNAUTHORIZED
+        StatusCode::NOT_FOUND
     );
     let scoped = json_body(
         caller_request(
