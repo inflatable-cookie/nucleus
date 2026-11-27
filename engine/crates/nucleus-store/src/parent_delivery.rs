@@ -1,4 +1,4 @@
-use rusqlite::{OptionalExtension, Row, params};
+use rusqlite::{Row, params};
 
 use crate::{Store, StoreError};
 
@@ -6,9 +6,6 @@ use crate::{Store, StoreError};
 pub enum ParentResult {
     Pending,
     Accepted,
-    Refused,
-    Failed,
-    Held,
 }
 
 impl ParentResult {
@@ -16,9 +13,6 @@ impl ParentResult {
         match self {
             Self::Pending => "pending",
             Self::Accepted => "accepted",
-            Self::Refused => "refused",
-            Self::Failed => "failed",
-            Self::Held => "held",
         }
     }
 }
@@ -28,7 +22,6 @@ pub struct ParentDelivery {
     pub version: i64,
     pub command: String,
     pub refresh: bool,
-    pub runtime: Option<String>,
     pub wire: Option<String>,
     pub legacy_prompt: Option<String>,
     pub due_ms: i64,
@@ -36,22 +29,20 @@ pub struct ParentDelivery {
 }
 
 fn delivery(row: &Row<'_>) -> rusqlite::Result<ParentDelivery> {
-    let result = match row.get_ref(7)?.as_str()? {
-        "pending" => ParentResult::Pending,
+    let result = match row.get_ref(6)?.as_str()? {
+        // Schema 12 used three additional outcomes. Any exact command that
+        // wasn't accepted can now be retried using its original ID.
+        "pending" | "refused" | "failed" | "held" => ParentResult::Pending,
         "accepted" => ParentResult::Accepted,
-        "refused" => ParentResult::Refused,
-        "failed" => ParentResult::Failed,
-        "held" => ParentResult::Held,
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     Ok(ParentDelivery {
         version: row.get(0)?,
         command: row.get(1)?,
         refresh: row.get(2)?,
-        runtime: row.get(3)?,
-        wire: row.get(4)?,
-        legacy_prompt: row.get(5)?,
-        due_ms: row.get(6)?,
+        wire: row.get(3)?,
+        legacy_prompt: row.get(4)?,
+        due_ms: row.get(5)?,
         result,
     })
 }
@@ -68,8 +59,8 @@ impl Store {
         child: Option<&str>,
     ) -> Result<Vec<ParentDelivery>, StoreError> {
         let mut query = self.connection.prepare_cached(
-            "SELECT version, command, refresh, runtime, wire, legacy_prompt, due_ms, result
-             FROM parent_deliveries WHERE task_id=?1 AND
+            "SELECT version, command, refresh, wire, legacy_prompt, due_ms, result
+             FROM parent_deliveries WHERE task_id=?1 AND command<>'' AND
                (version=?2 OR (version<?2 AND instr(command, ?3)=1)) ORDER BY ordinal DESC",
         )?;
         Ok(query
@@ -83,35 +74,12 @@ impl Store {
     /// Returns an error if the delivery record cannot be read.
     pub fn pending_parent_preparation(&self, task: &str, version: i64) -> Result<bool, StoreError> {
         Ok(self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM parent_deliveries
-             WHERE task_id=?1 AND version=?2 AND refresh=0 AND result IN ('pending','held'))",
+            "SELECT coalesce((SELECT result<>'accepted' FROM parent_deliveries
+             WHERE task_id=?1 AND version=?2 AND command<>'' AND refresh=0
+             ORDER BY ordinal DESC LIMIT 1), 0)",
             params![task, version],
             |row| row.get(0),
         )?)
-    }
-
-    /// Return whether the next recovery notice uses the retry ID, or none if spent.
-    ///
-    /// # Errors
-    /// Returns an error if the task effect journal cannot be read.
-    pub fn parent_recovery_notice_retry(
-        &self,
-        task: &str,
-        version: i64,
-    ) -> Result<Option<bool>, StoreError> {
-        let prior = self.connection.query_row(
-            "SELECT CASE kind
-                 WHEN 'parent_recovery_notice_rejected' THEN 1
-                 WHEN 'parent_recovery_notice_not_sent' THEN coalesce(detail ->> '$.retry', 0)
-                 ELSE NULL END
-             FROM events WHERE task_id=?1
-               AND kind IN ('parent_recovery_notice_intent', 'parent_recovery_notice_not_sent', 'parent_recovery_notice_rejected')
-               AND detail ->> '$.version' = ?2
-             ORDER BY sequence DESC LIMIT 1",
-            params![task, version],
-            |row| row.get::<_, Option<bool>>(0),
-        ).optional()?;
-        Ok(prior.unwrap_or(Some(false)))
     }
 
     /// Freeze one native delivery before crossing the wire, under the task version fence.
@@ -124,14 +92,52 @@ impl Store {
         value: &ParentDelivery,
     ) -> Result<bool, StoreError> {
         Ok(self.connection.execute(
-            "INSERT INTO parent_deliveries (task_id,version,command,refresh,runtime,wire,due_ms,result)
-             SELECT id,version,?3,?4,?5,?6,?7,'pending' FROM tasks WHERE id=?1 AND version=?2
-             ON CONFLICT(task_id, version, command) DO UPDATE
-             SET runtime=excluded.runtime, wire=excluded.wire, legacy_prompt=NULL,
-                 due_ms=excluded.due_ms, result=excluded.result
-             WHERE parent_deliveries.result='refused'",
-            params![task, value.version, value.command, value.refresh, value.runtime, value.wire, value.due_ms],
+            "INSERT INTO parent_deliveries (task_id,version,command,refresh,wire,due_ms,result)
+             SELECT id,version,?3,?4,?5,?6,'pending' FROM tasks WHERE id=?1 AND version=?2
+             ON CONFLICT(task_id, version, command) DO NOTHING",
+            params![
+                task,
+                value.version,
+                value.command,
+                value.refresh,
+                value.wire,
+                value.due_ms
+            ],
         )? == 1)
+    }
+
+    /// Store a due retry of the same command or its replacement after rejection.
+    ///
+    /// # Errors
+    /// Returns an error if persistence fails or the task or intent has changed.
+    pub fn retry_parent_delivery(
+        &self,
+        task: &str,
+        current_version: i64,
+        delivery: &ParentDelivery,
+        command: &str,
+        wire: &str,
+        due_ms: i64,
+    ) -> Result<(), StoreError> {
+        let count = self.connection.execute(
+            "UPDATE parent_deliveries
+             SET command=?5, wire=?6, due_ms=?7, runtime=NULL, legacy_prompt=NULL, result='pending'
+             WHERE task_id=?1 AND version=?2 AND command=?3 AND result<>'accepted'
+               AND EXISTS (SELECT 1 FROM tasks WHERE id=?1 AND version=?4)",
+            params![
+                task,
+                delivery.version,
+                delivery.command,
+                current_version,
+                command,
+                wire,
+                due_ms
+            ],
+        )?;
+        if count != 1 {
+            return Err(StoreError::StaleTask);
+        }
+        Ok(())
     }
 
     /// Update the exact command's outcome and retry deadline.
@@ -148,13 +154,13 @@ impl Store {
     ) -> Result<(), StoreError> {
         let count = self.connection.execute(
             "UPDATE parent_deliveries SET result=?6, due_ms=?7
-             WHERE task_id=?1 AND version=?2 AND command=?3 AND result=?4
+             WHERE task_id=?1 AND version=?2 AND command=?3 AND (result='accepted')=?4
                AND EXISTS (SELECT 1 FROM tasks WHERE id=?1 AND version=?5)",
             params![
                 task,
                 delivery.version,
                 delivery.command,
-                delivery.result.label(),
+                delivery.result == ParentResult::Accepted,
                 current_version,
                 result.label(),
                 due_ms

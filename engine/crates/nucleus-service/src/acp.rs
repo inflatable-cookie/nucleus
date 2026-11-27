@@ -63,11 +63,7 @@ fn parent_delivery_retry(source: HostError, due_ms: i64) -> ServiceError {
         HostError::Deferred { until: deferred } => until.max(deferred),
         _ => until,
     };
-    ServiceError::ParentDeliveryUnknown { source, until }
-}
-
-fn can_replay(record: &ParentDelivery, runtime: Option<&str>) -> bool {
-    record.wire.is_some() && runtime.is_some() && record.runtime.as_deref() == runtime
+    ServiceError::ParentRetry { source, until }
 }
 
 fn ms(timestamp: u64) -> i64 {
@@ -114,16 +110,7 @@ fn parent_delivery_for_acp(
         .store
         .parent_deliveries(&row.task.identity().id, row.version, reservation.as_deref())?
         .into_iter()
-        .find(|delivery| {
-            !delivery.refresh
-                && !delivery.command.is_empty()
-                && delivery.result != ParentResult::Refused
-                && (delivery.version == row.version
-                    || matches!(
-                        delivery.result,
-                        ParentResult::Pending | ParentResult::Accepted
-                    ))
-        }))
+        .find(|delivery| !delivery.refresh && !delivery.command.is_empty()))
 }
 
 fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
@@ -208,10 +195,7 @@ impl Service {
                 .store
                 .parent_deliveries(id, row.version, Some(&prefix))?
                 .into_iter()
-                .find(|delivery| {
-                    delivery.command.starts_with(&prefix)
-                        && delivery.result != ParentResult::Refused
-                });
+                .find(|delivery| delivery.command.starts_with(&prefix));
         }
         let reentry = delivery
             .as_ref()
@@ -228,167 +212,13 @@ impl Service {
         {
             return Ok((None, carry_row));
         }
-        if delivery
-            .as_ref()
-            .is_some_and(|delivery| delivery.result == ParentResult::Failed)
-        {
-            return Ok((None, carry_row));
-        }
         let prompt = delivery
-            .filter(|delivery| {
-                matches!(
-                    delivery.result,
-                    ParentResult::Pending | ParentResult::Accepted
-                )
-            })
             .map(|delivery| delivery_prompt(&delivery, &roles))
             .transpose()?
             .flatten();
         // Older ACP clients also use child activity to carry an already authenticated turn.
         let carry = prompt.is_none() && (carry_row || active_child && task.run().is_some());
         Ok((prompt, carry))
-    }
-
-    pub(super) async fn parent_delivery_fenced(&self, row: &TaskRow) -> Result<(), ServiceError> {
-        let id = &row.task.identity().id;
-        let state = self.state.lock().await;
-        let records = state.store.parent_deliveries(id, row.version, None)?;
-        if records
-            .iter()
-            .any(|value| value.result == ParentResult::Held)
-        {
-            return Err(ServiceError::ParentDeliveryHeld);
-        }
-        if !records
-            .iter()
-            .any(|value| value.result == ParentResult::Pending)
-        {
-            return Ok(());
-        }
-        if row.task.phase() == Phase::Working
-            && row.task.first_launch()
-            && !state.forge_requested.contains(id)
-            && !self.initial_dispatch_allowed(&state, row.task.identity())?
-        {
-            return Ok(());
-        }
-        drop(state);
-        let described = self.host.parent_runtime_hint();
-        let runtime = if records.iter().any(|record| {
-            record.result == ParentResult::Pending && can_replay(record, described.as_deref())
-        }) {
-            self.host.verified_runtime_identity().await
-        } else {
-            None
-        };
-        let uncertain: Vec<_> = records
-            .into_iter()
-            .filter(|value| {
-                value.result == ParentResult::Pending && !can_replay(value, runtime.as_deref())
-            })
-            .collect();
-        if uncertain.is_empty() {
-            return Ok(());
-        }
-        let _fence = self.effect(row).await?;
-        let identity = row.task.identity();
-        let route = self.project_for(identity).await?;
-        let work = self.worktrees();
-        let checkout = work.registered(&route.checkout, &identity.repository, id)?;
-        self.resolve_parent_deliveries(row, &route.binding(&checkout)?, &uncertain)
-            .await
-    }
-
-    pub(super) async fn replay_runtime(&self, record: &ParentDelivery) -> Option<String> {
-        let described = self.host.parent_runtime_hint()?;
-        if !can_replay(record, Some(&described)) {
-            return None;
-        }
-        self.host
-            .verified_runtime_identity()
-            .await
-            .filter(|verified| verified == &described)
-    }
-
-    pub(super) async fn resolve_parent_deliveries(
-        &self,
-        row: &TaskRow,
-        binding: &nucleus_hosts::Binding,
-        records: &[ParentDelivery],
-    ) -> Result<(), ServiceError> {
-        // A frozen send's deadline paces replay. Capacity release can still
-        // trigger its first receipt read on a replacement runtime.
-        for record in records.iter().filter(|record| record.wire.is_none()) {
-            parent_due(record)?;
-        }
-        let mut accepted = Vec::new();
-        if let Some(provider) = self.acp_provider() {
-            let thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
-            let commands: Vec<_> = records
-                .iter()
-                .filter(|record| {
-                    record
-                        .command
-                        .strip_prefix(&thread)
-                        .is_some_and(|suffix| suffix.starts_with('-'))
-                        && record.wire.as_deref().is_none_or(|wire| {
-                            serde_json::from_str::<FrozenParentWrite>(wire)
-                                .is_ok_and(|frozen| frozen.matches(binding, provider))
-                        })
-                })
-                .map(|record| record.command.clone())
-                .collect();
-            if !commands.is_empty() {
-                let receipts = self
-                    .host
-                    .parent_delivery_receipts(binding, provider, commands)
-                    .await;
-                let unavailable = match receipts {
-                    Ok(found) => {
-                        accepted = found;
-                        None
-                    }
-                    Err(HostError::Binding | HostError::ParentReceiptInconclusive) => None,
-                    Err(error @ HostError::Deferred { .. }) => {
-                        return Err(parent_delivery_retry(error, 0));
-                    }
-                    Err(error) => Some(error),
-                };
-                if let Some(error) = unavailable {
-                    let state = self.state.lock().await;
-                    let due = retry_ms();
-                    for record in records {
-                        state.store.finish_parent_delivery(
-                            &row.task.identity().id,
-                            row.version,
-                            record,
-                            ParentResult::Pending,
-                            due,
-                        )?;
-                    }
-                    return Err(parent_delivery_retry(error, due));
-                }
-            }
-        }
-        let state = self.state.lock().await;
-        for record in records {
-            let result = if accepted.contains(&record.command) {
-                ParentResult::Accepted
-            } else {
-                ParentResult::Held
-            };
-            state.store.finish_parent_delivery(
-                &row.task.identity().id,
-                row.version,
-                record,
-                result,
-                0,
-            )?;
-        }
-        if accepted.len() != records.len() {
-            return Err(ServiceError::ParentDeliveryHeld);
-        }
-        Ok(())
     }
 
     async fn reentry_due(
@@ -442,85 +272,93 @@ impl Service {
         prior: Option<ParentDelivery>,
         refresh: bool,
     ) -> Result<bool, ServiceError> {
-        let mut runtime = None;
         let existing = prior
             .filter(|record| record.command == write.command_id().unwrap_or_default() || refresh);
         if !self.reentry_due(row, &write, existing.as_ref()).await? {
             return Ok(false);
         }
         if let Some(record) = &existing {
-            match record.result {
-                ParentResult::Accepted | ParentResult::Failed => return Ok(false),
-                ParentResult::Held => return Err(ServiceError::ParentDeliveryHeld),
-                ParentResult::Pending => {
-                    runtime = self.replay_runtime(record).await;
-                    if runtime.is_none() {
-                        self.resolve_parent_deliveries(
-                            row,
-                            write.binding(),
-                            std::slice::from_ref(record),
-                        )
-                        .await?;
-                        return Ok(false);
-                    }
-                    parent_due(record)?;
-                }
-                ParentResult::Refused => {}
+            if record.result == ParentResult::Accepted {
+                return Ok(false);
             }
+            parent_due(record)?;
             if let Some(wire) = &record.wire {
                 write.use_frozen(serde_json::from_str(wire).map_err(StoreError::from)?)?;
-                if write.command_id() != Some(record.command.as_str()) {
-                    return Err(ServiceError::ParentDeliveryHeld);
-                }
+            } else if write.starts_turn() {
+                let prompt = record.legacy_prompt.clone().unwrap_or_else(|| {
+                    if record.refresh {
+                        nucleus_core::acp::REFRESH_TASK_ROW.to_owned()
+                    } else {
+                        nucleus_core::acp::legacy_parent_hold_prompt(&record.command)
+                    }
+                });
+                write.use_legacy_intent(&record.command, &prompt);
             }
         }
-        let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
+        let command = write.command_id().ok_or(ServiceError::Input)?;
+        if existing
+            .as_ref()
+            .is_some_and(|record| record.command != command)
+        {
+            return Err(HostError::Binding.into());
+        }
         let thread = write.thread_id().ok_or(ServiceError::Input)?.to_owned();
-        if write.delivery_row().is_some() || nucleus_hosts::is_pinned_parent_hold(&command) {
+        if write.delivery_row().is_some() || nucleus_hosts::is_pinned_parent_hold(command) {
             write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
         }
         if let Some(parent) = write.delivery_row() {
             self.check_parent_snooze(row, write.binding(), parent)
                 .await?;
         }
-        if runtime.is_none() {
-            runtime = self.host.verified_runtime_identity().await;
-        }
-        write.require_runtime(runtime.clone());
+        // Record the wire and deadline before sending. A restart or transport
+        // error can replay this exact command against T3's durable receipt.
         let attempt = if write.starts_turn() {
             Some(
-                self.begin_parent_delivery(row, &write, refresh, runtime, existing)
+                self.begin_parent_delivery(row, &write, refresh, existing)
                     .await?,
             )
         } else {
             None
         };
         let result = self.host.write_parent(write).await;
-        let retry = retry_ms();
-        if let Some((record, replay)) = &attempt {
-            let (outcome, due) = match &result {
-                Ok(()) => (ParentResult::Accepted, 0),
-                Err(ParentSendError::Rejected) => (ParentResult::Failed, 0),
-                Err(ParentSendError::NotSent(HostError::OperatorSnoozed { .. })) => {
-                    (ParentResult::Pending, 0)
+        match (result, attempt) {
+            (Ok(()), record) => {
+                if let Some((record, _)) = record {
+                    self.finish_parent_delivery(row, &record, ParentResult::Accepted, 0)
+                        .await?;
                 }
-                Err(ParentSendError::NotSent(_)) if !replay => (ParentResult::Refused, 0),
-                Err(_) => (ParentResult::Pending, retry),
-            };
-            self.finish_parent_delivery(row, record, outcome, due)
-                .await?;
-        }
-        match result {
-            Ok(()) => Ok(true),
-            Err(ParentSendError::Rejected) => Err(HostError::ParentHoldRejected.into()),
-            Err(ParentSendError::Unknown(error)) if attempt.is_some() => {
-                Err(parent_delivery_retry(error, retry))
+                Ok(true)
             }
-            Err(ParentSendError::Unknown(error)) => Err(error.into()),
-            Err(ParentSendError::NotSent(HostError::OperatorSnoozed { until })) => {
+            (Err(ParentSendError::NotSent(HostError::OperatorSnoozed { until })), record) => {
+                if let Some((record, _)) = record {
+                    self.finish_parent_delivery(row, &record, ParentResult::Pending, 0)
+                        .await?;
+                }
                 Err(ServiceError::OperatorSnoozed { thread, until })
             }
-            Err(ParentSendError::NotSent(error)) => Err(self.parent_not_sent(error)),
+            (Err(ParentSendError::Rejected), Some((record, mut frozen))) => {
+                let command = frozen
+                    .replace_rejected_command()
+                    .ok_or(ServiceError::Input)?;
+                let wire = serde_json::to_string(&frozen).map_err(StoreError::from)?;
+                let due = retry_ms();
+                self.state.lock().await.store.retry_parent_delivery(
+                    &row.task.identity().id,
+                    row.version,
+                    &record,
+                    &command,
+                    &wire,
+                    due,
+                )?;
+                Err(parent_delivery_retry(HostError::ParentHoldRejected, due))
+            }
+            (
+                Err(ParentSendError::Unknown(error) | ParentSendError::NotSent(error)),
+                Some((record, _)),
+            ) => Err(parent_delivery_retry(error, record.due_ms)),
+            (Err(ParentSendError::Unknown(error)), None) => Err(error.into()),
+            (Err(ParentSendError::NotSent(error)), None) => Err(self.parent_not_sent(error)),
+            (Err(ParentSendError::Rejected), None) => Err(HostError::ParentHoldRejected.into()),
         }
     }
 
@@ -529,41 +367,42 @@ impl Service {
         row: &TaskRow,
         write: &ParentWrite,
         refresh: bool,
-        runtime: Option<String>,
         existing: Option<ParentDelivery>,
-    ) -> Result<(ParentDelivery, bool), ServiceError> {
+    ) -> Result<(ParentDelivery, FrozenParentWrite), ServiceError> {
         let id = &row.task.identity().id;
+        let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
+        let frozen = write.freeze().clone();
+        let wire = serde_json::to_string(&frozen).map_err(StoreError::from)?;
+        let due_ms = retry_ms();
         let mut state = self.state.lock().await;
-        if let Some(record) = existing.filter(|record| record.result == ParentResult::Pending) {
-            state.store.finish_parent_delivery(
-                id,
-                row.version,
-                &record,
-                ParentResult::Pending,
-                retry_ms(),
-            )?;
-            return Ok((record, true));
-        }
-        let record = ParentDelivery {
-            version: row.version,
-            command: write.command_id().ok_or(ServiceError::Input)?.into(),
-            refresh,
-            runtime,
-            wire: Some(serde_json::to_string(write.freeze()).map_err(StoreError::from)?),
-            legacy_prompt: None,
-            due_ms: retry_ms(),
-            result: ParentResult::Pending,
-        };
-        if !state.store.freeze_parent_delivery(id, &record)? {
-            return Err(StoreError::StaleTask.into());
-        }
-        if !refresh && row.task.run().is_none() {
-            state.observe_wait(&row.task, Some(WaitReason::Starting))?;
-            self.publish(id, row.version);
+        let mut record = if let Some(record) = existing {
+            state
+                .store
+                .retry_parent_delivery(id, row.version, &record, &command, &wire, due_ms)?;
+            record
         } else {
-            self.publish_detail(id, row.version);
-        }
-        Ok((record, false))
+            let record = ParentDelivery {
+                version: row.version,
+                command,
+                refresh,
+                wire: Some(wire),
+                legacy_prompt: None,
+                due_ms,
+                result: ParentResult::Pending,
+            };
+            if !state.store.freeze_parent_delivery(id, &record)? {
+                return Err(StoreError::StaleTask.into());
+            }
+            if !refresh && row.task.run().is_none() {
+                state.observe_wait(&row.task, Some(WaitReason::Starting))?;
+                self.publish(id, row.version);
+            } else {
+                self.publish_detail(id, row.version);
+            }
+            record
+        };
+        record.due_ms = due_ms;
+        Ok((record, frozen))
     }
 
     pub(super) async fn finish_parent_delivery(
@@ -648,11 +487,10 @@ impl Service {
             .into_iter()
             .find(|value| value.refresh);
         if let Some(record) = &prior {
-            match record.result {
-                ParentResult::Pending => parent_due(record)?,
-                ParentResult::Refused => {}
-                _ => return Ok(false),
+            if record.result == ParentResult::Accepted {
+                return Ok(false);
             }
+            parent_due(record)?;
         }
         let route = self.project_for(identity).await?;
         let work = self.worktrees();

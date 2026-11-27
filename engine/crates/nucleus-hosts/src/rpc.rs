@@ -27,7 +27,6 @@ use crate::{
     HostError, ParentSendError, ProfileCatalog, T3_RETRY_DELAY,
     admission::Admission,
     catalog::CatalogRevision,
-    runtime::ServerRuntime,
     thread_snapshots::{ThreadRead, ThreadSnapshots},
     traffic::Traffic,
 };
@@ -420,45 +419,12 @@ impl Rpc {
         read: Read,
         check: impl FnOnce() -> Result<bool, HostError> + Send,
     ) -> Result<Reply, HostError> {
-        self.call_admitted(method, payload, read, None, check).await
-    }
-
-    async fn call_admitted(
-        &self,
-        method: &'static str,
-        payload: impl Serialize + Send,
-        read: Read,
-        runtime: Option<&str>,
-        check: impl FnOnce() -> Result<bool, HostError> + Send,
-    ) -> Result<Reply, HostError> {
         self.check_retry()?;
         let _admission = self
             .admission
             .enter(!matches!(read, Read::Background))
             .await?;
-        Box::pin(self.call_locked(method, payload, read, runtime, check)).await
-    }
-
-    pub(crate) async fn verify_runtime(&self, server: &ServerRuntime) -> Option<String> {
-        self.check_retry().ok()?;
-        let identity = server.replay_identity();
-        if self
-            .socket
-            .lock()
-            .expect("request socket")
-            .as_ref()
-            .is_some_and(|connection| connection.runtime.as_deref() == Some(&identity))
-        {
-            return Some(identity);
-        }
-        let _admission = self.admission.enter(true).await.ok()?;
-        let mut connection = self.request_connection().await.ok()?;
-        if connection.runtime.as_deref() != Some(&identity) {
-            connection.runtime = connection.owned_by(server).await.then(|| identity.clone());
-        }
-        let verified = connection.runtime.is_some();
-        *self.socket.lock().expect("request socket") = Some(connection);
-        verified.then_some(identity)
+        Box::pin(self.call_locked(method, payload, read, check)).await
     }
 
     pub(crate) async fn write_guarded(
@@ -466,11 +432,10 @@ impl Rpc {
         method: &'static str,
         payload: Value,
         class: Read,
-        runtime: Option<&str>,
         check: impl FnOnce() -> Result<(), HostError> + Send,
     ) -> Result<Reply, ParentSendError> {
         let mut reached_send = false;
-        self.call_admitted(method, payload, class, runtime, || {
+        self.call_guarded(method, payload, class, || {
             check()?;
             reached_send = true;
             Ok(true)
@@ -498,7 +463,6 @@ impl Rpc {
         method: &'static str,
         payload: impl Serialize + Send,
         read: Read,
-        runtime: Option<&str>,
         check: impl FnOnce() -> Result<bool, HostError> + Send,
     ) -> Result<Reply, HostError> {
         self.check_retry()?;
@@ -522,12 +486,7 @@ impl Rpc {
             .request_connection()
             .await
             .inspect_err(|error| self.record_timeout(method, target, *error))?;
-        match self.check_retry().and_then(|()| {
-            if runtime.is_some() && socket.runtime.as_deref() != runtime {
-                return Err(HostError::Uncertain);
-            }
-            check()
-        }) {
+        match self.check_retry().and_then(|()| check()) {
             Ok(true) => {}
             outcome => {
                 *self.socket.lock().expect("request socket") = Some(socket);
@@ -621,15 +580,6 @@ impl Rpc {
         id: &str,
         policy: ThreadRead<'_>,
     ) -> Result<ThreadObservation, HostError> {
-        self.observe_thread_with(id, policy, || {}).await
-    }
-
-    pub(crate) async fn observe_thread_with(
-        &self,
-        id: &str,
-        policy: ThreadRead<'_>,
-        before_read: impl FnOnce() + Send,
-    ) -> Result<ThreadObservation, HostError> {
         let requested_at = time::Instant::now();
         let _admission = self
             .admission
@@ -661,10 +611,8 @@ impl Rpc {
             json!({"threadId":id,"requestCompletionMarker":true,"acceptBoundedSnapshot":true,
                 "acceptCompactTurnItems":true,"acceptDedupedBodies":true}),
             Read::Thread,
-            None,
             || {
                 self.check_thread_read(self.thread_row(id).as_deref(), policy)?;
-                before_read();
                 self.traffic.record_thread_read(reason);
                 Ok(true)
             },
@@ -1079,28 +1027,11 @@ fn parse_native_time(value: &str) -> Option<::time::OffsetDateTime> {
 struct Connection {
     socket: Socket,
     next_id: u64,
-    runtime: Option<String>,
 }
 
 impl Connection {
     fn new(socket: Socket) -> Self {
-        Self {
-            socket,
-            next_id: 0,
-            runtime: None,
-        }
-    }
-
-    async fn owned_by(&self, server: &ServerRuntime) -> bool {
-        let tcp = match self.socket.get_ref() {
-            MaybeTlsStream::Plain(tcp) => tcp,
-            MaybeTlsStream::Rustls(tls) => tls.get_ref().0,
-            _ => return false,
-        };
-        let (Ok(local), Ok(peer)) = (tcp.local_addr(), tcp.peer_addr()) else {
-            return false;
-        };
-        server.owns_connection(local, peer).await
+        Self { socket, next_id: 0 }
     }
 
     async fn frames(&mut self) -> Result<Vec<Value>, HostError> {

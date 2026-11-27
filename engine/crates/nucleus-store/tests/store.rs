@@ -259,20 +259,25 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
     revert_parent_schema(&storage);
     let store = Store::open(&storage).unwrap();
     for (id, version) in versions {
-        use nucleus_store::ParentResult::{Held, Pending};
+        use nucleus_store::ParentResult::Pending;
         let records = store.parent_deliveries(id, version, None).unwrap();
         let unsettled: Vec<_> = records
             .iter()
-            .filter(|record| matches!(record.result, Pending | Held))
+            .filter(|record| record.result == Pending)
             .map(|record| (record.command.as_str(), record.result))
             .collect();
         let expected = match id {
-            "ambiguous" | "legacy_unresolved" | "replacement_observed" | "refused_replay" => {
+            "ambiguous"
+            | "legacy_unresolved"
+            | "replacement_observed"
+            | "refused_replay"
+            | "refused"
+            | "legacy_refused"
+            | "failed" => {
                 vec![("thread-hold-1", Pending)]
             }
             "refresh_pending" => vec![("thread-refresh-1", Pending)],
             "later_send" => vec![("thread-hold-3", Pending)],
-            "new_ambiguity" => vec![("", Held)],
             _ => vec![],
         };
         assert_eq!(unsettled, expected, "{id}");
@@ -282,9 +287,6 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
             "{id}"
         );
         assert!(!store.pending_parent_preparation(id, version + 1).unwrap());
-        if id == "failed" {
-            assert_eq!(records[0].result, nucleus_store::ParentResult::Failed);
-        }
     }
 }
 
@@ -1680,7 +1682,7 @@ fn version_eleven_decodes_delivery_history_once() {
 
     let store = Store::open(&storage).unwrap();
     for (id, result) in [
-        ("unknown", Some(nucleus_store::ParentResult::Held)),
+        ("unknown", None),
         ("live", Some(nucleus_store::ParentResult::Pending)),
         ("sent", Some(nucleus_store::ParentResult::Accepted)),
         ("preflight", None),

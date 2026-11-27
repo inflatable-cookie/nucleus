@@ -118,8 +118,6 @@ pub enum HostError {
     Deferred { until: tokio::time::Instant },
     #[error("waiting for T3 to confirm the role assignment")]
     RoleReplyPending { until: tokio::time::Instant },
-    #[error("the exact parent receipt read did not establish delivery")]
-    ParentReceiptInconclusive,
     #[error("the host reply could not be confirmed")]
     Protocol,
     #[error("the host thread does not match the configured project and checkout")]
@@ -606,22 +604,8 @@ impl T3 {
         }
     }
 
-    /// Identify the descriptor's process after it proves ownership of the RPC socket.
-    pub async fn verified_runtime_identity(&self) -> Option<String> {
-        let server = self.described_runtime()?;
-        let identity = Box::pin(self.rpc.verify_runtime(&server)).await?;
-        (self.parent_runtime_hint().as_ref() == Some(&identity)).then_some(identity)
-    }
-
     fn described_runtime(&self) -> Option<ServerRuntime> {
         ServerRuntime::read(self.runtime_descriptor.as_deref()?, self.rpc.endpoint())
-    }
-
-    /// Read the candidate replay key without connecting or proving socket ownership.
-    #[must_use]
-    pub fn parent_runtime_hint(&self) -> Option<String> {
-        self.described_runtime()
-            .map(|server| server.replay_identity())
     }
 
     /// Use the connected T3 server's own runtime descriptor for custody checks.
@@ -789,20 +773,7 @@ impl T3 {
         id: &str,
         policy: ThreadRead<'_>,
     ) -> Result<(Option<Projection>, rpc::ThreadFence), HostError> {
-        self.observe_thread_with(binding, id, policy, || {}).await
-    }
-
-    async fn observe_thread_with(
-        &self,
-        binding: &Binding,
-        id: &str,
-        policy: ThreadRead<'_>,
-        before_read: impl FnOnce() + Send,
-    ) -> Result<(Option<Projection>, rpc::ThreadFence), HostError> {
-        let rpc::ThreadObservation { reply, fence } = self
-            .rpc
-            .observe_thread_with(id, policy, before_read)
-            .await?;
+        let rpc::ThreadObservation { reply, fence } = self.rpc.observe_thread(id, policy).await?;
         let projection = match reply {
             ThreadReply::Closed { row, sequence } => {
                 Some(Projection::closed(&row, sequence, binding, id)?)
