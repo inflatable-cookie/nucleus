@@ -1062,6 +1062,28 @@ impl GitPolicy for Fetches {
     }
 }
 
+struct UnavailableCommitLookup;
+
+impl GitPolicy for UnavailableCommitLookup {
+    fn isolate(&self, command: &mut Command) {
+        LocalGit.isolate(command);
+        if command
+            .get_args()
+            .any(|argument| argument == "nucleus-commit-info")
+        {
+            command.current_dir("/dev/null");
+        }
+    }
+
+    fn credential(&self, _: &str) -> Result<Option<GitCredential>, GitFailure> {
+        Ok(None)
+    }
+
+    fn refresh_credential(&self, _: &GitCredential) -> Option<GitCredential> {
+        None
+    }
+}
+
 #[test]
 fn published_start_distinguishes_absent_prerequisites_from_git_failures() {
     let home = tempfile::tempdir().unwrap();
@@ -1089,6 +1111,19 @@ fn published_start_distinguishes_absent_prerequisites_from_git_failures() {
     assert!(matches!(
         checkout.published_start("main", &landings),
         Err(WorkError::UnlandedPrerequisite { prerequisite, .. }) if prerequisite == "fixture#1"
+    ));
+    let unreadable = landings.clone();
+    let job = checkout.job(
+        UnavailableCommitLookup,
+        Redactor::new([], RedactionRules::common()),
+        move |checkout| checkout.published_start("main", &unreadable),
+    );
+    assert!(matches!(
+        job(Arc::default()),
+        Err(WorkError::Git {
+            source: GitFailure::Unavailable { .. },
+            ..
+        })
     ));
 
     let loose_objects = repo.join(".git/objects/bb");

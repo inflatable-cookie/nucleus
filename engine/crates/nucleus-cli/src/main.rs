@@ -450,11 +450,11 @@ async fn serve(
         result
     }
     .await;
-    finish_serve(started, result)
+    finish_serve(started, &result)
 }
 
-fn finish_serve(started: Instant, result: Result<()>) -> Result<()> {
-    if let Err(error) = &result {
+fn finish_serve(started: Instant, result: &Result<()>) -> Result<()> {
+    if let Err(error) = result {
         serve_log::line(format_args!(
             "Nucleus engine exited with an error after {:.3}s: {}",
             started.elapsed().as_secs_f64(),
@@ -908,7 +908,7 @@ mod tests {
                 started,
             )
             .await;
-            finish_serve(started, result).unwrap();
+            finish_serve(started, &result).unwrap();
             panic!("serve returned after losing its scheduler");
         }
 

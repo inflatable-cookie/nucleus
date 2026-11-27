@@ -268,6 +268,7 @@ fn verified_trash_stamp(
         entry.dev(),
         entry.ino()
     );
+    // Two decimal u64 values, a colon, and a newline.
     let bytes = read_verified_stamp(marker, prefix.len() as u64 + 42)?;
     let text = std::str::from_utf8(&bytes).ok()?;
     let rest = text
@@ -351,8 +352,11 @@ pub fn prune_trash(work: &StorageDirectory, now_ms: u64) -> Result<(), WorkError
     for entry in fs::read_dir(&root)? {
         let result = match entry {
             Ok(entry) => prune_trash_entry(&entry, device, now_ms)
-                .map_err(|error| format!("{:?}: {error}", entry.path())),
-            Err(error) => Err(format!("could not read an entry in {root:?}: {error}")),
+                .map_err(|error| format!("{}: {error}", entry.path().display())),
+            Err(error) => Err(format!(
+                "could not read an entry in {}: {error}",
+                root.display()
+            )),
         };
         if let Err(detail) = result {
             failures.push(detail);
@@ -373,7 +377,7 @@ fn prune_trash_entry(entry: &fs::DirEntry, device: u64, now_ms: u64) -> std::io:
         return Ok(());
     };
     let entry_path = entry.path();
-    let entry_info = match entry.symlink_metadata() {
+    let entry_info = match entry_path.symlink_metadata() {
         Ok(info) if info.is_dir() && info.dev() == device => info,
         Ok(_) => return Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),

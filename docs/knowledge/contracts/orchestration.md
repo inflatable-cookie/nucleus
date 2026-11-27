@@ -116,8 +116,8 @@ Record first-dispatch prerequisites and deliberate post-dispatch waits as
 separate task facts. Dependency edits reject and name cycles across
 first-dispatch prerequisites and unreleased waits. Missing or cancelled
 prerequisite work needs an owner edit. A hold and a dependency wait are
-independent. On release, the scheduler
-observes current capacity and preserves the task's identity and order. The
+independent. On release, the scheduler observes current capacity and preserves
+the task's identity and order. The
 [dependency owner](../../../engine/crates/nucleus-service/src/dependencies.rs)
 and [Spec 070 commands](../specs/070-small-engine.md#commands) own the precise
 updates and exits.
