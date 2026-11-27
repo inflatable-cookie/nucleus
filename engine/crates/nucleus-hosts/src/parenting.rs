@@ -369,7 +369,7 @@ fn recover_stranded_parent(
             )
         }
         StrandedParentQueue::BehindHold(run)
-            if row.is_some_and(|row| row["activeRunId"].is_null() || row["activeRunId"] == run) =>
+            if row.is_some_and(|row| parent_allows_hold_release(row, run)) =>
         {
             // An older ACP client may still see the same label on both turns.
             release_stranded_hold(binding, thread, provider, run)
@@ -933,7 +933,7 @@ impl T3 {
             && self
                 .rpc
                 .thread_row(&parent_thread(checkout))
-                .is_some_and(|row| parent_accepts_reentry(&row))
+                .is_some_and(|row| parent_may_observe_reentry(&row, true))
     }
 
     /// Recover the exact active role from a retained binding and its launch journal.
@@ -945,7 +945,16 @@ impl T3 {
         binding: Binding,
         thread: String,
         instance: String,
+        has_prior: bool,
     ) -> Result<Option<ActiveChild>, HostError> {
+        let parent = parent_thread(Path::new(&binding.worktree_path));
+        if !self
+            .rpc
+            .thread_row(&parent)
+            .is_some_and(|row| parent_may_observe_reentry(&row, has_prior))
+        {
+            return Ok(None);
+        }
         let mut child = ActiveChild {
             binding,
             thread,
@@ -957,7 +966,7 @@ impl T3 {
             return Ok(Some(child));
         }
         let Some(projection) = self
-            .read_thread(&child.binding, &child.thread, ThreadRead::Observation)
+            .read_thread(&child.binding, &child.thread, ThreadRead::Inbox)
             .await?
         else {
             return Ok(None);
@@ -997,24 +1006,23 @@ impl T3 {
         let Some(row) = self.rpc.thread_row(&thread) else {
             return Ok(None);
         };
-        if !parent_accepts_reentry(&row) {
+        let prefix = child.parent_command_prefix();
+        let prior = prior.filter(|command| child_reentry_command(command, &prefix));
+        if !parent_may_observe_reentry(&row, prior.is_some()) {
             return Ok(None);
         }
         if !parent_row_matches(&row, binding, provider) {
             return Err(HostError::Binding);
         }
         let latest = row["latestRunId"].as_str();
-        let prefix = child.parent_command_prefix();
-        let prior = prior.filter(|command| child_reentry_command(command, &prefix));
         if prior
             .and_then(parent_hold_provider)
             .is_some_and(|frozen| frozen != provider)
         {
             return Err(HostError::Binding);
         }
-        // Only an idle shell can reach this read. Reuse the corresponding
-        // projection until the parent row changes, including a waiting parent
-        // whose own background list still shows its child.
+        // Reuse the bounded projection until the shell row changes. A live
+        // parent is read only to reconcile a recorded re-entry command.
         let (projection, _) = self
             .observe_thread(binding, &thread, ThreadRead::Inbox)
             .await?;
@@ -1023,13 +1031,16 @@ impl T3 {
         };
         projection.require_parent_provider(provider)?;
         let stranded = stranded_reentry(&projection, prior, &prefix, provider);
-        if let Some(StrandedParentQueue::BehindHold(run)) = stranded {
+        if let Some(StrandedParentQueue::BehindHold(run)) = stranded
+            && parent_allows_hold_release(&row, run)
+        {
             let mut write = release_stranded_hold(binding, &thread, provider, run);
             write.stranded_at = Some(row);
             write.reentry = Some(Box::new(child.clone()));
             return Ok(Some(write));
         }
-        if (stranded.is_none() && projection.has_pending_turn())
+        if !parent_accepts_reentry(&row)
+            || (stranded.is_none() && projection.has_pending_turn())
             || latest.is_some_and(|run| !projection.terminal_run(run))
         {
             return Ok(None);
@@ -1152,15 +1163,18 @@ impl T3 {
         child: &ActiveChild,
         evidence: Option<&str>,
         parent: &Value,
+        release: Option<&str>,
     ) -> Result<(), HostError> {
         let current = self.held_child(
             &child.thread,
             Path::new(&child.binding.worktree_path),
             Some(child),
         );
-        if parent_accepts_reentry(parent)
-            && current
-                .is_some_and(|row| evidence.is_none_or(|prior| prior == activity_digest(&row)))
+        if release.map_or_else(
+            || parent_accepts_reentry(parent),
+            |run| parent_allows_hold_release(parent, run),
+        ) && current
+            .is_some_and(|row| evidence.is_none_or(|prior| prior == activity_digest(&row)))
         {
             return Ok(());
         }
@@ -1185,6 +1199,10 @@ impl T3 {
         let hold = write
             .command_id()
             .filter(|id| is_pinned_parent_hold(id))
+            .map(str::to_owned);
+        let release = write.wire.payload["runId"]
+            .as_str()
+            .filter(|_| write.wire.payload["type"] == "run.interrupt")
             .map(str::to_owned);
         match self
             .rpc
@@ -1223,7 +1241,12 @@ impl T3 {
                             return Err(HostError::Binding);
                         }
                         if let Some(child) = &write.reentry {
-                            self.check_reentry(child, write.child_evidence.as_deref(), &row)?;
+                            self.check_reentry(
+                                child,
+                                write.child_evidence.as_deref(),
+                                &row,
+                                release.as_deref(),
+                            )?;
                         }
                         if write
                             .stranded_at
@@ -1391,6 +1414,20 @@ fn parent_accepts_reentry(row: &Value) -> bool {
                 Some(_)
             )
     )
+}
+
+fn parent_may_observe_reentry(row: &Value, has_prior: bool) -> bool {
+    parent_accepts_reentry(row)
+        || (has_prior
+            && !closed_row(row)
+            && row["pendingRuntimeRequest"].is_null()
+            && matches!(row["status"].as_str(), Some("running" | "waiting")))
+}
+
+fn parent_allows_hold_release(row: &Value, run: &str) -> bool {
+    !closed_row(row)
+        && row["pendingRuntimeRequest"].is_null()
+        && (row["activeRunId"].is_null() || row["activeRunId"] == run)
 }
 
 fn verify_delivery_visibility(

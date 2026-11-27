@@ -24,7 +24,7 @@ use nucleus_work::{Checkout, Retirement, WorkError};
 use tokio::sync::RwLockReadGuard;
 
 use crate::{
-    Service, ServiceError, active, event, now_ms,
+    Service, ServiceError, State, active, event, now_ms,
     profiles::{LaunchSelection, SelectedLaunch},
     project::ProjectRoute,
     prompt::{Assignment, LaneContext, Prompt, PromptSize, report_reminder},
@@ -33,6 +33,24 @@ use crate::{
 };
 
 const MAX_FORGE_RETRY: Duration = Duration::from_mins(4);
+
+fn reentry_parent_delivery(
+    state: &State,
+    row: &TaskRow,
+    prefix: &str,
+) -> Result<Option<ParentDelivery>, StoreError> {
+    Ok(state
+        .store
+        .parent_deliveries(&row.task.identity().id, row.version, Some(prefix))?
+        .into_iter()
+        .find(|value| {
+            value.result != ParentResult::Refused
+                && value
+                    .command
+                    .strip_prefix(prefix)
+                    .is_some_and(|tail| tail.starts_with(':') || tail.starts_with("-after-"))
+        }))
+}
 
 fn write_prompt_artifacts(
     root: &nucleus_store::StorageDirectory,
@@ -1253,12 +1271,21 @@ impl Service {
         if threads.is_empty() {
             return Ok(());
         }
-        let launch = {
+        let (thread, instance, has_prior) = {
             let state = self.state.lock().await;
-            crate::presentation::retained_launch(&state.store, &identity.id, &threads)?
-        };
-        let Some((thread, instance)) = launch else {
-            return Ok(());
+            let Some((thread, instance)) =
+                crate::presentation::retained_launch(&state.store, &identity.id, &threads)?
+            else {
+                return Ok(());
+            };
+            let prefix = ActiveChild::command_prefix(&path, &instance);
+            let has_prior = reentry_parent_delivery(&state, row, &prefix)?.is_some_and(|record| {
+                matches!(
+                    record.result,
+                    ParentResult::Pending | ParentResult::Accepted
+                )
+            });
+            (thread, instance, has_prior)
         };
         let route = self.project_for(identity).await?;
         let worktrees = self.worktrees();
@@ -1266,7 +1293,7 @@ impl Service {
         let binding = self.checkout_binding(identity, &route, &checkout)?;
         if let Some(child) = self
             .host
-            .retained_active_child(binding, thread, instance)
+            .retained_active_child(binding, thread, instance, has_prior)
             .await?
         {
             self.reenter_active_parent(row, &route, &child).await?;
@@ -1292,21 +1319,11 @@ impl Service {
         if !self.dispatch_mode().await.allows_launch(false) {
             return Ok(());
         }
-        let identity = task.identity();
         let prefix = child.parent_command_prefix();
         let (prior, start_line) = {
             let state = self.state.lock().await;
             (
-                state
-                    .store
-                    .parent_deliveries(&identity.id, row.version, Some(&prefix))?
-                    .into_iter()
-                    .find(|value| {
-                        value.result != ParentResult::Refused
-                            && value.command.strip_prefix(&prefix).is_some_and(|tail| {
-                                tail.starts_with(':') || tail.starts_with("-after-")
-                            })
-                    }),
+                reentry_parent_delivery(&state, row, &prefix)?,
                 crate::presentation::role_start_line(task, &state.store),
             )
         };
@@ -1344,6 +1361,7 @@ impl Service {
         {
             self.accept_parent_readback(row, prior.as_ref()).await?;
         }
+        let identity = task.identity();
         let worktrees = self.worktrees();
         let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         let _ = self.send_run_parent(row, &checkout, write, prior).await?;
