@@ -1623,7 +1623,6 @@ dependencies = [
  "futures-util",
  "log",
  "longhorn-redact",
- "nix",
  "nucleus-core",
  "reqwest",
  "rustix",

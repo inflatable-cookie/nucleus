@@ -16,13 +16,7 @@ pub const USAGE_APPROVE: &str = "approve";
 const PROCESS_DECISION: &str = "closeout-process-";
 
 impl Decision {
-    /// The stable decision key for one observed process lifetime.
-    #[must_use]
-    pub fn process_id(pid: u32, started: i64) -> String {
-        format!("{PROCESS_DECISION}{pid}-{started}")
-    }
-
-    /// A process custody decision remains open until the census clears it.
+    /// A decision an older engine raised about a process holding a checkout.
     #[must_use]
     pub fn is_process_custody(&self) -> bool {
         self.author == "Nucleus" && self.task.is_none() && self.id.starts_with(PROCESS_DECISION)
@@ -157,33 +151,7 @@ impl Store {
         Ok(decision)
     }
 
-    /// Withdraw an open, standalone decision when its cause has cleared.
-    ///
-    /// # Errors
-    /// Returns an error if the decision cannot be read or written.
-    pub fn withdraw_decision(
-        &mut self,
-        project: &str,
-        id: &str,
-        stamp: WriteAt<'_>,
-    ) -> Result<bool, StoreError> {
-        self.set_decision_withdrawn(project, id, true, None, stamp)
-    }
-
-    /// Reopen a standalone decision whose cause has returned.
-    ///
-    /// # Errors
-    /// Returns an error if the decision cannot be read or written.
-    pub fn reopen_decision(
-        &mut self,
-        project: &str,
-        id: &str,
-        stamp: WriteAt<'_>,
-    ) -> Result<bool, StoreError> {
-        self.set_decision_withdrawn(project, id, false, None, stamp)
-    }
-
-    /// Close a legacy process decision and record why it was superseded.
+    /// Close an open process decision from an older engine and record why.
     ///
     /// # Errors
     /// Returns an error if the decision or its history cannot be saved.
@@ -193,51 +161,31 @@ impl Store {
         id: &str,
         stamp: WriteAt<'_>,
     ) -> Result<bool, StoreError> {
-        self.set_decision_withdrawn(
-            project,
-            id,
-            true,
-            Some("Checkout retirement now follows Dispatch, T3, and Git."),
-            stamp,
-        )
-    }
-
-    fn set_decision_withdrawn(
-        &mut self,
-        project: &str,
-        id: &str,
-        withdrawn: bool,
-        superseded: Option<&str>,
-        stamp: WriteAt<'_>,
-    ) -> Result<bool, StoreError> {
         let tx = self.planning_write()?;
         let Some(mut decision) = read::<Decision>(&tx, DecisionRecord, project, id)? else {
             return Ok(false);
         };
-        let rearm = !withdrawn && decision.is_process_custody() && decision.answer.is_some();
-        if decision.task.is_some()
-            || (superseded.is_some() && !decision.is_process_custody())
-            || (!rearm && (decision.withdrawn == withdrawn || decision.answer.is_some()))
-        {
+        if !decision.is_process_custody() || decision.withdrawn || decision.answer.is_some() {
             return Ok(false);
         }
-        if rearm {
-            decision.answer = None;
-        }
-        decision.withdrawn = withdrawn;
-        let action = match (withdrawn, superseded) {
-            (_, Some(_)) => "supersede",
-            (true, None) => "withdraw",
-            (false, None) => "reopen",
-        };
-        save(&tx, DecisionRecord, project, id, action, &decision, stamp)?;
-        if let Some(note) = superseded {
-            tx.execute(
-                "UPDATE planning_history SET snapshot = json_set(snapshot, '$.note', ?1)
-                 WHERE sequence = ?2",
-                params![note, tx.last_insert_rowid()],
-            )?;
-        }
+        decision.withdrawn = true;
+        save(
+            &tx,
+            DecisionRecord,
+            project,
+            id,
+            "supersede",
+            &decision,
+            stamp,
+        )?;
+        tx.execute(
+            "UPDATE planning_history SET snapshot = json_set(snapshot, '$.note', ?1)
+             WHERE sequence = ?2",
+            params![
+                "Checkout retirement now follows Dispatch, T3, and Git.",
+                tx.last_insert_rowid()
+            ],
+        )?;
         tx.commit()?;
         Ok(true)
     }
@@ -297,20 +245,6 @@ impl Store {
             answered_at_ms: stamp.at_ms,
         });
         save(&tx, DecisionRecord, project, id, "answer", &decision, stamp)?;
-        if decision.is_process_custody() {
-            // Keep the operator's answer in history and the same decision in
-            // the Inbox. Only a fresh process observation can settle custody.
-            decision.answer = None;
-            save(
-                &tx,
-                DecisionRecord,
-                project,
-                id,
-                "await_custody",
-                &decision,
-                stamp,
-            )?;
-        }
         let queued = if !same_answer && let Some((tell, tell_id)) = notice {
             insert_decision_tell(&tx, project, tell, tell_id)?;
             true
