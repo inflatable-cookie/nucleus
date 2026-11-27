@@ -12,7 +12,6 @@ ENGINE = ROOT / "engine"
 MANIFEST = ENGINE / "Cargo.toml"
 CONFIG = ENGINE / ".config/nextest.toml"
 CENSUS_TESTS = (
-    "an_external_orphan_in_the_checkout_is_retained_and_holds_retirement",
     "closeout_stops_a_finished_sessions_provider_helpers",
 )
 
@@ -63,7 +62,7 @@ class NextestCensusOverrideTest(unittest.TestCase):
         }
         self.assertEqual(selected_census_tests, set(CENSUS_TESTS))
 
-    def test_inverted_filter_excludes_both_discovered_census_tests(self):
+    def test_inverted_filter_excludes_the_discovered_census_test(self):
         expression = (
             "package(nucleus-service) and not ("
             + " or ".join(f"test({name})" for name in CENSUS_TESTS)
