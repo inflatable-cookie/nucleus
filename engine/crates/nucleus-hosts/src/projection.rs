@@ -410,6 +410,24 @@ impl Projection {
         self.runs.iter().any(|run| run.status.in_flight())
     }
 
+    pub(crate) fn stranded_parent_queue(&self, message_id: &str) -> Option<&str> {
+        let run = self.delivery(message_id).1?;
+        (run.user_message_id.as_deref() == Some(message_id)
+            && run.status == Status::Queued
+            && run.started_at.is_none()
+            && !self.archived()
+            && !self.deleted()
+            && !self
+                .runs
+                .iter()
+                .any(|run| run.status != Status::Queued && run.status.in_flight())
+            && !self
+                .runtime_requests
+                .iter()
+                .any(|request| request.status == "pending"))
+        .then_some(run.id.as_str())
+    }
+
     pub(crate) fn turn_failed(&self, message_id: &str) -> bool {
         self.delivery(message_id).1.is_some_and(|run| {
             run.user_message_id.as_deref() == Some(message_id)
@@ -420,15 +438,14 @@ impl Projection {
         })
     }
 
-    pub(crate) fn parent_unavailable(&self, message_id: &str, provider: &str) -> bool {
+    pub(crate) fn parent_recoverable(&self, message_id: &str, provider: &str) -> bool {
         let Some(run) = self.delivery(message_id).1.filter(|run| {
             run.user_message_id.as_deref() == Some(message_id)
                 && run.status == Status::Failed
                 && run.provider_instance_id.as_deref() == Some(provider)
-                && run
-                    .model_selection
-                    .as_ref()
-                    .is_some_and(|selection| selection.instance_id == provider)
+                && run.model_selection.as_ref().is_some_and(|selection| {
+                    selection.instance_id == provider && selection.model == "nucleus"
+                })
         }) else {
             return false;
         };
@@ -449,10 +466,17 @@ impl Projection {
             .and_then(|item| item.failure.as_ref())
             .is_some_and(|failure| {
                 failure["class"] == "provider_error"
-                    && (failure["message"] == "Nucleus is unavailable."
-                        || failure["message"].as_str().is_some_and(|message| {
-                            message.starts_with("Nucleus could not answer: ")
-                        }))
+                    && failure["message"].as_str().is_some_and(|text| {
+                        matches!(text, "Nucleus is unavailable." | "ACP input stream ended.")
+                            // The ACP registry projects an unanswered prompt as a generic
+                            // failure. An actual ACP error reply carries its JSON-RPC code.
+                            || (text == "Provider turn failed."
+                                && failure.get("code").is_some_and(Value::is_null))
+                            || text.starts_with("Nucleus could not answer: ")
+                            || text.starts_with("The provider process exited.")
+                            || text.starts_with("The provider process exited after signal ")
+                            || text.starts_with("The provider process exited with code ")
+                    })
             })
     }
 
