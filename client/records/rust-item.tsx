@@ -1,9 +1,9 @@
 /**
  * The lead and papercut view (Spec 071, "Leads and papercuts"): one engine item in
- * the task view's frame. The header says what state it is in; a panel holds the one
- * decision that state asks for (promote, revisit, follow the task, or the drop's
- * outcome); the body and its activity follow; Park and Drop sit in the footer, with
- * Drop apart and asking for a disposition first.
+ * the task view's frame. The header says what state it is in; a panel holds the
+ * decision that state asks for (send to planner, revisit, follow the task, or the
+ * drop's outcome); the body and its activity follow; Park and Drop sit in the footer,
+ * with Drop apart and asking for a disposition first.
  */
 import { useContext, useState } from "react";
 import { Text, View } from "react-native";
@@ -15,12 +15,12 @@ import { radius, roles, space, taskDetail, toneSurface, wash, type as typeScale 
 import { errorText } from "../error-text";
 import { Markdown } from "../markdown";
 import * as api from "../../shared/contracts";
-import type { CapabilityLevel, ItemDetail, ItemHistoryEntry } from "../../shared/contracts";
+import type { ItemDetail, ItemHistoryEntry } from "../../shared/contracts";
 import { defaultRecheckDate, recheckDateLabel, recheckIsoFromDate } from "../../shared/parking";
 import { relativeAge } from "../../shared/pipeline-board";
 import { generatedProjectBadge, type ProjectBadge } from "../../shared/t3/project-badge";
 import { BoardCard, BoardCardVariantContext, ProjectBadgeMark } from "../board/cards";
-import { isRustHttpError, rustCardAgeAt, rustTaskLabel, rustTaskListKey, type RustTask } from "../web/rust-board";
+import { isRustHttpError, rustCardAgeAt, rustTaskLabel, type RustTask } from "../web/rust-board";
 import { RustTaskProgress } from "../task/rust-progress";
 import { Dot, Hint, QuietButton, metaText, toneColor } from "../task/rust-detail-parts";
 import { ActivityList, Card, Collapsible } from "../task/rust-task-cards";
@@ -37,14 +37,6 @@ type Draft = {
   version: number;
   saved: { title: string; body: string; version: number } | null;
 };
-
-const COMPLEXITY: Array<{ value: CapabilityLevel; label: string }> = [
-  { value: "very_low", label: "Very low" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "very_high", label: "Very high" },
-];
 
 const DAY_MS = 86_400_000;
 
@@ -102,8 +94,19 @@ const ACTIONS: Record<string, string> = {
   edit: "Edited",
   park: "Parked",
   reopen: "Reopened",
+  assess: "Sent to planner",
   promote: "Promoted",
 };
+
+/** The latest assessment send since the item was filed or last reopened. */
+function latestAssess(item: ItemDetail): ItemHistoryEntry | undefined {
+  for (let i = item.history.length - 1; i >= 0; i--) {
+    const entry = item.history[i]!;
+    if (entry.action === "assess") return entry;
+    if (entry.action === "drop" || entry.action === "promote" || entry.action === "reopen") return undefined;
+  }
+  return undefined;
+}
 
 /** The item's history as activity, newest first. Imports and unknown actions keep their own word. */
 export function itemActivity(item: ItemDetail) {
@@ -119,7 +122,7 @@ export function itemActivity(item: ItemDetail) {
           : entry.action === "park" || entry.action === "drop"
             ? "muted"
             : "accent";
-      const detail = [entry.actor, entry.note].filter(Boolean).join(" · ") || null;
+      const detail = [entry.actor, entry.recipient, entry.note].filter(Boolean).join(" · ") || null;
       return { key: `${index}`, at: entry.atMs, text, detail, tone };
     })
     .sort((a, b) => b.at - a.at);
@@ -158,7 +161,7 @@ export function RustItemDialog({
     parkItem = useRpc(api.itemPark),
     dropItem = useRpc(api.itemDrop),
     reopenItem = useRpc(api.itemReopen),
-    promoteItem = useRpc(api.itemPromote);
+    assessItem = useRpc(api.itemAssess);
   const key = ["nucleus", "item", id, project];
   // The planning event refreshes an open item; without the stream it reads on an interval.
   const live = useContext(BoardLiveContext);
@@ -179,9 +182,6 @@ export function RustItemDialog({
   const [revisitDay, setRevisitDay] = useState<string | null>(null);
   const [disposition, setDisposition] = useState<"completed" | "deprecated">("completed");
   const [dropNote, setDropNote] = useState("");
-  const [repository, setRepository] = useState<string | null>(null);
-  // Unset follows the item: a lead's brief level, otherwise Medium.
-  const [complexity, setComplexity] = useState<CapabilityLevel | null>(null);
 
   const r = roles(c);
   const word = (item?.kind ?? kind) === "papercut" ? "Papercut" : "Lead";
@@ -266,7 +266,7 @@ export function RustItemDialog({
   const active = item.state === "open" || item.state === "parked";
   const entry = stateEntry(item);
   const address = { id: item.id, project: item.projectKey };
-  const chosenLevel: CapabilityLevel = complexity ?? item.briefComplexity ?? "medium";
+  const assessed = latestAssess(item);
   const activity = itemActivity(item);
 
   const age = <ItemAge c={c} item={item} entry={entry} />;
@@ -357,42 +357,26 @@ export function RustItemDialog({
           {notice.text}
         </Text>
       )}
-      {item.state === "open" && (
-        <PromotePanel
+      {active && (
+        <AssessPanel
           c={c}
           item={item}
+          assessed={assessed}
           busy={busy}
-          repository={repository}
-          setRepository={setRepository}
-          complexity={chosenLevel}
-          setComplexity={setComplexity}
-          onPromote={(origin) => {
-            // A lead sends a level only to change its brief (or when the brief has none); the
-            // engine writes it into the brief together with the task. The version is the one
-            // this view shows, so any change since refuses the promotion as a whole.
-            const level =
-              item.kind === "lead" && complexity === null && item.briefComplexity !== null ? undefined : chosenLevel;
+          onAssess={() => {
             void (async () => {
               if (busy) return;
               setBusy(true);
               setNotice(null);
               try {
-                const { reference } = await promoteItem({
-                  ...address,
-                  repository: origin,
-                  version: item.version,
-                  ...(level ? { complexity: level } : {}),
-                });
-                void queryClient.invalidateQueries({ queryKey: rustTaskListKey });
+                const saved = await assessItem({ ...address, version: item.version });
+                queryClient.setQueryData(key, saved);
                 void queryClient.invalidateQueries({ queryKey: ["nucleus", "leads"] });
-                await query.refetch();
-                setNotice({ text: `Promoted as ${reference}`, tone: "success" });
               } catch (error) {
                 if (isRustHttpError(error, 409)) {
-                  setComplexity(null);
                   await query.refetch();
                   setNotice({
-                    text: `This ${word.toLowerCase()} changed since you opened it. It has been reloaded; check it and promote again.`,
+                    text: `This ${word.toLowerCase()} changed since you opened it. It has been reloaded; check it and send again.`,
                     tone: "warning",
                   });
                 } else setNotice({ text: errorText(error), tone: "warning" });
@@ -579,95 +563,50 @@ function Panel({
   );
 }
 
-function PromotePanel({
+function AssessPanel({
   c,
   item,
+  assessed,
   busy,
-  repository,
-  setRepository,
-  complexity,
-  setComplexity,
-  onPromote,
+  onAssess,
 }: {
   c: Colors;
   item: ItemDetail;
+  assessed: ItemHistoryEntry | undefined;
   busy: boolean;
-  repository: string | null;
-  setRepository: (origin: string) => void;
-  complexity: CapabilityLevel;
-  setComplexity: (level: CapabilityLevel | null) => void;
-  onPromote: (origin: string) => void;
+  onAssess: () => void;
 }) {
   const [help, setHelp] = useState(false);
-  const several = item.repositories.length > 1;
-  // A choice defaults to the first bound repository; one repository is always the destination.
-  const chosen =
-    item.repositories.find((repo) => repo.origin === repository) ??
-    item.repositories.find((repo) => repo.bound) ??
-    item.repositories[0];
-  const lead = item.kind === "lead";
-  const refusal = !chosen
-    ? "This project has no repository."
-    : !chosen.bound
-      ? `Bind ${chosen.origin} to a T3 project before promoting.`
-      : null;
-  const complexityHelp = lead
-    ? "Complexity sets how capable a model each run needs. A lead starts at its brief's level; choosing another writes it into the brief when you promote."
-    : "Complexity sets how capable a model each run needs.";
-  const helpText = several
-    ? `Only repositories bound to a T3 project can take the task. ${complexityHelp}`
-    : `The task goes to ${chosen?.origin ?? "the project's repository"}. ${complexityHelp}`;
+  const helpText =
+    "The planner will check this item, drop it if it's stale or already done, or write a brief and dispatch it.";
   return (
     <Panel
       c={c}
-      label="Promote"
+      label="Send to planner"
       tone="accent"
-      eyebrow="Promote"
-      help={<HelpTip c={c} label="About promoting" text={helpText} open={help} onOpenChange={setHelp} />}
+      eyebrow="Send to planner"
+      help={<HelpTip c={c} label="About sending to planner" text={helpText} open={help} onOpenChange={setHelp} />}
     >
       <View style={{ ...row, gap: space.xs }}>
-        {several && (
-          <DropdownSelect
-            c={c}
-            compact
-            hideLabel
-            minWidth={180}
-            label="Repository"
-            value={chosen?.origin ?? ""}
-            options={item.repositories.map((repo) => ({
-              value: repo.origin,
-              label: repo.origin,
-              detail: repo.bound ? undefined : "Not bound to T3",
-            }))}
-            disabled={busy}
-            onChange={setRepository}
-          />
-        )}
-        <DropdownSelect
-          c={c}
-          compact
-          hideLabel
-          minWidth={130}
-          label="Complexity"
-          value={complexity}
-          options={COMPLEXITY}
-          disabled={busy}
-          onChange={(value) => setComplexity(COMPLEXITY.find((level) => level.value === value)?.value ?? "medium")}
-        />
+        {assessed ? (
+          <>
+            <Hint c={c} text={new Date(assessed.atMs).toLocaleString()} focusable>
+              <Text style={metaText(c)}>{`With planner since ${clockTime(assessed.atMs)}`}</Text>
+            </Hint>
+            {assessed.recipient ? <Text style={metaText(c)}>{`· ${assessed.recipient}`}</Text> : null}
+          </>
+        ) : null}
         <View style={{ flex: 1 }} />
         <Button
           c={c}
           small
-          selected
-          text="Promote"
-          label={`Promote ${item.kind}`}
-          hint={refusal ?? undefined}
-          disabled={busy || refusal !== null}
-          // The engine defaults a destination only for a project with one bound repository; always name it.
-          onPress={() => chosen && onPromote(chosen.origin)}
+          selected={!assessed}
+          text={assessed ? "Send again" : "Send to planner"}
+          label={assessed ? `Send ${item.kind} to planner again` : `Send ${item.kind} to planner`}
+          disabled={busy}
+          onPress={onAssess}
         />
       </View>
-      {refusal && <Text style={metaText(c)}>{refusal}</Text>}
     </Panel>
   );
 }
