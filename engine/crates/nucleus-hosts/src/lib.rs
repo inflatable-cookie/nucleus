@@ -430,6 +430,15 @@ struct PassEvidence {
 }
 
 impl T3 {
+    /// Read a thread title from the synchronized shell snapshot without a host call.
+    #[must_use]
+    pub fn cached_thread_title(&self, id: &str) -> Option<String> {
+        self.rpc
+            .thread_row(id)
+            .and_then(|row| row["title"].as_str().map(str::to_owned))
+            .filter(|title| !title.trim().is_empty())
+    }
+
     /// Check the recorded worker's turn in the synchronized shell for owner acceptance.
     ///
     /// # Errors
