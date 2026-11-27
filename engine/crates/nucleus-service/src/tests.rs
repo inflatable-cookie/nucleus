@@ -1681,10 +1681,6 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
 #[tokio::test]
 #[expect(
     clippy::too_many_lines,
-    reason = "exercise the parent, service restart and worker dispatch in one trace"
-)]
-#[expect(
-    clippy::too_many_lines,
     reason = "exercise the recorded parent, native queue and capacity together"
 )]
 async fn lost_parent_turn_recovers_after_service_restart_and_capacity_wait() {
