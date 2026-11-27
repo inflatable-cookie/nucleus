@@ -208,7 +208,7 @@ async fn a_successor_releases_a_carried_turn_even_during_child_activity() {
     let endpoint = listener.local_addr().unwrap();
     let state = Arc::new(AtomicUsize::new(1));
     let (stream, _attached, server_task) = server(listener, Arc::clone(&state));
-    let mut client = ServiceClient::new(&binding(endpoint, false)).unwrap();
+    let mut client = ServiceClient::new(&binding(endpoint, false), None).unwrap();
     let (output, mut frames) = mpsc::unbounded_channel();
     let turn = tokio::spawn(async move {
         task_prompt(

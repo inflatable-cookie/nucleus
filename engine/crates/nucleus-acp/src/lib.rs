@@ -472,7 +472,7 @@ pub async fn fixture_task_prompt(
     output: &mpsc::UnboundedSender<Value>,
 ) -> io::Result<()> {
     let session = binding.session_id.clone();
-    let mut client = ServiceClient::new(&nucleus_core::acp::SessionBinding::Task(binding))
+    let mut client = ServiceClient::new(&nucleus_core::acp::SessionBinding::Task(binding), None)
         .map_err(io::Error::other)?;
     task_prompt(
         &mut client,
