@@ -4,6 +4,9 @@ import { boardDetailReply, boardTasks } from "./support/board-tasks";
 import { leadActionHints } from "./support/lead-actions";
 import assert from "node:assert/strict";
 import React from "react";
+import { readFileSync } from "node:fs";
+import { createRustBoardTransport, type RustTask } from "../client/web/rust-board";
+import { generatedProjectBadge, projectBadgeWebStyle } from "../shared/t3/project-badge";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { build } from "esbuild";
@@ -609,6 +612,7 @@ function tree(
   compact: boolean,
   rpc: typeof invoke = invoke,
   failFast = false,
+  rustRows?: RustTask[],
 ) {
   return h(QueryClientProvider, {
     client: new QueryClient({
@@ -620,6 +624,7 @@ function tree(
         theme: { colors: c },
         layout: { compact, platform: "ios" as const },
         navigation: {},
+        ...(rustRows ? { rustBoard: () => {}, boardTransport: createRustBoardTransport(async () => Response.json(rustRows)) } : {}),
       }),
     }),
   });
@@ -715,6 +720,7 @@ function assertDarkTheme(ui: ReturnType<typeof mount>) {
   // A kind tile's tint is a palette role at low alpha (nucleus#1515), derived, not a literal.
   const palette: Set<string> = new Set([
     ...Object.values(dark),
+    ...Object.values(projectBadgeWebStyle(generatedProjectBadge("App"), true)),
     ...Object.values(dark).map((value) => toneSurface(value, value)),
     toneSurface(dark.foreground, dark.foreground, 0.75),
     // Planning's review segment and idle banner tint a role at their own token alphas (nucleus#1531);
@@ -1764,3 +1770,125 @@ test("the narrow drawer lists Working, In review and Closing top-level with grou
     unmount(ui);
   }
 });
+
+
+/** Rows captured from the Rust /v1/tasks endpoint, with synthetic project names. */
+async function rustRows(): Promise<RustTask[]> {
+  const raw: unknown = JSON.parse(readFileSync(new URL("./fixtures/rust-task-order-rows.json", import.meta.url), "utf8"));
+  const rows = await createRustBoardTransport(async () => Response.json(raw)).list(new AbortController().signal);
+  return rows.map(row => ({ ...row, identity: { ...row.identity, repository: repo.origin } }));
+}
+
+for (const compact of [false, true]) {
+  test(`026-13/15 dark Rust inbox shows the task columns and totals (${compact ? "medium" : "wide"})`, async () => {
+    const rows = await rustRows();
+    const previous = board.tasks;
+    board.tasks = [];
+    const ui = mount(tree(await bundleMainSurface(), compact, invoke, false, rows));
+    try {
+      await settleUntil(ui, () => Boolean(ui.query("History, 1")), "Rust task counts did not load");
+      assert.deepEqual(navigationLabels(ui).map(viewName), ["Needs you", "Planning", "Leads", "Papercuts", "Queue", "Working", "In review", "Merging", "Closing", "History"]);
+      const menu = ui.get("Nucleus navigation").children.filter((node): node is HostNode => typeof node !== "string");
+      const gaps = menu.filter(node => node.type === "View" && node.props.style?.height === space.md);
+      assert.equal(gaps.length, 2);
+      for (const gap of gaps) assert.equal(gap.props.style.backgroundColor, undefined);
+      assert.ok(ui.get("Needs you, 1"));
+      assert.ok(ui.get("Queue, 3"));
+      assert.ok(ui.get("Working, 1"));
+      assert.ok(ui.get("In review, 1"));
+      assert.ok(ui.get("Merging, 1"));
+      assert.ok(ui.get("Closing, 1"));
+      assert.match(ui.text(), /Needs task/);
+      for (const [name, title] of [["Queue", "Queued task"], ["Working", "Working task"], ["In review", "Review task"], ["Merging", "Merging task"], ["Closing", "Closing task"], ["History", "History task"]]) {
+        ui.press(new RegExp(`^${name},`));
+        assert.match(ui.text(), new RegExp(title));
+        assertDarkTheme(ui);
+      }
+    } finally { unmount(ui); board.tasks = previous; }
+  });
+}
+
+test("032 Rust inbox places a work question and a held task in Needs you", async () => {
+  const rows = await rustRows();
+  const needs = rows[0]!;
+  const question: RustTask = { ...needs, question: { work: { prompt: "Choose the next step", options: ["Continue", "Stop"] } } };
+  const held: RustTask = { ...rows[1]!, identity: { ...rows[1]!.identity, id: "held", reference: "app#20" }, title: "Held merge", attention: "attention", hold: { reason: "Awaiting acceptance" } };
+  const previous = board.tasks;
+  board.tasks = [];
+  const ui = mount(tree(await bundleMainSurface(), false, invoke, false, [question, held]));
+  try {
+    await settleUntil(ui, () => Boolean(ui.query("Needs you, 2")), "Needs you did not load");
+    assert.match(ui.text(), /Choose the next step/);
+    assert.match(ui.text(), /Held merge/);
+  } finally { unmount(ui); board.tasks = previous; }
+});
+
+test("queue controls default to the current Rust menu", async () => {
+  const previous = board.tasks;
+  board.tasks = [];
+  const ui = mount(tree(await bundleMainSurface(), false, invoke, false, await rustRows()));
+  try {
+    await settleUntil(ui, () => ui.query("Queue controls menu")?.props.disabled === false, "queue controls did not load");
+    ui.press("Queue controls menu");
+    assert.ok(ui.get("Pause"));
+    assert.ok(ui.get("Dispatch hold"));
+    assert.ok(ui.get("Stop"));
+    assert.equal(ui.query(/^Project slot usage/), undefined);
+  } finally { unmount(ui); board.tasks = previous; }
+});
+
+test("026-15a bundled records show the result of an action in their detail", async () => {
+  const writes: unknown[] = [];
+  const item = {
+    id: "lead-1", kind: "lead" as const, projectKey: "app", projectName: "App", title: "Lead one", body: "Ship it.",
+    lanes: [], repositories: [{ origin: repo.origin, bound: true }], author: "planner", state: "open" as const,
+    reason: null, disposition: null, briefComplexity: null, revisitAt: null, taskId: null, version: 1,
+    createdAtMs: null, updatedAtMs: null, history: [],
+  };
+  const rpc = async (method: string, input: unknown): Promise<unknown> => {
+    if (method === "item.get") return item;
+    if (method === "item.drop") {
+      writes.push(input);
+      return { ...item, state: "dropped", disposition: "deprecated", version: 2 };
+    }
+    return invoke(method, input);
+  };
+  const previous = board.tasks;
+  board.tasks = [];
+  const ui = mount(tree(await bundleMainSurface(), false, rpc, false, await rustRows()));
+  try {
+    await settleUntil(ui, () => Boolean(ui.query(/^Leads, /)), "Leads did not load");
+    openView(ui, "Leads");
+    await settleUntil(ui, () => Boolean(ui.query(/^Lead: Lead one, Status: /)), "lead did not load");
+    ui.press(/^Lead: Lead one, Status: /);
+    await settleUntil(ui, () => Boolean(ui.query("Open drop for lead")), "lead detail did not load");
+    assertDarkTheme(ui);
+    ui.press("Open drop for lead");
+    ui.type("Note", "No longer needed");
+    ui.press("Drop lead");
+    await settleUntil(ui, () => Boolean(ui.query("State: Dropped · deprecated")), "drop result did not render");
+    assert.deepEqual(writes, [{ id: "lead-1", project: "app", disposition: "deprecated", note: "No longer needed" }]);
+    assertDarkTheme(ui);
+  } finally { unmount(ui); board.tasks = previous; }
+});
+
+for (const compact of [false, true]) {
+  test(`inbox totals count long multi-lane Rust task lists (${compact ? "medium" : "wide"})`, async () => {
+    const rows = await rustRows();
+    const working = rows.find(row => row.phase === "working")!;
+    const many = Array.from({ length: 40 }, (_, i) => ({ ...working, identity: { ...working.identity, id: `long-${i}`, reference: `app#${i + 1}` }, title: `Long task ${i}`, number: i + 1, lanes: ["first", "second"] }));
+    const previous = board.tasks;
+    board.tasks = [];
+    const ui = mount(tree(await bundleMainSurface(), compact, invoke, false, many));
+    try {
+      await settleUntil(ui, () => Boolean(ui.query("Working, 40")), "working total did not load");
+      assert.ok(ui.get("Needs you, 0"));
+      assert.match(ui.text(), /Nothing here\./);
+      assert.ok(ui.get("Queue, 0"));
+      ui.press("Working, 40");
+      assert.match(ui.text(), /40 items/);
+      assert.match(ui.text(), /Long task/);
+      assertDarkTheme(ui);
+    } finally { unmount(ui); board.tasks = previous; }
+  });
+}

@@ -207,6 +207,8 @@ export function planningFixture() {
 
   return {
     projectNames,
+    tasks,
+    outcomes,
     addLane(input: LaneUpsertInput) {
       lanes.push(lane(input));
     },
