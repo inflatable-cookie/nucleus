@@ -1,4 +1,4 @@
-use rusqlite::{Row, params};
+use rusqlite::{OptionalExtension, Row, params};
 
 use crate::{Store, StoreError};
 
@@ -48,7 +48,7 @@ fn delivery(row: &Row<'_>) -> rusqlite::Result<ParentDelivery> {
 }
 
 impl Store {
-    /// Read the current task's deliveries and any occurrence of its exact retained child.
+    /// Read the delivery rows for the requested task version.
     ///
     /// # Errors
     /// Returns an error if the delivery rows cannot be read.
@@ -56,16 +56,32 @@ impl Store {
         &self,
         task: &str,
         version: i64,
-        child: Option<&str>,
     ) -> Result<Vec<ParentDelivery>, StoreError> {
         let mut query = self.connection.prepare_cached(
             "SELECT version, command, refresh, wire, legacy_prompt, due_ms, result
-             FROM parent_deliveries WHERE task_id=?1 AND command<>'' AND
-               (version=?2 OR (version<?2 AND instr(command, ?3)=1)) ORDER BY ordinal DESC",
+             FROM parent_deliveries WHERE task_id=?1 AND version=?2 AND command<>''
+             ORDER BY ordinal DESC",
         )?;
         Ok(query
-            .query_map(params![task, version, child], delivery)?
+            .query_map(params![task, version], delivery)?
             .collect::<Result<_, _>>()?)
+    }
+
+    /// Read the task's one current hold across role and task version changes.
+    ///
+    /// # Errors
+    /// Returns an error if the row cannot be read.
+    pub fn current_parent_hold(&self, task: &str) -> Result<Option<ParentDelivery>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT version, command, refresh, wire, legacy_prompt, due_ms, result
+             FROM parent_deliveries WHERE task_id=?1 AND refresh=0 AND command<>''
+             ORDER BY ordinal DESC LIMIT 1",
+                [task],
+                delivery,
+            )
+            .optional()?)
     }
 
     /// Keep the task version that owns an unresolved parent preparation.
@@ -76,6 +92,7 @@ impl Store {
         Ok(self.connection.query_row(
             "SELECT coalesce((SELECT result<>'accepted' FROM parent_deliveries
              WHERE task_id=?1 AND version=?2 AND command<>'' AND refresh=0
+               AND coalesce(json_extract(wire, '$.checkpoint.preparing_launch'), 1)
              ORDER BY ordinal DESC LIMIT 1), 0)",
             params![task, version],
             |row| row.get(0),
@@ -91,7 +108,8 @@ impl Store {
         task: &str,
         value: &ParentDelivery,
     ) -> Result<bool, StoreError> {
-        Ok(self.connection.execute(
+        let tx = self.connection.unchecked_transaction()?;
+        let inserted = tx.execute(
             "INSERT INTO parent_deliveries (task_id,version,command,refresh,wire,due_ms,result)
              SELECT id,version,?3,?4,?5,?6,'pending' FROM tasks WHERE id=?1 AND version=?2
              ON CONFLICT(task_id, version, command) DO NOTHING",
@@ -103,7 +121,16 @@ impl Store {
                 value.wire,
                 value.due_ms
             ],
-        )? == 1)
+        )? == 1;
+        if inserted && !value.refresh {
+            tx.execute(
+                "DELETE FROM parent_deliveries
+                 WHERE task_id=?1 AND refresh=0 AND ordinal<>last_insert_rowid()",
+                [task],
+            )?;
+        }
+        tx.commit()?;
+        Ok(inserted)
     }
 
     /// Store a due retry of the same command or its replacement after rejection.

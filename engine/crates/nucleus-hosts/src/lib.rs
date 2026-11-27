@@ -55,9 +55,9 @@ pub use launch::{
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
-    ActiveChild, ArchiveWrite, DoneArchive, FrozenParentWrite, ParentAttempt, ParentRun,
-    ParentSendError, ParentSnooze, ParentStep, ParentWrite, QuietCheckout, SnoozeRestoration,
-    is_parent_reentry, is_pinned_parent_hold, parent_thread,
+    ArchiveWrite, DoneArchive, FrozenParentWrite, HoldCheckpoint, ParentRun, ParentSendError,
+    ParentShell, ParentSnooze, ParentTurn, ParentWrite, QuietCheckout, SnoozeRestoration,
+    is_pinned_parent_hold, parent_thread,
 };
 /// A link within the same T3 environment as the task thread.
 #[must_use]
@@ -295,7 +295,6 @@ pub struct RunObservation {
     pub activity: Option<RunActivity>,
     pub provider_limit: Option<ProviderLimit>,
     pub routing: Option<RunRouting>,
-    pub active_child: Option<ActiveChild>,
 }
 
 /// Provider and model recorded on the exact native run after it started.
@@ -1138,7 +1137,6 @@ impl TaskHost for T3Pass<'_> {
                 activity: None,
                 provider_limit: None,
                 routing: None,
-                active_child: None,
             });
         }
         if state == RunState::ReadyToSend && !queued_continuation(run, &wire) {
@@ -1192,26 +1190,12 @@ impl TaskHost for T3Pass<'_> {
         } else {
             state
         };
-        let active_child = ActiveChild {
-            binding: wire.binding,
-            thread: run.launch().thread.clone(),
-            instance: run.launch().instance.clone(),
-            native: thread
-                .as_ref()
-                .and_then(|thread| thread.owned_active_run(&message))
-                .map(str::to_owned),
-        };
-        let active_child = self
-            .host
-            .active_child_in_shell(&active_child)
-            .then_some(active_child);
         let activity = thread.and_then(|thread| thread.activity(&message));
         Ok(RunObservation {
             host: current(run, state),
             activity,
             provider_limit,
             routing,
-            active_child,
         })
     }
 
@@ -1537,7 +1521,6 @@ fn assignment_rejected(run: &Run) -> RunObservation {
         activity: None,
         provider_limit: None,
         routing: None,
-        active_child: None,
     }
 }
 
@@ -1602,28 +1585,44 @@ fn rejected(cause: &Value, wire: &Wire, instance: &str) -> bool {
         };
         return command_rejected(cause, instance, command);
     }
-    let Some(error) = command_failure(cause, instance) else {
-        return false;
-    };
+    launch_rejection(cause, instance, &wire.binding.project_id).is_some()
+}
+
+enum LaunchRejection {
+    Create,
+    InitialMessage,
+}
+
+fn launch_rejection(cause: &Value, instance: &str, project: &str) -> Option<LaunchRejection> {
+    let error = command_failure(cause, instance)?;
     let defect = &error["cause"];
-    error["_tag"] == "OrchestrationV2ThreadLaunchError"
-        && error["projectId"] == wire.binding.project_id
-        && defect_named(defect, "ThreadLaunchError")
-        && [
-            ("create-thread", instance.to_owned(), "thread.create"),
-            (
-                "dispatch-message",
-                format!("{instance}:initial-message"),
-                "message.dispatch",
-            ),
-        ]
-        .iter()
-        .any(|(operation, command_id, command)| {
-            (defect["operation"] == *operation
-                || defect["message"]
-                    == format!("Thread launch {instance} failed during {operation}."))
-                && rejected_command(&defect["cause"], command_id, command)
-        })
+    if error["_tag"] != "OrchestrationV2ThreadLaunchError"
+        || error["projectId"] != project
+        || !defect_named(defect, "ThreadLaunchError")
+    {
+        return None;
+    }
+    [
+        (
+            "create-thread",
+            instance.to_owned(),
+            "thread.create",
+            LaunchRejection::Create,
+        ),
+        (
+            "dispatch-message",
+            format!("{instance}:initial-message"),
+            "message.dispatch",
+            LaunchRejection::InitialMessage,
+        ),
+    ]
+    .into_iter()
+    .find_map(|(operation, command_id, command, rejected)| {
+        ((defect["operation"] == operation
+            || defect["message"] == format!("Thread launch {instance} failed during {operation}."))
+            && rejected_command(&defect["cause"], &command_id, command))
+        .then_some(rejected)
+    })
 }
 
 fn dispatch_rejected(cause: &Value, id: &str) -> bool {
