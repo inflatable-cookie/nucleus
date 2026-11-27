@@ -170,12 +170,10 @@ Later decisions carry their own attribution.
    cannot prove past delivery or absence. T3's `message.dispatch` deduplicates
    the exact frozen command ID, so a parent hold pinned to the ACP provider and
    model can queue while busy and reconcile an ambiguous send under that ID.
-   A pinned retry reuses the original intent and prompt. A check that fails
-   before an intent is recorded leaves no attempted-send record. A refusal
-   after that point names its exact attempt. Re-entry uses one bounded read
-   to identify the ended hold and rechecks current child activity, parent
-   availability, binding and operator snooze at send time.
-   Older parent holds still require an idle thread. Delegated launch absence
+   A retry reuses the original intent and prompt under the parent delivery
+   policy below. Re-entry uses one bounded read to identify the ended hold and
+   rechecks current child activity, parent availability and binding at send time.
+   Delegated launch absence
    still requires an exact terminal parent run and an authoritative child absence.
    New retained role continuations pin provider and model and can enter the
    native queue without waiting for idle coverage or a prior send deadline.
@@ -380,14 +378,9 @@ Later decisions carry their own attribution.
     leave a live hold intact. It ends when the task is terminal or waits
     with no active or pending role. Terminal and agent prompts render the
     current view and end normally. Mutating commands require attested input under
-    ruling 27. A native turn failure is recorded against the task version,
-    T3 session and engine instance. A change to any of these permits one fresh
-    attempt. A fenced task without a sent run leaves room for other project work.
+    ruling 27. Parent sends follow the retry policy in ruling 57. Tasks without
+    a sent role run leave room for other project work.
 
-    The planner ruled on 2026-11-24 that an effect proven unsent replans on the
-    next eligible pass, even at the same task version. Ambiguous delivery keeps
-    its readback deadline and may block if it stays unresolved. A completed
-    hold uses its own native outcome across subsequent retries and restarts.
     Retained reads record a missing bounded projection when the shell still
     lists the thread. Revoked-run custody can still require a local writer check.
     Title, settle and snooze changes preserve matching custody evidence.
@@ -473,9 +466,9 @@ Later decisions carry their own attribution.
     - A bound role's active run or positively observed background work can keep the ACP task turn open, including after an authenticated report. Re-entry uses the same activity evidence. The first hold keys on the role launch and its activity. A successor requires the exact ended parent run and a change in role activity, or evidence of provider loss or a stranded queue. An uncertain reply retains the existing intent and command.
     - A parent turn that ends within one second imposes a three-second backoff from completion. Three consecutive instant turns stop re-entry and show an owner action until new role evidence arrives. Shell updates and startup drive re-entry. The existing three-second recheck for an unproven continuation remains bounded to its first 30 seconds.
     - After an authenticated report or an observed terminal role, the ACP hold releases when the bound role is quiet. The next engine change for that task rechecks the current hold even if the completion notification was missed. Each frozen hold prompt identifies its command. An older ACP turn yields when the latest hold has a different prompt. The service sends child activity as a carry signal only when there is no current hold.
-    - Parent delivery respects operator snoozes and can send across a Nucleus-owned snooze. Task-row visibility follows ruling 22.
+    - A parent hold can send through a snooze. When the native read confirms it cleared an operator snooze, the engine restores that horizon under ruling 62. Task-row visibility follows ruling 22.
     - Held task and Inbox ACP streams use the service's keepalives to detect broken connections. EOF, transport errors and 45 seconds without a complete keepalive or invalidation trigger capped reconnect backoff. The new stream refreshes the view. A task turn can carry its authenticated hold while the restarted engine waits for the first T3 shell snapshot.
-    - A failed parent turn can get a fresh journaled hold when its exact command, ACP run and root error prove the provider process exited, the ACP reply stream closed, or Nucleus could not answer. The same evidence can recover an already recorded failure. Other parent failures retain their owner action.
+    - A failed parent turn can get a fresh journaled hold when its exact command, ACP run and root error prove the provider process exited, the ACP reply stream closed, or Nucleus could not answer. Other observed native turn failures retain their owner action until hold derivation moves to the held shell.
     - An exact queued parent run that never started, with no active run or pending runtime request, cannot supply a hold. The scheduler can send a new, journaled command after capacity frees. An uncertain send still uses its frozen, deduplicated command ID.
     - ACP request failures and requests slower than two seconds record UTC time, route, status or transport outcome, latency and attempt in `acp.log`, without request content or credentials. Engine errors retain the response message; transport failures and deadlines remain unavailable errors. The service timestamps its log lines and records ACP 5xx responses. Slow ACP detail reads record state-lock wait and hold time to distinguish contention from response errors.
     - A report-ready or prerequisite-release notice can make one fresh attempt
@@ -484,8 +477,6 @@ Later decisions carry their own attribution.
       T3 backoff delays native requests while local decisions continue. A retryable preflight or unavailable observation has a due time.
       A failure with no more specific wait shows its cause and offers Recheck. It, and a finished task's retained checkout, retry from 3 seconds, doubling to 10 minutes (nucleus#1640).
       Only a non-queueable, possibly sent role uses the late-reply grace, after a successful read found no receipt.
-      For a parent command that cannot replay, a deferral before the exact read stays pending. An inconclusive read once issued, or a successful read with no command match, sends one notice to the responsible planner. The notice asks them to check the earlier turn and use **Next** to review available actions. Next reads the task and leaves the held occurrence in place.
-      An unavailable planner route stays due. Once the routing check confirms there is no responsible planner, the card asks the operator to review recovery. The held delivery opens no Inbox form.
     - The board's **Needs you** and T3 task rows share one attention rule.
       Operator decisions, unanswered Inbox forms and typed blocks with a
       concrete operator action need the operator. Planner questions, including
@@ -504,7 +495,7 @@ Later decisions carry their own attribution.
     ordinary scheduler work. Capacity ordering applies on the ordinary turns.
     An unresolved parent attempt keeps its task version and waits for capacity.
     Schema 12 reads that decision from the current delivery occurrence. Exact
-    acceptance, refusal before send or failure releases that occurrence's guard.
+    acceptance releases that occurrence's guard.
     The task keeps its original admission order and reuses its native parent row
     on a later dispatch.
     Admission creates no T3 parent. The TypeScript path uses
@@ -782,7 +773,7 @@ Later decisions carry their own attribution.
 
 56. **Any agent can watch a task for its completion.** Tom, 2026-11-27, asked whether a planner can subscribe to another task's completion after it has started: "Yeah, the latter case is what i'm after, a general subscription model for any agent to receive notifications of a task completing". Any agent thread can run `nucleus watch <task>` to receive that task's completion notice, whichever project the task belongs to, and `nucleus unwatch <task>` to stop. Watching is read-only, so it needs no access to the task's project beyond reading its reference and title. When the task reaches Done or Cancelled, every watcher gets the ruling 55 notice once, through the same queued delivery. A watcher that is also the dispatching thread gets one notice, not two. If a watcher's thread is archived or gone, its notice is dropped and recorded in the task's history. Tom, 2026-11-27: "if a watcher's thread has gone then it _should_ be dropped.. the point of this opt-in subscription is to allow interested parties to see when a task finishes, not as a general workflow mechanism. The thread's project planner probably won't be interested". This is the one exception to ruling 41's never-dropped rule. The dispatching thread's own notice (ruling 55) still falls back. Watching a task that has already finished returns its outcome at once and sends nothing. The watch ends when the task does.
 
-57. **One re-sendable parent hold per task.** Tom, 2026-11-27, approved the assessment's Z1 model ("Approve (Recommended)"; Tom answered four questions from the quality-round-2 assessment (nucleus#1638), choosing the planner's recommendation each time.) A parent hold message keeps a task's T3 turn open, which is read-only and harmless to repeat, so it is not delivered like a destructive step. Whether a hold is wanted is one function of the task and the held shell: the task is live and not held, declined, snoozed or stopped, and either a reservation is unsent or inside its reply window, or a bound role thread is active. The engine records one hold per task (command ID, a prompt carrying the command fingerprint, and the parent run it follows). The turn stays open only while the hold is wanted and the client's prompt matches the recorded one, so a stale turn ends by itself. An unconfirmed send repeats the same command ID with backoff. T3 deduplicates by command ID, so this is not a blind retry, and an adapter test pins that behaviour. A new ID is issued only when the parent is idle and a run has finished since the record, the recorded run hasn't started after a bounded wait, or T3 rejected the ID. There is no held, refused or unverified hold state and no planner notice or owner action about holds. Very short turns back off and show the cause, and the breaker clears itself. Role launches keep their current custody.
+57. **One re-sendable parent hold per task.** Tom, 2026-11-27, approved the assessment's Z1 model ("Approve (Recommended)"; Tom answered four questions from the quality-round-2 assessment (nucleus#1638), choosing the planner's recommendation each time.) A parent hold message keeps a task's T3 turn open, which is read-only and harmless to repeat, so it is not delivered like a destructive step. Whether a hold is wanted is one function of the task and the held shell: the task is live and not held, declined or stopped, and either a reservation is unsent or inside its reply window, or a bound role thread is active. The engine records one hold per task (command ID, a prompt carrying the command fingerprint, and the parent run it follows). The turn stays open only while the hold is wanted and the client's prompt matches the recorded one, so a stale turn ends by itself. An unconfirmed send repeats the same command ID with backoff. T3 deduplicates by command ID, so this is not a blind retry, and an adapter test pins that behaviour. A new ID is issued only when the parent is idle and a run has finished since the record, the recorded run hasn't started after a bounded wait, or T3 rejected the ID. There is no held, refused or unverified hold state and no planner notice or owner action about holds. Very short turns back off and show the cause, and the breaker clears itself. Role launches keep their current custody.
 
 58. **Closeout doesn't wait on a process census.** Tom, 2026-11-27, approved the assessment's Z2 model with 24-hour trash ("Approve, 24h trash (Recommended)"). A checkout retires when Dispatch allows it, every task thread is quiet in the held shell, and Git proves the published head. Retirement renames it into same-volume trash, which is kept for 24 hours before deletion, so a late write is recoverable. One best-effort terminal sweep stops own-code orphans and finished provider helpers while roles are quiet. It records outcomes and never makes a task wait. The process census may postpone deleting a trash entry that still holds a process, never a task. Nucleus still never signals a shared service.
 
@@ -932,7 +923,7 @@ waiting notice, and the next due pass can also retry routing. The scheduler
 records the concrete send intent after checking the recipient and snooze horizon. T3 wakes a settled planner in the message dispatch transaction.
 A queued notice remains read-only if the planner settles again. An uncertain
 question or operator-decline send keeps its exact attempt.
-For report-ready, prerequisite-release and held parent recovery notices, a
+For report-ready and prerequisite-release notices, a
 structured T3 rejection of the exact command reopens the notice once. The fresh
 attempt uses a new command ID, the same notice text and a currently verified planner.
 A second rejection spends the retry. Uncertain replies and previously spent
@@ -1060,21 +1051,31 @@ Cargo builds" rule for the `engine/` workspace only:
 
 ### Parent delivery storage and upgrade
 
-Planner ruling, 2026-11-24. Schema 12 stores one frozen parent command, due
-time and result per occurrence. The engine persists the exact method, wire
-payload, binding and verified native runtime before sending. An accepted reply
-or exact command-linked evidence settles that occurrence. The task version,
-current destination, role and operator snooze still authorize the wire. A
-pending command can replay only in the same native runtime. On a due send,
-the engine checks the descriptor PID and process start against the exact RPC
-socket. The socket carries that proof until it closes. A replacement connection
-must prove ownership again, even if the descriptor survives. Earlier records
-that only store the descriptor key also require readback. A new or unverified
-native runtime gets one bounded opportunity to confirm delivery
-from exact positive evidence. A missing or inconclusive result parks the
-occurrence and directs the operator to open the thread and use Next. A
-replacement store may advertise the same environment ID and sequence, so those
-values do not establish continuity.
+Schema 12 stores the command, frozen wire payload and due time for each parent
+send. A pending command is due again after backoff and uses the same ID and
+payload across reconnects and restarts. Current task and destination checks
+still authorize sending it. An accepted reply or positive native turn evidence
+settles the occurrence. An exact T3 rejection replaces the rejected message ID
+with a fresh due command before another send. No planner or operator action is
+needed for unconfirmed delivery. Old refused, failed and held rows with command
+IDs resume as pending. Historical rows without a command ID do not gate delivery.
+
+Before a parent send can clear an operator snooze, the engine records the
+native destination, message and horizon separately from hold delivery. The
+visibility worker retries restoration after restart, once the exact message
+is visible and the snooze is clear. It reuses the restoration command ID
+after an uncertain reply and uses a fresh ID after a confirmed rejection.
+Automatic row visibility yields to the pending operator horizon until the
+shell confirms the restoration. Expiry, closure or a newer operator visibility
+change also ends the intent.
+
+Run the installed T3 receipt contract test when changing or upgrading the
+adapter. It starts the bundled server with its own store under scratch and
+checks accepted and rejected replies across a restart.
+
+```sh
+node scripts/test-t3-hold-receipts.mjs "/Applications/T3 Code (Nightly).app" "$TMPDIR"
+```
 
 Before a schema upgrade the engine copies the committed database into its
 configured backup root and verifies the copy read-only. Schema 12 decodes
@@ -1085,12 +1086,6 @@ backup is an explicit operator-directed recovery with dispatch held until
 native effects after that backup are reconciled. Ship schema 12 as a
 standalone release after project removal (#642). The planner approved the
 measured 76-line production Rust increase for this scoped change.
-
-The shared role and parent wire is a separate reduction after scheduler
-retry deadlines (#644). Consolidate common command construction, frozen
-payload and receipt handling while keeping each role's authorization.
-Limit each review unit to three production modules and report its measured
-production Rust delta.
 
 ## Migration
 

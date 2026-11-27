@@ -101,6 +101,7 @@ struct Thread {
     lineage: Option<Lineage>,
     provider_instance_id: Option<String>,
     active_provider_thread_id: Option<String>,
+    last_snooze_wake_at: Option<String>,
     model_selection: Option<Value>,
     #[serde(flatten)]
     visibility: ThreadVisibility,
@@ -590,6 +591,10 @@ impl Projection {
         self.runs
             .iter()
             .any(|run| run.user_message_id.as_deref() == Some(message_id))
+    }
+
+    pub(crate) fn last_snooze_wake_ms(&self) -> Option<u64> {
+        crate::task_row::timestamp_ms(self.thread.last_snooze_wake_at.as_deref()?).ok()
     }
 
     pub(crate) fn has_delivery(&self, message_id: &str) -> bool {

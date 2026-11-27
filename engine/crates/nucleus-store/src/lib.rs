@@ -45,7 +45,7 @@ pub use settings_domains::{
     DispatchMode, DispatchSettings, Hosts, NamedProfile, PlannerClaim, Profiles, ProjectSettings,
     Projects, RepositorySettings, T3Settings,
 };
-pub use task_rows::{RowSnooze, SnoozeOutcome};
+pub use task_rows::{RowSnooze, SnoozeOutcome, StoredParentSnooze};
 pub use tells::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };

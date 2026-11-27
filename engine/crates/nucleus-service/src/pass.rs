@@ -1324,32 +1324,13 @@ impl Service {
                 crate::presentation::role_start_line(task, &state.store),
             )
         };
-        if let Some(record) = &prior {
-            match record.result {
-                ParentResult::Held => return Err(ServiceError::ParentDeliveryHeld),
-                ParentResult::Failed => return Ok(()),
-                ParentResult::Pending if self.replay_runtime(record).await.is_none() => {
-                    return self
-                        .resolve_parent_deliveries(
-                            row,
-                            child.binding(),
-                            std::slice::from_ref(record),
-                        )
-                        .await;
-                }
-                _ => crate::acp::parent_due(record)?,
-            }
-        }
         let Some(write) = self
             .host
             .prepare_parent_reentry(
                 child,
                 provider,
                 &start_line,
-                prior
-                    .as_ref()
-                    .filter(|value| value.result != ParentResult::Refused)
-                    .map(|value| value.command.as_str()),
+                prior.as_ref().map(|value| value.command.as_str()),
             )
             .await?
         else {
@@ -1397,22 +1378,7 @@ impl Service {
                 crate::presentation::role_start_line(task, &state.store),
             )
         };
-        if let Some(record) = &prior {
-            match record.result {
-                ParentResult::Held => return Err(ServiceError::ParentDeliveryHeld),
-                _ => crate::acp::parent_due(record)?,
-            }
-        }
-        let attempt = prior
-            .as_ref()
-            .filter(|value| value.result != ParentResult::Refused);
-        let replay_launch = if let Some(record) = attempt.filter(|value| {
-            value.result == ParentResult::Pending && value.command.ends_with("-launch")
-        }) {
-            self.replay_runtime(record).await.is_some()
-        } else {
-            false
-        };
+        let attempt = prior.as_ref();
         let step = self
             .host
             .prepare_parent(
@@ -1423,8 +1389,6 @@ impl Service {
                 attempt.map(|value| ParentAttempt {
                     command: &value.command,
                     released: released_at.is_some(),
-                    replay_launch,
-                    recorded_failure: value.result == ParentResult::Failed,
                 }),
                 host.profile_catalog(),
             )
@@ -1432,27 +1396,20 @@ impl Service {
             .map_err(|error| self.parent_not_sent(error))?;
         if matches!(
             step,
-            ParentStep::Live(_) | ParentStep::Delivered | ParentStep::AfterDelivery(_)
+            ParentStep::Live(_)
+                | ParentStep::Delivered
+                | ParentStep::AfterDelivery(_)
+                | ParentStep::Failed
         ) {
             self.accept_parent_readback(row, attempt).await?;
         }
         match step {
             ParentStep::Live(parent) => Ok(ControlFlow::Continue(Some(parent))),
             ParentStep::Delivered => Ok(ControlFlow::Break(WaitReason::Starting)),
-            ParentStep::DeliveryUnknown => Err(ServiceError::ParentDeliveryHeld),
             ParentStep::Wait => Ok(ControlFlow::Break(
                 released_at.unwrap_or(WaitReason::Starting),
             )),
-            ParentStep::Failed => {
-                if let Some(record) = prior
-                    .as_ref()
-                    .filter(|record| record.result != ParentResult::Failed)
-                {
-                    self.finish_parent_delivery(row, record, ParentResult::Failed, 0)
-                        .await?;
-                }
-                Ok(ControlFlow::Break(WaitReason::HostObservationBlocked))
-            }
+            ParentStep::Failed => Ok(ControlFlow::Break(WaitReason::HostObservationBlocked)),
             ParentStep::Write(write) | ParentStep::AfterDelivery(write) => {
                 self.send_run_parent(row, checkout, write, prior).await
             }
@@ -1496,13 +1453,7 @@ impl Service {
         let reentry = write
             .command_id()
             .is_some_and(nucleus_hosts::is_parent_reentry);
-        match self.deliver_parent(row, write, prior, false).await {
-            Ok(_) => {}
-            Err(ServiceError::Host(HostError::ParentHoldRejected)) => {
-                return Ok(ControlFlow::Break(WaitReason::HostObservationBlocked));
-            }
-            Err(error) => return Err(error),
-        }
+        self.deliver_parent(row, write, prior, false).await?;
         if row.task.run().is_none() && !reentry {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
         }
