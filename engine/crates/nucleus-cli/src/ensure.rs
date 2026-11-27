@@ -1,8 +1,6 @@
 use std::{
     env,
-    error::Error,
     fs::File,
-    io::{self, ErrorKind},
     net::{Ipv4Addr, SocketAddr},
     os::unix::{fs::MetadataExt, process::CommandExt},
     path::PathBuf,
@@ -129,27 +127,13 @@ async fn probe(
     match engine_health(endpoint, key).await {
         Ok(view) if same_engine(&view, storage) => Ok(Health::Ready),
         Err(error) if error.is::<tokio::time::error::Elapsed>() => Ok(Health::Waiting),
-        Err(error) if connection_refused(error.as_ref()) => Ok(Health::Absent),
+        Err(error)
+            if error
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(nucleus_acp::connection_refused) =>
+        {
+            Ok(Health::Absent)
+        }
         _ => Err("the loopback port did not confirm this engine's identity".into()),
     }
-}
-
-fn connection_refused(error: &(dyn Error + 'static)) -> bool {
-    if !error
-        .downcast_ref::<reqwest::Error>()
-        .is_some_and(reqwest::Error::is_connect)
-    {
-        return false;
-    }
-    let mut source = error.source();
-    while let Some(error) = source {
-        if error
-            .downcast_ref::<io::Error>()
-            .is_some_and(|error| error.kind() == ErrorKind::ConnectionRefused)
-        {
-            return true;
-        }
-        source = error.source();
-    }
-    false
 }

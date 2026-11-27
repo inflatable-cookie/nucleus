@@ -1,3 +1,4 @@
+import { Markdown } from "./markdown";
 import { observeAgents } from "./agent-observer";
 import { readDecisions, clearDecisionRead } from "./decision-read";
 import { domainRevision } from "./board-state";
@@ -182,7 +183,7 @@ export function decisionPillPopover({ client, boardPanelId, known, projectOf }: 
               accessibilityState={{ expanded: Boolean(detailsOpen[decision.id]) }} onPress={() => setDetailsOpen(current => ({ ...current, [decision.id]: !current[decision.id] }))}>
               <Text style={{ color: c.accent, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{detailsOpen[decision.id] ? "Hide details" : "Details"}</Text>
             </Pressable>
-            {detailsOpen[decision.id] && <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{details}</Text>}
+            {detailsOpen[decision.id] && <Markdown text={details} c={c} />}
           </View>}
           <View style={{ ...row, flexWrap: "nowrap", alignItems: "flex-end", gap: space.xs }}>
             <TextInput accessibilityLabel={`Answer box: ${headline}`} value={drafts[decision.id] ?? ""}

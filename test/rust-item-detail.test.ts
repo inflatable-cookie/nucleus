@@ -437,3 +437,29 @@ test("after a refusal, Replace writes the operator's draft over the version show
   assert.equal((engine.writes.at(-1)!.body as { version: number }).version, shown);
   assert.equal(engine.item("nucleus", "i-replace").body, "My rewrite.");
 });
+
+test("By identifies a registered planner and retains each raw author in its tooltip", async () => {
+  const engine = planningEngine();
+  const planner = "mcp:launch:planner-example";
+  const unknown = "mcp:launch:unknown-example";
+  engine.seed("nucleus", papercut({ id: "known-author", title: "Known author", author: planner }), { actor: planner, atMs: now });
+  engine.seed("nucleus", papercut({ id: "unknown-author", title: "Unknown author", author: unknown }), { actor: unknown, atMs: now });
+  const fetcher: typeof fetch = async (input, init) => {
+    const response = await engine.fetcher(input, init);
+    if (!String(input).endsWith("/settings")) return response;
+    const settings = await response.json();
+    settings.projects.settings.value.projects.acowtancy.plannerClaim = { thread: planner, occurrence: "claim" };
+    return Response.json(settings);
+  };
+  const configured = { ...engine, fetcher };
+  const known = await open(configured, "known-author", "nucleus", "papercut");
+  assert.match(known.ui.text(), /Acowtancy planner/);
+  assert.doesNotMatch(known.ui.text(), /mcp:launch:planner-example/);
+  known.ui.get(planner).props.onHoverIn();
+  assert.match(known.ui.text(), /mcp:launch:planner-example/);
+  const fallback = await open(configured, "unknown-author", "nucleus", "papercut");
+  assert.match(fallback.ui.text(), /Thread/);
+  assert.doesNotMatch(fallback.ui.text(), /mcp:launch:unknown-example/);
+  fallback.ui.get(unknown).props.onHoverIn();
+  assert.match(fallback.ui.text(), /mcp:launch:unknown-example/);
+});
