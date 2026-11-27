@@ -1,0 +1,1 @@
+- Replaced the board's Promote panel for leads and papercuts with Send to planner (`POST …/items/{id}/assess`), queuing an assessment message to the project's planner (or starting and claiming a new planner thread when none is live).

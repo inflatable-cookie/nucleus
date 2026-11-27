@@ -17,6 +17,8 @@ export const itemHistoryEntrySchema = z.object({
   note: z.string().nullable(),
   /** A drop's disposition, read from the recorded snapshot. */
   disposition: itemDisposition.nullable(),
+  /** An assessment send's recipient thread or "new planner thread". */
+  recipient: z.string().nullable().default(null),
 });
 
 export const itemDetailSchema = z.object({
@@ -100,22 +102,10 @@ export const itemReopen = defineRpc({
   output: itemDetailSchema,
 });
 
-export const itemPromote = defineRpc({
-  name: "item.promote",
-  input: z
-    .object({
-      ...address,
-      repository: z.string().min(1).optional(),
-      /**
-       * The task's complexity. A lead sends one only to change its brief's level; the engine
-       * writes it into the lead's brief together with the admitted task.
-       */
-      complexity: capabilityLevelSchema.optional(),
-      /** The item version the view showed; the engine refuses the promotion after any change. */
-      version: z.number().int().positive(),
-    })
-    .strict(),
-  output: z.object({ taskId: z.string(), reference: z.string() }),
+export const itemAssess = defineRpc({
+  name: "item.assess",
+  input: z.object({ ...address, version: z.number().int().positive() }).strict(),
+  output: itemDetailSchema,
 });
 
 /** A promoted or dropped item, for the Leads and Papercuts lists' Closed filter. */

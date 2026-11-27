@@ -410,6 +410,7 @@ pub trait TaskHost: Send + Sync {
 pub struct RegisteredProject {
     pub root: String,
     pub title: Option<String>,
+    pub default_model_selection: Option<Value>,
 }
 
 impl RegisteredProject {
@@ -420,6 +421,10 @@ impl RegisteredProject {
                 .filter(|root| !closed_row(row) && !root.is_empty())?
                 .into(),
             title: row["title"].as_str().map(str::to_owned),
+            default_model_selection: row
+                .get("defaultModelSelection")
+                .filter(|value| value.is_object())
+                .cloned(),
         })
     }
 }

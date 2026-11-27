@@ -18,6 +18,7 @@ const TELL: &str = "/v1/planning/tell";
 #[derive(Default)]
 pub(super) struct NoticeFixture {
     pub(super) sends: Vec<Value>,
+    pub(super) launches: Vec<Value>,
     controls: Vec<Value>,
     started: bool,
     pub(super) next_reply: NoticeReply,
@@ -37,19 +38,31 @@ pub(super) enum NoticeReply {
 
 impl NoticeFixture {
     fn thread_snapshot(&self, id: &str, archived: bool) -> Value {
-        let project = match id {
-            "beta-planner" => "beta-native",
-            "missing-root" => "missing-native",
-            _ => "alpha-native",
-        };
+        let launched = self.launches.iter().find(|launch| launch["threadId"] == id);
+        let project = launched
+            .and_then(|launch| launch["projectId"].as_str())
+            .unwrap_or(match id {
+                "beta-planner" => "beta-native",
+                "missing-root" => "missing-native",
+                _ => "alpha-native",
+            });
+        let provider = launched
+            .and_then(|launch| launch["modelSelection"]["instanceId"].as_str())
+            .or((id == "task-session").then_some("fixture-acp"));
         let (messages, runs) = self.projection(id);
         json!({"kind": "snapshot", "snapshotSequence": 16, "projection": {"thread": {
             "id": id, "projectId": project,
             "archivedAt": (id == "closed" || id == "alpha-planner" && archived).then_some("2026-11-23T18:10:00Z"),
             "parentThreadId": (id == "child").then_some("parent"),
-            "providerInstanceId": (id == "task-session").then_some("fixture-acp"),
+            "providerInstanceId": provider,
             "settledAt": self.settled.then_some("2026-11-23T18:10:00Z"),
         }, "messages": messages, "runs": runs}})
+    }
+
+    pub(super) fn launch(&mut self, request: &Value) -> Value {
+        let payload = request["payload"].clone();
+        self.launches.push(payload);
+        json!({"_tag": "Exit", "requestId": request["id"], "exit": {"_tag": "Success", "value": {"sequence": 17}}})
     }
 
     fn projection(&self, id: &str) -> (Value, Value) {
@@ -272,9 +285,10 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
     let moved = Arc::new(AtomicBool::new(false));
     let moved_root = Arc::clone(&moved);
     let missing = alpha_path.with_file_name("missing");
+    let default_model = json!({"instanceId": "codex", "model": "gpt-5"});
     let snapshot = json!({"projects": [
-        {"id": "alpha-native", "workspaceRoot": alpha_path, "title": "Exact T3 Alpha"},
-        {"id": "beta-native", "workspaceRoot": beta_path},
+        {"id": "alpha-native", "workspaceRoot": alpha_path, "title": "Exact T3 Alpha", "defaultModelSelection": default_model},
+        {"id": "beta-native", "workspaceRoot": beta_path, "defaultModelSelection": default_model},
         {"id": "missing-native", "workspaceRoot": missing},
     ], "threads": []});
     let archived = Arc::new(AtomicBool::new(false));
@@ -302,12 +316,13 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
                     &alpha_path
                 };
                 json!({"kind": "snapshot", "snapshot": {"projects": [
-                    {"id": "alpha-native", "workspaceRoot": alpha, "title": "Exact T3 Alpha"},
-                    {"id": "beta-native", "workspaceRoot": beta_path},
+                    {"id": "alpha-native", "workspaceRoot": alpha, "title": "Exact T3 Alpha", "defaultModelSelection": {"instanceId": "codex", "model": "gpt-5"}},
+                    {"id": "beta-native", "workspaceRoot": beta_path, "defaultModelSelection": {"instanceId": "codex", "model": "gpt-5"}},
                     {"id": "missing-native", "workspaceRoot": missing},
                 ]}})
             }
             Some("orchestration.dispatchCommand") => return notices.dispatch(request),
+            Some("orchestration.launchThread") => return notices.launch(request),
             _ => panic!("unexpected T3 call"),
         };
         json!({"_tag": "Chunk", "requestId": request["id"], "values": [
@@ -3973,4 +3988,430 @@ async fn shared_reply_fixtures_reach_the_sender_and_refuse_foreign_and_expired_h
     assert_eq!(stale.status(), StatusCode::BAD_REQUEST);
     assert_eq!(json_body(stale).await["error"], REFUSAL);
     assert_eq!(registry.notices.lock().unwrap().sends.len(), sends);
+}
+
+async fn item_latest_version(api: &Router, project: &str, id: &str) -> (i64, Vec<Value>) {
+    let history = json_body(
+        get_as(
+            api,
+            &format!("/v1/planning/{project}/history/item/{id}"),
+            &BOARD_KEY,
+        )
+        .await,
+    )
+    .await;
+    let entries = history.as_array().expect("history").clone();
+    let version = entries.last().expect("entry")["sequence"]
+        .as_i64()
+        .expect("sequence");
+    (version, entries)
+}
+
+#[tokio::test]
+async fn item_assess_routes_to_claimed_planner_and_fallback_thread() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("next-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+    let claimed = caller_request(
+        &registry.api,
+        Method::POST,
+        "/v1/planning/claim",
+        "alpha-planner",
+        json!({}),
+    )
+    .await;
+    assert_eq!(claimed.status(), StatusCode::OK);
+
+    let items = format!("/v1/planning/{alpha}/items");
+    let created = json_body(
+        post_as(
+            &registry.api,
+            &items,
+            &BOARD_KEY,
+            &json!({"kind": "papercut", "title": "Stale button", "body": "The old Promote button should go."}),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().expect("item id").to_owned();
+    let (v1, _) = item_latest_version(&registry.api, &alpha, &id).await;
+
+    let response = post_as(
+        &registry.api,
+        &format!("{items}/{id}/assess"),
+        &BOARD_KEY,
+        &json!({"version": v1}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let v2 = json_body(response).await["version"].as_i64().unwrap();
+    let (_, entries) = item_latest_version(&registry.api, &alpha, &id).await;
+    let last = entries.last().unwrap();
+    assert_eq!(last["action"], "assess");
+    assert_eq!(last["actor"], "fixture-operator");
+    assert_eq!(last["snapshot"]["recipient"], "alpha-planner");
+
+    registry.advance_tell().await.expect("deliver to claimed");
+    {
+        let fixture = registry.notices.lock().expect("notices");
+        assert_eq!(fixture.sends.len(), 1);
+        let msg = &fixture.sends[0];
+        assert_eq!(msg["threadId"], "alpha-planner");
+        assert_eq!(msg["dispatchMode"]["type"], "queue_after_active");
+        let text = msg["text"].as_str().expect("message text");
+        for expected in [
+            "Papercut",
+            id.as_str(),
+            "Stale button",
+            "The old Promote button should go.",
+            "nucleus item.drop",
+            "nucleus item.edit",
+            "nucleus item.promote",
+        ] {
+            assert!(text.contains(expected), "missing {expected} in {text}");
+        }
+        assert!(!text.contains("Reply:"));
+    }
+    registry.notices.lock().expect("notices").started = true;
+    registry.advance_tell().await.expect("mark delivered");
+
+    // Archive claimed planner; sending again on open item falls back to next-planner.
+    registry.archived.store(true, Ordering::Relaxed);
+    registry.notices.lock().expect("notices").started = false;
+    let resent = post_as(
+        &registry.api,
+        &format!("{items}/{id}/assess"),
+        &BOARD_KEY,
+        &json!({"version": v2}),
+    )
+    .await;
+    assert_eq!(resent.status(), StatusCode::OK);
+    registry.advance_tell().await.expect("deliver to fallback");
+    {
+        let fixture = registry.notices.lock().expect("notices");
+        assert_eq!(fixture.sends.len(), 2);
+        assert_eq!(fixture.sends[1]["threadId"], "next-planner");
+        assert_eq!(
+            fixture.sends[1]["dispatchMode"]["type"],
+            "queue_after_active"
+        );
+    }
+}
+
+#[tokio::test]
+async fn item_assess_allows_parked_and_refuses_dropped_or_promoted_items() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+    let items = format!("/v1/planning/{alpha}/items");
+    let created = json_body(
+        post_as(
+            &registry.api,
+            &items,
+            &BOARD_KEY,
+            &json!({"kind": "papercut", "title": "Parkable", "body": "Body"}),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().unwrap();
+
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &format!("{items}/{id}/park"),
+            &BOARD_KEY,
+            &json!({"reason": "Later", "revisitAt": null}),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let (v_parked, _) = item_latest_version(&registry.api, &alpha, id).await;
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &format!("{items}/{id}/assess"),
+            &BOARD_KEY,
+            &json!({"version": v_parked}),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &format!("{items}/{id}/drop"),
+            &BOARD_KEY,
+            &json!({"disposition": "deprecated", "reason": "Done"}),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &format!("{items}/{id}/assess"),
+            &BOARD_KEY,
+            &json!({}),
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+
+    let lead = json_body(
+        post_as(
+            &registry.api,
+            &items,
+            &BOARD_KEY,
+            &json!({"kind": "lead", "title": "Ready", "body": "---\nqueue:\n  complexity: low\n---\nShip."}),
+        )
+        .await,
+    )
+    .await;
+    let lead_id = lead["id"].as_str().unwrap();
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &format!("{items}/{lead_id}/promote"),
+            &BOARD_KEY,
+            &json!({}),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &format!("{items}/{lead_id}/assess"),
+            &BOARD_KEY,
+            &json!({}),
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+}
+
+async fn clear_project_planners(registry: &Registry, project_id: &str, name: &str) {
+    let file = registry.service.settings.clone();
+    let id = project_id.to_owned();
+    let display = name.to_owned();
+    let saved = tokio::task::spawn_blocking(move || {
+        let before = file.read::<nucleus_store::Projects>()?;
+        file.edit(
+            &before.revision,
+            |projects: &mut nucleus_store::Projects| {
+                let project = projects.projects.get_mut(&id).expect("project");
+                project.name = display;
+                project.planner_claim = None;
+                for repo in &mut project.repositories {
+                    repo.planner_threads.clear();
+                }
+                Ok(())
+            },
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    let mut state = registry.service.state.lock().await;
+    state.settings.projects = Some(saved.0.value);
+    state.enrolled_planners.clear();
+}
+
+#[tokio::test]
+async fn item_assess_starts_one_claimed_planner_thread_when_project_has_no_thread() {
+    let registry = registry().await;
+    registry.enroll("beta-planner").await;
+    let beta = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("beta-planner")
+        .expect("beta")
+        .to_owned();
+    clear_project_planners(&registry, &beta, "Beta").await;
+
+    let items = format!("/v1/planning/{beta}/items");
+    let created = json_body(
+        post_as(
+            &registry.api,
+            &items,
+            &BOARD_KEY,
+            &json!({"kind": "lead", "title": "Cold project lead", "body": "Needs a planner to assess."}),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().expect("item id").to_owned();
+    let (v1, _) = item_latest_version(&registry.api, &beta, &id).await;
+
+    let first = json_body(
+        post_as(
+            &registry.api,
+            &format!("{items}/{id}/assess"),
+            &BOARD_KEY,
+            &json!({"version": v1}),
+        )
+        .await,
+    )
+    .await;
+    let v2 = first["version"].as_i64().unwrap();
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &format!("{items}/{id}/assess"),
+            &BOARD_KEY,
+            &json!({"version": v2}),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let (_, entries) = item_latest_version(&registry.api, &beta, &id).await;
+    assert_eq!(entries[1]["snapshot"]["recipient"], "new planner thread");
+    assert_eq!(entries[2]["snapshot"]["recipient"], "new planner thread");
+
+    registry
+        .advance_tell()
+        .await
+        .expect("launch planner thread");
+    let launched_thread = {
+        let fixture = registry.notices.lock().expect("notices");
+        assert_eq!(fixture.launches.len(), 1);
+        let launch = &fixture.launches[0];
+        assert_eq!(launch["projectId"], "beta-native");
+        assert_eq!(launch["title"], "Beta planner");
+        assert_eq!(
+            launch["modelSelection"],
+            json!({"instanceId": "codex", "model": "gpt-5"})
+        );
+        assert_eq!(launch["workspaceStrategy"]["type"], "root");
+        let text = launch["initialMessage"]["text"].as_str().expect("prompt");
+        assert!(text.contains("Cold project lead") && text.contains(&id));
+        launch["threadId"].as_str().expect("thread id").to_owned()
+    };
+    {
+        let state = registry.service.state.lock().await;
+        let project = &state.settings.projects.as_ref().unwrap().projects[&beta];
+        assert_eq!(
+            project.planner_claim.as_ref().map(|c| c.thread.as_str()),
+            Some(launched_thread.as_str())
+        );
+        assert!(
+            project
+                .repositories
+                .iter()
+                .any(|r| r.planner_threads.contains(&launched_thread))
+        );
+    }
+
+    registry.advance_tell().await.expect("queue second assess");
+    let fixture = registry.notices.lock().expect("notices");
+    assert_eq!(fixture.launches.len(), 1, "exactly one thread started");
+    assert_eq!(fixture.sends.len(), 1);
+    assert_eq!(fixture.sends[0]["threadId"], launched_thread);
+    assert_eq!(
+        fixture.sends[0]["dispatchMode"]["type"],
+        "queue_after_active"
+    );
+}
+
+#[tokio::test]
+async fn item_assess_with_archived_claimed_planner_and_no_fallback_records_new_thread_and_launches()
+{
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+    assert_eq!(
+        caller_request(
+            &registry.api,
+            Method::POST,
+            "/v1/planning/claim",
+            "alpha-planner",
+            json!({}),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    let items = format!("/v1/planning/{alpha}/items");
+    let created = json_body(
+        post_as(
+            &registry.api,
+            &items,
+            &BOARD_KEY,
+            &json!({"kind": "lead", "title": "Orphaned claim", "body": "Claimed planner is archived."}),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().expect("item id").to_owned();
+    let (v1, _) = item_latest_version(&registry.api, &alpha, &id).await;
+
+    // Archive the only claimed planner; no fallback thread exists.
+    registry.archived.store(true, Ordering::Relaxed);
+    let sent = post_as(
+        &registry.api,
+        &format!("{items}/{id}/assess"),
+        &BOARD_KEY,
+        &json!({"version": v1}),
+    )
+    .await;
+    assert_eq!(sent.status(), StatusCode::OK);
+    let (_, entries) = item_latest_version(&registry.api, &alpha, &id).await;
+    let last = entries.last().unwrap();
+    assert_eq!(last["action"], "assess");
+    assert_eq!(last["snapshot"]["recipient"], "new planner thread");
+
+    registry.advance_tell().await.expect("launch replacement");
+    let launched_thread = {
+        let fixture = registry.notices.lock().expect("notices");
+        assert_eq!(fixture.sends.len(), 0);
+        assert_eq!(fixture.launches.len(), 1);
+        let prompt = fixture.launches[0]["initialMessage"]["text"]
+            .as_str()
+            .expect("prompt");
+        assert!(prompt.contains("--disposition completed|deprecated"));
+        fixture.launches[0]["threadId"]
+            .as_str()
+            .expect("thread id")
+            .to_owned()
+    };
+    let state = registry.service.state.lock().await;
+    let project = &state.settings.projects.as_ref().unwrap().projects[&alpha];
+    assert_eq!(
+        project.planner_claim.as_ref().map(|c| c.thread.as_str()),
+        Some(launched_thread.as_str())
+    );
 }

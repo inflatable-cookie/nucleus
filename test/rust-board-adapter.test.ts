@@ -2024,12 +2024,12 @@ test("a board click and action address the selected project's colliding decision
     { reason: string | null; disposition: string }
   >();
   const parked = new Set<string>();
-  const promotions: unknown[] = [];
+  const assessments: unknown[] = [];
   const calls: string[] = [];
   const fetcher: typeof fetch = async (url, init) => {
     const path = String(url);
     const match =
-      /\/planning\/([^/]+)\/(decisions|items)(?:\/(shared|cut)\/(answer|drop|park|promote))?(?:\?pending=true)?$/.exec(
+      /\/planning\/([^/]+)\/(decisions|items)(?:\/(shared|cut)\/(answer|drop|park|assess))?(?:\?pending=true)?$/.exec(
         path,
       );
     if (!match) return fake.fetcher(url, init);
@@ -2065,12 +2065,8 @@ test("a board click and action address the selected project's colliding decision
             : [record],
       );
     }
-    if (match[4] === "promote") {
-      promotions.push({ project, ...JSON.parse(String(init?.body)) });
-      return Response.json({
-        identity: { id: "t-result" },
-        reference: "orbit-docs#12",
-      });
+    if (match[4] === "assess") {
+      assessments.push({ project, ...JSON.parse(String(init?.body)) });
     }
     if (match[4] === "park") parked.add(project);
     if (match[4] === "drop")
@@ -2160,19 +2156,11 @@ test("a board click and action address the selected project's colliding decision
   );
   await press(/^Papercuts, 2$/);
   await press(/^Papercut: Orbit_Main cut,/);
-  await press(/^Repository, /);
-  await press("Repository: example/orbit-docs");
-  await press("Promote papercut");
-  await waitFor(
-    () => ui.text().includes("Promoted as orbit-docs#12"),
-    4000,
-    "second repository receipt",
-  );
-  assert.deepEqual(promotions, [
+  await press("Send papercut to planner");
+  await waitFor(() => assessments.length > 0, 4000, "assessment sent");
+  assert.deepEqual(assessments, [
     {
       project: "Orbit_Main",
-      complexity: "medium",
-      repository: "example/orbit-docs",
       version: 1,
     },
   ]);
@@ -2679,37 +2667,37 @@ test("the board reads, edits, and closes the selected project's lane when keys c
   );
 });
 
-test("promotion sends the selected repository and displays the public task reference", async () => {
-  for (const repository of ["example/orbit", "example/orbit-docs"]) {
-    const fake = engine();
-    const sent: unknown[] = [];
-    const reference = `${repository.split("/").at(-1)}#42`;
-    const fetcher: typeof fetch = async (input, init) => {
-      if (
-        String(input) !==
-        "/api/engine/planning/Orbit_Main/items/i-Orbit_Main/promote"
-      )
-        return fake.fetcher(input, init);
-      assert.equal(init?.method, "POST");
-      sent.push(JSON.parse(String(init.body)));
-      return Response.json({
-        identity: { id: "t-internal", reference: "admission alias" },
-        reference,
-      });
-    };
-    const adapter = createRustAdapter(createRustApi(fetcher));
-    assert.deepEqual(
-      await adapter.rpc(api.itemPromote, {
-        id: "i-Orbit_Main",
-        project: projectKey("Orbit_Main"),
-        repository,
-        version: 1,
-      }),
-      { taskId: "t-internal", reference },
-    );
-    // A lead keeps its brief's level unless one is chosen; the version seen goes with it.
-    assert.deepEqual(sent, [{ repository, version: 1 }]);
-  }
+test("item assessment sends the version seen to the selected project", async () => {
+  const fake = engine();
+  const sent: unknown[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    if (
+      String(input) !==
+      "/api/engine/planning/Orbit_Main/items/i-Orbit_Main/assess"
+    )
+      return fake.fetcher(input, init);
+    assert.equal(init?.method, "POST");
+    sent.push(JSON.parse(String(init.body)));
+    return Response.json({
+      id: "i-Orbit_Main",
+      title: "Orbit item",
+      kind: "lead",
+      author: "planner",
+      state: "open",
+      body: "Assess this",
+      lanes: [],
+      version: 2,
+      createdAtMs: 10,
+    });
+  };
+  const adapter = createRustAdapter(createRustApi(fetcher));
+  const detail = await adapter.rpc(api.itemAssess, {
+    id: "i-Orbit_Main",
+    project: projectKey("Orbit_Main"),
+    version: 1,
+  });
+  assert.equal(detail.id, "i-Orbit_Main");
+  assert.deepEqual(sent, [{ version: 1 }]);
 });
 
 test("a project refusal settles lists until the paired session changes", async () => {
@@ -2764,13 +2752,13 @@ test("a project refusal settles lists until the paired session changes", async (
   );
 });
 
-test("the selected item's project scopes detail, drop, reopen and promotion", async () => {
+test("the selected item's project scopes detail, drop, reopen and assessment", async () => {
   const fake = engine();
   const writes: Array<{ path: string; body: unknown }> = [];
   const fetcher: typeof fetch = async (url, init) => {
     const path = String(url);
     const match =
-      /\/planning\/([^/]+)\/items(?:\/shared\/(drop|reopen|promote))?$/.exec(
+      /\/planning\/([^/]+)\/items(?:\/shared\/(drop|reopen|assess))?$/.exec(
         path,
       );
     if (!match) return fake.fetcher(url, init);
@@ -2787,12 +2775,9 @@ test("the selected item's project scopes detail, drop, reopen and promotion", as
     };
     if (!match[2]) return Response.json([item]);
     writes.push({ path, body: JSON.parse(String(init?.body)) });
-    if (match[2] === "reopen") return Response.json({ ...item, version: 9 });
-    return Response.json(
-      match[2] === "drop"
-        ? { ...item, state: "dropped" }
-        : { identity: { id: "task" }, reference: "repo#23" },
-    );
+    if (match[2] === "reopen" || match[2] === "assess")
+      return Response.json({ ...item, version: 9 });
+    return Response.json({ ...item, state: "dropped" });
   };
   const adapter = createRustAdapter(createRustApi(fetcher));
   const id = "shared",
@@ -2812,7 +2797,7 @@ test("the selected item's project scopes detail, drop, reopen and promotion", as
     note: "Resolved",
   });
   await adapter.rpc(api.itemReopen, { project, id, version: 1 });
-  await adapter.rpc(api.itemPromote, { project, id, complexity: "low", version: 1 });
+  await adapter.rpc(api.itemAssess, { project, id, version: 1 });
   assert.deepEqual(writes, [
     {
       path: "/api/engine/planning/lantern/items/shared/drop",
@@ -2823,8 +2808,8 @@ test("the selected item's project scopes detail, drop, reopen and promotion", as
       body: { version: 1 },
     },
     {
-      path: "/api/engine/planning/lantern/items/shared/promote",
-      body: { complexity: "low", version: 1 },
+      path: "/api/engine/planning/lantern/items/shared/assess",
+      body: { version: 1 },
     },
   ]);
 });

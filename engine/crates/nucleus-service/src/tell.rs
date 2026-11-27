@@ -5,7 +5,9 @@ use std::{
 };
 
 use nucleus_core::QuestionDelivery;
-use nucleus_hosts::{HostError, NoticeAuthorization, NoticeOutcome, NoticeState, T3};
+use nucleus_hosts::{
+    HostError, NoticeAuthorization, NoticeOutcome, NoticeState, PlannerIdentity, T3,
+};
 use nucleus_store::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };
@@ -539,12 +541,156 @@ impl Service {
             self.state.lock().await.store.fallback_reply(&row.id)?;
             return Ok(());
         }
+        if row.direct.is_none() && row.request_key.starts_with("assess-") {
+            return self.launch_assess_planner(row).await;
+        }
         let outcome = if row.direct.is_some() {
             TellDispatch::Advance(TellState::Refused)
         } else {
             TellDispatch::Defer
         };
         self.save_tell(tell_rows(row), outcome).await
+    }
+
+    async fn launch_assess_planner(&self, row: &TellDelivery) -> Result<(), ServiceError> {
+        let rows = tell_rows(row);
+        let launch_target = {
+            let state = self.state.lock().await;
+            if state
+                .store
+                .has_pending_planner_launch(&row.to_project, &row.id)?
+            {
+                return self.save_tell(rows, TellDispatch::Defer).await;
+            }
+            let Some(project) = state
+                .settings
+                .projects
+                .as_ref()
+                .and_then(|all| all.projects.get(&row.to_project))
+                .filter(|project| !project.archived)
+            else {
+                return self.save_tell(rows, TellDispatch::Defer).await;
+            };
+            project.repositories.iter().find_map(|repo| {
+                let host_id = repo.host_project.as_deref()?;
+                let native = self.host.cached_project(host_id).ok()?;
+                if Path::new(&native.root) != repo.path {
+                    return None;
+                }
+                let model_selection = native.default_model_selection?;
+                Some((
+                    host_id.to_owned(),
+                    native.root,
+                    project.name.clone(),
+                    model_selection,
+                ))
+            })
+        };
+        let Some((host_project, root, name, model_selection)) = launch_target else {
+            return self.save_tell(rows, TellDispatch::Defer).await;
+        };
+        let thread = new_id("planner")?;
+        let command = new_id("assess-launch")?;
+        let title = format!("{name} planner");
+        let attempt = T3::prepare_planner_launch(
+            thread,
+            &host_project,
+            &title,
+            &model_selection,
+            command,
+            &row.text,
+        )?;
+        self.save_tell(
+            rows,
+            TellDispatch::Advance(TellState::InFlight(attempt.clone())),
+        )
+        .await?;
+        let result = self
+            .host
+            .launch_planner_thread(&attempt, &host_project, &root)
+            .await;
+        if matches!(result, Err(HostError::Deferred { .. })) {
+            return self
+                .save_tell(rows, TellDispatch::Advance(TellState::Pending))
+                .await;
+        }
+        let next = match result? {
+            NoticeOutcome::Accepted => {
+                let provider = model_selection["instanceId"].as_str().map(str::to_owned);
+                self.claim_launched_planner(
+                    &row.to_project,
+                    &host_project,
+                    &attempt.thread,
+                    provider,
+                )
+                .await?;
+                TellState::Accepted(attempt)
+            }
+            NoticeOutcome::Rejected => TellState::Pending,
+        };
+        self.save_tell(rows, TellDispatch::Advance(next)).await
+    }
+
+    async fn claim_launched_planner(
+        &self,
+        project: &str,
+        host_project: &str,
+        thread: &str,
+        provider_instance_id: Option<String>,
+    ) -> Result<(), ServiceError> {
+        let _write = self.project_writes.write().await;
+        let file = self.settings.clone();
+        let id = project.to_owned();
+        let host = host_project.to_owned();
+        let claimed = thread.to_owned();
+        let occurrence = new_id("claim")?;
+        let saved = tokio::task::spawn_blocking(move || {
+            let before = file.read::<nucleus_store::Projects>()?;
+            file.edit(
+                &before.revision,
+                |projects: &mut nucleus_store::Projects| {
+                    let entry = projects
+                        .projects
+                        .get_mut(&id)
+                        .filter(|p| !p.archived)
+                        .ok_or(nucleus_store::StorageError::SettingsConflict)?;
+                    let repo = entry
+                        .repositories
+                        .iter_mut()
+                        .find(|repo| repo.host_project.as_deref() == Some(host.as_str()))
+                        .ok_or(nucleus_store::StorageError::SettingsConflict)?;
+                    if !repo.planner_threads.contains(&claimed) {
+                        repo.planner_threads.push(claimed.clone());
+                    }
+                    if entry
+                        .planner_claim
+                        .as_ref()
+                        .is_none_or(|claim| claim.thread != claimed)
+                    {
+                        entry.planner_claim = Some(nucleus_store::PlannerClaim {
+                            thread: claimed,
+                            occurrence,
+                            replaced: entry.planner_claim.take().map(|claim| claim.thread),
+                        });
+                    }
+                    Ok(())
+                },
+            )
+        })
+        .await
+        .map_err(|_| ServiceError::Input)??;
+        let mut state = self.state.lock().await;
+        state.settings.projects = Some(saved.0.value);
+        state.enroll_launched_planner(PlannerIdentity::top_level(
+            thread.to_owned(),
+            host_project.to_owned(),
+            provider_instance_id,
+        ));
+        if saved.1 {
+            self.project_settings_changed(&mut state);
+            self.tell_wake.notify_one();
+        }
+        Ok(())
     }
 
     fn plan_tell(
@@ -594,6 +740,8 @@ impl Service {
             .map(|_| project_name(state, &row.to_project));
         let text = if row.request_key.starts_with("decision-") {
             decision_notice_text(&row.text, gone)
+        } else if row.request_key.starts_with("assess-") {
+            row.text.clone()
         } else {
             notice_text(
                 project_name(state, &row.from_project),
@@ -619,6 +767,17 @@ impl Service {
         attempt: &QuestionDelivery,
     ) -> Result<TellDispatch, ServiceError> {
         let observed = self.host.observe_notice(attempt).await?;
+        if attempt.command.starts_with("assess-launch-")
+            && matches!(observed.state, NoticeState::Queued | NoticeState::Started)
+            && let Ok(payload) = serde_json::from_str::<serde_json::Value>(&attempt.payload)
+            && let Some(host_project) = payload["projectId"].as_str()
+        {
+            let provider = payload["modelSelection"]["instanceId"]
+                .as_str()
+                .map(str::to_owned);
+            self.claim_launched_planner(&row.to_project, host_project, &attempt.thread, provider)
+                .await?;
+        }
         let next = match observed.state {
             NoticeState::Started => TellState::Delivered {
                 at_ms: tell_clock(),
@@ -678,6 +837,28 @@ impl Service {
                 .await?);
         }
         Ok(true)
+    }
+
+    pub(super) async fn resolve_assess_recipient(
+        &self,
+        project: &str,
+    ) -> Result<String, ServiceError> {
+        let candidates = {
+            let state = self.state.lock().await;
+            let mut choices = state.planner_candidates_for(project);
+            choices.sort_by_key(|thread| Some(thread.as_str()) != claimed_thread(&state, project));
+            choices
+        };
+        for actor in candidates {
+            if self.check_registered_planner(&actor).await? {
+                break;
+            }
+        }
+        let state = self.state.lock().await;
+        Ok(tell_planner(&state, project, "", None).map_or_else(
+            || "new planner thread".to_owned(),
+            |planner| planner.identity.id.clone(),
+        ))
     }
 
     async fn save_tell(
