@@ -398,7 +398,10 @@ impl Invalidations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{io::AsyncWriteExt, net::TcpListener};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
 
     async fn fixture(
         response: Option<&'static [u8]>,
@@ -408,6 +411,13 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             if let Some(response) = response {
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.ends_with(b"\r\n\r\n") {
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    assert_ne!(count, 0, "request closed before its headers");
+                    request.extend_from_slice(&buffer[..count]);
+                }
                 socket.write_all(response).await.unwrap();
             } else {
                 tokio::time::sleep(DEADLINE + Duration::from_secs(1)).await;
