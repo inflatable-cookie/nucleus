@@ -40,13 +40,27 @@ async fn legacy_process_decisions_are_closed_as_superseded_without_a_census() {
             },
         ],
     };
-    let legacy = Decision::process_id(91988, 1);
+    // The key an older engine stored for one process lifetime.
+    let legacy = "closeout-process-91988-1".to_owned();
     store
         .add_decision(project, legacy.clone(), input.clone(), engine_stamp())
         .unwrap();
     store
-        .add_decision(project, "ordinary".into(), input, engine_stamp())
+        .add_decision(project, "ordinary".into(), input.clone(), engine_stamp())
         .unwrap();
+    // An answer now settles a process decision like any other. Nothing reopens it.
+    let answered = "closeout-process-91989-1";
+    store
+        .add_decision(project, answered.into(), input, engine_stamp())
+        .unwrap();
+    let answer = DecisionAnswerInput {
+        option_id: "checked".into(),
+        note: None,
+    };
+    let recorded = store
+        .answer_decision(project, answered, answer, engine_stamp())
+        .unwrap();
+    assert!(recorded.answer.is_some());
     for _ in 0..2 {
         supersede_process_decisions(store, settings, service.project.as_ref()).unwrap();
     }
@@ -59,6 +73,15 @@ async fn legacy_process_decisions_are_closed_as_superseded_without_a_census() {
         .unwrap();
     assert_eq!(history.len(), 2);
     assert_eq!(history[1].action, "supersede");
+    let kept = store
+        .planning_history(
+            project,
+            nucleus_store::planning::RecordKind::Decision,
+            answered,
+        )
+        .unwrap();
+    let actions: Vec<_> = kept.iter().map(|entry| entry.action.as_str()).collect();
+    assert_eq!(actions, ["add", "answer"]);
     assert_eq!(
         history[1].snapshot["note"],
         "Checkout retirement now follows Dispatch, T3, and Git."

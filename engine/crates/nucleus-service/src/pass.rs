@@ -3152,19 +3152,10 @@ mod tests {
         .output()
         .await
         .unwrap();
-        let ps = command(
-            "/bin/ps",
-            &[
-                "-ww",
-                "-p",
-                &pid_arg,
-                "-o",
-                "pid=,ppid=,uid=,stat=,lstart=,ucomm=",
-            ],
-        )
-        .output()
-        .await
-        .unwrap();
+        let ps = command("/bin/ps", &["-p", &pid_arg, "-o", "pid=,ppid=,uid=,stat="])
+            .output()
+            .await
+            .unwrap();
         assert!(cwd.status.success() && ps.status.success());
         assert!(String::from_utf8_lossy(&cwd.stdout).contains(trash.to_str().unwrap()));
         let census =

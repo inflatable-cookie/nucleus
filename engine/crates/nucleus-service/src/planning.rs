@@ -575,11 +575,6 @@ impl Service {
             );
             self.wake.notify_one();
         }
-        if decision.is_process_custody() {
-            // The released process may have held any closeout which is backing off.
-            state.schedule.retry_failures(tokio::time::Instant::now());
-            self.wake.notify_one();
-        }
         if queued {
             self.tell_wake.notify_one();
         }

@@ -127,7 +127,7 @@ fn settled(started: &str, observed: i64) -> bool {
     start_epoch(started).is_some_and(|start| start + SETTLE_SECONDS <= observed)
 }
 
-pub(super) fn observed_seconds() -> Result<i64, HostError> {
+fn observed_seconds() -> Result<i64, HostError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| HostError::Uncertain)?;
@@ -135,7 +135,7 @@ pub(super) fn observed_seconds() -> Result<i64, HostError> {
 }
 
 /// Seconds since the Unix epoch for a `ps` lstart value, which is UTC under TZ=UTC.
-pub(super) fn start_epoch(started: &str) -> Option<i64> {
+fn start_epoch(started: &str) -> Option<i64> {
     let words: Vec<&str> = started.split_ascii_whitespace().collect();
     let [_weekday, month, day, clock, year] = words.as_slice() else {
         return None;
@@ -374,12 +374,6 @@ pub async fn verify_orphans(
 }
 
 impl OrphanProcess {
-    /// The PID and short command, for a wait that names this process.
-    #[must_use]
-    pub fn describe(&self) -> String {
-        format!("PID {} ({})", self.pid, self.command)
-    }
-
     /// Signal a verified member. Returns false if it has already exited.
     /// # Errors
     /// Returns the operating system's refusal if the signal could not be sent.
