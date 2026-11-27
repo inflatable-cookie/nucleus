@@ -2,7 +2,6 @@ import {
   laneTaskPage,
   laneViewSchema,
   leadBoard,
-  outcomeSearch,
   planGet,
   plans,
   taskSummarySchema,
@@ -257,12 +256,6 @@ export function planningFixture() {
         return planGet.output.parse(version === 1
           ? { ...secondSave, version: 1, entries: firstEntries }
           : secondSave);
-      }
-      if (method === "queue.outcome-search") {
-        const { lane, outcome: kind = "done" } = outcomeSearch.input.parse(input);
-        const results = outcomes.filter((outcome) =>
-          outcome.lanes.includes(lane ?? "") && (kind === "any" || outcome.outcome === kind));
-        return outcomeSearch.output.parse({ results, cursor: null, hasMore: false });
       }
       return [];
     },

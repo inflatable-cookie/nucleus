@@ -1,5 +1,4 @@
-import { telemetryStageForTask } from "../../shared/telemetry";
-import { detail, taskDetailView, taskNextSchema, taskSchema, type TaskDetail, type TaskNext, type Task, type WaitStateContext } from "../../shared/contracts";
+import { taskDetailView, taskNextSchema, taskSchema, type TaskDetail, type TaskNext, type Task, type WaitStateContext } from "../../shared/contracts";
 
 /** Numbered board rows, in admission order within each test. */
 export function boardTasks() {
@@ -47,42 +46,6 @@ export function boardTasks() {
   };
 }
 
-export function boardDetailReply(task: Task, context?: WaitStateContext) {
-  return detail.output.parse({
-    task: taskDetailView(task, context),
-    events: [],
-    runs: [],
-    notices: [],
-    dependencies: [],
-    hooks: [],
-    telemetry: {
-      taskId: task.id,
-      generatedAt: task.updatedAt,
-      evidence: "exact",
-      totalElapsedMs: 0,
-      waitingMs: 0,
-      activeMs: 0,
-      interventionMs: 0,
-      currentStage: telemetryStageForTask(task),
-      currentStageAgeMs: 0,
-      closeoutAuthority: "pending",
-      stages: [],
-      interventions: {
-        recoveryRuns: 0,
-        recoveries: [],
-        uncertainCreations: 0,
-        absentCreations: 0,
-        attentionNotices: 0,
-        escalations: 0,
-        hookHolds: 0,
-        hookRetries: 0,
-        revisions: 0,
-        replacements: 0,
-        operatorActions: [],
-      },
-    },
-  });
-}
 
 export function boardNext(
   task: TaskDetail,

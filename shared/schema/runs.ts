@@ -7,10 +7,6 @@ import { pausedStopSchema, siblingPinSchema } from "./workspace";
 import {
   completionSchema,
   mechanicalReviewProofSchema,
-  rejectedReviewReadingSchema,
-  reviewCheckpointRecordSchema,
-  reviewContinuationIntentSchema,
-  reviewDeliveryAuthorizationSchema,
 } from "./review";
 import { profileSchema } from "./settings";
 
@@ -250,13 +246,6 @@ export const runSchema = z.object({
   profileGroup: z.string().nullable().optional(),
   exhaustionReason: z.string().optional(),
   transientProviderRetry: transientProviderRetrySchema.optional(),
-  // Spec 044: immutable reviewer progress history and its delivery authorizations.
-  reviewCheckpoints: z.array(reviewCheckpointRecordSchema).optional(),
-  reviewDeliveries: z.array(reviewDeliveryAuthorizationSchema).optional(),
-  /** When Queue rejected a checkpoint past the per-task budget; the reviewer has stopped and the owner decides. */
-  reviewBudgetExhaustedAt: z.string().optional(),
-  /** Readings refused past the checkpoint allowance, kept as evidence in arrival order. */
-  reviewRejectedReadings: z.array(rejectedReviewReadingSchema).optional(),
   /**
    * When Queue positively observed this run's own agent closed in its workspace,
    * with no active turn or pending permission. The retained-agent checkpoint
@@ -273,8 +262,6 @@ export const runSchema = z.object({
    * `restart` release it and launch a fresh run from the current route.
    */
   absentProvenAt: z.string().optional(),
-  // Retired legacy continuation: nothing writes these; old records still parse. An unsettled one fails closed on reviewer delivery.
-  reviewContinuation: reviewContinuationIntentSchema.nullable().optional(),
   reviewContinuations: z.number().int().nonnegative().optional(),
   // New review intents require explicit responsibility for a non-approval outcome.
   reviewResponsibilityRequired: z.boolean().optional(),

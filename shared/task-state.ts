@@ -1,4 +1,4 @@
-import { CHECKPOINT_BUDGET, blockingHoldKind, type CheckpointState, type Task } from './contracts';
+import { blockingHoldKind, type Task } from './contracts';
 import type { HoldKind } from './contracts';
 import { isOperatorOwner, taskStateHolds } from './holds';
 
@@ -92,14 +92,4 @@ export function taskTitleStateLabel(task:StateTask){
   if(wait)return wait;
   const phase=phaseStateLabel(task);
   return taskStateHolds(task).any&&!['done','cancelled'].includes(task.phase)?`${phase}*`:phase;
-}
-/** Compact bounded-checkpoint ordinal, budget and continuation state for task detail. */
-export function checkpointStateLabel(checkpoints: CheckpointState){
-  const { records, intent } = checkpoints;
-  const ordinal = `${records.length}/${CHECKPOINT_BUDGET}`;
-  if (intent?.status === 'pending') return `Checkpoints ${ordinal} · continuation pending`;
-  if (intent?.status === 'uncertain') return `Checkpoints ${ordinal} · continuation needs attention`;
-  if (intent) return `Checkpoints ${ordinal} · continued: ${intent.summary}`;
-  const last = records.at(-1);
-  return last ? `Checkpoints ${ordinal} · last: ${last.summary}` : `Checkpoints ${ordinal}`;
 }

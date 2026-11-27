@@ -5,7 +5,6 @@ import { instructionArtifactSchema } from "../../hooks";
 import { capabilityLevelSchema, completionAgentIdsSchema, profileRequestsSchema, scopeSchema } from "../settings";
 import { dependencyIdsSchema, laneKeyListSchema } from "../task-primitives";
 import { taskTitleSchema } from "../task-common";
-import { proofExecutionRequestSchema, proofOnlySchema } from "./proof";
 import { reviewContinuationIdsSchema, reviewPassGateSchema, reviewVerdictsOptInSchema } from "./retired-submission";
 
 /**
@@ -74,11 +73,6 @@ export const submissionSchema = z.object({
   // ordinary reviewer evidence.
   reviewVerdicts: reviewVerdictsOptInSchema.optional(),
   reviewPassGate: reviewPassGateSchema.optional(),
-  // Task 405: the brief-authorized author-side proof selector an external author cannot run.
-  // Absent keeps legacy submissions; a task without it has no proof execution route.
-  proofExecution: proofExecutionRequestSchema.optional(),
-  /** Proof-only qualification of an already-merged base commit (task 551). */
-  proofOnly: proofOnlySchema.optional(),
   /** Live surfaces the qualification touches; this requires a release-kind operator GO. */
   requiresOperatorGo: z.string().trim().min(1).max(4000).optional(),
   // Retired with the automatic-review-loop concept (2026-10-07); no code reads

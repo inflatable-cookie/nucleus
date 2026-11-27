@@ -5,13 +5,7 @@ import {
   retiredNarrowCoordinatorActions,
 } from "../task-common";
 import { REPORT_HEADLINE_STORED_MAX } from "../../task-detail-summary";
-import {
-  proofFileListSchema,
-  reviewVerdictListSchema,
-  reviewedInputListSchema,
-} from "./evidence";
-import { reviewProgressSchema } from "./checkpoints";
-import { proofExecutionResultSchema } from "./proof";
+import { reviewVerdictListSchema, reviewedInputListSchema } from "./evidence";
 
 /**
  * The callback a run reports its outcome with: the one status vocabulary, the
@@ -173,13 +167,9 @@ export const completionBaseSchema = z
       .min(1)
       .max(REPORT_HEADLINE_STORED_MAX)
       .optional(),
-    /** Task 405: the executor's own result for the one brief-named selector. */
-    proofResult: proofExecutionResultSchema.optional(),
     sourceApproved: z.literal(true).optional(),
     /** Spec 058 (task 533): each named proof carries the route that can produce it. */
     awaitingProofs: z.array(awaitingProofSchema).min(1).max(40).optional(),
-    // Spec 044: a reviewer's bounded progress report. Never a verdict.
-    checkpoint: reviewProgressSchema.optional(),
     // Spec 044: who owns an unresolved review outcome; never inferred from verdict text.
     reviewResponsibility: z
       .enum(["author", "reviewer", "environment"])
@@ -195,8 +185,6 @@ export const completionBaseSchema = z
     // Spec 033: a formal GitHub review's id, kept distinct from a PR comment id.
     reviewId: z.number().int().positive().optional(),
     reviewText: z.string().trim().min(1).max(48000).optional(),
-    /** nucleus#1142: local proof files named by a worker report for the retained reviewer at this head. */
-    proofFiles: proofFileListSchema.optional(),
     // Spec 037: the reviewer's structured judgments, stored with the review record.
     verdicts: reviewVerdictListSchema.optional(),
     // Exact bytes the original reviewer declared they relied on. The mechanical

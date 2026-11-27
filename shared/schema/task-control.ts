@@ -122,28 +122,6 @@ export const explicitResolutionSchema = z.preprocess(
     z
       .object({
         ...resolutionFields,
-        action: z.literal("record.clear"),
-        kind: z.enum([
-          "stop",
-          "wait",
-          "hold",
-          "escalation",
-          "incident",
-          "recovery",
-          "attention",
-          "run_pointer",
-          "effect",
-          "host_wait",
-          "owner_stop",
-          "deferred_verb",
-          "workspace_intent",
-        ]),
-        id: resolutionId,
-      })
-      .strict(),
-    z
-      .object({
-        ...resolutionFields,
         action: z.literal("run.start"),
         role: z.enum(["worker", "reviewer", "coordinator"]),
         agent: z.enum(["retained", "fresh"]).optional(),

@@ -114,7 +114,6 @@ export const REPOSITORY_REKEY_HISTORICAL = [
   "shadowStream",
   "receipts",
   "legacyPapercuts",
-  "proofExecutions",
   "outcomeProof",
 ] as const;
 

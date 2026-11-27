@@ -1012,18 +1012,6 @@ export function explicitCommandLabel(cmd: TaskNextExplicitCommand): string {
     }
     case "run.release":
       return "Release the stuck run";
-    case "record.clear": {
-      const kind = typeof args.kind === "string" ? args.kind : "";
-      if (kind === "stop") return "Clear the stop record";
-      if (kind === "wait") return "Clear the wait";
-      if (kind === "hold") return "Clear the hold";
-      if (kind === "host_wait") return "Clear the host wait";
-      if (kind === "escalation") return "Clear the escalation";
-      if (kind === "incident") return "Clear the incident";
-      if (kind === "effect") return "Clear the stuck effect";
-      if (kind === "workspace_intent") return "Release the workspace intent";
-      return "Clear the stuck record";
-    }
     case "phase.set": {
       const to = typeof args.to === "string" ? args.to : "";
       return to ? `Set phase to ${to.replaceAll("_", " ")}` : "Change phase";

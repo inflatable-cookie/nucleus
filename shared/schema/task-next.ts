@@ -238,7 +238,6 @@ const taskNextExplicitCommandSchema = z
     action: z.enum([
       "run.start",
       "run.release",
-      "record.clear",
       "phase.set",
       "message.send",
       "turn.take",

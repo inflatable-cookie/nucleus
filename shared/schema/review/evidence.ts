@@ -1,13 +1,11 @@
 import { z } from "zod";
 import { repoRelativePathSchema } from "../../hooks";
 import { dedupeReviewedInputs, reviewedInputListRefusals } from "../../service/reviewed-inputs.mjs";
-import { dedupeProofFiles, proofFileListRefusals } from "../../service/proof-files.mjs";
 
 /**
  * The evidence an authentic approval and a worker report rest on: the reviewer's
- * structured judgments, the exact repository inputs it read, and the worker's
- * local proof files. Each list has one shape and one refusal rule, shared with
- * the `nucleus_report` bridge.
+ * structured judgments and the exact repository inputs it read. Each list has
+ * one shape and one refusal rule, shared with the `nucleus_report` bridge.
  */
 
 export const MAX_REVIEW_VERDICTS = 500;
@@ -64,50 +62,5 @@ export const reviewedInputListSchema = z.array(z.unknown())
   .transform(rows => dedupeReviewedInputs(rows) as ReviewedInputList)
   .superRefine((rows, ctx) => {
     for (const issue of reviewedInputListRefusals(rows))
-      ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
-  });
-
-/**
- * nucleus#1142 (papercut 01e88ba5): a worker's local proof files, named by a
- * short label and the absolute path inside its own task scratch or worktree.
- * Nucleus validates, copies and hashes them; the paths themselves are never
- * published to the forge.
- */
-export const proofFileEntrySchema = z.object({
-  label: z.string().trim().min(1).max(120),
-  path: z.string().trim().min(1).max(1024),
-}).strict();
-
-export type ProofFileEntry = z.infer<typeof proofFileEntrySchema>;
-
-/** One worker proof file after Nucleus copied and hashed it. */
-export const proofFileRecordSchema = z.object({
-  /** The exact head the evidence was delivered for. */
-  head: z.string().regex(/^[a-f0-9]{40}$/),
-  label: z.string().trim().min(1).max(120),
-  /** The copied file's own name in the evidence directory. */
-  name: z.string().min(1).max(200),
-  /** The copied file's absolute path under Nucleus's own scratch. */
-  path: z.string().min(1).max(2000),
-  /** The original task-owned locator, retained as provenance after the run scratch is removed. */
-  sourcePath: z.string().min(1).max(2000).optional(),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/),
-  bytes: z.number().int().nonnegative(),
-  runId: z.string().min(1),
-  eventId: z.string().min(1).max(160),
-  at: z.string(),
-}).strict();
-
-export type ProofFileRecord = z.infer<typeof proofFileRecordSchema>;
-
-/**
- * The report's proof-file list. Shape refusals name the entry and field (the
- * same words the `nucleus_report` bridge applies); containment inside the task
- * is checked against the task record at intake.
- */
-export const proofFileListSchema = z.array(z.unknown())
-  .transform(rows => dedupeProofFiles(rows) as ProofFileEntry[])
-  .superRefine((rows, ctx) => {
-    for (const issue of proofFileListRefusals(rows))
       ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
   });
