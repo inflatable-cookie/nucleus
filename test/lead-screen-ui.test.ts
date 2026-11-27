@@ -349,27 +349,6 @@ test("every control carries an accessible label and the record keeps its raw fac
   assert.match(ui.text(), /owner\/alpha \(\/alpha\)/);
 });
 
-test("wrapped prose reads as one paragraph while headings, lists and code keep their shape", async () => {
-  const { readableBlocks } = await import("../client/readable-text");
-  assert.deepEqual(
-    readableBlocks(
-      "# Title\n\nOne wrapped\nline here.\n\n- item one\n- item two\n\n```\nraw();\n```",
-    ),
-    [
-      { kind: "heading", text: "Title" },
-      { kind: "gap", text: "" },
-      { kind: "paragraph", text: "One wrapped line here." },
-      { kind: "gap", text: "" },
-      { kind: "line", text: "- item one" },
-      { kind: "line", text: "- item two" },
-      { kind: "gap", text: "" },
-      { kind: "line", text: "```" },
-      { kind: "line", text: "raw();" },
-      { kind: "line", text: "```" },
-    ],
-  );
-});
-
 test("brief frontmatter is routing mechanics, so the operator reads the brief without it", async () => {
   const { briefParts } = await import("../client/lead-screen");
   const { hasBriefFrontmatter } = await import("../shared/lead-status");

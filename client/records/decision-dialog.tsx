@@ -1,3 +1,4 @@
+import { Markdown } from "../markdown";
 import { useContext, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
@@ -169,16 +170,7 @@ export function DecisionDialog({
             </Text>
           )}
           <DetailSection title="Question" c={c}>
-            <Text
-              selectable
-              style={{
-                color: c.foreground,
-                fontSize: typeScale.body.fontSize,
-                lineHeight: typeScale.body.lineHeight,
-              }}
-            >
-              {decisionDetail.headline ?? decisionDetail.question}
-            </Text>
+            <Markdown text={decisionDetail.headline ?? decisionDetail.question} c={c} />
           </DetailSection>
           {decisionDetailsContent && (
             <CollapsibleSection
@@ -187,16 +179,7 @@ export function DecisionDialog({
               onToggle={() => setDecisionDetailsOpen((value) => !value)}
               c={c}
             >
-              <Text
-                selectable
-                style={{
-                  color: c.foreground,
-                  fontSize: typeScale.body.fontSize,
-                  lineHeight: typeScale.body.lineHeight,
-                }}
-              >
-                {decisionDetailsContent}
-              </Text>
+              <Markdown text={decisionDetailsContent} c={c} />
             </CollapsibleSection>
           )}
           {choices.length > 0 && (

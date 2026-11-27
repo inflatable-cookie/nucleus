@@ -18,7 +18,7 @@ import {
   type Colors,
 } from "./controls";
 import { radius, roles, space, toneWash, type } from "./design";
-import { Readable } from "./readable-text";
+import { Markdown } from "./markdown";
 import { ParkFields, ParkedNote } from "./park-controls";
 import { defaultRecheckDate, recheckIsoFromDate } from "../shared/parking";
 
@@ -355,7 +355,7 @@ export function LeadScreen({
                   Version {checkView.version}, as it was checked:
                 </Text>
                 {briefParts(checkedRead.text).text ? (
-                  <Readable text={briefParts(checkedRead.text).text} c={c} />
+                  <Markdown text={briefParts(checkedRead.text).text} c={c} />
                 ) : (
                   <Text style={text}>That version has no brief text.</Text>
                 )}
@@ -536,7 +536,7 @@ export function LeadScreen({
           </Text>
           <View style={panel}>
             {brief.text ? (
-              <Readable text={brief.text} c={c} />
+              <Markdown text={brief.text} c={c} />
             ) : (
               <Text style={text}>No brief written yet.</Text>
             )}
