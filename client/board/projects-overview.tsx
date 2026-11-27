@@ -11,11 +11,9 @@ import {
   projectHasRepository,
   projectSelectorRows,
 } from "../../shared/project-scope";
-import { pipelineBoard } from "../../shared/pipeline-board";
 import {
-  leadsCards,
-  papercutCards,
   projectColumnWidth,
+  projectTriageCounts,
 } from "../../shared/inbox-board";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import {
@@ -106,16 +104,15 @@ export function projectOverviewColumns({
   return order.flatMap(({ key }) => {
     const project = byKey.get(key);
     if (!project) return [];
-    const triage =
-      leads && pipelineBoard({ projects, selection: [key], leads, tasks: [] });
+    const triage = leads && projectTriageCounts(projects, leads, key);
     const own = tasks?.filter(({ identity }) =>
       projectHasRepository(project, identity.repository, identity.repository),
     );
     return [
       {
         project,
-        leads: triage ? leadsCards(triage).length : null,
-        papercuts: triage ? papercutCards(triage).length : null,
+        leads: triage ? triage.leads : null,
+        papercuts: triage ? triage.papercuts : null,
         queue: own
           ? own.filter((task) => task.phase === "queued").length
           : null,

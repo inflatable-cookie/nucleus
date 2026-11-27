@@ -3,7 +3,8 @@ import type {
   PipelineCard,
   PipelineColumn,
 } from "./pipeline-board";
-import { triageKind } from "./pipeline-board";
+import { pipelineBoard, triageKind } from "./pipeline-board";
+import type { BoardLead, Project } from "./contracts";
 
 /**
  * The inbox board (Tom, 2026-11-21): a menu, a list and a detail pane replace the
@@ -57,6 +58,27 @@ export const leadsCards = (board: PipelineBoard) =>
   triageCards(board, "leads", "All");
 export const papercutCards = (board: PipelineBoard) =>
   triageCards(board, "papercuts", "All");
+
+/**
+ * One project's Leads and Papercuts totals (nucleus#1666): the same projection and
+ * default set the lists read, with the project filter on that project alone.
+ */
+export function projectTriageCounts(
+  projects: Project[],
+  leads: readonly BoardLead[],
+  project: string,
+) {
+  const board = pipelineBoard({
+    projects,
+    selection: [project],
+    leads,
+    tasks: [],
+  });
+  return {
+    leads: leadsCards(board).length,
+    papercuts: papercutCards(board).length,
+  };
+}
 
 /**
  * When a Needs you card began to need the operator: a decision's ask, a drained
