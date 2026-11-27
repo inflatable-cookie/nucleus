@@ -1,4 +1,3 @@
-import { useEngineFeatures } from "./engine-features";
 import React, { useState, useEffect, useMemo } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import {
@@ -54,8 +53,6 @@ import { TaskDialog } from "./task/task-dialog";
 import { RustTaskDialog } from "./task/rust-task";
 import { groupRustTasks, postRustCommand, rustProjectActivity, useRustTasks, type RustCommand, type RustTask, type RustInvalidation } from "./web/rust-board";
 import { useTaskDraftStore } from "./task/drafts";
-import { LeadDialog } from "./records/lead-dialog";
-import { PapercutDialog } from "./records/papercut-dialog";
 import { RustItemDialog } from "./records/rust-item";
 import { DecisionDialog } from "./records/decision-dialog";
 import type { RecordNoticeValue } from "./task/parts";
@@ -147,13 +144,12 @@ export function MainSurface({
   // hook, so every surface hydrates from one projection and panel mounts never
   // wait for their own poll.
   const { stateQuery, state } = useBoardState();
-  const features = useEngineFeatures();
   const { surfaceScope, saveSurfaceScope, unresolvedScope } =
-    useSavedScope(features.engine === "rust" && !workspaceBoard);
+    useSavedScope(!workspaceBoard);
   const [panelScope, setPanelScope] = usePanelScope(workspaceBoard?.key ?? null);
   const scope = workspaceBoard ? (panelScope ?? { projects: [workspaceBoard.key] }) : surfaceScope;
   const setScope = workspaceBoard ? setPanelScope : saveSurfaceScope;
-  const [scopeOpen, setScopeOpen] = useState(false);
+  const [, setScopeOpen] = useState(false);
   const {
     recordProject,
     selected,
@@ -162,7 +158,6 @@ export function MainSurface({
     setRustTaskId,
     selectedLeadId,
     setSelectedLeadId,
-    leadLane,
     setLeadLane,
     openPapercutId,
     setOpenPapercutId,
@@ -175,7 +170,7 @@ export function MainSurface({
     selectPapercut,
     clearSelection,
   } = useBoardSelection();
-  // Unsaved plan drafts, one per project section: entries, idle mark and the version they were based on.
+  // Unsaved plan drafts, one per project section: entries and the version they were based on.
   const [planEdits, setPlanEdits] = useState<Record<string, PlanEdit>>({});
   // The last failed save per project. The draft stays; the section says why it was not saved.
   const [planSaveErrors, setPlanSaveErrors] = useState<Record<string, string>>(
@@ -198,7 +193,7 @@ export function MainSurface({
   // On the Rust engine every task is a Rust task. The project selector counts
   // each project's open tasks through its hidden-count input, keyed by checkout.
   const selectorCounts = useMemo(() => {
-    if (features.engine !== "rust" || !rustTasks.data) return state?.queuedCounts ?? [];
+    if (!rustTasks.data) return state?.queuedCounts ?? [];
     const counts = new Map<string, number>();
     for (const task of rustTasks.data) {
       if (task.phase === "done" || task.phase === "cancelled") continue;
@@ -209,17 +204,17 @@ export function MainSurface({
       if (repo?.path) counts.set(repo.path, (counts.get(repo.path) ?? 0) + 1);
     }
     return [...counts].map(([repoPath, count]) => ({ repoPath, count }));
-  }, [features.engine, rustTasks.data, state?.projects, state?.queuedCounts]);
+  }, [rustTasks.data, state?.projects, state?.queuedCounts]);
   // The selector's row actions (nucleus#1430) refresh the board after each save; Remove opens the shared removal dialog below.
   const projectSelector = useProjectSelectorActions(
     () => stateQuery.refetch(),
-    features.engine === "rust" && state?.canEditSettings === true,
+    state?.canEditSettings === true,
   );
   const [removingProject, setRemovingProject] = useState<api.Project | null>(
     null,
   );
   const { detailQuery, nextQuery } = useTaskDetail(selected);
-  const records = useRecordQueries({ stateQuery, state, tab, scopeOpen });
+  const records = useRecordQueries();
   const {
     leadsQuery,
     decisionsQuery,
@@ -229,10 +224,10 @@ export function MainSurface({
     leadLinks,
   } = records;
   const projectActivity = useMemo(
-    () => features.engine === "rust" && state && rustTasks.data
+    () => state && rustTasks.data
       ? rustProjectActivity(state.projects, rustTasks.data, leadsQuery.data?.activity ?? [])
       : state?.projectActivity ?? [],
-    [features.engine, state?.projects, state?.projectActivity, rustTasks.data, leadsQuery.data?.activity],
+    [state?.projects, state?.projectActivity, rustTasks.data, leadsQuery.data?.activity],
   );
   const {
     lanes,
@@ -264,7 +259,7 @@ export function MainSurface({
   const laneCards = new Set(planningLeads);
   // The list's tag filter, pages and held-back queue reads outlive a visit to another view.
   const pipeline = usePipelineState();
-  const { act, leadAct, busy, error, setError } = useBoardAct({
+  const { act, busy, error, setError } = useBoardAct({
     recordProject,
     selected,
     selectedLeadId,
@@ -283,7 +278,6 @@ export function MainSurface({
     setRecordNotice(null);
   }, [recordProject, selectedLeadId, openPapercutId, openDecisionId]);
   const recordKey = `${recordProject ?? ""}|${selectedLeadId ?? ""}|${openPapercutId ?? ""}|${openDecisionId ?? ""}`;
-  const liveTasks = state?.tasks.filter(isOpenTask) ?? [];
   // Stale saved keys (a removed project) drop out, so every view treats them alike.
   // The selection is the only filter state (nucleus#1476): an empty selection shows
   // all projects in every scoped view, and clearing the last project restores them.
@@ -442,7 +436,7 @@ export function MainSurface({
       onSelectTask={setSelected}
       c={c}
     />
-  ) : (selectedLeadId || openPapercutId) && features.engine === "rust" ? (
+  ) : selectedLeadId || openPapercutId ? (
     // The Rust engine keeps leads and papercuts as one item (Spec 071).
     <RustItemDialog
       key={recordKey}
@@ -461,38 +455,6 @@ export function MainSurface({
         setSelectedLeadId(null);
         setOpenPapercutId(null);
       }}
-    />
-  ) : selectedLeadId ? (
-    <LeadDialog
-      key={recordKey}
-      project={recordProject}
-      id={selectedLeadId}
-      lane={leadLane}
-      compact={compact}
-      busy={busy}
-      leadAct={leadAct}
-      inline={inlineDetail}
-      onClose={() => {
-        setLeadLane(null);
-        setSelectedLeadId(null);
-      }}
-      c={c}
-    />
-  ) : openPapercutId ? (
-    // A record dialog remounts when any open record changes, which clears its drafts.
-    <PapercutDialog
-      key={recordKey}
-      project={recordProject}
-      id={openPapercutId}
-      compact={compact}
-      busy={busy}
-      act={act}
-      recordNotice={recordNotice}
-      setRecordNotice={setRecordNotice}
-      laneName={laneName}
-      inline={inlineDetail}
-      onClose={() => setOpenPapercutId(null)}
-      c={c}
     />
   ) : openDecisionId ? (
     <DecisionDialog
@@ -553,11 +515,11 @@ export function MainSurface({
       view={view}
       counts={inbox.counts}
       loaded={Boolean(state)}
-      pendingCounts={features.engine === "rust" ? [
+      pendingCounts={[
         ...(!decisionsQuery.data ? ["needs" as const] : []),
         ...(!planQuery.data ? ["planning" as const] : []),
         ...(!leadsQuery.data ? ["leads" as const, "papercuts" as const] : []),
-      ] : undefined}
+      ]}
       rust={rustBoard ? { totals: Object.fromEntries(
         Object.entries(rustColumns ?? {}).map(([column, tasks]) => [column, tasks.length]),
       ) } : undefined}
@@ -580,8 +542,7 @@ export function MainSurface({
       }
       projectActions={{
         ...projectSelector.actions,
-        ...(features.projectAgents || (features.engine === "rust" && state?.canEditSettings === true)
-          ? { remove: setRemovingProject } : {}),
+        ...(state?.canEditSettings === true ? { remove: setRemovingProject } : {}),
       }}
       onOpenChange={setScopeOpen}
       compact={narrow}
@@ -607,11 +568,7 @@ export function MainSurface({
           c={c}
           workspaceName={workspaceBoard?.name}
           state={state}
-          activeWorkers={
-            features.engine === "rust"
-              ? rustTasks.data?.filter((task) => task.wait === "running").length ?? null
-              : undefined
-          }
+          activeWorkers={rustTasks.data?.filter((task) => task.wait === "running").length ?? null}
           refetchState={stateQuery.refetch}
           busy={busy}
           act={act}

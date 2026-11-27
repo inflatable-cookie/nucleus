@@ -32,14 +32,7 @@ const c = dark as never;
 const CAPACITY: CapacityAuthorityValues = {
   globalLimit: 32,
   projectLimit: 5,
-  papercutProjectLimit: 2,
   hostCallLimit: 6,
-  stallThresholdMinutes: 30,
-  holdReminderMinutes: 120,
-  holdEscalationMinutes: 240,
-  laneDrainMinutes: 120,
-  laneDrainEscalationMinutes: 1440,
-  hostOutageNoticeMinutes: 120,
   operatorDefaultHostKind: "paseo",
   threadRetentionDays: 3,
   threadRetentionIntervalHours: 12,
@@ -147,7 +140,7 @@ test("Limits sends the edited field at the displayed Dispatch revision", async (
 });
 
 test("limits show applied values beside controls, and the recorded changes stay off the screen", async () => {
-  const applied = { globalLimit: 21, stallThresholdMinutes: 45 };
+  const applied = { globalLimit: 21, projectLimit: 6 };
   const v1 = "2026-11-02T09:00:00.000Z",
     v2 = "2026-11-03T10:30:00.000Z";
   const { ui, done } = await mountLimits({
@@ -155,7 +148,7 @@ test("limits show applied values beside controls, and the recorded changes stay 
       effective: applied,
       changes: [
         change(1, { globalLimit: [32, 21] }, v1),
-        change(2, { stallThresholdMinutes: [30, 45] }, v2),
+        change(2, { projectLimit: [5, 6] }, v2),
       ],
     }),
   });
@@ -187,7 +180,7 @@ test("a full record adds nothing to the screen: Project overrides is the last se
   const twenty = Array.from({ length: 20 }, (_, index) =>
     change(
       index + 1,
-      { holdReminderMinutes: [120, 120 + index] },
+      { projectLimit: [5, 5 + (index % 20)] },
       `2026-11-01T0${index % 9}:00:00.000Z`,
     ),
   );

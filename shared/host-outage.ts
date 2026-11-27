@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { HOST_KIND_LABELS, hostKindOf } from "./host-kind";
-import { DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, MAX_HOST_OUTAGE_NOTICE_MINUTES } from "./schema/settings";
 
 /**
  * A host that went away mid-session (Tom, 2026-11-14; T3 lane document v18,
@@ -42,9 +41,6 @@ export type TaskHostWait = z.infer<typeof taskHostWaitSchema>;
 /** Open outages by host id. A host that is back has no entry. */
 export const hostOutagesSchema = z.record(z.string().min(1), hostOutageSchema);
 export type HostOutages = z.infer<typeof hostOutagesSchema>;
-
-/** Re-exported so the outage record's one bound has one home (dispatch limits). */
-export { DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, MAX_HOST_OUTAGE_NOTICE_MINUTES };
 
 /**
  * Stops that keep their own owner and question when a host goes away. Those are

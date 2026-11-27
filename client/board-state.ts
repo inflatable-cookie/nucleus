@@ -1,5 +1,3 @@
-import { useContext } from "react";
-import { BoardLiveContext } from "./board-live";
 import {
   replaceEqualDeep,
   useQuery,
@@ -7,7 +5,6 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { useRpc } from "./shell";
-import { useEngineFeatures } from "./engine-features";
 import * as api from "../shared/contracts";
 import {
   isUnchangedBoard,
@@ -171,14 +168,12 @@ export function commitBoardRead(
  * counters, never another complete board.
  */
 export function useBoardState() {
-  const live = useContext(BoardLiveContext);
-  const rust = useEngineFeatures().engine === "rust";
   const fetchState = useRpc(api.uiSnapshot);
   const queryClient = useQueryClient();
   const stateQuery = useQuery({
     queryKey: BOARD_STATE_KEY,
-    refetchInterval: live || rust ? false : 4000,
-    staleTime: rust ? Infinity : 0,
+    refetchInterval: false,
+    staleTime: Infinity,
     queryFn: async (): Promise<UiBoard> => {
       const started = beginBoardRead(queryClient);
       const response = await fetchState(

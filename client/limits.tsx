@@ -1,4 +1,3 @@
-import { useEngineFeatures } from "./engine-features";
 import { errorText as failureText } from "./error-text";
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
@@ -362,7 +361,6 @@ function ProjectOverrides({
 }) {
   // Choosing a project creates its override at once with the per-project limit;
   // a failure to create it is shown here, beside the picker.
-  const features = useEngineFeatures();
   const [addStatus, setAddStatus] = useState("");
   // One create at a time: + and the picker wait for it, so a second pick can
   // never overwrite an edit made after the first (review #596).
@@ -404,15 +402,11 @@ function ProjectOverrides({
   return (
     <Section
       c={c}
-      title={features.projectDefaultLimit ? "Project overrides" : "Project slots"}
+      title="Project overrides"
       last
-      description={
-        features.projectDefaultLimit
-          ? "Slots run 0–64, where 0 admits nothing. A project may have twice its slots in flight. A project without an override uses the per-project limit."
-          : "Each project's own slot limit, at least 1."
-      }
+      description="Slots run 0–64, where 0 admits nothing. A project may have twice its slots in flight. A project without an override uses the per-project limit."
       action={
-        features.projectDefaultLimit && <DropdownSelect
+        <DropdownSelect
           compact
           label="Add project limit override"
           value=""
@@ -451,7 +445,7 @@ function ProjectOverrides({
             value={limit}
             canSave={Boolean(projectRecord)}
             pendingRemoval={pendingOverrideRemovals?.[projectKey]}
-            removable={features.projectDefaultLimit}
+            removable
             save={(next) => saveProjectLimit({ projectKey, ...next })}
           />
         );

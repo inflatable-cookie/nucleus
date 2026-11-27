@@ -1,5 +1,4 @@
 import { RUST_PROFILE_USAGE_KEY, rustProfileUsage } from "./rust-contracts";
-import { useEngineFeatures } from "./engine-features";
 import { errorText, errorText as failureText } from "./error-text";
 import { activeGroupLimit } from "../shared/pool";
 import { ProfilesPanel } from "./settings-profiles";
@@ -38,7 +37,6 @@ import {
   BACKUP_STALE_AFTER_MS,
   type PoolEntry,
   type Profile,
-  type Project,
   type RepositorySettings,
   type UiQueueState,
 } from "../shared/contracts";
@@ -62,8 +60,6 @@ import { GitHubReviewerSettings } from "./web/github-reviewer-settings";
  */
 export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const c = theme.colors;
-  const features = useEngineFeatures();
-  const rust = features.engine === "rust";
   const [width, setWidth] = useState(0);
   // The layout follows the measured width of the Settings screen itself, never the
   // host's compact flag (task 923). The tabs are the same at every width
@@ -71,14 +67,11 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const compact = width > 0 && width < 700;
   const inset = compact ? 16 : 24;
   const { stateQuery, state } = useBoardState();
-  const canManageGitHub = rust && state?.canEditSettings === true;
+  const canManageGitHub = state?.canEditSettings === true;
   const fetchRepositories = useRpc(api.repositories);
   const fetchProjectSettings = useRpc(api.projectSettings),
     upsertProject = useRpc(api.projectUpsert);
-  const fetchOwnerCandidates = useRpc(api.projectOwnerCandidates),
-    setProjectPlanner = useRpc(api.projectSetPlanner);
-  const registerProjectAgent = useRpc(api.agentRegister),
-    unregisterProjectAgent = useRpc(api.agentUnregister);
+  const setProjectPlanner = useRpc(api.projectSetPlanner);
   const setProfile = useRpc(api.configureProfile),
     setPool = useRpc(api.configurePool),
     setAvailability = useRpc(api.availabilityControl),
@@ -105,7 +98,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const profileUsageQuery = useQuery({
     queryKey: RUST_PROFILE_USAGE_KEY,
     queryFn: () => fetchProfileUsage({}),
-    enabled: rust && settingsTab === "profiles",
+    enabled: settingsTab === "profiles",
   });
   const profileUsage = profileUsageQuery.data;
   const profileState = state && profileUsage ? {
@@ -139,13 +132,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     queryFn: () => fetchProjectSettings({ project: focusKey! }),
     enabled: settingsTab === "projects" && focusKey !== null,
   });
-  // Agent registration still uses live threads on engines that expose that feature.
-  const candidatesQuery = useQuery({
-    queryKey: ["nucleus", "owner-candidates"],
-    queryFn: () => fetchOwnerCandidates({}),
-    enabled:
-      features.projectAgents && settingsTab === "projects" && focusKey !== null,
-  });
   // Spec 028: the listing is a Backups-tab read. The stale/failing warning on every
   // other tab rides the board's snapshot health, so no surface polls this just to age a
   // snapshot (2026-10-25 performance audit: the poll spawned a Node process per minute).
@@ -159,7 +145,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const storageQuery = useQuery({
     queryKey: ["nucleus", "work-storage"],
     queryFn: () => fetchWorkStorage({}),
-    enabled: rust || settingsTab === "storage",
+    enabled: true,
   });
   // Settings-only capacity writes need the values in force and the record of
   // applied changes. It is a separate read because the board projection keeps its
@@ -177,7 +163,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     queryKey: ["nucleus", "hosts"],
     queryFn: () => fetchHosts({}),
     enabled: settingsTab === "hosts",
-    refetchInterval: rust ? false : 15_000,
   });
   const listedNewest = backupsQuery.data?.snapshots
     .filter((entry) => entry.verified)
@@ -189,9 +174,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     ? Date.now() - Date.parse(newestBackupAt)
     : Infinity;
   const backupStale = backupAgeMs > BACKUP_STALE_AFTER_MS;
-  const backupError = rust
-    ? (rustBackups?.issues ?? 0) > 0 ? "Some backups could not be verified." : null
-    : state?.backup?.localError ?? backupsQuery.data?.localError ?? null;
+  const backupError = (rustBackups?.issues ?? 0) > 0 ? "Some backups could not be verified." : null;
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState<{
@@ -330,8 +313,8 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
           })).filter(
             // Rust engine (Spec 070 rulings 16 and 17): no Telemetry, backups live in Storage.
             (tab) =>
-              (tab.id !== "backups" || features.backupsTab) &&
-              (tab.id !== "telemetry" || features.telemetry) &&
+              tab.id !== "backups" &&
+              tab.id !== "telemetry" &&
               (tab.id !== "github-accounts" || canManageGitHub),
           )}
           value={settingsTab}
@@ -360,10 +343,8 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
               <Button
                 c={c}
                 small
-                text={features.backupsTab ? "Open Backups" : "Open Storage"}
-                onPress={() =>
-                  setSettingsTab(features.backupsTab ? "backups" : "storage")
-                }
+                text="Open Storage"
+                onPress={() => setSettingsTab("storage")}
               />
             </View>
           )}
@@ -374,7 +355,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
               inset={inset}
               state={profileState ?? null}
               stateError={stateQuery.error}
-              usageReady={!rust || Boolean(profileUsage)}
+              usageReady={Boolean(profileUsage)}
               usageError={profileUsageQuery.error}
               repositories={
                 Array.isArray(repositoriesQuery.data)
@@ -388,8 +369,8 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                     ...entry,
                     group: entry.group.trim(),
                   });
-                  const saved = await setProfile(rust ? { ...expected, groupChanged } : expected);
-                  const confirmed = rust && groupChanged === false && saved.entry
+                  const saved = await setProfile({ ...expected, groupChanged });
+                  const confirmed = groupChanged === false && saved.entry
                     ? { ...saved.entry, group: expected.group }
                     : saved.entry;
                   if (replaceEqualDeep(expected, confirmed) !== expected)
@@ -490,39 +471,10 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
               inset={inset}
               query={projectsQuery}
               onFocus={setFocusKey}
-              createProject={async (input) => {
-                // Refresh even after a refusal so the next Create derives a free key.
-                let writeError: unknown;
-                try {
-                  await upsertProject(input);
-                } catch (failure) {
-                  writeError = failure;
-                }
-                const refreshes = await Promise.allSettled([
-                  queryClient.refetchQueries({
-                    queryKey: ["nucleus", "project-settings"],
-                  }),
-                  queryClient.refetchQueries({
-                    queryKey: ["nucleus", "state"],
-                    exact: true,
-                  }),
-                ]);
-                if (writeError !== undefined) throw writeError;
-                const failedRefresh = refreshes.find(
-                  (result): result is PromiseRejectedResult =>
-                    result.status === "rejected",
-                );
-                if (failedRefresh)
-                  setError(
-                    `Project was created, but refresh failed: ${errorText(failedRefresh.reason)}`,
-                  );
-              }}
               edit={{
                 saveProject: (input) => upsertProject(input),
                 setPlanner: (input) =>
                   setProjectPlanner({ ...input, setBy: "operator" }),
-                registerAgent: (input) => registerProjectAgent(input),
-                unregisterAgent: (input) => unregisterProjectAgent(input),
                 setSlots: (input) => setProjectLimit(input),
                 setRepository: (input) => setRepository(input),
                 repositoryBlockers: (input) => repositoryBlockers(input),
@@ -546,11 +498,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                       exact: true,
                     }),
                   ]),
-                candidates: {
-                  data: candidatesQuery.data,
-                  error: candidatesQuery.error,
-                  isPending: candidatesQuery.isPending,
-                },
                 focus: {
                   row: focusQuery.data?.projects[0],
                   error: focusQuery.error,

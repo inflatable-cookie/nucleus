@@ -62,8 +62,6 @@ async function mountLead(detail: LeadDetail) {
   const { LeadScreen } = await import("../client/lead-screen");
   const calls: string[] = [];
   const actions: LeadActions = {
-    onCheck: async () => "Checks passed",
-    onApprove: async () => "Approved.",
     onPromote: async () => "Promoted",
     onDrop: async () => "Dropped.",
     onReopen: async () => {

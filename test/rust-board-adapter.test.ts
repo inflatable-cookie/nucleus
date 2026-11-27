@@ -11,10 +11,6 @@ import {
 } from "../client/web/rust-board";
 import { rustTaskCard } from "./support/rust-task-card";
 import { useNativeStubs, mount } from "./support/render";
-import {
-  EngineFeaturesContext,
-  RUST_ENGINE_FEATURES,
-} from "../client/engine-features";
 import { waitFor, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS } from "./support/budgets";
 import * as api from "../shared/contracts";
 import { createRustApi, namedProfile } from "../client/web/rust-api";
@@ -529,8 +525,7 @@ test("the Rust Hosts panel hides the default picker below two registered hosts",
         client,
         children: h(PluginRpcProvider, {
           invoke: (async () => ({})) as never,
-          children: h(EngineFeaturesContext.Provider, {
-            value: RUST_ENGINE_FEATURES,
+          children: h((props) => props.children, {
             children: h(HostsPanel, {
               c: new Proxy({}, { get: () => "#123" }) as never,
               list,
@@ -652,8 +647,7 @@ test("Rust Settings opens an adapter project without requesting owner candidates
   const ui = mount(
     h(QueryClientProvider, {
       client,
-      children: h(EngineFeaturesContext.Provider, {
-        value: RUST_ENGINE_FEATURES,
+      children: h((props) => props.children, {
         children: h(PluginRpcProvider, {
           invoke: invoke as never,
           children: h(QueueSettingsScreen as never, {
@@ -952,8 +946,7 @@ test("a saved filter keeps its owner across a registry collision and a fresh boa
         client,
         children: h(web.WebContext.Provider, {
           value: { transport: adapter, settings: false },
-          children: h(EngineFeaturesContext.Provider, {
-            value: RUST_ENGINE_FEATURES,
+          children: h((props) => props.children, {
             children: h(MainSurface, {
               theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
               layout: { compact: false },
@@ -1456,8 +1449,7 @@ test("paired operator and planner Profiles show stored flags, subscriptions and 
                 throw new Error(`Unexpected profile RPC ${method}`);
             }
           }) as never,
-          children: h(EngineFeaturesContext.Provider, {
-            value: RUST_ENGINE_FEATURES,
+          children: h((props) => props.children, {
             children: h(ProfilesPanel, {
               c: new Proxy({}, { get: () => "#123" }) as never,
               compact: false,
@@ -1567,12 +1559,7 @@ test("Rust board loads scoped collections on entry and shares them across views"
     view: "needs" | "planning" | "leads" | "queue";
   }) {
     const { state, stateQuery } = useBoardState();
-    const records = useRecordQueries({
-      state,
-      stateQuery,
-      tab: view === "planning" ? view : "queue",
-      scopeOpen: false,
-    });
+    const records = useRecordQueries();
     const inbox = useInboxBoard({
       state,
       selection: [],
@@ -1601,8 +1588,7 @@ test("Rust board loads scoped collections on entry and shares them across views"
       client,
       children: h(PluginRpcProvider, {
         invoke: invoke as never,
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(Records, { view }),
         }),
       }),
@@ -2131,8 +2117,7 @@ test("a board click and action address the selected project's colliding decision
       client,
       children: h(web.WebContext.Provider, {
         value: { transport: adapter, settings: false },
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(MainSurface, {
             theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
             layout: { compact: false },
@@ -2265,8 +2250,7 @@ test("a fresh Rust board opens promoted and dropped items from the Closed filter
       client,
       children: h(web.WebContext.Provider, {
         value: { transport: adapter, settings: false },
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(MainSurface, {
             theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
             layout: { compact: false },
@@ -2383,8 +2367,7 @@ test("the mounted Rust board counts parked leads and papercuts like their All li
       client,
       children: h(web.WebContext.Provider, {
         value: { transport: adapter, settings: false },
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(MainSurface, {
             theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
             layout: { compact: false },
@@ -2547,8 +2530,7 @@ test("the board reads, edits, and closes the selected project's lane when keys c
       client,
       children: h(web.WebContext.Provider, {
         value: { transport: adapter, settings: false },
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(MainSurface, {
             theme: { colors: new Proxy({}, { get: () => "#123" }) as never },
             layout: { compact: false },
@@ -2926,8 +2908,7 @@ test("the paired Profiles panel adds, edits, and duplicates using the shared con
       client,
       children: h(PluginRpcProvider, {
         invoke: invoke as never,
-        children: h(EngineFeaturesContext.Provider, {
-          value: RUST_ENGINE_FEATURES,
+        children: h((props) => props.children, {
           children: h(ProfilesPanel, {
             c: new Proxy({}, { get: () => "#123" }) as never,
             compact: false,

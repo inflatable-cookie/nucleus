@@ -1,4 +1,3 @@
-import { useEngineFeatures } from "./engine-features";
 import { errorText as message } from "./error-text";
 import React, { useEffect, useState } from "react";
 import { Text, View } from "react-native";
@@ -103,8 +102,6 @@ function NoticeLine({
 
 /** What each action does. A handler resolves with what happened, or rejects with the refusal to show beside it. */
 export type LeadActions = {
-  onCheck: () => Promise<string>;
-  onApprove: () => Promise<string>;
   onPromote: (origin: string) => Promise<string>;
   onDrop: (reason: string) => Promise<string>;
   onReopen: (reason: string) => Promise<string>;
@@ -116,12 +113,6 @@ export type LeadActions = {
   ) => Promise<string>;
 };
 const unloaded: LeadActions = {
-  onCheck: async () => {
-    throw new Error("The lead has not loaded yet");
-  },
-  onApprove: async () => {
-    throw new Error("The lead has not loaded yet");
-  },
   onPromote: async () => {
     throw new Error("The lead has not loaded yet");
   },
@@ -170,7 +161,6 @@ export function LeadScreen({
   c: Colors;
   onRetry: () => void;
 }) {
-  const { planningCeremony } = useEngineFeatures();
   const r = roles(c);
   const fill = useCardFill(c);
   const [notices, setNotices] = useState<Record<string, Notice>>({});
@@ -301,8 +291,6 @@ export function LeadScreen({
     approvalView = leadApprovalView(lead),
     brief = briefParts(lead.body);
   const {
-    onCheck,
-    onApprove,
     onPromote,
     onDrop,
     onReopen,
@@ -310,8 +298,6 @@ export function LeadScreen({
     onPromoteTo,
   } = actions ?? unloaded;
   const {
-    check: checkReason,
-    approve: approveReason,
     drop: dropReason,
     reopen: reopenReason,
     promoteTo: promoteToReason,
@@ -448,30 +434,6 @@ export function LeadScreen({
         accessibilityLabel={`Decision summary for ${lead.title}`}
         style={{ ...panel, gap: space.xs }}
       >
-        {planningCeremony && (
-          <>
-            <Text accessibilityRole="header" style={sectionHeader}>
-              Decision status
-            </Text>
-            <Text style={text}>
-              {checkView.kind === "pending"
-                ? "Check running"
-                : checkView.kind === "none"
-                  ? "Not checked"
-                  : checkView.kind === "stale"
-                    ? `Check stale · version ${checkView.version}`
-                    : checkView.check.ok
-                      ? `Current check passed · version ${lead.version}`
-                      : `Current check failed · version ${lead.version}`}
-              {" · "}
-              {approvalView.kind === "none"
-                ? "Not approved"
-                : approvalView.kind === "stale"
-                  ? `Approval stale · version ${approvalView.approval.version}`
-                  : `Approved · version ${approvalView.approval.version}`}
-            </Text>
-          </>
-        )}
         {(lead.parked || lead.recheck) && (
           <View style={{ gap: space.xxs }}>
             <ParkedNote
@@ -496,28 +458,6 @@ export function LeadScreen({
           </View>
         )}
         <View style={row}>
-          {planningCeremony && (
-            <>
-              <Button
-                small
-                c={c}
-                text={running === "check" ? "Checking…" : "Check brief"}
-                label="Check the brief"
-                disabled={blocked || Boolean(checkReason)}
-                hint={checkReason ?? undefined}
-                onPress={() => void run("check", onCheck)}
-              />
-              <Button
-                small
-                c={c}
-                text={running === "approve" ? "Approving…" : "Approve"}
-                label="Approve the checked version"
-                disabled={blocked || Boolean(approveReason)}
-                hint={approveReason ?? undefined}
-                onPress={() => void run("approve", onApprove)}
-              />
-            </>
-          )}
           {lead.repositories.map((repo) => {
             const reason = lead.actions.promote.find(
                 (item) => item.origin === repo.origin,
@@ -541,17 +481,6 @@ export function LeadScreen({
             );
           })}
         </View>
-        {planningCeremony &&
-          [
-            checkReason && `Check: ${checkReason}`,
-            approveReason && `Approve: ${approveReason}`,
-          ]
-            .filter(Boolean)
-            .map((reason) => (
-              <Text key={reason} style={meta}>
-                {reason}
-              </Text>
-            ))}
         {lead.repositories.map((repo) => {
           const reason = lead.actions.promote.find(
             (item) => item.origin === repo.origin,
@@ -562,12 +491,6 @@ export function LeadScreen({
             </Text>
           ) : null;
         })}
-        {planningCeremony && (
-          <>
-            <NoticeLine notice={notices.check} label="Check" c={c} />
-            <NoticeLine notice={notices.approve} label="Approve" c={c} />
-          </>
-        )}
         {lead.repositories.map((repo) => (
           <NoticeLine
             key={repo.origin}
@@ -620,8 +543,7 @@ export function LeadScreen({
           </View>
         </View>
 
-        {(planningCeremony ||
-          checkView.kind !== "none" ||
+        {(checkView.kind !== "none" ||
           approvalView.kind !== "none") && (
           <View accessibilityLabel="Check result and approval" style={column}>
             <Text accessibilityRole="header" style={sectionHeader}>

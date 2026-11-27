@@ -232,7 +232,13 @@ export function planningFixture() {
         projectActivity,
         lanes,
       });
-      if (method === "queue.plans") return planReplies;
+      // The Rust board reads each project's lanes from its plan's laneViews. Every lane here sits
+      // in the roadmap repository, so only the roadmap plan lists them.
+      if (method === "queue.plans")
+        return planReplies.map((plan) => ({
+          ...plan,
+          laneViews: plan.project === projectNames.roadmap ? lanes : [],
+        }));
       if (method === "lead.board") return leadReplies;
       if (method === "lane.task-page") {
         const { lane, offset, limit } = laneTaskPage.input.parse(input);

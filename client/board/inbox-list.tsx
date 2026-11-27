@@ -21,14 +21,12 @@ import {
   inboxSections,
   triageCards,
   rustTriageStates,
-  triageStates,
   type TriageFilter,
   type InboxView,
 } from "../../shared/inbox-board";
 import { openScopeLanes } from "../../shared/project-scope";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { useRpc } from "../shell";
-import { useEngineFeatures } from "../engine-features";
 import {
   Button,
   DropdownSelect,
@@ -402,10 +400,9 @@ export function InboxList({
     leads: "All", papercuts: "All",
   });
   const triageView = view === "leads" || view === "papercuts" ? view : null;
-  const rustEngine = useEngineFeatures().engine === "rust";
-  const stateOptions = rustEngine ? rustTriageStates : triageStates;
-  // Closed (Rust only): promoted and dropped items, read apart from the board's cards.
-  const closedFilter = rustEngine && triageView !== null && triageFilters[triageView] === "Closed";
+  const stateOptions = rustTriageStates;
+  // Closed: promoted and dropped items, read apart from the board's cards.
+  const closedFilter = triageView !== null && triageFilters[triageView] === "Closed";
   const readClosed = useRpc(api.itemClosed);
   const closedKind = view === "papercuts" ? "papercut" : "lead";
   const closedQuery = useQuery({

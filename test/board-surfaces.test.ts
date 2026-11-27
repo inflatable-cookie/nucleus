@@ -179,22 +179,3 @@ test("a toned badge reads by its tinted fill, with no outline", async () => {
     toneSurface(dark.statusWarning, roles(c).raised),
   );
 });
-
-test("the header has no bottom rule and shows a deferred roll as a pill, its detail in the popover", async () => {
-  const { NoticePill } = await import("../client/board/header");
-  const notice = {
-    tone: "quiet" as const,
-    label: "Roll deferred",
-    text: "Nucleus is deferring a service roll: a heavy run has an attached follower",
-  };
-  const ui = mount(h(NoticePill, { notice, c }));
-  assert.equal(ui.query("Roll deferred detail"), undefined, "the detail waits for the popover");
-  assert.ok(!ui.text().includes(notice.text), "no status line");
-  ui.get("Roll deferred").props.onHoverIn();
-  assert.ok(ui.get("Roll deferred detail"), "hover opens the detail");
-  assert.ok(ui.text().includes(notice.text));
-  ui.get("Roll deferred").props.onHoverOut();
-  assert.equal(ui.query("Roll deferred detail"), undefined);
-  ui.press("Roll deferred");
-  assert.ok(ui.get("Roll deferred detail"), "a press opens it on touch");
-});

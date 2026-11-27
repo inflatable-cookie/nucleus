@@ -1,30 +1,15 @@
-import { useEngineFeatures } from "../engine-features";
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
-import { useQuery } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
 import type { UiQueueState } from "../../shared/contracts";
 import { headerControls, type SettingsTarget } from "../../shared/queue-navigation";
-import { serviceNotices, type ServiceNotice } from "../../shared/service-roll";
 import { useRpc, Icon } from "../shell";
-import { ActionButton, Button, SurfacePress, muted, popover, row, type Colors } from "../controls";
+import { ActionButton, Button, SurfacePress, muted, row, type Colors } from "../controls";
 import { errorText } from "../error-text";
 import { Popover } from "../popover";
 import { Badge } from "./badges";
 import type { BoardAct } from "./use-board-data";
 import { control as controlSize, space, type as typeScale, radius, overlay, roles } from "../design";
-
-/**
- * Queue #665: the slot table lists only projects with at least one slot occupied,
- * most-used first, then name. Visibility is by slots in use only: a project with
- * tasks in flight and no live agent does not appear. The filter copies the array,
- * so sorting never mutates the board projection and a refresh keeps a
- * deterministic order unless counts change.
- */
-export function slotPopoverRows(capacities: UiQueueState["projectCapacities"] | undefined) {
-  return (capacities ?? []).filter(project => project.occupiedSlots > 0)
-    .sort((a, b) => b.occupiedSlots - a.occupiedSlots || (a.projectName < b.projectName ? -1 : a.projectName > b.projectName ? 1 : 0));
-}
 
 /**
  * The run state the header shows (Tom, 2026-11-21: the status line left the
@@ -54,26 +39,6 @@ export function headerStatePills(
   if (state.stoppedThreads) pills.push({ label: state.paused ? `${state.stoppedThreads} stopped` : `${state.stoppedThreads} waiting to resume`, tone: "warning" });
   if (state.operationBacklog) pills.push({ label: `${state.operationBacklog} operation${state.operationBacklog === 1 ? "" : "s"} queued`, tone: "neutral" });
   return pills;
-}
-
-/**
- * A service state as a header pill (nucleus#1540): the short label in the pill and
- * the full detail in its popover on hover, keyboard focus or press. The header has
- * no status line under the title.
- */
-export function NoticePill({ notice, c }: { notice: ServiceNotice; c: Colors }) {
-  const [open, setOpen] = useState(false);
-  const anchor = useRef<View | null>(null);
-  return <Pressable ref={anchor} accessibilityRole="button" accessibilityLabel={notice.label} accessibilityHint={notice.text}
-    accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)}
-    onHoverIn={() => setOpen(true)} onHoverOut={() => setOpen(false)} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}>
-    <Badge label={notice.label} tone={notice.tone === "warning" ? "warning" : "neutral"} c={c} />
-    {open && <Popover anchor={anchor} align="start" pointerEvents="none" maxWidth={420} inlineStyle={{ top: "100%", left: 0, marginTop: space.xxs, maxWidth: 420 }}>
-      <View pointerEvents="none" accessibilityLabel={`${notice.label} detail`} style={{ paddingHorizontal: space.sm, paddingVertical: space.xs, borderRadius: radius.control, ...popover(c) }}>
-        <Text style={{ color: notice.tone === "warning" ? c.statusWarning : c.foreground, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{notice.text}</Text>
-      </View>
-    </Popover>}
-  </Pressable>;
 }
 
 export type BoardHeaderProps = {
@@ -114,8 +79,6 @@ export function BoardHeader({ c, workspaceName, state, activeWorkers, refetchSta
   const { height: viewportHeight } = useWindowDimensions();
   const setQueue = useRpc(api.queueControl);
   const stopThreadsRpc = useRpc(api.stopThreads);
-  const refresh = useRpc(api.refreshCatalog);
-  const fetchServiceState = useRpc(api.serviceState);
   const [queueMenuOpen, setQueueMenuOpen] = useState(false);
   // Queue #1391: the queue menu's anchor. Its panel renders in the shell's
   // popover layer, positioned from the anchor's window coordinates.
@@ -130,12 +93,7 @@ export function BoardHeader({ c, workspaceName, state, activeWorkers, refetchSta
     documentHost.addEventListener("keydown", onKey);
     return () => documentHost.removeEventListener("keydown", onKey);
   }, [queueMenuOpen]);
-  const overrideCount = Object.keys(state?.projectLimitOverrides ?? {}).length;
-  const slotRows = useMemo(() => slotPopoverRows(state?.projectCapacities), [state?.projectCapacities]);
-  const features = useEngineFeatures();
-  const serviceStateQuery = useQuery({ queryKey: ["nucleus", "service-state"], queryFn: () => fetchServiceState({}), refetchInterval: 15_000, retry: false, enabled: features.serviceNotices });
   const pills = headerStatePills(state, activeWorkers);
-  const notices = !workspacePanel && serviceStateQuery.data ? serviceNotices(serviceStateQuery.data) : [];
   const meta = { fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight } as const;
   const hasAlerts = Boolean(error || readError) || Boolean(staleRead);
   return <>
@@ -163,9 +121,8 @@ export function BoardHeader({ c, workspaceName, state, activeWorkers, refetchSta
             >
               {workspacePanel ? `Nucleus board · ${workspaceName}` : "Nucleus"}
             </Text>
-            {(pills.length > 0 || notices.length > 0) && <View accessibilityLabel="Queue state" style={{ ...row, gap: space.xs, flexShrink: 1, minWidth: 0, overflow: "hidden", flexWrap: "nowrap" }}>
+            {pills.length > 0 && <View accessibilityLabel="Queue state" style={{ ...row, gap: space.xs, flexShrink: 1, minWidth: 0, overflow: "hidden", flexWrap: "nowrap" }}>
               {pills.map(pill => <Badge key={pill.label} label={pill.label} tone={pill.tone} c={c} a11y={pill.label} />)}
-              {notices.map(notice => <NoticePill key={notice.label} notice={notice} c={c} />)}
             </View>}
           </View>
           <View accessibilityLabel="Nucleus header controls" style={{ ...row, flexWrap: "nowrap", flexShrink: 0 }}>
@@ -174,7 +131,7 @@ export function BoardHeader({ c, workspaceName, state, activeWorkers, refetchSta
                 Boolean(state?.paused),
                 Boolean(state?.connected),
                 busy,
-              ).filter((control) => control.id !== "refresh" || features.catalogRefresh).map((control) => control.id === "pause" ? (
+              ).filter((control) => control.id !== "refresh").map((control) => control.id === "pause" ? (
                 <View key={control.id} style={{ position: "relative", zIndex: queueMenuOpen ? 50 : 0 }}>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Button small iconOnly joined="start" c={c} icon={control.icon} text={control.label} disabled={control.disabled}
@@ -205,28 +162,8 @@ export function BoardHeader({ c, workspaceName, state, activeWorkers, refetchSta
                       <Text numberOfLines={1} style={{ color: c.foreground, fontSize: typeScale.body.fontSize }}>{item.label}</Text>
                     </SurfacePress>)}
                     {state?.paused && <Text style={{ ...muted(c), ...meta, paddingHorizontal: space.sm, paddingBottom: space.xs }}>
-                      {features.engine === "rust"
-                        ? "Submissions are stored. No new run starts. In-flight work drains."
-                        : "Submissions are stored. No new run starts. In-flight work drains. Idle status covers this plugin’s managed runs only."}
+                      Submissions are stored. No new run starts. In-flight work drains.
                     </Text>}
-                    {/* Queue #665: per-project slot usage, moved here from the header's status line (Tom, 2026-11-21). */}
-                    {state && features.slotUsage && <View accessibilityLabel={`Project slot usage (${state.occupiedSlots ?? 0}/${state.globalLimit} in use)`} style={{ gap: space.xxs, paddingHorizontal: space.sm, paddingTop: space.sm, paddingBottom: space.xs }}>
-                      <View style={{ ...row, flexWrap: "nowrap", justifyContent: "space-between" }}>
-                        <Text style={{ color: c.foreground, ...meta, fontWeight: "600" }}>Slots</Text>
-                        <Text numberOfLines={1} style={{ ...muted(c), ...meta, flexShrink: 1 }}>{`${state.occupiedSlots ?? 0}/${state.globalLimit} global · project default ${state.projectLimit}${overrideCount ? ` · ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : ""}`}</Text>
-                      </View>
-                      {slotRows.length === 0
-                        ? <Text style={{ ...muted(c), ...meta }}>No project is using a slot.</Text>
-                        : slotRows.map(project => <View key={project.projectKey} accessibilityLabel={`${project.projectName}, ${project.occupiedSlots} of ${project.slotLimit} slots, ${project.inFlightTasks} of ${project.inFlightLimit} in flight`} style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
-                          <Text numberOfLines={1} style={{ color: c.foreground, ...meta, flex: 1 }}>{project.projectName}</Text>
-                          <Text numberOfLines={1} style={{ color: c.foregroundMuted, ...meta, fontFamily: "monospace", textAlign: "right" }}>{`${project.occupiedSlots}/${project.slotLimit} slots · ${project.inFlightTasks}/${project.inFlightLimit} in flight`}</Text>
-                        </View>)}
-                    </View>}
-                    {state && features.slotUsage && <View accessibilityLabel={state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`} style={{ gap: space.xxs, paddingHorizontal: space.sm, paddingTop: space.sm, paddingBottom: space.xs }}>
-                      <Text style={{ color: c.foreground, ...meta, fontWeight: "600" }}>{state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`}</Text>
-                      {!state.drained && state.boundRuns.slice(0, 8).map(run =>
-                        <Text key={run.runId} numberOfLines={1} style={{ color: c.foregroundMuted, ...meta }}>{`${run.reference ?? run.taskId} · ${run.role}`}</Text>)}
-                    </View>}
                     </ScrollView>
                   </Popover>}
                 </View>
@@ -236,7 +173,6 @@ export function BoardHeader({ c, workspaceName, state, activeWorkers, refetchSta
                   onPress={() => {
                     setQueueMenuOpen(false);
                     if (control.id === "settings") settingsOpener?.();
-                    else if (control.id === "refresh") void act(() => refresh({}));
                   }} />
               ))}
           </View>
