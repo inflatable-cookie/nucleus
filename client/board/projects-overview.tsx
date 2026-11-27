@@ -426,6 +426,7 @@ function CountTab({
     <Pressable
       accessibilityRole="tab"
       accessibilityState={{ selected }}
+      aria-selected={selected}
       accessibilityLabel={
         value === null
           ? `${label} in ${project.name}`

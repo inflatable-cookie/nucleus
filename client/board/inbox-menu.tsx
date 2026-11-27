@@ -66,6 +66,7 @@ function MenuEntry({
     <Pressable
       accessibilityRole="tab"
       accessibilityState={{ selected: on }}
+      aria-selected={on}
       accessibilityLabel={
         value === null || !loaded
           ? label
