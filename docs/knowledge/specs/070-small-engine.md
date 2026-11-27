@@ -646,7 +646,7 @@ Later decisions carry their own attribution.
     - Task workers and reviewers still reach their task's dispatching planner.
       Replies use the message's reply route (ruling 40).
 
-42. **Completion notices are opt-in.** Tom, 2026-11-25: "Do we have completion
+42. **Completion notices are opt-in.** (Superseded by ruling 55: notices are now opt-out.) Tom, 2026-11-25: "Do we have completion
     notices in rust nucleus? I don't see any planners being notified when a task
     is completed.. they were opt-in in TS version, can be here too, just want to
     make sure agents know how to use them". This ports the TypeScript
@@ -781,6 +781,8 @@ Later decisions carry their own attribution.
 53. **Retired concepts stay out of the Rust port.** Tom, 2026-11-26, after profile roles and scopes (retired by Spec 053 on 2026-10-21) turned up gating selection again: "Those concepts should never have made it into the rust port." He answered four questions about other leftovers, choosing the planner's recommendation each time. Remove the per-repository "Hung tool limit" ("Remove it"). The merge gate uses only the checks GitHub marks required on the branch, with no Nucleus-side checks list ("GitHub's only"). Hide the Default host picker until a second host is registered ("Hide until Orca"; Default host itself stays, as recorded above). Remove pilot mode, `serve --project` and its planner registration ("Remove pilot mode"). Interactive tasks (ruling 28) are rejected on submission like `queue.preferredProfileId`. The unused provider-limit cooldown setting goes. Board code that only served the TypeScript engine is deleted.
 
 54. **Merge with merge commits; honour brief merge holds.** On 2026-11-26 a brief's `queue.mergeHold` was ignored and its PR was squash-merged. The project's release tag had to sit on the certified candidate commit, which was then not on main. The Rust port had dropped both TypeScript behaviours. Tom, asked to confirm merge commits: "It sounds like merge commits are the right choice for the reason this incident brings up - squashes change the commit". Nucleus merges with a merge commit, so the exact reviewed head is an ancestor of the base. Squash and rebase merges are not used. A brief's `queue.mergeHold: true` with a required `queue.mergeHoldReason` holds only the merge step until the owning planner or the operator releases it (Specs 040 and 058). Admission refuses unknown `queue` keys and names them. Amendments can keep or remove existing legacy keys and refuse any additions or changes to unknown keys by name.
+
+55. **Completion notices are opt-out and queue behind the planner's turn.** Tom, 2026-11-27: "Can we make task completion notifications opt-out rather than opt-in, and have them queue by default so they land when the planner has finished its turn?" This replaces ruling 42's opt-in. Every task sends its completion notice to the dispatching planner thread when it reaches Done or Cancelled, unless its brief sets `queue.notifyOriginOnCloseout: false`. A task admitted before this change follows the rule in force at its closeout, so it gets the notice too. The fallback, the one-notice-per-task rule, the uncertain-delivery rule and the notice text stay as ruling 42 has them. Notices go as a queued message (`queue_after_active`): T3 holds a notice until the planner's current turn ends and never steers it into a running turn, so it doesn't interrupt the planner.
 
 ## The model
 
