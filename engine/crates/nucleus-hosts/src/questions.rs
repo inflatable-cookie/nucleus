@@ -6,7 +6,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use crate::{
     HostError, T3, clock_ms, dispatch_rejected,
     launch::message_id,
-    rpc::{Read, Reply, ThreadFence, ThreadObservation, ThreadReply},
+    rpc::{CallError, Read, Reply, ThreadFence, ThreadObservation, ThreadReply},
     task_row::ThreadVisibility,
     thread_snapshots::ThreadRead,
 };
@@ -91,6 +91,8 @@ pub enum NoticeState {
 pub enum NoticeOutcome {
     Accepted,
     Rejected,
+    /// The failure happened before any bytes were written to T3.
+    NotSent(HostError),
 }
 
 pub struct NoticeObservation {
@@ -299,10 +301,11 @@ impl T3 {
         let payload = frozen_payload(delivery)?;
         match self
             .rpc
-            .call_guarded(
+            .call_write(
                 "orchestration.launchThread",
                 payload.as_ref(),
                 Read::Background,
+                None,
                 || {
                     if self
                         .cached_project(project_id)
@@ -316,13 +319,15 @@ impl T3 {
                     }
                 },
             )
-            .await?
+            .await
         {
-            Reply::Value(_) => Ok(NoticeOutcome::Accepted),
-            Reply::Failure(cause) if dispatch_rejected(&cause, &delivery.command) => {
+            Ok(Reply::Value(_)) => Ok(NoticeOutcome::Accepted),
+            Ok(Reply::Failure(cause)) if dispatch_rejected(&cause, &delivery.command) => {
                 Ok(NoticeOutcome::Rejected)
             }
-            Reply::Failure(_) => Err(HostError::Uncertain),
+            Ok(Reply::Failure(_)) => Err(HostError::Uncertain),
+            Err(CallError::NotSent(error)) => Ok(NoticeOutcome::NotSent(error)),
+            Err(CallError::Unknown(error)) => Err(error),
         }
     }
 
@@ -413,10 +418,11 @@ impl T3 {
         let authorization = &dispatch.authorization;
         match self
             .rpc
-            .call_guarded(
+            .call_write(
                 "orchestration.dispatchCommand",
                 authorization.payload.as_ref(),
                 Read::Background,
+                None,
                 || {
                     self.check_notice_target(authorization)
                         .map_err(|_| HostError::Deferred {
@@ -425,13 +431,15 @@ impl T3 {
                     Ok(true)
                 },
             )
-            .await?
+            .await
         {
-            Reply::Value(_) => Ok(NoticeOutcome::Accepted),
-            Reply::Failure(cause) if dispatch_rejected(&cause, &authorization.command) => {
+            Ok(Reply::Value(_)) => Ok(NoticeOutcome::Accepted),
+            Ok(Reply::Failure(cause)) if dispatch_rejected(&cause, &authorization.command) => {
                 Ok(NoticeOutcome::Rejected)
             }
-            Reply::Failure(_) => Err(HostError::Uncertain),
+            Ok(Reply::Failure(_)) => Err(HostError::Uncertain),
+            Err(CallError::NotSent(error)) => Ok(NoticeOutcome::NotSent(error)),
+            Err(CallError::Unknown(error)) => Err(error),
         }
     }
 

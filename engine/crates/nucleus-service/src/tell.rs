@@ -522,15 +522,9 @@ impl Service {
             return Ok(());
         }
         saved?;
-        let result = self.host.send_notice(dispatch).await;
-        if matches!(result, Err(HostError::Deferred { .. })) {
-            return self
-                .save_tell(rows, TellDispatch::Advance(TellState::Pending))
-                .await;
-        }
-        let next = match result? {
+        let next = match self.host.send_notice(dispatch).await? {
             NoticeOutcome::Accepted => TellState::Accepted(attempt),
-            NoticeOutcome::Rejected => TellState::Pending,
+            NoticeOutcome::Rejected | NoticeOutcome::NotSent(_) => TellState::Pending,
         };
         self.save_tell(rows, TellDispatch::Advance(next)).await
     }
@@ -605,16 +599,11 @@ impl Service {
             TellDispatch::Advance(TellState::InFlight(attempt.clone())),
         )
         .await?;
-        let result = self
+        let next = match self
             .host
             .launch_planner_thread(&attempt, &host_project, &root)
-            .await;
-        if matches!(result, Err(HostError::Deferred { .. })) {
-            return self
-                .save_tell(rows, TellDispatch::Advance(TellState::Pending))
-                .await;
-        }
-        let next = match result? {
+            .await?
+        {
             NoticeOutcome::Accepted => {
                 let provider = model_selection["instanceId"].as_str().map(str::to_owned);
                 self.claim_launched_planner(
@@ -626,7 +615,7 @@ impl Service {
                 .await?;
                 TellState::Accepted(attempt)
             }
-            NoticeOutcome::Rejected => TellState::Pending,
+            NoticeOutcome::Rejected | NoticeOutcome::NotSent(_) => TellState::Pending,
         };
         self.save_tell(rows, TellDispatch::Advance(next)).await
     }

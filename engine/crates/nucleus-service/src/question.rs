@@ -158,6 +158,7 @@ impl Service {
 
     async fn notify_planner(&self, row: &TaskRow) -> Result<Action, ServiceError> {
         let wait = Action::Wait(WaitReason::Question);
+        let mut pending_attempt = None;
         if let Some(delivery) = row.task.question_delivery() {
             let observation = self.host.observe_notice(delivery).await?;
             match observation.state {
@@ -170,29 +171,40 @@ impl Service {
                     }
                     return Ok(wait);
                 }
-                NoticeState::Undelivered => {}
+                NoticeState::Undelivered | NoticeState::Gone => {}
+                NoticeState::Absent if delivery.last_send_at_ms.is_none() => {
+                    if self.project.is_some()
+                        || self.check_registered_planner(&delivery.thread).await?
+                    {
+                        pending_attempt = Some(delivery.clone());
+                    }
+                }
                 // None of these states authorizes another write for the recorded send.
-                NoticeState::Absent | NoticeState::Gone | NoticeState::Queued => return Ok(wait),
+                NoticeState::Absent | NoticeState::Queued => return Ok(wait),
             }
         }
-        let Some(thread) = self.planner_notice_target(&row.task, false).await? else {
-            return Ok(wait);
-        };
-        let question = row.task.question().ok_or(ServiceError::Input)?;
-        let command = format!("task-{}-question-{}", row.task.identity().id, row.version);
-        let text = if row.task.operator_decline().is_some() {
-            format!(
-                "The operator declined to accept the external merge for {}. Move or cancel the task.",
-                row.reference()
-            )
+        let mut attempt = if let Some(attempt) = pending_attempt {
+            attempt
         } else {
-            notice_text(
-                row.reference().as_ref(),
-                question,
-                row.task.threads().last_provider_limit.as_deref(),
-            )
+            let Some(thread) = self.planner_notice_target(&row.task, false).await? else {
+                return Ok(wait);
+            };
+            let question = row.task.question().ok_or(ServiceError::Input)?;
+            let command = format!("task-{}-question-{}", row.task.identity().id, row.version);
+            let text = if row.task.operator_decline().is_some() {
+                format!(
+                    "The operator declined to accept the external merge for {}. Move or cancel the task.",
+                    row.reference()
+                )
+            } else {
+                notice_text(
+                    row.reference().as_ref(),
+                    question,
+                    row.task.threads().last_provider_limit.as_deref(),
+                )
+            };
+            T3::prepare_notice(thread, command, &text)?
         };
-        let mut attempt = T3::prepare_notice(thread, command, &text)?;
         let _fence = self.effect(row).await?;
         let Some((authorization, _permit)) = self.prepare_planner_notice(row, &attempt).await?
         else {
@@ -206,19 +218,25 @@ impl Service {
         }
         let sent = self.save(row, updated, &event("question_delivery")).await?;
         let result = self.host.send_notice(dispatch).await;
-        let not_sent = matches!(result, Err(HostError::Deferred { .. }));
-        if not_sent || matches!(result, Ok(NoticeOutcome::Rejected)) {
+        let not_sent = match &result {
+            Ok(NoticeOutcome::NotSent(error)) => Some(*error),
+            _ => None,
+        };
+        if not_sent.is_some() || matches!(result, Ok(NoticeOutcome::Rejected)) {
             let mut pending = sent.task.clone();
             if !pending.clear_question_delivery(&command) {
                 return Err(ServiceError::Input);
             }
-            let mut audit = event(if not_sent {
+            let mut audit = event(if not_sent.is_some() {
                 "question_delivery_not_sent"
             } else {
                 "question_delivery_rejected"
             });
             audit.detail = serde_json::json!({"command":command}).to_string();
             self.save(&sent, pending, &audit).await?;
+        }
+        if let Some(error) = not_sent {
+            return Err(error.into());
         }
         result?;
         Ok(wait)
@@ -930,6 +948,226 @@ mod tests {
             .create(&task, &event("fixture"))
             .expect("seed question");
         service.task("notice").await.expect("first row")
+    }
+
+    #[tokio::test]
+    async fn delivered_question_rebinds_when_its_planner_is_gone() {
+        let (_home, mut service) = crate::tests::fixture(GitHub::new("unused-test-forge").unwrap());
+        let checkout = service.fixture().checkout.clone();
+        let gone = Arc::new(AtomicBool::new(false));
+        let sent = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let gone_flag = Arc::clone(&gone);
+        let sent_log = Arc::clone(&sent);
+        let (host, server) = native_fixture(move |request| match request["tag"].as_str() {
+            Some("orchestration.subscribeShell") => {
+                let threads = if gone_flag.load(Ordering::Relaxed) {
+                    json!([shell("planner-b", "2026-11-02T00:00:00.000Z")])
+                } else {
+                    json!([
+                        shell("planner-a", "2026-11-02T00:00:00.000Z"),
+                        shell("planner-b", "2026-11-01T00:00:00.000Z")
+                    ])
+                };
+                json!({"_tag":"Chunk","requestId":request["id"],"values":[
+                    {"kind":"snapshot","snapshotSequence":1,"snapshot":{
+                        "projects":[{"id":"local-fixture","workspaceRoot":checkout}],
+                        "threads": threads
+                    }},
+                    {"kind":"synchronized"}
+                ]})
+            }
+            Some("orchestration.subscribeThread") => {
+                let id = request["payload"]["threadId"].as_str().unwrap();
+                let archived = id == "planner-a" && gone_flag.load(Ordering::Relaxed);
+                let delivered = sent_log
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .find(|send| send["threadId"] == id)
+                    .cloned();
+                let (messages, runs) = match delivered {
+                    Some(record) => {
+                        let msg = record["messageId"].clone();
+                        (
+                            json!([{"id": msg, "runId": "run-1"}]),
+                            json!([{"id": "run-1", "userMessageId": msg, "status": "running", "startedAt": "2026-11-24T10:00:00Z"}]),
+                        )
+                    }
+                    None => (json!([]), json!([])),
+                };
+                json!({"_tag":"Chunk","requestId":request["id"],"values":[
+                    {"kind":"snapshot","snapshotSequence":2,"projection":{
+                        "thread":{
+                            "id": id,
+                            "projectId": "local-fixture",
+                            "archivedAt": archived.then_some("2026-11-24T11:00:00Z")
+                        },
+                        "messages": messages,
+                        "runs": runs
+                    }},
+                    {"kind":"synchronized"}
+                ]})
+            }
+            Some("orchestration.dispatchCommand") => {
+                sent_log.lock().unwrap().push(request["payload"].clone());
+                json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{"sequence":3}}})
+            }
+            other => panic!("unexpected request: {other:?}"),
+        })
+        .await;
+        service.host = host;
+
+        let row = seed_question(&service).await;
+        service.notify_question(&row).await.unwrap();
+        let bound = service.task("notice").await.unwrap();
+        assert_eq!(bound.task.question_delivery().unwrap().thread, "planner-a");
+
+        // While planner-a is alive and started, no second send occurs.
+        service.notify_question(&bound).await.unwrap();
+        assert_eq!(sent.lock().unwrap().len(), 1);
+
+        // Once planner-a is archived, the question rebinds to planner-b.
+        gone.store(true, Ordering::Relaxed);
+        service.notify_question(&bound).await.unwrap();
+        let rebound = service.task("notice").await.unwrap();
+        assert_eq!(
+            rebound.task.question_delivery().unwrap().thread,
+            "planner-b"
+        );
+        let sends = sent.lock().unwrap();
+        assert_eq!(sends.len(), 2);
+        assert_eq!(sends[0]["threadId"], "planner-a");
+        assert_eq!(sends[1]["threadId"], "planner-b");
+        assert_ne!(sends[0]["commandId"], sends[1]["commandId"]);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn unsent_question_delivery_resends_only_when_no_send_was_attempted() {
+        for attempted in [false, true] {
+            let (_home, mut service) =
+                crate::tests::fixture(GitHub::new("unused-test-forge").unwrap());
+            let checkout = service.fixture().checkout.clone();
+            let sent = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let sent_log = Arc::clone(&sent);
+            let (host, server) = native_fixture(move |request| match request["tag"].as_str() {
+                Some("orchestration.subscribeThread") => {
+                    let id = request["payload"]["threadId"].as_str().unwrap();
+                    json!({"_tag":"Chunk","requestId":request["id"],"values":[
+                        {"kind":"snapshot","snapshotSequence":2,"projection":{
+                            "thread":{"id": id, "projectId": "local-fixture"},
+                            "messages": [],
+                            "runs": []
+                        }},
+                        {"kind":"synchronized"}
+                    ]})
+                }
+                Some("orchestration.subscribeShell") => {
+                    json!({"_tag":"Chunk","requestId":request["id"],"values":[
+                        {"kind":"snapshot","snapshotSequence":1,"snapshot":{
+                            "projects":[{"id":"local-fixture","workspaceRoot":checkout}],
+                            "threads":[shell("planner-a", "2026-11-02T00:00:00.000Z")]
+                        }},
+                        {"kind":"synchronized"}
+                    ]})
+                }
+                Some("orchestration.dispatchCommand") => {
+                    sent_log.lock().unwrap().push(request["payload"].clone());
+                    json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{"sequence":3}}})
+                }
+                other => panic!("unexpected request: {other:?}"),
+            })
+            .await;
+            service.host = host;
+
+            let row = seed_question(&service).await;
+            let mut delivery = T3::prepare_notice(
+                "planner-a".into(),
+                "saved-before-send".into(),
+                "Please decide",
+            )
+            .unwrap();
+            if attempted {
+                delivery.last_send_at_ms = Some(1_000);
+            }
+            let mut updated = row.task.clone();
+            assert!(updated.bind_question_delivery(delivery));
+            let saved = service
+                .save(&row, updated, &event("seed_delivery"))
+                .await
+                .unwrap();
+
+            service.notify_question(&saved).await.unwrap();
+            let sends = sent.lock().unwrap().clone();
+            if attempted {
+                // Uncertain delivery (last_send_at_ms set, message absent) must never resend.
+                assert!(sends.is_empty());
+            } else {
+                // Unsent delivery (last_send_at_ms None, message absent) sends the recorded command.
+                assert_eq!(sends.len(), 1);
+                assert_eq!(sends[0]["commandId"], "saved-before-send");
+                let after = service.task("notice").await.unwrap();
+                assert!(
+                    after
+                        .task
+                        .question_delivery()
+                        .unwrap()
+                        .last_send_at_ms
+                        .is_some()
+                );
+            }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn uncertain_drop_after_send_keeps_question_bound_while_not_sent_clears_it() {
+        let (_home, mut service) = crate::tests::fixture(GitHub::new("unused-test-forge").unwrap());
+        let checkout = service.fixture().checkout.clone();
+        let sent = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sent_log = Arc::clone(&sent);
+        let (host, server) = native_fixture(move |request| match request["tag"].as_str() {
+            Some("orchestration.subscribeShell") => json!({
+                "_tag":"Chunk","requestId":request["id"],"values":[
+                    {"kind":"snapshot","snapshotSequence":1,"snapshot":{
+                        "projects":[{"id":"local-fixture","workspaceRoot":checkout}],
+                        "threads":[shell("planner-a", "2026-11-02T00:00:00.000Z")]
+                    }},
+                    {"kind":"synchronized"}
+                ]
+            }),
+            Some("orchestration.subscribeThread") => json!({
+                "_tag":"Chunk","requestId":request["id"],"values":[
+                    {"kind":"snapshot","snapshotSequence":2,"projection":{
+                        "thread":{"id":"planner-a","projectId":"local-fixture"},
+                        "messages":[],"runs":[]
+                    }},
+                    {"kind":"synchronized"}
+                ]
+            }),
+            Some("orchestration.dispatchCommand") => {
+                sent_log.lock().unwrap().push(request["payload"].clone());
+                // Drop connection after receiving the write to simulate uncertain delivery.
+                Value::Null
+            }
+            other => panic!("unexpected request: {other:?}"),
+        })
+        .await;
+        service.host = host;
+
+        let row = seed_question(&service).await;
+        let err = service.notify_question(&row).await.unwrap_err();
+        assert!(matches!(err, ServiceError::Host(HostError::Unavailable)));
+        // Uncertain delivery after write keeps question_delivery bound with last_send_at_ms set.
+        let after = service.task("notice").await.unwrap();
+        let delivery = after
+            .task
+            .question_delivery()
+            .expect("uncertain delivery stays bound");
+        assert!(delivery.last_send_at_ms.is_some());
+        assert_eq!(sent.lock().unwrap().len(), 1);
+        server.abort();
     }
 
     fn snapshot_reply(req: &Value, strongest: &str, checkout: &Path) -> Value {

@@ -1815,13 +1815,8 @@ impl Service {
         {
             service_log!("{}: {error}", task.identity().id);
         }
-        let result = match host.send(dispatch).await {
-            Err(
-                error @ (HostError::Deferred { .. }
-                | HostError::RetainedBindingChanged
-                | HostError::OperatorSnoozed { .. }
-                | HostError::RetainedParentSnoozed { .. }),
-            ) => {
+        let result = match host.send(dispatch).await? {
+            SendOutcome::NotSent(error) => {
                 let mut audit = event("host_send_not_sent");
                 audit.detail = serde_json::json!({"command":run.launch().instance}).to_string();
                 let restored = self.save(&sent, row.task.clone(), &audit).await?;
@@ -1840,7 +1835,7 @@ impl Service {
                 .await?;
                 return Ok(SendAttempt::Deferred);
             }
-            result => result?,
+            outcome => outcome,
         };
         if archive && result == SendOutcome::Rejected {
             let mut updated = sent.task.clone();

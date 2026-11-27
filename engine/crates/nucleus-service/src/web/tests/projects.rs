@@ -4478,3 +4478,186 @@ async fn item_assess_with_archived_claimed_planner_and_no_fallback_records_new_t
         Some(launched_thread.as_str())
     );
 }
+
+async fn board_get(board: &Router, path: &str, cookie: &str) -> Response {
+    board
+        .clone()
+        .oneshot(
+            Request::get(path)
+                .header(HOST, "127.0.0.1:9")
+                .header("x-nucleus-board", "1")
+                .header(axum::http::header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn pair_planner_board(board: &Router, actor: &str) -> String {
+    let link = caller_request(board, Method::POST, "/v1/board/link", actor, json!({})).await;
+    assert_eq!(link.status(), StatusCode::OK);
+    let url = json_body(link).await["url"].as_str().unwrap().to_owned();
+    let token = url.split("#token=").nth(1).unwrap();
+    let paired = board
+        .clone()
+        .oneshot(
+            Request::post("/api/engine/pair")
+                .header(HOST, "127.0.0.1:9")
+                .header("x-nucleus-board", "1")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(paired.status(), StatusCode::NO_CONTENT);
+    paired
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+async fn acp_keys(api: &Router, path: &str, actor: &str) -> (String, String) {
+    let res = caller_request(api, Method::POST, path, actor, json!({})).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_body(res).await;
+    let binding: nucleus_core::acp::Binding = serde_json::from_str(
+        &std::fs::read_to_string(body["bindingPath"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    (
+        hex::encode(binding.credential),
+        hex::encode(binding.command_credential.unwrap()),
+    )
+}
+
+async fn assert_board_reauthorized(board: &Router, cookie: &str, alpha: &str, task_id: &str) {
+    let session = board_get(board, "/api/engine/session", cookie).await;
+    assert_eq!(session.status(), StatusCode::OK);
+    assert_eq!(json_body(session).await["planningProjects"], json!([alpha]));
+    let tasks = board_get(board, "/api/engine/tasks", cookie).await;
+    assert_eq!(tasks.status(), StatusCode::OK);
+    let list = json_body(tasks).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["identity"]["id"], task_id);
+}
+
+fn spawn_enrollments(service: &Arc<Service>) -> tokio::task::JoinHandle<()> {
+    let service = Arc::clone(service);
+    tokio::spawn(async move { service.watch_enrollments().await })
+}
+
+async fn acp_call(
+    api: &Router,
+    method: Method,
+    path: &str,
+    key: &str,
+    body: Option<Value>,
+) -> StatusCode {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(HOST, "127.0.0.1:9")
+        .header(AUTHORIZATION, format!("Bearer {key}"));
+    let body = match body {
+        Some(value) => {
+            req = req.header("content-type", "application/json");
+            Body::from(value.to_string())
+        }
+        None => Body::empty(),
+    };
+    api.clone()
+        .oneshot(req.body(body).unwrap())
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn planner_paired_board_and_acp_sessions_reauthorize_after_stream_drop_and_restart() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+    let task_id = "reauth-task";
+    let admitted = submit(&registry.api, "alpha-planner", task_id, None).await;
+    assert_eq!(admitted.status(), StatusCode::CREATED);
+    let (read_key, write_key) = acp_keys(
+        &registry.api,
+        &format!("/v1/tasks/{task_id}/acp"),
+        "alpha-planner",
+    )
+    .await;
+    let board = registry_board_api(&registry);
+    let cookie = pair_planner_board(&board, "alpha-planner").await;
+
+    // Stream drop: ACP read, ACP write and board sessions each reauthorize project scope.
+    let worker = spawn_enrollments(&registry.service);
+    registry
+        .service
+        .state
+        .lock()
+        .await
+        .enrolled_planners
+        .clear();
+    assert_eq!(
+        acp_call(
+            &registry.api,
+            Method::GET,
+            &format!("/v1/tasks/{task_id}"),
+            &read_key,
+            None
+        )
+        .await,
+        StatusCode::OK
+    );
+    registry
+        .service
+        .state
+        .lock()
+        .await
+        .enrolled_planners
+        .clear();
+    assert_eq!(
+        acp_call(
+            &registry.api,
+            Method::POST,
+            &format!("/v1/tasks/{task_id}/commands"),
+            &write_key,
+            Some(json!({"hold": "reauth check"})),
+        )
+        .await,
+        StatusCode::OK
+    );
+    registry
+        .service
+        .state
+        .lock()
+        .await
+        .enrolled_planners
+        .clear();
+    assert_board_reauthorized(&board, &cookie, &alpha, task_id).await;
+
+    // Restart: persisted board cookie reauthorizes planner scope on the first request.
+    worker.abort();
+    let _ = worker.await;
+    drop(board);
+    let restarted = registry.reopen();
+    let worker = spawn_enrollments(&restarted.service);
+    let restarted_board = registry_board_api(&restarted);
+    assert_board_reauthorized(&restarted_board, &cookie, &alpha, task_id).await;
+    worker.abort();
+}

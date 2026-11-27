@@ -225,7 +225,7 @@ impl SendOutcome {
                 error: None,
             },
             Ok(NoticeOutcome::Rejected) => Self::RetryRejected,
-            Err(error @ HostError::Deferred { .. }) => Self::Reopen {
+            Ok(NoticeOutcome::NotSent(error)) => Self::Reopen {
                 rejected: false,
                 error: Some(error),
             },
@@ -749,4 +749,24 @@ fn report_branches(identity: &Identity, checkout: &Checkout<'_>) -> Result<Branc
         &identity.base,
         checkout.branch(),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pre_send_notice_failure_reopens_report_notice_while_post_send_stays_uncertain() {
+        assert!(matches!(
+            SendOutcome::classify(Ok(NoticeOutcome::NotSent(HostError::Unavailable)), false),
+            SendOutcome::Reopen {
+                rejected: false,
+                error: Some(HostError::Unavailable),
+            }
+        ));
+        assert!(matches!(
+            SendOutcome::classify(Err(HostError::Unavailable), false),
+            SendOutcome::Uncertain(HostError::Unavailable)
+        ));
+    }
 }

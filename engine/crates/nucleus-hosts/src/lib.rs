@@ -82,7 +82,7 @@ pub use questions::{
     NoticeTarget, PlannerIdentity, PlannerThread,
 };
 pub use rpc::ThreadHint;
-use rpc::{Read, Reply, Rpc, ThreadReply, closed_row};
+use rpc::{CallError, Read, Reply, Rpc, ThreadReply, closed_row};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
 pub use task_row::{RowChange, RowChildren, RowObservation, RowVisibility, snooze_deadline};
@@ -106,7 +106,7 @@ pub struct LaunchRequest<'a> {
     pub text: String,
 }
 
-#[derive(Clone, Copy, Debug, thiserror::Error)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum HostError {
     #[error("the host endpoint, credential or role profile is invalid")]
     Configuration,
@@ -186,6 +186,8 @@ pub enum SendOutcome {
     Sent,
     /// T3 returned a durable rejection for this exact native command ID.
     Rejected,
+    /// The failure happened before any bytes were written to T3.
+    NotSent(HostError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -454,6 +456,11 @@ struct PassEvidence {
 
 #[cfg(any(test, feature = "loopback-fixture"))]
 impl T3Pass<'_> {
+    #[cfg(test)]
+    pub(crate) fn sent_for_test(&self) -> bool {
+        self.evidence.sent.load(Ordering::Acquire)
+    }
+
     /// Use one known process cwd in this loopback fixture pass.
     #[doc(hidden)]
     #[must_use]
@@ -1320,13 +1327,19 @@ impl TaskHost for T3Pass<'_> {
         let reply = self
             .host
             .rpc
-            .call_guarded(wire.method.rpc(), wire.payload.as_ref(), Read::One, || {
-                if dispatch.queued_continuation && self.host.rpc.uses_held_shell() {
-                    self.host
-                        .verify_retained_target(&wire, &dispatch.owned_parent_snoozes)?;
-                }
-                Ok(true)
-            })
+            .call_write(
+                wire.method.rpc(),
+                wire.payload.as_ref(),
+                Read::One,
+                None,
+                || {
+                    if dispatch.queued_continuation && self.host.rpc.uses_held_shell() {
+                        self.host
+                            .verify_retained_target(&wire, &dispatch.owned_parent_snoozes)?;
+                    }
+                    Ok(true)
+                },
+            )
             .await;
         match &reply {
             Ok(Reply::Failure(cause)) => host_log!(
@@ -1335,17 +1348,28 @@ impl TaskHost for T3Pass<'_> {
                 wire.diagnostic(),
                 self.host.rpc.failure_detail(cause)
             ),
-            Err(error) => host_log!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic()),
+            Err(CallError::NotSent(error) | CallError::Unknown(error)) => {
+                host_log!("{}: T3 {}: {error}", dispatch.instance, wire.diagnostic());
+            }
             Ok(Reply::Value(_)) => {}
         }
-        if matches!(&reply, Ok(Reply::Failure(cause)) if rejected(cause, &wire, &dispatch.instance))
-        {
-            return Ok(SendOutcome::Rejected);
-        }
-        self.evidence.sent.store(true, Ordering::Release);
-        match reply? {
-            Reply::Value(_) => Ok(SendOutcome::Sent),
-            Reply::Failure(_) => Err(HostError::Uncertain),
+        match reply {
+            Err(CallError::NotSent(error)) => Ok(SendOutcome::NotSent(error)),
+            Err(CallError::Unknown(error)) => {
+                self.evidence.sent.store(true, Ordering::Release);
+                Err(error)
+            }
+            Ok(Reply::Failure(cause)) if rejected(&cause, &wire, &dispatch.instance) => {
+                Ok(SendOutcome::Rejected)
+            }
+            Ok(Reply::Value(_)) => {
+                self.evidence.sent.store(true, Ordering::Release);
+                Ok(SendOutcome::Sent)
+            }
+            Ok(Reply::Failure(_)) => {
+                self.evidence.sent.store(true, Ordering::Release);
+                Err(HostError::Uncertain)
+            }
         }
     }
 

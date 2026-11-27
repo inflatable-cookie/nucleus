@@ -38,7 +38,7 @@ const PS_COLUMNS: &str = "pid=,ppid=,uid=,stat=,lstart=,ucomm=";
 #[cfg(not(target_os = "macos"))]
 const PS_COLUMNS: &str = "pid=,ppid=,uid=,stat=,lstart=,comm=";
 
-#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ProcessEvidenceFailure {
     #[error("the census timed out")]
     Timeout,

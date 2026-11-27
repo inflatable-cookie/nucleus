@@ -2502,7 +2502,7 @@ async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody()
         .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
     assert!(matches!(
         pass.send(dispatch).await,
-        Err(HostError::OperatorSnoozed { .. })
+        Ok(SendOutcome::NotSent(HostError::OperatorSnoozed { .. }))
     ));
     row["snoozedUntil"] = Value::Null;
     host.rpc
@@ -2606,7 +2606,10 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     assert!(permit.parent_row().is_none());
     let refused = pass.send(permit.record(&mut task.clone()).unwrap()).await;
     assert!(
-        matches!(refused, Err(HostError::RetainedParentSnoozed { until }) if until == until_ms),
+        matches!(
+            refused,
+            Ok(SendOutcome::NotSent(HostError::RetainedParentSnoozed { until })) if until == until_ms
+        ),
         "{refused:?}"
     );
     task.record_send(&instance, 4).unwrap();
@@ -3484,4 +3487,208 @@ async fn retention_walk_drains_seventy_archives_in_three_bounded_batches() {
     }
     assert_eq!(sizes, [32, 32, 6]);
     assert_eq!(wire.await.unwrap().len(), 73);
+}
+
+#[tokio::test]
+async fn failed_inbox_write_releases_effect_claim_so_retry_writes() {
+    use crate::{
+        InboxStep, InboxTarget, NUCLEUS_RUST_PROVIDER, inbox::INBOX_THREAD, inbox::PROJECT,
+    };
+    use std::collections::BTreeSet;
+
+    let root = "/synthetic/rust-inbox";
+    let inbox_snapshot = json!({
+        "kind": "snapshot",
+        "snapshotSequence": 11,
+        "projection": {
+            "thread": {
+                "id": INBOX_THREAD,
+                "projectId": PROJECT,
+                "providerInstanceId": NUCLEUS_RUST_PROVIDER,
+                "modelSelection": {"instanceId": NUCLEUS_RUST_PROVIDER, "model": "nucleus"},
+                "pinnedAt": "2026-11-24T10:00:00Z",
+                "archivedAt": null,
+                "deletedAt": null,
+                "worktreePath": null,
+                "parentThreadId": null,
+                "lineage": null
+            },
+            "runs": [],
+            "runtimeRequests": [],
+            "turnItems": []
+        }
+    });
+    let shell_snapshot = json!({
+        "kind": "snapshot",
+        "snapshot": {
+            "snapshotSequence": 11,
+            "projects": [{"id": PROJECT, "workspaceRoot": root}],
+            "threads": [{
+                "id": INBOX_THREAD,
+                "projectId": PROJECT,
+                "pinnedAt": "2026-11-24T10:00:00Z",
+                "archivedAt": null,
+                "deletedAt": null,
+                "updatedAt": "2026-11-24T10:00:00Z"
+            }]
+        }
+    });
+    let (host, requests) = server(vec![
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(inbox_snapshot.clone()),
+        ),
+        (
+            "orchestration.dispatchCommand",
+            Response::Failure(json!([{"_tag":"Fail","error":{"_tag":"TransientError"}}])),
+        ),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(inbox_snapshot.clone()),
+        ),
+        ("orchestration.dispatchCommand", Response::Success),
+        (
+            "orchestration.subscribeThread",
+            Response::ParentSnapshot(inbox_snapshot),
+        ),
+    ])
+    .await;
+    host.rpc.use_held_shell();
+    host.rpc.fixture_shell(&shell_snapshot);
+    let target = InboxTarget {
+        root,
+        provider: NUCLEUS_RUST_PROVIDER,
+    };
+    let pending = BTreeSet::from(["decision:fixture".to_owned()]);
+
+    let InboxStep::Wake(first) = host.prepare_inbox(&target, &pending).await.unwrap() else {
+        panic!("expected inbox wake");
+    };
+    let command_id = first.command_id().to_owned();
+    assert!(matches!(
+        host.write_inbox(first).await,
+        Err(HostError::Uncertain)
+    ));
+
+    let InboxStep::Wake(retry) = host.prepare_inbox(&target, &pending).await.unwrap() else {
+        panic!("expected inbox wake retry");
+    };
+    assert_eq!(retry.command_id(), command_id);
+    host.write_inbox(retry).await.unwrap();
+
+    // After success, the same command ID is deduplicated while the shell has not moved.
+    let InboxStep::Wake(duplicate) = host.prepare_inbox(&target, &pending).await.unwrap() else {
+        panic!("expected inbox wake duplicate");
+    };
+    assert_eq!(duplicate.command_id(), command_id);
+    host.write_inbox(duplicate).await.unwrap();
+
+    let dispatches: Vec<Value> = requests
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.tag == "orchestration.dispatchCommand")
+        .map(|request| serde_json::from_str(request.payload.get()).unwrap())
+        .collect();
+    assert_eq!(dispatches.len(), 2);
+    assert_eq!(dispatches[0]["commandId"], command_id);
+    assert_eq!(dispatches[1]["commandId"], command_id);
+}
+
+#[tokio::test]
+async fn pre_send_connection_failure_reports_not_sent_for_notice_and_role_dispatch() {
+    use crate::NoticeOutcome;
+
+    let directory = checkout_fixture();
+    let binding = binding(directory.path());
+    let mut notice = T3::prepare_notice(THREAD.into(), "pre-send-notice".into(), "Please decide")
+        .expect("notice");
+    let mut idle = snapshot(&binding, &notice.command, "queued", false);
+    idle["projection"]["runs"] = json!([]);
+    let (mut task, _, _) = reserve_entry(binding.clone(), Entry::Brief);
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listen");
+    let address = listener.local_addr().expect("address");
+    let client = T3::new(&format!("http://{address}"), "fixture-key").expect("client");
+    let server = tokio::spawn(async move {
+        // First connection serves observe_notice and authorize_send, then closes so writes reconnect.
+        serve_ticket(&listener).await;
+        let (socket, _) = listener.accept().await.expect("websocket");
+        let mut socket = accept_hdr_async(socket, check_upgrade)
+            .await
+            .expect("handshake");
+        for step in 0..2 {
+            let frame = socket.next().await.unwrap().unwrap();
+            let request: Request = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+            assert_eq!(request.tag, "orchestration.subscribeThread");
+            let reply = if step == 0 {
+                json!({
+                    "_tag": "Chunk",
+                    "requestId": request.id.parse::<u64>().unwrap(),
+                    "values": [idle, {"kind": "synchronized"}],
+                })
+            } else {
+                json!({
+                    "_tag": "Exit",
+                    "requestId": request.id,
+                    "exit": {
+                        "_tag": "Failure",
+                        "cause": [{"_tag": "Fail", "error": {
+                            "_tag": "OrchestrationV2GetThreadProjectionError",
+                            "threadId": THREAD,
+                            "cause": {
+                                "name": "ProjectionStoreThreadNotFoundError",
+                                "message": format!("No orchestration projection exists for thread {THREAD}.")
+                            }
+                        }}]
+                    }
+                })
+            };
+            socket
+                .send(Message::Text(reply.to_string().into()))
+                .await
+                .unwrap();
+            if step == 0 {
+                for _ in 0..2 {
+                    let _ = socket.next().await;
+                }
+            }
+        }
+        drop(socket);
+
+        // Next two ticket requests fail with 503 before any WebSocket write happens.
+        for _ in 0..2 {
+            let (mut http, _) = listener.accept().await.expect("rejected ticket");
+            let mut buf = [0; 1024];
+            assert!(http.read(&mut buf).await.unwrap() > 0);
+            http.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+        }
+    });
+
+    let permit = ready_notice(&client, &notice).await;
+    let notice_dispatch = permit.record(&mut notice).expect("record notice");
+
+    let pass = quiet_pass(&client);
+    let run_permit = pass
+        .authorize_send(task.run().expect("reserved run"))
+        .await
+        .expect("authorize role launch");
+    let run_dispatch = run_permit.record(&mut task).expect("record role launch");
+
+    // Drop the cached socket so both writes must reconnect and hit the 503 ticket failure.
+    client.rpc.socket_clear_for_test();
+    assert_eq!(
+        client.send_notice(notice_dispatch).await.unwrap(),
+        NoticeOutcome::NotSent(HostError::Unavailable)
+    );
+
+    client.rpc.clear_retry_for_test();
+    assert_eq!(
+        pass.send(run_dispatch).await.unwrap(),
+        SendOutcome::NotSent(HostError::Unavailable)
+    );
+    assert!(!pass.sent_for_test());
+    server.await.unwrap();
 }
