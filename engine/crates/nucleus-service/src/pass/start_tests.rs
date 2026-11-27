@@ -75,6 +75,7 @@ async fn registered() -> Registered {
             "product".into(),
             ProjectSettings {
                 planner_claim: None,
+                claimed_planner_threads: Vec::new(),
                 name: "Synthetic product".into(),
                 archived: false,
                 repositories: vec![RepositorySettings {

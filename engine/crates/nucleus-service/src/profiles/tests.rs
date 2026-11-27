@@ -268,6 +268,22 @@ struct NativeRuns {
     limited: Option<String>,
 }
 
+impl NativeRuns {
+    fn limit(&mut self, thread: &str) -> Value {
+        self.limited = Some(thread.into());
+        let launch = &self.launches[thread];
+        json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1, "projects":[], "threads":[{
+                "id":thread, "projectId":"local-fixture",
+                "worktreePath":launch["workspaceStrategy"]["worktreePath"],
+                "branch":launch["workspaceStrategy"]["branch"], "status":"failed",
+                "latestRunId":"native-run", "activeRunId":null,
+                "pendingRuntimeRequest":null, "pendingBackgroundTasks":[],
+            }]
+        }})
+    }
+}
+
 fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRuns) -> Value {
     let payload = &request["payload"];
     let reply = |value| {
@@ -512,7 +528,8 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
     let threads = launch_three(&service, &native).await;
     measure_overlap(&service, &traffic).await;
 
-    native.lock().expect("native runs").limited = Some(threads[0].clone());
+    let shell = native.lock().expect("native runs").limit(&threads[0]);
+    service.host.fixture_held_shell(&shell);
     wake(&service, &IDS[..1]).await;
     let ended = pass(&service).await;
     assert_eq!(ended.len(), 1);

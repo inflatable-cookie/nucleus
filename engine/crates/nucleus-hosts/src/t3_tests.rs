@@ -28,6 +28,29 @@ use tokio_tungstenite::{
 };
 
 const THREAD: &str = "fixture-thread";
+
+#[test]
+fn cached_thread_titles_include_archived_rows_without_a_host_read() {
+    let host = T3::new("http://127.0.0.1:1", "fixture-key").expect("fixture host");
+    host.rpc.fixture_shell(&json!({
+        "kind":"snapshot",
+        "snapshot":{
+            "threads":[{"id":"current","title":"Current thread"}],
+            "archivedThreads":[{"id":"archived","title":"Archived thread"}],
+            "projects":[]
+        }
+    }));
+
+    assert_eq!(
+        host.cached_thread_title("current").as_deref(),
+        Some("Current thread")
+    );
+    assert_eq!(
+        host.cached_thread_title("archived").as_deref(),
+        Some("Archived thread")
+    );
+    assert_eq!(host.cached_thread_title("unknown"), None);
+}
 const NATIVE_RUN: &str = "fixture-native-turn";
 const LATE_REPLY_MS: u64 = 600_000;
 
@@ -236,7 +259,7 @@ async fn unchanged_rows_reuse_their_snapshots_and_only_one_changed_row_reads() {
     let ((), warm) = T3::count_pass_calls(Box::pin(async {
         for row in &rows {
             host.fixture_pass()
-                .observe_retained(&binding, row["id"].as_str().unwrap())
+                .observe_retained_role(&binding, row["id"].as_str().unwrap())
                 .await
                 .expect("initial exact observation");
         }
@@ -246,7 +269,7 @@ async fn unchanged_rows_reuse_their_snapshots_and_only_one_changed_row_reads() {
     let ((), unchanged) = T3::count_pass_calls(Box::pin(async {
         for row in &rows {
             host.fixture_pass()
-                .observe_retained(&binding, row["id"].as_str().unwrap())
+                .observe_retained_role(&binding, row["id"].as_str().unwrap())
                 .await
                 .expect("unchanged observation");
         }
@@ -262,7 +285,7 @@ async fn unchanged_rows_reuse_their_snapshots_and_only_one_changed_row_reads() {
     let ((), moved) = T3::count_pass_calls(Box::pin(async {
         for row in &rows {
             host.fixture_pass()
-                .observe_retained(&binding, row["id"].as_str().unwrap())
+                .observe_retained_role(&binding, row["id"].as_str().unwrap())
                 .await
                 .expect("observation after one row moved");
         }
@@ -355,13 +378,6 @@ async fn done_archive_uses_only_the_held_shell_and_skips_a_late_active_row() {
             "snapshotSequence":99,"projects":[],"threads":[deleted,row("unrelated","idle")]
         }}));
     assert!(matches!(restart_step(), Ok(crate::DoneArchive::Finished)));
-    assert!(
-        quiet_pass(&restarted)
-            .retirement_writer(checkout.path())
-            .await
-            .unwrap()
-            .is_none()
-    );
     assert!(restarted.host_calls().is_empty());
     let requests = native.await.unwrap();
     let targets: Vec<Value> = requests
@@ -597,31 +613,26 @@ fn reserve_with_parent(
 }
 
 #[tokio::test]
-async fn a_sibling_helper_needs_exact_idle_proof_and_never_hides_other_work() {
+async fn a_sibling_helper_needs_a_quiet_bound_shell_row_and_never_hides_other_work() {
     let checkout = checkout_fixture();
     let root = checkout.path().canonicalize().expect("canonical checkout");
     let binding = binding(&root);
     let (mut task, _, instance) = reserve_entry(binding.clone(), Entry::Brief);
     task.record_send(&instance, 1).expect("record worker send");
     assert_eq!(task.threads().get(nucleus_core::Role::Worker), Some(THREAD));
-    for (status, unrelated, unknown, expected) in [
-        ("completed", false, false, Some(true)),
-        ("running", false, false, Some(false)),
-        ("completed", true, false, Some(false)),
-        ("completed", false, true, None),
+    for (status, unrelated, expected) in [
+        ("completed", false, true),
+        ("running", false, false),
+        ("completed", true, false),
+        ("unknown", false, false),
     ] {
-        let mut observed = snapshot(&binding, &instance, status, false);
-        if unknown {
-            observed["projection"]
-                .as_object_mut()
-                .expect("projection")
-                .remove("providerThreads");
-        }
-        let (client, server) = server(vec![(
-            "orchestration.subscribeThread",
-            Response::Snapshot(observed),
-        )])
-        .await;
+        let client = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+        let observed = snapshot(&binding, &instance, status, false);
+        client
+            .rpc
+            .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+                "snapshotSequence":16, "projects":[], "threads":[shell_row(&observed)]
+            }}));
         let mut pass = client.fixture_pass().for_task(&task, None);
         pass.evidence = std::sync::Arc::new(crate::PassEvidence {
             processes: tokio::sync::OnceCell::new_with(Some(Ok(
@@ -629,21 +640,13 @@ async fn a_sibling_helper_needs_exact_idle_proof_and_never_hides_other_work() {
             ))),
             ..crate::PassEvidence::default()
         });
-        let result = pass.quiet(&binding, "fixture-reviewer", None).await;
-        if let Some(expected) = expected {
-            assert_eq!(result.expect("custody"), expected);
-        } else {
-            assert!(matches!(
-                result,
-                Err(HostError::RetainedIdleCoverage {
-                    providers: false,
-                    ..
-                })
-            ));
-        }
-        let requests = server.await.expect("scripted host");
-        let payload: Value = serde_json::from_str(requests[0].payload.get()).expect("payload");
-        assert_eq!(payload["threadId"], THREAD);
+        assert_eq!(
+            pass.quiet(&binding, "fixture-reviewer", None)
+                .await
+                .unwrap(),
+            expected
+        );
+        assert!(client.host_calls().is_empty());
     }
 }
 
@@ -664,6 +667,34 @@ fn snapshot(binding: &Binding, instance: &str, state: &str, archived: bool) -> V
     })
 }
 
+fn shell_row(view: &Value) -> Value {
+    let mut row = view["projection"]["thread"].clone();
+    let run = &view["projection"]["runs"][0];
+    row["status"] = run["status"].clone();
+    row["latestRunId"] = run["id"].clone();
+    row["activeRunId"] = Value::Null;
+    row["pendingRuntimeRequest"] = Value::Null;
+    row["pendingBackgroundTasks"] = json!([]);
+    row
+}
+
+fn archived_shell_reply(revision: u64, row: &Value) -> (&'static str, Response) {
+    (
+        "orchestration.getArchivedShellSnapshot",
+        Response::Value(json!({
+            "snapshotSequence":revision,"projects":[],"threads":[row],
+        })),
+    )
+}
+
+fn hold_shell(client: &T3, view: &Value) {
+    client
+        .rpc
+        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":view["snapshotSequence"], "projects":[], "threads":[shell_row(view)]
+        }}));
+}
+
 #[tokio::test]
 async fn missing_or_steered_history_does_not_prove_a_terminal_role_run() {
     let checkout = checkout_fixture();
@@ -679,7 +710,7 @@ async fn missing_or_steered_history_does_not_prove_a_terminal_role_run() {
     truncated["historyCursor"] = json!("more");
     truncated["projection"]["runs"] = json!([]);
     let (client, server) = server(
-        [exact, steered, truncated]
+        [exact.clone(), steered, truncated]
             .into_iter()
             .map(|reply| ("orchestration.subscribeThread", Response::Snapshot(reply)))
             .collect(),
@@ -691,14 +722,17 @@ async fn missing_or_steered_history_does_not_prove_a_terminal_role_run() {
         instance: instance.clone(),
         state,
     };
+    hold_shell(&client, &exact);
     assert_eq!(
         pass.observe_run(run, 2).await.unwrap().host,
         seen(RunState::Ended)
     );
+    hold_shell(&client, &exact);
     assert_eq!(
         pass.observe_run(run, 3).await.unwrap().host,
         seen(RunState::IdleWithoutTerminalRun)
     );
+    hold_shell(&client, &exact);
     assert!(matches!(
         pass.observe_run(run, 4).await,
         Err(HostError::Uncertain)
@@ -1466,6 +1500,65 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
 }
 
 #[tokio::test]
+async fn parent_unarchive_requires_current_archived_shell_evidence() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let archived = parent_snapshot(&binding, "completed", true);
+    let row = shell_row(&archived);
+    let mut busy = row.clone();
+    busy["pendingBackgroundTasks"] = json!([{"kind":"command","taskId":"late-work"}]);
+    let mut responses = Vec::new();
+    for (revision, row) in [(15, &row), (16, &busy), (17, &row), (18, &row)] {
+        responses.extend([
+            (
+                "orchestration.subscribeThread",
+                Response::ParentSnapshot(archived.clone()),
+            ),
+            archived_shell_reply(revision, row),
+        ]);
+    }
+    responses.push(("orchestration.dispatchCommand", Response::Success));
+    let (host, native) = server(responses).await;
+    let shell = |revision| {
+        host.rpc
+            .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+                "snapshotSequence":revision,"projects":[],"threads":[]}
+            }));
+    };
+    shell(16);
+    let pass = quiet_pass(&host);
+    let prepare = || {
+        Box::pin(host.prepare_parent(
+            &binding,
+            "fixture-acp",
+            "Fixture",
+            "Resume the task",
+            None,
+            pass.profile_catalog(),
+        ))
+    };
+    assert!(matches!(prepare().await.unwrap(), crate::ParentStep::Wait));
+    assert!(matches!(prepare().await.unwrap(), crate::ParentStep::Wait));
+    let crate::ParentStep::Write(stale) = prepare().await.unwrap() else {
+        panic!("the quiet archived parent should unarchive");
+    };
+    host.rpc.clear_shell();
+    shell(18);
+    assert!(matches!(
+        host.write_parent(stale).await,
+        Err(crate::ParentSendError::NotSent(HostError::Uncertain))
+    ));
+    let crate::ParentStep::Write(write) = prepare().await.unwrap() else {
+        panic!("the new shell has confirmed archive evidence");
+    };
+    host.write_parent(write).await.unwrap();
+    let requests = native.await.unwrap();
+    let payload: Value = serde_json::from_str(requests.last().unwrap().payload.get()).unwrap();
+    assert_eq!(payload["type"], "thread.unarchive");
+    assert_eq!(payload["threadId"], row["id"]);
+}
+
+#[tokio::test]
 async fn bounded_parent_refresh_keeps_the_held_custody_fence() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
@@ -1524,38 +1617,6 @@ async fn assert_repeat_custody_refusal(host: &T3, verified: Vec<crate::ParentWri
     assert!(refusals[0].contains("pendingBackgroundTasks changed"));
 }
 
-#[test]
-fn parent_custody_fails_closed_with_an_unknown_or_live_child() {
-    let checkout = checkout_fixture();
-    let binding = binding(checkout.path());
-    let thread = crate::parent_thread(checkout.path());
-    let snapshot = parent_snapshot(&binding, "completed", false);
-    for status in [
-        Value::Null,
-        json!("unknown"),
-        json!("queued"),
-        json!("preparing"),
-        json!("running"),
-    ] {
-        let mut input = snapshot.clone();
-        input["projection"]["subagents"][0]["status"] = status;
-        let projection = crate::Projection::parse(input, &binding, &thread).unwrap();
-        assert!(projection.delivery_custody().unwrap_err().contains("child"));
-    }
-    let mut input = snapshot.clone();
-    input["projection"]
-        .as_object_mut()
-        .unwrap()
-        .remove("subagents");
-    let projection = crate::Projection::parse(input, &binding, &thread).unwrap();
-    assert!(
-        projection
-            .delivery_custody()
-            .unwrap_err()
-            .contains("roster")
-    );
-}
-
 #[tokio::test]
 async fn a_retained_read_cannot_infer_absence_when_the_held_shell_lists_the_thread() {
     let checkout = checkout_fixture();
@@ -1572,71 +1633,12 @@ async fn a_retained_read_cannot_infer_absence_when_the_held_shell_lists_the_thre
             ]
         }}));
     assert!(matches!(
-        quiet_pass(&host).observe_retained(&binding, THREAD).await,
+        quiet_pass(&host)
+            .observe_retained_role(&binding, THREAD)
+            .await,
         Err(HostError::HeldThreadMissing { revision: Some(16) })
     ));
     assert_eq!(native.await.unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn bounded_finished_worker_needs_matching_shell_custody_for_retirement() {
-    let checkout = checkout_fixture();
-    let binding = binding(checkout.path());
-    let updated = "2026-11-24T16:00:00Z";
-    let bounded = |mut value: Value| {
-        value["hasMoreHistory"] = json!(true);
-        value["historyCursor"] = json!("older worker turns");
-        value["turnItemsOmitLocalVisible"] = json!(true);
-        value["projection"]["thread"]["updatedAt"] = json!(updated);
-        value
-    };
-    let worker = bounded(snapshot(&binding, "child", "completed", false));
-    let (host, native) = server(vec![(
-        "orchestration.subscribeThread",
-        Response::Snapshot(worker.clone()),
-    )])
-    .await;
-    let shell_row = |view: &Value| {
-        let mut row = view["projection"]["thread"].clone();
-        row["latestRunId"] = json!(NATIVE_RUN);
-        row["status"] = json!("completed");
-        row["pendingBackgroundTasks"] = json!([]);
-        row["visibleItemCount"] = json!(50_000);
-        row
-    };
-    host.rpc
-        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":16, "projects":[],
-            "threads":[shell_row(&worker)]
-        }}));
-    let mut projection = crate::Projection::parse(worker.clone(), &binding, THREAD).unwrap();
-    let mut stale = shell_row(&worker);
-    stale["updatedAt"] = json!("2026-11-24T15:59:00Z");
-    projection.use_shell_background(&stale, false);
-    assert!(matches!(
-        projection.retained(),
-        Err(HostError::RetainedIdleCoverage {
-            shell_background: false,
-            ..
-        })
-    ));
-    let mut busy = shell_row(&worker);
-    busy["pendingBackgroundTasks"] = json!([{"taskId":"before-the-window"}]);
-    projection.use_shell_background(&busy, false);
-    assert_eq!(projection.retained().unwrap(), RetainedThread::Busy);
-
-    assert_eq!(
-        quiet_pass(&host)
-            .observe_retained(&binding, THREAD)
-            .await
-            .unwrap(),
-        Host::Retained {
-            thread: THREAD.into(),
-            state: RetainedThread::Idle,
-        }
-    );
-    let requests = native.await.unwrap();
-    assert_thread_subscription(&requests[0], THREAD);
 }
 
 #[test]
@@ -1728,7 +1730,6 @@ async fn fresh_roles_can_start_while_the_checkout_has_a_writer() {
     ] {
         let (client, server) = server(vec![
             ("orchestration.subscribeThread", absent()),
-            ("orchestration.subscribeThread", absent()),
             ("orchestration.launchThread", Response::Success),
         ])
         .await;
@@ -1739,15 +1740,8 @@ async fn fresh_roles_can_start_while_the_checkout_has_a_writer() {
             )))),
             ..crate::PassEvidence::default()
         });
-        assert!(matches!(
-            pass.observe_retained(&binding, THREAD).await.unwrap(),
-            Host::Retained {
-                state: RetainedThread::Busy,
-                ..
-            }
-        ));
         assert_eq!(send(&pass, &mut task).await.unwrap(), SendOutcome::Sent);
-        assert_eq!(server.await.unwrap().len(), 3);
+        assert_eq!(server.await.unwrap().len(), 2);
     }
 }
 
@@ -1779,255 +1773,64 @@ async fn ready_notice(
 }
 
 #[tokio::test]
-async fn closing_tasks_share_one_cwd_census_for_retirement_roots() {
-    let busy = checkout_fixture();
-    let idle = checkout_fixture();
-    let elsewhere = checkout_fixture();
-    // The test process keeps these open with its cwd outside every fixture.
-    let _handles: Vec<_> = (0..128)
-        .map(|n| std::fs::File::create(elsewhere.path().join(n.to_string())).unwrap())
-        .collect();
-    let _open_in_idle_checkout = std::fs::File::create(idle.path().join("build.log")).unwrap();
-    let mut child = Process::new("/bin/sleep")
-        .arg("60")
-        .current_dir(busy.path())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    let pid = child.id().unwrap();
-    let host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
-    let pass = host.pass(elsewhere.path());
-    assert!(!pass.evidence.processes.initialized());
-    let pass = pass.with_fixture_process_cwd(pid, busy.path());
-    let scope = |checkout: &Path, scratch| pass.for_task(&reserve(binding(checkout)).0, scratch);
-    assert_eq!(
-        scope(busy.path(), None)
-            .retirement_writer(busy.path())
-            .await
-            .unwrap()
-            .map(|blocker| blocker.pid),
-        Some(pid)
-    );
-    child.kill().await.unwrap();
-    // A second census here would see that the child has exited.
-    assert_eq!(
-        scope(idle.path(), None)
-            .retirement_writer(busy.path())
-            .await
-            .unwrap()
-            .map(|blocker| blocker.pid),
-        Some(pid)
-    );
-    assert_eq!(
-        scope(idle.path(), None)
-            .retirement_writer(idle.path())
-            .await
-            .unwrap(),
-        None
-    );
-    assert!(host.host_calls().is_empty());
-}
-
-#[tokio::test]
-async fn terminal_role_observation_leaves_local_writer_custody_to_checkout_removal() {
-    let checkout = checkout_fixture();
-    let binding = binding(checkout.path());
-    let (mut task, _, instance) = reserve(binding.clone());
-    task.record_send(&instance, 1).expect("record send");
-    let terminal = snapshot(&binding, &instance, "completed", false);
-    let probe = "orchestration.subscribeThread";
-    let (client, server) = server(vec![
-        (probe, Response::Snapshot(terminal.clone())),
-        (probe, Response::Snapshot(terminal.clone())),
-        (probe, Response::Snapshot(terminal)),
-    ])
-    .await;
-
-    // The process outlives the projected turn. Its cwd is the only connection
-    // to the checkout, so a pass-wide thread inventory would not account for it.
-    let mut process = Process::new("/bin/sleep")
-        .arg("60")
-        .current_dir(checkout.path())
-        .kill_on_drop(true)
-        .spawn()
-        .expect("fixture child");
-    let parent = crate::parent_thread(checkout.path());
-    let unlisted = T3::new("http://127.0.0.1:9", "fixture").unwrap();
-    unlisted
-        .rpc
-        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":1,"projects":[],"threads":[]
-        }}));
-    assert!(
-        unlisted
-            .pass(checkout.path())
-            .retirement_writer(checkout.path())
-            .await
-            .unwrap()
-            .is_some()
-    );
-    assert!(unlisted.host_calls().is_empty());
-    unlisted.rpc.clear_shell();
-    assert!(matches!(
-        unlisted.retire_with_quiet_shell(&parent, &[&parent], || panic!("shell detached")),
-        Err(HostError::Uncertain)
-    ));
-    let run = task.run().expect("run");
-    let pass = client.pass(checkout.path());
-    assert_eq!(
-        pass.observe_run(run, 2)
-            .await
-            .expect("exact turn ended")
-            .host,
-        Host::Current {
-            instance,
-            state: RunState::Ended
-        }
-    );
-    assert_eq!(
-        pass.observe_retained(&binding, THREAD)
-            .await
-            .expect("writer present"),
-        Host::Retained {
-            thread: THREAD.into(),
-            state: RetainedThread::Busy
-        }
-    );
-    process.kill().await.expect("stop fixture child");
-    assert_eq!(
-        quiet_pass(&client)
-            .observe_retained(&binding, THREAD)
-            .await
-            .expect("writer exited"),
-        Host::Retained {
-            thread: THREAD.into(),
-            state: RetainedThread::Idle
-        }
-    );
-    server.await.expect("scripted host");
-}
-
-#[tokio::test]
-async fn terminal_role_uses_explicit_background_clearance_from_current_bound_shell() {
+async fn terminal_role_requires_a_quiet_bound_row_at_or_after_its_revision() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (task, _, instance) = reserve(binding.clone());
     let mut terminal = snapshot(&binding, &instance, "completed", false);
     terminal["hasMoreHistory"] = json!(true);
     terminal["historyCursor"] = json!("earlier-items");
-    let mut row = terminal["projection"]["thread"].clone();
-    row["status"] = json!("completed");
-    // The shell knows a separate T3 completion after the primary role run.
-    row["latestRunId"] = json!("later-completion");
-    row["activeRunId"] = Value::Null;
-    row["pendingRuntimeRequest"] = Value::Null;
-    row["pendingBackgroundTasks"] = json!([]);
+    let detail = terminal["projection"].as_object_mut().unwrap();
+    detail.remove("providerThreads");
+    detail.remove("turnItems");
+    let row = shell_row(&terminal);
     let probe = "orchestration.subscribeThread";
-    let (host, requests) = server(vec![
-        (probe, Response::Snapshot(terminal.clone())),
-        (probe, Response::Snapshot(terminal)),
-    ])
+    let (host, requests) = server(
+        (0..5)
+            .map(|_| (probe, Response::Snapshot(terminal.clone())))
+            .collect(),
+    )
     .await;
-    let pass = host.pass(checkout.path());
+    let pass = host.fixture_pass();
     let run = task.run().unwrap();
+    let observed = |state| Host::Current {
+        instance: instance.clone(),
+        state,
+    };
     host.rpc
         .fixture_shell(&json!({"kind":"snapshot","snapshot":{
             "snapshotSequence":15, "projects":[], "threads":[row]
         }}));
-    assert!(matches!(
-        pass.observe_run(run, 2).await,
-        Err(HostError::RetainedIdleCoverage { .. })
-    ));
     host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":16,"thread":{"id":"unrelated"}}));
     assert_eq!(
-        pass.observe_run(run, 3).await.unwrap().host,
-        Host::Current {
-            instance,
-            state: RunState::Ended
-        }
+        pass.observe_run(run, 2).await.unwrap().host,
+        observed(RunState::Running)
     );
-    // The second observation may reuse the held exact projection.
-    assert!(
-        host.host_calls()
-            .get(probe)
-            .is_some_and(|calls| (1..=2).contains(calls))
-    );
-    requests.abort();
-}
-
-#[tokio::test]
-async fn settlement_needs_every_provider_and_background_turn_item() {
-    let checkout = checkout_fixture();
-    let binding = binding(checkout.path());
-    let (task, _, instance) = reserve(binding.clone());
-    let terminal = snapshot(&binding, &instance, "completed", false);
-    let mut omitted = terminal.clone();
-    omitted["projection"]
+    let mut busy = row.clone();
+    busy["pendingBackgroundTasks"] = json!([{"kind":"command","taskId":"older-run"}]);
+    let mut unknown = row.clone();
+    unknown
         .as_object_mut()
-        .expect("projection")
-        .remove("providerThreads");
-    let mut windowed = terminal.clone();
-    windowed["hasMoreHistory"] = json!(true);
-    windowed["historyCursor"] = json!("prior-session-not-in-window");
-    let mut old_provider = terminal.clone();
-    old_provider["projection"]["providerThreads"] = json!([
-        {"id":"older-session", "pendingBackgroundTasks":[{"taskId":"still-executing","kind":"command"}]},
-        {"id":"latest-session", "pendingBackgroundTasks":[]},
-    ]);
-    let mut live_item = terminal.clone();
-    live_item["projection"]["turnItems"] = json!([
-        {"type":"command_execution","status":"running","runId":NATIVE_RUN},
-    ]);
-    let probe = "orchestration.subscribeThread";
-    let (client, server) = server(vec![
-        (probe, Response::Snapshot(omitted)),
-        (probe, Response::Snapshot(windowed)),
-        (probe, Response::Snapshot(old_provider)),
-        (probe, Response::Snapshot(live_item)),
-        (probe, Response::Snapshot(terminal)),
-    ])
-    .await;
-
-    let pass = quiet_pass(&client);
-    assert!(matches!(
-        pass.observe_retained(&binding, THREAD).await,
-        Err(HostError::RetainedIdleCoverage {
-            providers: false,
-            ..
-        })
-    ));
-    let run = task.run().expect("run");
-    assert!(matches!(
-        pass.observe_run(run, 2).await,
-        Err(HostError::RetainedIdleCoverage {
-            shell_background: false,
-            ..
-        })
-    ));
-    for _ in 0..2 {
+        .unwrap()
+        .remove("pendingBackgroundTasks");
+    let mut foreign = row.clone();
+    foreign["branch"] = json!("wrong-branch");
+    for (revision, thread) in [(17, busy), (18, unknown), (19, foreign)] {
+        host.rpc
+            .fixture_shell(&json!({"kind":"thread.updated","sequence":revision,"thread":thread}));
         assert_eq!(
-            pass.observe_run(run, 2)
-                .await
-                .expect("active background work")
-                .host,
-            Host::Current {
-                instance: instance.clone(),
-                state: RunState::Running
-            }
+            pass.observe_run(run, 2).await.unwrap().host,
+            observed(RunState::Running)
         );
     }
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":20,"thread":row}));
     assert_eq!(
-        pass.observe_run(run, 3)
-            .await
-            .expect("covered and quiet")
-            .host,
-        Host::Current {
-            instance,
-            state: RunState::Ended
-        }
+        pass.observe_run(run, 3).await.unwrap().host,
+        observed(RunState::Ended)
     );
-    server.await.expect("scripted host");
+    assert_eq!(requests.await.unwrap().len(), 5);
 }
 
 #[tokio::test]
@@ -2152,17 +1955,19 @@ async fn usage_limit_requires_the_latest_failed_root_error_on_the_exact_run() {
     steer["projection"]["messages"] =
         json!([{"id":format!("{instance}-message"),"runId":NATIVE_RUN}]);
 
-    let steps = [
+    let views = [
         limited, no_reset, balance, quota, throttle, running, completed, older_run, child_node,
         text_only, superseded, steer,
-    ]
-    .into_iter()
-    .map(|reply| ("orchestration.subscribeThread", Response::Snapshot(reply)))
-    .collect();
+    ];
+    let steps = views
+        .iter()
+        .cloned()
+        .map(|reply| ("orchestration.subscribeThread", Response::Snapshot(reply)))
+        .collect();
     let (client, server) = server(steps).await;
     let pass = quiet_pass(&client);
     let run = task.run().expect("own launch");
-    for (status, evidence) in [
+    for (view, (status, evidence)) in views.iter().zip([
         (RunState::UsageLimited, Some(Some(1_795_449_900_000))),
         (RunState::UsageLimited, Some(None)),
         (RunState::UsageLimited, Some(None)),
@@ -2175,7 +1980,8 @@ async fn usage_limit_requires_the_latest_failed_root_error_on_the_exact_run() {
         (RunState::Ended, None),
         (RunState::Ended, None),
         (RunState::IdleWithoutTerminalRun, None),
-    ] {
+    ]) {
+        hold_shell(&client, view);
         let seen = pass.observe_run(run, 2).await.expect("native observation");
         assert_eq!(
             seen.host,
@@ -2230,7 +2036,7 @@ async fn windowed_terminal_limit_uses_the_failed_runs_root_or_its_shell_summary(
     let mut unmatched = crate::Projection::parse(view.clone(), &binding, THREAD).unwrap();
     let mut wrong = shell.clone();
     wrong["latestRunId"] = json!("unrelated-run");
-    unmatched.use_shell_background(&wrong, true);
+    unmatched.use_shell_failure(&wrong, true);
     assert_eq!(unmatched.provider_limit(&msg), None);
     let (host, native) = server(vec![(
         "orchestration.subscribeThread",
@@ -2317,18 +2123,19 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
     restored["turnItemsOmitLocalVisible"] = json!(true);
     restored["projection"]["turnItems"] = json!([]);
     restored["projection"]["thread"]["updatedAt"] = json!("2026-11-24T16:42:26Z");
-    let mut shell_row = restored["projection"]["thread"].clone();
-    shell_row["latestRunId"] = json!(NATIVE_RUN);
-    shell_row["status"] = json!("interrupted");
-    shell_row["pendingBackgroundTasks"] = json!([]);
-    shell_row["visibleItemCount"] = json!(50_000);
+    let mut restored_row = shell_row(&restored);
+    restored_row["visibleItemCount"] = json!(50_000);
     let mut operator_snoozed = restored.clone();
     operator_snoozed["projection"]["thread"]["snoozedUntil"] = json!("2099-06-01T12:00:00.000Z");
     let mut settled = restored.clone();
     settled["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:00:00Z");
     let probe = "orchestration.subscribeThread";
     let command = "orchestration.dispatchCommand";
+    let archive_row = shell_row(&archived);
     let (client, server) = server(vec![
+        (probe, Response::Snapshot(archived.clone())),
+        (probe, Response::Snapshot(archived)),
+        archived_shell_reply(16, &archive_row),
         (command, Response::Success),
         (probe, Response::Snapshot(operator_snoozed)),
         (probe, Response::Snapshot(settled)),
@@ -2338,19 +2145,18 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
     client
         .rpc
         .fixture_shell(&json!({"kind":"snapshot","snapshot":{
-            "sequence":1, "projects":[], "threads":[],
-            "archivedThreads":[archived["projection"]["thread"]]
+            "snapshotSequence":15, "projects":[], "threads":[]
         }}));
     let pass = quiet_pass(&client);
     let retained = pass
-        .observe_retained(&binding, THREAD)
+        .observe_retained_role(&binding, THREAD)
         .await
         .expect("retained thread");
     assert_eq!(
         retained,
         Host::Retained {
             thread: THREAD.into(),
-            state: RetainedThread::Idle
+            state: RetainedThread::Queueable
         }
     );
     observation.host = Observed::Known(retained);
@@ -2375,8 +2181,8 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
         .expect("unarchived");
     client
         .rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":2,
-            "thread":shell_row
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":16,
+            "thread":restored_row
         }));
     assert!(
         matches!(
@@ -2394,8 +2200,8 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
         .expect("record settled continuation");
     assert_eq!(pass.send(dispatch).await.unwrap(), SendOutcome::Sent);
     let sent = server.await.expect("scripted host");
-    let unarchive: Value = serde_json::from_str(sent[0].payload.get()).expect("unarchive payload");
-    let message: Value = serde_json::from_str(sent[3].payload.get()).expect("continuation payload");
+    let unarchive: Value = serde_json::from_str(sent[3].payload.get()).expect("unarchive payload");
+    let message: Value = serde_json::from_str(sent[6].payload.get()).expect("continuation payload");
     assert_eq!(
         unarchive,
         json!({"type":"thread.unarchive", "threadId":THREAD, "commandId":format!("{instance}-unarchive")})
@@ -2719,12 +2525,12 @@ fn replay_script(
         (probe, Response::Snapshot(ended)),
     ];
     if archive {
+        let archived = snapshot(binding, instance, "interrupted", true);
+        let row = shell_row(&archived);
         steps.extend([
             (command, Response::Success),
-            (
-                probe,
-                Response::Snapshot(snapshot(binding, instance, "interrupted", true)),
-            ),
+            (probe, Response::Snapshot(archived)),
+            archived_shell_reply(17, &row),
         ]);
     }
     steps
@@ -2789,12 +2595,19 @@ async fn revoked_replay(archive: bool) {
             .expect("interrupt"),
         StopProgress::Waiting
     );
+    hold_shell(
+        &client,
+        &snapshot(&binding, &instance, "interrupted", false),
+    );
     if archive {
         assert_eq!(
             stop(&quiet_pass(&client), run, &binding, expired, true)
                 .await
                 .expect("archive"),
             StopProgress::Waiting
+        );
+        client.rpc.fixture_shell(
+            &json!({"kind":"thread.removed","sequence":17,"location":"active","threadId":THREAD}),
         );
     }
     assert_eq!(
@@ -2839,16 +2652,21 @@ async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
     let probe = "orchestration.subscribeThread";
     let command = "orchestration.dispatchCommand";
     let mut idle = snapshot(&binding, &instance, "interrupted", false);
+    let quiet = idle.clone();
     idle["projection"]["runs"] = json!([]);
     let mut archived = idle.clone();
     archived["projection"]["thread"]["archivedAt"] = json!("2026-11-23T16:00:00Z");
+    let mut archive_row = shell_row(&quiet);
+    archive_row["archivedAt"] = archived["projection"]["thread"]["archivedAt"].clone();
     let (client, server) = server(vec![
         (probe, Response::Snapshot(idle.clone())),
         (command, Response::Success),
         (probe, Response::Snapshot(idle)),
         (probe, Response::Snapshot(archived)),
+        archived_shell_reply(17, &archive_row),
     ])
     .await;
+    hold_shell(&client, &quiet);
     let run = task.run().expect("revoked reservation");
     assert_eq!(
         stop(&quiet_pass(&client), run, &binding, 2, true)
@@ -2871,6 +2689,9 @@ async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
             .expect("stale archive readback"),
         StopProgress::Write(_)
     ));
+    client.rpc.fixture_shell(
+        &json!({"kind":"thread.removed","sequence":17,"location":"active","threadId":THREAD}),
+    );
     assert_eq!(
         pass.stop(run, &binding, late, true)
             .await

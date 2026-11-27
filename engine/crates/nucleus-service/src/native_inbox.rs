@@ -156,14 +156,14 @@ impl Service {
         self.inbox_changed();
     }
 
+    #[expect(dead_code, reason = "batch 6b removes process-custody decisions")]
     pub(super) fn raise_process_decision(
         &self,
         state: &mut State,
-        blocker: &nucleus_hosts::RetirementBlocker,
+        pid: u32,
+        started: i64,
+        finding: &str,
     ) -> Result<(), StoreError> {
-        let Some(started) = blocker.started else {
-            return Ok(());
-        };
         // A host process can hold checkouts across repositories. Give its
         // operator decision one stable home in this profile's Inbox.
         let Some(project) = state
@@ -173,7 +173,7 @@ impl Service {
         else {
             return Ok(());
         };
-        let id = Decision::process_id(blocker.pid, started);
+        let id = Decision::process_id(pid, started);
         for configured in state.settings.planning_projects(self.project.as_ref()) {
             if let Some(decision) = state.store.decision(configured, &id)? {
                 if (decision.withdrawn || decision.answer.is_some())
@@ -191,7 +191,7 @@ impl Service {
             id,
             DecisionInput {
                 question: format!(
-                    "{blocker} Check the process before Nucleus can retire affected checkouts."
+                    "{finding} Check the process before Nucleus can retire affected checkouts."
                 ),
                 options: vec![
                     DecisionOption {
@@ -210,6 +210,7 @@ impl Service {
         Ok(())
     }
 
+    #[expect(dead_code, reason = "batch 6b removes process-custody decisions")]
     pub(super) fn clear_process_decisions(
         &self,
         state: &mut State,
@@ -489,6 +490,22 @@ impl Service {
         }
         self.decision_changed();
     }
+}
+
+// Close decisions left by engines that used process custody as a closeout gate.
+pub(super) fn supersede_process_decisions(
+    store: &mut nucleus_store::Store,
+    settings: &crate::web::RuntimeSettings,
+    fixture: Option<&crate::Project>,
+) -> Result<(), StoreError> {
+    for project in settings.planning_projects(fixture) {
+        for decision in store.decisions(project, true)? {
+            if decision.is_process_custody() {
+                store.supersede_process_decision(project, &decision.id, engine_stamp())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn pending(state: &State, service: &Service) -> Result<Vec<Decision>, StoreError> {

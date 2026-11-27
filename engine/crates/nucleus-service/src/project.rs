@@ -415,6 +415,7 @@ pub(crate) mod git_gate {
         pub holds: AtomicUsize,
         /// Count and hold only Git commands with this argument.
         pub only: OnceLock<&'static str>,
+        skip: usize,
         released: Mutex<bool>,
         ready: Condvar,
     }
@@ -432,7 +433,14 @@ pub(crate) mod git_gate {
     }
 
     pub fn install(path: PathBuf) -> Arc<Gate> {
-        let gate = Arc::new(Gate::default());
+        install_after(path, 0)
+    }
+
+    pub fn install_after(path: PathBuf, skip: usize) -> Arc<Gate> {
+        let gate = Arc::new(Gate {
+            skip,
+            ..Gate::default()
+        });
         gates().lock().unwrap().insert(path, Arc::clone(&gate));
         gate
     }
@@ -446,7 +454,7 @@ pub(crate) mod git_gate {
         }) {
             let earlier = gate.entered.fetch_add(1, Ordering::SeqCst);
             let holds = gate.holds.load(Ordering::SeqCst);
-            if holds != 0 && earlier >= holds {
+            if earlier < gate.skip || (holds != 0 && earlier - gate.skip >= holds) {
                 return;
             }
             let released = gate.released.lock().unwrap();

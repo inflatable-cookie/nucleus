@@ -87,8 +87,6 @@ pub enum ServiceError {
     /// A checkout stays until its changes, publication, roles or Dispatch move.
     #[error("{0}")]
     CheckoutRetained(String),
-    #[error("{0}")]
-    CheckoutProcess(nucleus_hosts::RetirementBlocker),
     #[error("T3 parent message was not sent: {reason}")]
     ParentNotSent {
         reason: String,
@@ -251,7 +249,7 @@ pub struct Service {
     board: std::sync::OnceLock<web::Board>,
     callback: SocketAddr,
     report_command: PathBuf,
-    state: StateMutex,
+    state: Arc<StateMutex>,
     project_writes: RwLock<()>,
     pass_lock: Mutex<()>,
     watch_lock: Mutex<()>,
@@ -476,6 +474,7 @@ impl Service {
         {
             runtime_settings.projects = Some(store.clean_removed_projects(&settings)?.value);
         }
+        native_inbox::supersede_process_decisions(&mut store, &runtime_settings, project.as_ref())?;
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
         if project.is_none() {
             host.use_held_shell();
@@ -495,7 +494,7 @@ impl Service {
             board: std::sync::OnceLock::new(),
             callback,
             report_command,
-            state: StateMutex::new(State {
+            state: Arc::new(StateMutex::new(State {
                 store,
                 allowance_clock,
                 settings: runtime_settings,
@@ -523,7 +522,7 @@ impl Service {
                 thread_tasks: BTreeMap::new(),
                 title_candidates: BTreeMap::new(),
                 held_calls: BTreeMap::new(),
-            }),
+            })),
             project,
             project_writes: RwLock::new(()),
             pass_lock: Mutex::new(()),
@@ -631,9 +630,6 @@ impl Service {
         let (result, calls) = Box::pin(T3::count_pass_calls(self.run_batch(host))).await;
         let mut state = self.state.lock().await;
         state.last_pass_calls = calls;
-        if let Some(processes) = host.unresolved_processes() {
-            self.clear_process_decisions(&mut state, processes)?;
-        }
         state.scheduler_error = result.as_ref().err().map(|error| match error {
             ServiceError::Project => "the task is outside this engine's configured project",
             ServiceError::Settings(_) | ServiceError::Store(_) => {
@@ -1067,9 +1063,29 @@ impl Service {
 
     async fn watch_trash(&self) {
         loop {
-            let work = self.storage.work();
-            self.prune("checkout trash", work, nucleus_work::prune_trash)
-                .await;
+            let runtime = tokio::runtime::Handle::current();
+            let census_root = self.storage.scratch().clone();
+            self.prune("checkout trash", self.storage.work(), move |work, now| {
+                let mut census = None;
+                nucleus_work::prune_trash(work, now, |entry| {
+                    // Capture once, only when a verified entry has reached its expiry.
+                    if census.is_none() {
+                        census = Some(runtime.block_on(async {
+                            if census_root.verify().is_err() {
+                                return None;
+                            }
+                            nucleus_hosts::TrashCensus::capture(census_root.path())
+                                .await
+                                .ok()
+                        }));
+                    }
+                    census
+                        .as_ref()
+                        .and_then(Option::as_ref)
+                        .is_some_and(|census| runtime.block_on(census.can_remove(entry)))
+                })
+            })
+            .await;
             let scratch = self.storage.scratch();
             self.prune(
                 "checkout quarantine",
@@ -1085,7 +1101,7 @@ impl Service {
         &self,
         kind: &'static str,
         root: &StorageDirectory,
-        job: fn(&StorageDirectory, u64) -> Result<(), WorkError>,
+        job: impl FnOnce(&StorageDirectory, u64) -> Result<(), WorkError> + Send + 'static,
     ) {
         let root = root.clone();
         let result = self
@@ -1291,11 +1307,6 @@ impl Service {
                 );
             }
             return Ok(());
-        }
-        if let Err(ServiceError::CheckoutProcess(blocker)) = result
-            && blocker.unverified
-        {
-            self.raise_process_decision(&mut state, blocker)?;
         }
         if wait == Some(WaitReason::Capacity)
             && current.task.phase() == Phase::Working
@@ -2279,10 +2290,6 @@ fn task_wait(
             Some(Wait::Stopping),
             Some(WaitDetail::Blocked(error.to_string())),
         ),
-        Err(ServiceError::CheckoutProcess(blocker)) => (
-            Some(Wait::Stopping),
-            Some(WaitDetail::Blocked(blocker.to_string())),
-        ),
         Err(ServiceError::ParentRecoveryPlanner { retry_at }) => observation(
             Wait::Question,
             if retry_at.is_some() {
@@ -2402,15 +2409,13 @@ fn error_cause(error: &ServiceError) -> String {
 }
 
 /// Failures which the next few seconds are unlikely to clear: a step with no
-/// known wait, and a finished task's retained or occupied checkout.
+/// known wait, and a finished task's retained checkout.
 fn backs_off(task: &Task, wait: Option<WaitReason>, result: &Result<Action, ServiceError>) -> bool {
     wait == Some(WaitReason::EngineBlocked)
         || task.phase().is_terminal()
             && matches!(
                 result,
-                Err(ServiceError::CheckoutRetained(_)
-                    | ServiceError::CheckoutProcess(_)
-                    | ServiceError::ReportCheckout(_))
+                Err(ServiceError::CheckoutRetained(_) | ServiceError::ReportCheckout(_))
             )
 }
 
@@ -2446,7 +2451,6 @@ fn record_incomplete_observation(
                 Some(("cwd_followup", Some(*pid)))
             }
             HostError::HeldThreadMissing { .. } => Some(("retained_thread_read", None)),
-            HostError::RetainedIdleCoverage { .. } => Some(("retained_idle_coverage", None)),
             _ => None,
         };
         if let Some((checkpoint, pid)) = checkpoint {
