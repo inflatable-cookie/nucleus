@@ -6,8 +6,8 @@ use std::{
 use nucleus_core::{
     Action, Observation, Role, Run, Task, WaitReason,
     profiles::{
-        Candidate, LaunchPolicy, ProfileLaunch, ProfileLaunchError, RotationCounts, UsageLevel,
-        decide_profile_launch, decide_weighted_launch,
+        BriefPolicy, Candidate, LaunchPolicy, ProfileLaunch, ProfileLaunchError, RotationCounts,
+        UsageLevel, decide_profile_launch, decide_weighted_launch,
     },
 };
 use nucleus_hosts::{
@@ -386,27 +386,35 @@ impl Service {
         row: &TaskRow,
         observation: &Observation,
     ) -> Result<Option<Action>, ServiceError> {
-        let run = row.task.run().ok_or(ServiceError::Input)?;
-        {
-            let mut state = self.state.lock().await;
-            let Some(pause) = state.prepared_pause(run)? else {
-                return Ok(None);
-            };
-            if run.last_send_at_ms().is_some() || run.report_reminder_for().is_some() {
-                state
-                    .group_waits
-                    .insert(row.task.identity().id.clone(), pause);
-                return Ok(Some(Action::Wait(WaitReason::Capacity)));
+        let task = &row.task;
+        let run = task.run().ok_or(ServiceError::Input)?;
+        let mut state = self.state.lock().await;
+        let Some(pause) = state.prepared_pause(run)? else {
+            return Ok(None);
+        };
+        if run.last_send_at_ms().is_none() && !brief_requires_reserved_profile(task, run)? {
+            let mut updated = task.clone();
+            if updated.discard_paused_reservation(observation) {
+                drop(state);
+                let _fence = self.effect(row).await?;
+                self.save(row, updated, &crate::event("paused_reservation_released"))
+                    .await?;
+                return Ok(Some(Action::Advance(task.phase())));
             }
         }
-        let mut task = row.task.clone();
-        if task.discard_paused_reservation(observation) {
-            self.save(row, task, &crate::event("paused_reservation_released"))
-                .await?;
-            return Ok(Some(Action::Advance(row.task.phase())));
-        }
+        state.group_waits.insert(task.identity().id.clone(), pause);
         Ok(Some(Action::Wait(WaitReason::Capacity)))
     }
+}
+
+fn brief_requires_reserved_profile(task: &Task, run: &Run) -> Result<bool, ProfileLaunchError> {
+    let Some(profile) = run.launch().profile() else {
+        return Ok(false);
+    };
+    let brief = BriefPolicy::parse(&task.brief().text).map_err(ProfileLaunchError::Brief)?;
+    Ok(brief
+        .request(run.launch().role)
+        .is_some_and(|request| request.required && request.profile_id == profile.id))
 }
 
 fn limit_pause(limit: &ProviderLimit) -> SubscriptionPause {
