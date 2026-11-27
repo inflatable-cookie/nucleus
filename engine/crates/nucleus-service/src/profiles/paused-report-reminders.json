@@ -1,0 +1,194 @@
+{
+  "worker": {
+    "phase": "working",
+    "threads": {
+      "earlier_scratch": {
+        "1": "fixture-scratch/task-reserved-reminder-run-1"
+      },
+      "launch_sequence": 2,
+      "reviewer": null,
+      "worker": "thread:worker",
+      "worker_profile": {
+        "consumed_review": null,
+        "selected": {
+          "capability": "mechanical",
+          "effort": "medium",
+          "id": "paused",
+          "model": "second",
+          "provider": "codex",
+          "weight": "default"
+        }
+      }
+    },
+    "run": {
+      "last_send_at_ms": null,
+      "launch": {
+        "credential": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "input": {
+          "binding": null,
+          "parent": "fixture-parent",
+          "method": "continue",
+          "selection": {
+            "instanceId": "codex",
+            "model": "second",
+            "options": [
+              {
+                "id": "thinking",
+                "value": "medium"
+              }
+            ]
+          },
+          "payload": {
+            "attachments": [],
+            "commandId": "task-reserved-reminder-run-2",
+            "createdBy": "user",
+            "creationSource": "server",
+            "dispatchMode": {
+              "type": "queue_after_active"
+            },
+            "messageId": "task-reserved-reminder-run-2-message",
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "second",
+              "options": [
+                {
+                  "id": "thinking",
+                  "value": "medium"
+                }
+              ]
+            },
+            "text": "Fixture report reminder.",
+            "threadId": "thread:worker",
+            "type": "message.dispatch"
+          }
+        },
+        "instance": "task-reserved-reminder-run-2",
+        "label": "fixture report reminder",
+        "profile": {
+          "consumed_review": null,
+          "selected": {
+            "capability": "mechanical",
+            "effort": "medium",
+            "id": "paused",
+            "model": "second",
+            "provider": "codex",
+            "weight": "default"
+          }
+        },
+        "review_head": null,
+        "role": "worker",
+        "scratch": "fixture-scratch/task-reserved-reminder-run-2",
+        "started_at": 1,
+        "subscription_group": "opencode-go",
+        "thread": "thread:worker"
+      },
+      "rejected_awaiting_archive": false,
+      "report": null,
+      "report_reminder_for": "task-reserved-reminder-run-1",
+      "revoked": false
+    },
+    "attempts": 0
+  },
+  "reviewer": {
+    "phase": "reviewing",
+    "threads": {
+      "earlier_scratch": {
+        "1": "fixture-scratch/task-reserved-reminder-run-1",
+        "2": "fixture-scratch/task-reserved-reminder-run-2"
+      },
+      "launch_sequence": 3,
+      "reviewer": "thread:reviewer",
+      "reviewer_profile": {
+        "consumed_review": null,
+        "selected": {
+          "capability": "worker",
+          "effort": "high",
+          "id": "paused",
+          "model": "second",
+          "provider": "codex",
+          "weight": "default"
+        }
+      },
+      "worker": "thread:worker",
+      "worker_profile": {
+        "consumed_review": null,
+        "selected": {
+          "capability": "heavyweight",
+          "effort": "high",
+          "id": "author",
+          "model": "first",
+          "provider": "codex",
+          "weight": "most"
+        }
+      }
+    },
+    "run": {
+      "last_send_at_ms": null,
+      "launch": {
+        "credential": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "input": {
+          "binding": null,
+          "parent": "fixture-parent",
+          "method": "continue",
+          "selection": {
+            "instanceId": "codex",
+            "model": "second",
+            "options": [
+              {
+                "id": "thinking",
+                "value": "high"
+              }
+            ]
+          },
+          "payload": {
+            "attachments": [],
+            "commandId": "task-reserved-reminder-run-3",
+            "createdBy": "user",
+            "creationSource": "server",
+            "dispatchMode": {
+              "type": "queue_after_active"
+            },
+            "messageId": "task-reserved-reminder-run-3-message",
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "second",
+              "options": [
+                {
+                  "id": "thinking",
+                  "value": "high"
+                }
+              ]
+            },
+            "text": "Fixture report reminder.",
+            "threadId": "thread:reviewer",
+            "type": "message.dispatch"
+          }
+        },
+        "instance": "task-reserved-reminder-run-3",
+        "label": "fixture report reminder",
+        "profile": {
+          "consumed_review": null,
+          "selected": {
+            "capability": "worker",
+            "effort": "high",
+            "id": "paused",
+            "model": "second",
+            "provider": "codex",
+            "weight": "default"
+          }
+        },
+        "review_head": "0000000000000000000000000000000000000000",
+        "role": "reviewer",
+        "scratch": "fixture-scratch/task-reserved-reminder-run-3",
+        "started_at": 1,
+        "subscription_group": "opencode-go",
+        "thread": "thread:reviewer"
+      },
+      "rejected_awaiting_archive": false,
+      "report": null,
+      "report_reminder_for": "task-reserved-reminder-run-2",
+      "revoked": false
+    },
+    "attempts": 0
+  }
+}

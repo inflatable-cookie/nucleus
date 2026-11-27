@@ -235,6 +235,7 @@ fn select_launch(
         (best.profile.clone(), None, climbed, step_up_from)
     };
     let via = match (&previous, retained) {
+        _ if task.threads().missing_report_from().is_some() => Launch::Create,
         (Launch::Continue { .. }, Some(retained)) if retained.same_binding(&profile) => {
             previous.clone()
         }
