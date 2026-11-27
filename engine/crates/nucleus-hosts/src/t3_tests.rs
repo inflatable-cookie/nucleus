@@ -827,8 +827,6 @@ async fn stranded_parent_reentry_has_one_successor_until_the_shell_changes() {
     projection["projection"]["runs"].as_array_mut().unwrap().push(json!({
         "id":"queued-hold","status":"queued","startedAt":null,"userMessageId":crate::message_id(&prior)
     }));
-    let mut promoted = projection.clone();
-    promoted["projection"]["runs"][1]["status"] = json!("running");
     let worker = json!({"id":THREAD, "status":"running", "activeRunId":"native-worker-run",
         "projectId":binding.project_id,"branch":binding.branch,"worktreePath":binding.worktree_path});
     let (host, native) = server(vec![
@@ -837,10 +835,6 @@ async fn stranded_parent_reentry_has_one_successor_until_the_shell_changes() {
             Response::ParentSnapshot(projection),
         ),
         ("orchestration.dispatchCommand", Response::Success),
-        (
-            "orchestration.subscribeThread",
-            Response::ParentSnapshot(promoted),
-        ),
     ])
     .await;
     host.rpc.use_held_shell();
@@ -866,179 +860,6 @@ async fn stranded_parent_reentry_has_one_successor_until_the_shell_changes() {
     ));
     assert!(prepare().await.unwrap().is_none());
     native.await.unwrap();
-}
-
-#[tokio::test]
-async fn retained_reentry_recovers_the_queue_behind_a_running_old_client() {
-    for active in [Value::Null, json!(NATIVE_RUN)] {
-        let checkout = checkout_fixture();
-        let binding = binding(checkout.path());
-        let child = crate::ActiveChild {
-            binding: binding.clone(),
-            thread: THREAD.into(),
-            instance: "retained-worker".into(),
-            native: None,
-        };
-        let prefix = child.parent_command_prefix();
-        let older = format!("{prefix}:fixture-acp");
-        let prior = format!("{prefix}-after-start-activity-0:fixture-acp");
-        let mut projection = parent_snapshot(&binding, "running", false);
-        let mut row = projection["projection"]["thread"].clone();
-        row["status"] = json!("running");
-        row["activeRunId"] = active;
-        row["latestRunId"] = json!("queued-hold");
-        let snooze = "2099-06-01T12:00:00Z";
-        row["snoozedUntil"] = json!(snooze);
-        projection["projection"]["runs"][0]["userMessageId"] = json!(crate::message_id(&older));
-        projection["projection"]["runs"].as_array_mut().unwrap().push(json!({
-            "id":"queued-hold","status":"queued","startedAt":null,"userMessageId":crate::message_id(&prior)
-        }));
-        let worker = json!({"id":THREAD, "status":"waiting", "activeRunId":null,
-            "projectId":binding.project_id,"branch":binding.branch,"worktreePath":binding.worktree_path,
-            "pendingBackgroundTasks":[{"kind":"monitor","taskId":"retained-activity","awaited":true}]});
-        let (host, native) = server(vec![
-            (
-                "orchestration.subscribeThread",
-                Response::ParentSnapshot(projection),
-            ),
-            ("orchestration.dispatchCommand", Response::Success),
-        ])
-        .await;
-        host.rpc.use_held_shell();
-        host.rpc
-            .fixture_shell(&json!({"kind":"snapshot","snapshot":{
-                "snapshotSequence":20,"threads":[row,worker],"projects":[]
-            }}));
-
-        assert!(host.retained_reentry_due(THREAD, checkout.path()));
-        let resolve = |has_prior| {
-            host.retained_active_child(
-                binding.clone(),
-                child.thread.clone(),
-                child.instance.clone(),
-                has_prior,
-            )
-        };
-        assert!(resolve(false).await.unwrap().is_none());
-        let child = resolve(true).await.unwrap().unwrap();
-        assert!(
-            host.prepare_parent_reentry(&child, "fixture-acp", "Starting worker", None)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(host.host_calls().is_empty());
-
-        let prepare =
-            || host.prepare_parent_reentry(&child, "fixture-acp", "Starting worker", Some(&prior));
-        let (write, inspect) = T3::count_pass_calls(prepare()).await;
-        let write = write.unwrap().unwrap();
-        assert!(!write.starts_turn());
-        assert!(matches!(
-            host.write_parent(write).await,
-            Err(crate::ParentSendError::NotSent(
-                HostError::OperatorSnoozed { .. }
-            ))
-        ));
-        let (write, unchanged) = T3::count_pass_calls(prepare()).await;
-        let mut write = write.unwrap().unwrap();
-        assert!(
-            unchanged.is_empty(),
-            "unchanged parent called T3: {unchanged:?}"
-        );
-        write.allow_owned_snoozes(vec![crate::task_row::timestamp_ms(snooze).unwrap()]);
-        let (result, release) = T3::count_pass_calls(host.write_parent(write)).await;
-        result.unwrap();
-        assert_eq!(inspect.get("orchestration.subscribeThread"), Some(&1));
-        assert_eq!(release, [("orchestration.dispatchCommand", 1)].into());
-        eprintln!(
-            "retained re-entry T3 calls: inspect {inspect:?}, unchanged {unchanged:?}, release {release:?}"
-        );
-
-        row["pendingRuntimeRequest"] = json!({"kind":"approval"});
-        host.rpc
-            .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
-        assert!(!host.retained_reentry_due(THREAD, checkout.path()));
-        assert!(prepare().await.unwrap().is_none());
-        let requests = native.await.unwrap();
-        let payload: Value = serde_json::from_str(requests[1].payload.get()).unwrap();
-        assert_eq!(payload["type"], "run.interrupt");
-        assert_eq!(payload["runId"], NATIVE_RUN);
-    }
-}
-
-#[tokio::test]
-async fn a_receipted_queue_releases_only_the_older_parent_hold() {
-    let checkout = checkout_fixture();
-    let binding = binding(checkout.path());
-    let thread = crate::parent_thread(checkout.path());
-    let prior = format!("{thread}-hold-acp-20:fixture-acp");
-    let mut projection = parent_snapshot(&binding, "running", false);
-    let mut row = projection["projection"]["thread"].clone();
-    row["status"] = json!("running");
-    row["activeRunId"] = Value::Null;
-    projection["projection"]["runs"][0]["userMessageId"] =
-        json!(crate::message_id(&format!("{thread}-launch")));
-    projection["projection"]["runs"].as_array_mut().unwrap().push(json!({
-        "id":"queued-hold","status":"queued","startedAt":null,"userMessageId":crate::message_id(&prior)
-    }));
-    let (host, native) = server(vec![
-        (
-            "orchestration.subscribeThread",
-            Response::ParentSnapshot(projection.clone()),
-        ),
-        ("orchestration.dispatchCommand", Response::Success),
-        (
-            "orchestration.subscribeThread",
-            Response::ParentSnapshot(projection),
-        ),
-    ])
-    .await;
-    host.rpc.use_held_shell();
-    host.rpc
-        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":20,"threads":[row],"projects":[]
-        }}));
-    let prepare = || {
-        host.prepare_parent(
-            &binding,
-            "fixture-acp",
-            "Fixture",
-            "Starting reviewer",
-            Some(crate::ParentAttempt {
-                command: &prior,
-                released: false,
-                replay_launch: false,
-                recorded_failure: false,
-            }),
-            std::future::pending(),
-        )
-    };
-    let ((), calls) = crate::T3::count_pass_calls(Box::pin(async {
-        let crate::ParentStep::AfterDelivery(write) = prepare().await.unwrap() else {
-            panic!("recover the verified queue by releasing the older hold");
-        };
-        assert!(
-            !write.starts_turn(),
-            "recovery must not enqueue another message"
-        );
-        host.write_parent(write).await.unwrap();
-    }))
-    .await;
-    assert_eq!(calls.get("orchestration.subscribeThread"), Some(&1));
-    assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
-    eprintln!("stranded queue recovery T3 calls: {calls:?}");
-    row["pendingRuntimeRequest"] = json!({"kind":"approval"});
-    host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":21,"thread":row}));
-    assert!(matches!(
-        prepare().await.unwrap(),
-        crate::ParentStep::Delivered
-    ));
-    let requests = native.await.unwrap();
-    let interrupt: Value = serde_json::from_str(requests[1].payload.get()).unwrap();
-    assert_eq!(interrupt["type"], "run.interrupt");
-    assert_eq!(interrupt["runId"], NATIVE_RUN);
 }
 
 #[tokio::test]

@@ -99,14 +99,20 @@ fn delivery_prompt(
     }
 }
 
-pub(super) fn current_parent_delivery(
+fn parent_delivery_for_acp(
     state: &State,
     row: &TaskRow,
-    earlier_prefix: Option<&str>,
+    parent: &str,
 ) -> Result<Option<ParentDelivery>, StoreError> {
+    // The latest hold still owns the parent when a reservation advances the task version.
+    let reservation = row
+        .task
+        .run()
+        .filter(|run| run.last_send_at_ms().is_none())
+        .map(|_| format!("{parent}-"));
     Ok(state
         .store
-        .parent_deliveries(&row.task.identity().id, row.version, earlier_prefix)?
+        .parent_deliveries(&row.task.identity().id, row.version, reservation.as_deref())?
         .into_iter()
         .find(|delivery| {
             !delivery.refresh
@@ -191,14 +197,7 @@ impl Service {
         {
             return Ok((None, carry_row));
         }
-        // A remembered child can acquire a new re-entry hold after settlement.
-        // A reservation advances the task version before the role enters T3.
-        // Its latest parent delivery still owns the hold across that version.
-        let reservation = task
-            .run()
-            .filter(|run| run.last_send_at_ms().is_none())
-            .map(|_| format!("{parent}-"));
-        let mut delivery = current_parent_delivery(state, row, reservation.as_deref())?;
+        let mut delivery = parent_delivery_for_acp(state, row, &parent)?;
         if active_in_shell
             && delivery.is_none()
             && let Some((_, instance)) =
@@ -245,6 +244,7 @@ impl Service {
             .map(|delivery| delivery_prompt(&delivery, &roles))
             .transpose()?
             .flatten();
+        // Older ACP clients also use child activity to carry an already authenticated turn.
         let carry = prompt.is_none() && (carry_row || active_child && task.run().is_some());
         Ok((prompt, carry))
     }
@@ -474,8 +474,9 @@ impl Service {
                 }
             }
         }
+        let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
         let thread = write.thread_id().ok_or(ServiceError::Input)?.to_owned();
-        if write.checks_parent_snooze() {
+        if write.delivery_row().is_some() || nucleus_hosts::is_pinned_parent_hold(&command) {
             write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
         }
         if let Some(parent) = write.delivery_row() {

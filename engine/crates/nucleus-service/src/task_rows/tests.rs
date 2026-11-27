@@ -909,8 +909,9 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
     let cwd = PathBuf::from(&fixture.binding.worktree_path);
     let old_binding = binding();
     let old_cwd = cwd.clone();
+    let held_prompt = old_prompt.clone();
     let turn = tokio::spawn(async move {
-        nucleus_acp::fixture_task_prompt(old_binding, &old_cwd, &old_prompt, &output).await
+        nucleus_acp::fixture_task_prompt(old_binding, &old_cwd, &held_prompt, &output).await
     });
     tokio::time::timeout(std::time::Duration::from_secs(5), frames.recv())
         .await
@@ -924,6 +925,7 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
     let newer = fixture.prepare_hold(label, None).await;
     let command = newer.command_id().unwrap().to_owned();
     let new_prompt = newer.freeze().prompt().unwrap().to_owned();
+    assert_ne!(old_prompt, new_prompt);
     fixture.native.lock().unwrap().fail_next = true;
     assert!(matches!(
         service.deliver_parent(&row, newer, None, false).await,
@@ -949,14 +951,19 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
         std::future::pending(),
     )))
     .await;
-    assert!(matches!(step.unwrap(),
-        nucleus_hosts::ParentStep::AfterDelivery(write) if !write.starts_turn()));
+    assert!(matches!(
+        step.unwrap(),
+        nucleus_hosts::ParentStep::Delivered
+    ));
     assert_eq!(calls, [("orchestration.subscribeThread", 1)].into());
+    eprintln!("queued parent receipt T3 calls: {calls:?}");
+    let before_release = service.host.host_calls();
     tokio::time::timeout(std::time::Duration::from_secs(5), turn)
         .await
         .expect("the newer hold releases ACP before its deadline")
         .unwrap()
         .unwrap();
+    assert_eq!(service.host.host_calls(), before_release);
     fixture.native.lock().unwrap().finish_live_hold();
     fixture.publish_shell();
     let row = {
@@ -965,7 +972,12 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
             .commit(&mut state, &row, &task, &event("fixture_version"), None)
             .unwrap();
         assert!(version > row.version);
-        service.lookup(&state, ID).unwrap()
+        let reserved = service.lookup(&state, ID).unwrap();
+        assert_eq!(
+            service.acp_turn_view(&state, &reserved).unwrap(),
+            (Some(new_prompt.clone()), false)
+        );
+        reserved
     };
     let (output, mut frames) = tokio::sync::mpsc::unbounded_channel();
     let new_binding = binding();
