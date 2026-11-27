@@ -574,7 +574,8 @@ fn reopen_retains_history_and_fences_stale_versions() {
 
 #[test]
 fn assess_item_writes_history_and_tell_atomically() {
-    let mut store = Store::open_memory().unwrap();
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut store = Store::open(&fixture_storage(scratch.path())).expect("store");
     store
         .add_item(
             "project",
