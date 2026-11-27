@@ -438,17 +438,23 @@ test("after a refusal, Replace writes the operator's draft over the version show
   assert.equal(engine.item("nucleus", "i-replace").body, "My rewrite.");
 });
 
-test("By identifies a registered planner and retains each raw author in its tooltip", async () => {
+test("item authors and activity actors use planner, thread, and operator labels with raw IDs in tooltips", async () => {
   const engine = planningEngine();
   const planner = "mcp:launch:planner-example";
   const unknown = "mcp:launch:unknown-example";
+  const titled = "01adc496-18f0-4b9e-a22c-d1acb7facdab";
+  engine.setThreadTitle(titled, "Longhorn papercut details view");
   engine.seed("nucleus", papercut({ id: "known-author", title: "Known author", author: planner }), { actor: planner, atMs: now });
   engine.seed("nucleus", papercut({ id: "unknown-author", title: "Unknown author", author: unknown }), { actor: unknown, atMs: now });
+  engine.seed("nucleus", papercut({ id: "titled-author", title: "Titled author", author: titled }), { actor: titled, atMs: now });
+  engine.seed("nucleus", papercut({ id: "archived-planner", title: "Archived planner", author: "mcp:launch:old-planner", authorProjectId: "legacy" }), { actor: "mcp:launch:old-planner", atMs: now });
+  engine.seed("nucleus", papercut({ id: "operator-author", title: "Operator author", author: "operator" }), { actor: "operator", atMs: now });
   const fetcher: typeof fetch = async (input, init) => {
     const response = await engine.fetcher(input, init);
     if (!String(input).endsWith("/settings")) return response;
     const settings = await response.json();
     settings.projects.settings.value.projects.acowtancy.plannerClaim = { thread: planner, occurrence: "claim" };
+    settings.projects.settings.value.projects.legacy = { name: "Longhorn", archived: true, repositories: [] };
     return Response.json(settings);
   };
   const configured = { ...engine, fetcher };
@@ -458,8 +464,18 @@ test("By identifies a registered planner and retains each raw author in its tool
   known.ui.get(planner).props.onHoverIn();
   assert.match(known.ui.text(), /mcp:launch:planner-example/);
   const fallback = await open(configured, "unknown-author", "nucleus", "papercut");
-  assert.match(fallback.ui.text(), /Thread/);
+  assert.match(fallback.ui.text(), /Agent thread/);
   assert.doesNotMatch(fallback.ui.text(), /mcp:launch:unknown-example/);
   fallback.ui.get(unknown).props.onHoverIn();
   assert.match(fallback.ui.text(), /mcp:launch:unknown-example/);
+  const oldPlanner = await open(configured, "archived-planner", "nucleus", "papercut");
+  assert.match(oldPlanner.ui.text(), /Longhorn planner/);
+  const titledItem = await open(configured, "titled-author", "nucleus", "papercut");
+  assert.match(titledItem.ui.text(), /Longhorn papercut details view/);
+  titledItem.ui.press(/Activity/);
+  assert.match(titledItem.ui.text(), /Longhorn papercut details view/);
+  titledItem.ui.all(titled).forEach((node) => node.props.onHoverIn());
+  assert.match(titledItem.ui.text(), new RegExp(titled));
+  const operator = await open(configured, "operator-author", "nucleus", "papercut");
+  assert.match(operator.ui.text(), /Operator/);
 });

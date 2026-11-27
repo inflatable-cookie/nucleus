@@ -231,12 +231,29 @@ impl Store {
         content: ItemContent,
         stamp: WriteAt<'_>,
     ) -> Result<Item, StoreError> {
+        self.add_item_with_author_project(project, id, kind, content, None, stamp)
+    }
+
+    /// Record an item with the project whose planner claim authenticated its author.
+    ///
+    /// # Errors
+    /// Returns an error for invalid content, a duplicate ID, or database failure.
+    pub fn add_item_with_author_project(
+        &mut self,
+        project: &str,
+        id: String,
+        kind: ItemKind,
+        content: ItemContent,
+        author_project_id: Option<String>,
+        stamp: WriteAt<'_>,
+    ) -> Result<Item, StoreError> {
         validate_item(&content)?;
         let tx = self.planning_write()?;
         let item = Item {
             id,
             kind,
             author: stamp.actor.into(),
+            author_project_id,
             repositories: Vec::new(),
             task_links: Vec::new(),
             content,

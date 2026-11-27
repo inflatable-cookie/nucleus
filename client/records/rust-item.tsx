@@ -119,8 +119,8 @@ export function itemActivity(item: ItemDetail) {
           : entry.action === "park" || entry.action === "drop"
             ? "muted"
             : "accent";
-      const detail = [entry.actor, entry.note].filter(Boolean).join(" · ") || null;
-      return { key: `${index}`, at: entry.atMs, text, detail, tone };
+      const detail = [entry.actorLabel ?? entry.actor, entry.note].filter(Boolean).join(" · ") || null;
+      return { key: `${index}`, at: entry.atMs, text, detail, detailHint: entry.actor, tone };
     })
     .sort((a, b) => b.at - a.at);
 }
@@ -831,7 +831,7 @@ function ContextLine({ c, item, laneName }: { c: Colors; item: ItemDetail; laneN
       {item.author ? (
         <View style={{ ...row, gap: space.xs }}>
           {label("By")}
-          <Hint c={c} text={item.author} focusable><Text style={metaText(c)}>{item.authorLabel ?? (item.author.startsWith("mcp:launch:") ? "Thread" : item.author)}</Text></Hint>
+          <Hint c={c} text={item.author} focusable><Text style={metaText(c)}>{item.authorLabel ?? "Agent thread"}</Text></Hint>
         </View>
       ) : null}
     </View>

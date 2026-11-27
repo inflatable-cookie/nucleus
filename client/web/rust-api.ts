@@ -244,6 +244,7 @@ export const item = z.object({
   id: z.string(),
   kind: z.enum(["lead", "papercut"]),
   author: z.string(),
+  authorProjectId: z.string().optional(),
   taskLinks: z.array(z.string()).optional(),
   title: z.string(),
   createdAtMs: integer.nullish(),
@@ -330,6 +331,8 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
     settings: () => board.read(boardSettings, "/settings"),
     domain: <T>(schema: z.ZodType<T>, domain: SettingsDomain) =>
       board.read(schema, `/settings/${domain}`),
+    threadTitles: (ids: readonly string[]) =>
+      board.read(z.record(z.string(), z.string()), `/thread-titles?${ids.map((id) => `ids=${encodeURIComponent(id)}`).join("&")}`),
     saveDomain: <T>(
       schema: z.ZodType<T>,
       domain: SettingsDomain,

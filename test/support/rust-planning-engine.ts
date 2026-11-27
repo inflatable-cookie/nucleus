@@ -20,6 +20,7 @@ export type StoredItem = {
   id: string;
   kind: "lead" | "papercut";
   author: string;
+  authorProjectId?: string;
   title: string;
   body: string;
   lanes: string[];
@@ -118,6 +119,7 @@ export function planningEngine(now: () => number = Date.now) {
   const items = new Map<string, { project: string; item: StoredItem; createdAtMs: number }>();
   const history: Array<History & { project: string; id: string }> = [];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
+  const threadTitles = new Map<string, string>();
   let sequence = 0;
   let refusal: string | null = null;
   let tasks = 0;
@@ -159,6 +161,13 @@ export function planningEngine(now: () => number = Date.now) {
     const method = init?.method ?? "GET";
     if (path === "/session") return json({ id: "operator-session", canEditSettings: true, planningProjects: null });
     if (path === "/settings") return json(settings());
+    if (path.startsWith("/thread-titles?")) {
+      const ids = new URL(`http://nucleus${path}`).searchParams.getAll("ids");
+      return json(Object.fromEntries(ids.flatMap((id) => {
+        const title = threadTitles.get(id);
+        return title ? [[id, title]] : [];
+      })));
+    }
     if (path === "/tasks") return json([]);
     const match = /^\/planning\/([^/]+)\/(items|history\/item)(?:\/([^/]+))?(?:\/(park|drop|reopen|promote))?$/.exec(path);
     if (!match) return json({ error: `no route ${path}` }, 404);
@@ -241,6 +250,7 @@ export function planningEngine(now: () => number = Date.now) {
   return {
     fetcher,
     seed,
+    setThreadTitle: (id: string, title: string) => threadTitles.set(id, title),
     writes,
     editElsewhere,
     refuseNextAdmission: (error: string) => {
@@ -251,6 +261,6 @@ export function planningEngine(now: () => number = Date.now) {
 }
 
 function base(item: StoredItem) {
-  const { id, kind, author, title, body, lanes, repositories, taskLinks } = item;
-  return { id, kind, author, title, body, lanes, ...(repositories ? { repositories } : {}), ...(taskLinks ? { taskLinks } : {}) };
+  const { id, kind, author, authorProjectId, title, body, lanes, repositories, taskLinks } = item;
+  return { id, kind, author, ...(authorProjectId ? { authorProjectId } : {}), title, body, lanes, ...(repositories ? { repositories } : {}), ...(taskLinks ? { taskLinks } : {}) };
 }

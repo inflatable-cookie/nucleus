@@ -11,6 +11,7 @@ const itemDisposition = z.enum(["completed", "deprecated"]);
 
 export const itemHistoryEntrySchema = z.object({
   actor: z.string(),
+  actorLabel: z.string().optional(),
   atMs: z.number().int(),
   action: z.string(),
   /** The reopen note, when the reopen carried one. */

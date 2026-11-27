@@ -461,8 +461,25 @@ export function createRustPlanning(
 
   /** The item as the detail view reads it, with its history. */
   async function itemDetail(row: ProjectRow, record: RustItem): Promise<api.ItemDetail> {
-    const [records, projectRows] = await Promise.all([planningRead(row, `history/item/${encodeURIComponent(record.id)}`, history), projects()]);
-    const authorProject = projectRows.find((candidate) => candidate.project.plannerClaim?.thread === record.author);
+    const [records, projectRows, allSettings] = await Promise.all([planningRead(row, `history/item/${encodeURIComponent(record.id)}`, history), projects(), settings()]);
+    const historyRows = records ?? [];
+    const allProjects = allSettings.projects.settings.value.projects;
+    const threadTitles = await rust.threadTitles([...new Set([record.author, ...historyRows.map((entry) => entry.actor)])]);
+    const plannerLabel = (actor: string) => {
+      const match = Object.values(allProjects).find((project) =>
+        project.plannerClaim?.thread === actor || project.plannerClaim?.replaced === actor,
+      );
+      return match ? `${match.name} planner` : undefined;
+    };
+    const authorProject = record.authorProjectId ? allProjects[record.authorProjectId] : undefined;
+    const actorLabel = (actor: string) => {
+      if (/^(operator|nucleus:operator)$/i.test(actor)) return "Operator";
+      const planner = plannerLabel(actor);
+      if (planner) return planner;
+      if (threadTitles[actor]) return threadTitles[actor];
+      if (/^(mcp:launch:|[0-9a-f]{8}-[0-9a-f-]{27,}$)/i.test(actor)) return "Agent thread";
+      return actor;
+    };
     if (record.version === undefined)
       throw new Error("The engine did not supply the item version.");
     const bound = new Set(
@@ -483,7 +500,7 @@ export function createRustPlanning(
         bound: bound.has(repo.origin.toLowerCase()),
       })),
       author: record.author,
-      authorLabel: authorProject ? `${authorProject.project.name} planner` : undefined,
+      authorLabel: authorProject ? `${authorProject.name} planner` : plannerLabel(record.author) ?? actorLabel(record.author),
       state: record.state,
       reason: record.reason ?? null,
       disposition: record.state === "dropped" ? (record.disposition ?? "deprecated") : null,
@@ -493,10 +510,11 @@ export function createRustPlanning(
       version: record.version,
       createdAtMs: record.createdAtMs ?? null,
       updatedAtMs: record.updatedAtMs ?? null,
-      history: (records ?? []).map((entry) => {
+      history: historyRows.map((entry) => {
         const snapshot = historySnapshot.safeParse(entry.snapshot).data;
         return {
           actor: entry.actor,
+          actorLabel: actorLabel(entry.actor),
           atMs: entry.atMs,
           action: entry.action,
           note: snapshot?.note ?? null,

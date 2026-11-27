@@ -27,6 +27,7 @@ const PLANNING_BODY_LIMIT: usize = 6 * MAX_TEXT_BYTES + 64 * 1024;
 
 pub(super) fn routes() -> Router<Api> {
     Router::new()
+        .route("/v1/thread-titles", get(thread_titles))
         .route(
             "/v1/planning/tasks",
             post(add_task).layer(DefaultBodyLimit::max(PLANNING_BODY_LIMIT)),
@@ -35,6 +36,29 @@ pub(super) fn routes() -> Router<Api> {
         .nest("/v1/planning/{project}", project_routes())
         // A separate prefix keeps unqualified record paths out of the project namespace.
         .nest("/v1/planning-current", project_routes())
+}
+
+#[derive(Deserialize)]
+struct ThreadTitleQuery {
+    ids: Vec<String>,
+}
+
+async fn thread_titles(
+    State(api): State<Api>,
+    Query(query): Query<ThreadTitleQuery>,
+) -> Json<std::collections::BTreeMap<String, String>> {
+    let titles = query
+        .ids
+        .into_iter()
+        .take(100)
+        .filter_map(|id| {
+            api.service
+                .host
+                .cached_thread_title(&id)
+                .map(|title| (id, title))
+        })
+        .collect();
+    Json(titles)
 }
 
 /// GET and PUT are bound to one run and its one durable delivery lane.
@@ -318,13 +342,23 @@ async fn add_item(
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
         .await?;
+    let actor = stamp(&caller).actor;
+    let author_project_id = state.settings.projects.as_ref().and_then(|projects| {
+        let project_settings = projects.projects.get(&project)?;
+        project_settings
+            .planner_claim
+            .as_ref()
+            .is_some_and(|claim| claim.thread == actor || claim.replaced.as_deref() == Some(actor))
+            .then(|| project.clone())
+    });
     let item = state
         .store
-        .add_item(
+        .add_item_with_author_project(
             &project,
             new_id("i")?,
             input.kind,
             input.content,
+            author_project_id,
             stamp(&caller),
         )
         .map_err(ServiceError::from)?;
