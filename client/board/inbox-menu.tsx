@@ -18,7 +18,8 @@ import {
 } from "../design";
 
 export type InboxMenuCounts = Record<InboxView, number>;
-export type BoardView = InboxView | RustExtraView;
+/** Projects (nucleus#1666) is a Rust-board view with no count. */
+export type BoardView = InboxView | RustExtraView | "projects";
 
 /**
  * One menu entry (nucleus#1528): the same sidebar hover as a list row — a dimmed
@@ -59,11 +60,7 @@ function MenuEntry({
   const emphasized = on || hovered || focus.visible;
   const labelColor =
     options.dimmed && themedNavigation && !emphasized
-      ? toneSurface(
-          c.foreground,
-          c.foreground,
-          navigationTextOpacity.dimmed,
-        )
+      ? toneSurface(c.foreground, c.foreground, navigationTextOpacity.dimmed)
       : cardTitleColor(c, emphasized);
   return (
     <Pressable
@@ -93,11 +90,7 @@ function MenuEntry({
       }}
     >
       {options.icon && (
-        <Icon
-          name={options.icon}
-          size={16}
-          color={labelColor}
-        />
+        <Icon name={options.icon} size={16} color={labelColor} />
       )}
       <Text
         numberOfLines={1}
@@ -124,8 +117,8 @@ function MenuEntry({
 }
 
 /**
- * The board menu (Tom, 2026-11-21): Needs you, a divider, Planning, Leads,
- * Papercuts, Queue, a divider, then Working, In review and Closing. Counts are
+ * The board menu (Tom, 2026-11-21): Needs you, a divider, Projects (nucleus#1666,
+ * Rust board only, no count), Planning, Leads, Papercuts, Queue, a divider, then Working, In review and Closing. Counts are
  * real totals — Planning shows the number of open lanes in scope (nucleus#1546);
  * only Needs you is highlighted, because only it asks the operator to act. A count is hidden until the board loads. An entry whose count is 0
  * renders dimmed but stays selectable; the selected entry keeps its styling.
@@ -151,19 +144,37 @@ export function InboxMenu({
   standalone?: boolean;
   onSelect: (view: BoardView) => void;
 }) {
-  const allEntries: readonly { id: BoardView; label: string; icon: string }[] = rust
-    ? [...inboxViews.slice(0, -1), { id: "merging", label: "Merging", icon: "GitMerge" },
-        ...inboxViews.slice(-1), { id: "history", label: "History", icon: "History" }]
-    : inboxViews;
+  const allEntries: readonly { id: BoardView; label: string; icon: string }[] =
+    rust
+      ? [
+          ...inboxViews.slice(0, 1),
+          { id: "projects", label: "Projects", icon: "Columns3" },
+          ...inboxViews.slice(1, -1),
+          { id: "merging", label: "Merging", icon: "GitMerge" },
+          ...inboxViews.slice(-1),
+          { id: "history", label: "History", icon: "History" },
+        ]
+      : inboxViews;
   const entries = standalone
-    ? allEntries.filter(({ id }) => id !== "planning" && id !== "leads" && id !== "papercuts")
+    ? allEntries.filter(
+        ({ id }) =>
+          id !== "projects" &&
+          id !== "planning" &&
+          id !== "leads" &&
+          id !== "papercuts",
+      )
     : allEntries;
   const count = (id: BoardView) => {
-    if (pendingCounts?.includes(id)) return null;
+    if (id === "projects" || pendingCounts?.includes(id)) return null;
     const rustTotal = rust?.totals[id];
     if (standalone) return rustTotal ?? null;
     if (id === "merging" || id === "history") return rustTotal ?? null;
-    if (rust && ["needs", "queue", "working", "review", "closing"].includes(id) && rustTotal === undefined) return null;
+    if (
+      rust &&
+      ["needs", "queue", "working", "review", "closing"].includes(id) &&
+      rustTotal === undefined
+    )
+      return null;
     return counts[id] + (rustTotal ?? 0);
   };
   const item = (
@@ -203,7 +214,8 @@ export function InboxMenu({
     >
       {entries.map((entry) => (
         <React.Fragment key={entry.id}>
-          {(entry.id === "planning" || entry.id === "working") &&
+          {(entry.id === (rust && !standalone ? "projects" : "planning") ||
+            entry.id === "working") &&
             divider(`${entry.id}-divider`)}
           {item(
             entry.id,

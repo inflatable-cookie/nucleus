@@ -1,5 +1,9 @@
 import { matchesRepository } from "../../shared/project-scope";
-import { activityItems, EXECUTING_TASK_PHASES, projectActivityRows } from "../../shared/project-activity";
+import {
+  activityItems,
+  EXECUTING_TASK_PHASES,
+  projectActivityRows,
+} from "../../shared/project-activity";
 import type { Project, leadBoard } from "../../shared/contracts";
 import {
   useInfiniteQuery,
@@ -9,8 +13,19 @@ import {
 } from "@tanstack/react-query";
 import { z } from "zod";
 import { readLiveFrames, type LiveFrame } from "./live-channel";
-import { compareRustTasksForColumn, rustCardAgeAt, rustColumns, type RustBoardView } from "./rust-task-order";
-export { compareRustTasks, compareRustTasksForColumn, rustCardAgeAt, rustColumns, rustTaskColumn } from "./rust-task-order";
+import {
+  compareRustTasksForColumn,
+  rustCardAgeAt,
+  rustColumns,
+  type RustBoardView,
+} from "./rust-task-order";
+export {
+  compareRustTasks,
+  compareRustTasksForColumn,
+  rustCardAgeAt,
+  rustColumns,
+  rustTaskColumn,
+} from "./rust-task-order";
 export type { RustBoardView } from "./rust-task-order";
 
 const api = "/api/engine";
@@ -125,19 +140,29 @@ const transcript = z.object({
   externalAcceptances: z.array(z.tuple([timestamp, z.string()])),
 });
 const lifecycle = z.object({
-  steps: z.array(z.object({
-    key: z.enum(["queued", "working", "review", "merge", "close", "report_ready", "done"]),
-    label: z.string(),
-    state: z.enum(["todo", "current", "done"]),
-    tone: z.enum(["accent", "danger", "warning", "success", "muted"]),
-    note: z.string().nullable(),
-    roundLabel: z.string().nullable(),
-    elapsedMs: revision.nullable(),
-    activeSinceMs: timestamp.nullable(),
-    enteredAtMs: timestamp.nullish(),
-    leftAtMs: timestamp.nullish(),
-    visits: z.array(stepVisit).optional(),
-  })),
+  steps: z.array(
+    z.object({
+      key: z.enum([
+        "queued",
+        "working",
+        "review",
+        "merge",
+        "close",
+        "report_ready",
+        "done",
+      ]),
+      label: z.string(),
+      state: z.enum(["todo", "current", "done"]),
+      tone: z.enum(["accent", "danger", "warning", "success", "muted"]),
+      note: z.string().nullable(),
+      roundLabel: z.string().nullable(),
+      elapsedMs: revision.nullable(),
+      activeSinceMs: timestamp.nullable(),
+      enteredAtMs: timestamp.nullish(),
+      leftAtMs: timestamp.nullish(),
+      visits: z.array(stepVisit).optional(),
+    }),
+  ),
   admittedAtMs: timestamp.nullable(),
   finishedAtMs: timestamp.nullable(),
   reviewRound: revision.nullable(),
@@ -159,10 +184,12 @@ const summary = current.extend({
     repository: z.string(),
     base: z.string(),
   }),
-  hold: z.object({
-    reason: z.string(),
-    by: z.enum(["operator", "planner"]).optional().catch(undefined),
-  }).nullable(),
+  hold: z
+    .object({
+      reason: z.string(),
+      by: z.enum(["operator", "planner"]).optional().catch(undefined),
+    })
+    .nullable(),
 });
 const verdict = z.union([
   z.object({
@@ -204,15 +231,19 @@ const detail = summary.extend({
   brief: z.object({ text: z.string(), version: revision }),
   pullRequest: z.object({ url: z.httpUrl(), head }).nullable(),
   verdict: verdict.nullable(),
-  report: z.object({
-    lane: z.string(),
-    planningBase: head,
-    failure: z.string().nullable(),
-    delivery: z.object({
-      artifact: reportArtifact,
-      summary: z.string(),
-    }).nullable(),
-  }).optional(),
+  report: z
+    .object({
+      lane: z.string(),
+      planningBase: head,
+      failure: z.string().nullable(),
+      delivery: z
+        .object({
+          artifact: reportArtifact,
+          summary: z.string(),
+        })
+        .nullable(),
+    })
+    .optional(),
   run: z
     .object({
       role,
@@ -315,7 +346,11 @@ const historyRecord = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("verdict"), verdict }),
   z.object({ kind: z.literal("question"), question }),
   z.object({ kind: z.literal("merged"), commit: head }),
-  z.object({ kind: z.literal("finished"), phase, previousPhase: phase.nullish() }),
+  z.object({
+    kind: z.literal("finished"),
+    phase,
+    previousPhase: phase.nullish(),
+  }),
 ]);
 const warnedUnknownHistoryRecords = new Set<string>();
 // One record the board cannot read is dropped alone, so the page keeps its other entries.
@@ -372,7 +407,13 @@ export type RustTranscriptOutcome = z.infer<typeof transcriptOutcome>;
 export type RustCommand =
   | { move: RustPhase }
   | { move_work: { instruction: string } }
-  | { complete: { version: number; artifact: z.infer<typeof reportArtifact>; reason: string } }
+  | {
+      complete: {
+        version: number;
+        artifact: z.infer<typeof reportArtifact>;
+        reason: string;
+      };
+    }
   | {
       answer:
         | { work: string }
@@ -410,9 +451,10 @@ export function createRustBoardTransport(fetcher: typeof fetch = fetch) {
         })
         .safeParse(body);
       const error = refusal.data?.error;
-      const message = typeof error === "string"
-        ? error
-        : (error?.message ?? `Engine request failed (${response.status})`);
+      const message =
+        typeof error === "string"
+          ? error
+          : (error?.message ?? `Engine request failed (${response.status})`);
       throw Object.assign(new Error(message), { status: response.status });
     }
     const result = schema.safeParse(body);
@@ -469,12 +511,17 @@ export function rustProjectActivity(
   leads: NonNullable<z.infer<typeof leadBoard.output>["activity"]>,
 ) {
   const items = activityItems();
-  const byProject = new Map(projects.map(project => [project.key, project.repositories]));
-  const repositories = projects.flatMap(project => project.repositories);
+  const byProject = new Map(
+    projects.map((project) => [project.key, project.repositories]),
+  );
+  const repositories = projects.flatMap((project) => project.repositories);
   for (const task of tasks) {
     const origin = task.identity.repository;
-    const repo = repositories.find(candidate => matchesRepository(candidate, origin, origin));
-    const at = task.latestEventAtMs ?? task.stateSinceMs ?? task.lifecycle.admittedAtMs;
+    const repo = repositories.find((candidate) =>
+      matchesRepository(candidate, origin, origin),
+    );
+    const at =
+      task.latestEventAtMs ?? task.stateSinceMs ?? task.lifecycle.admittedAtMs;
     items.add(`task:${task.identity.id}`, {
       at: at == null ? null : new Date(at).toISOString(),
       executing: EXECUTING_TASK_PHASES.includes(task.phase),
@@ -483,7 +530,11 @@ export function rustProjectActivity(
   }
   for (const lead of leads) {
     const key = `lead:${JSON.stringify([lead.project, lead.id])}`;
-    items.add(key, { at: lead.at, executing: false, repositories: byProject.get(lead.project) ?? [] });
+    items.add(key, {
+      at: lead.at,
+      executing: false,
+      repositories: byProject.get(lead.project) ?? [],
+    });
     for (const task of lead.taskIds) {
       const linked = `task:${task}`;
       items.join(key, linked);
@@ -491,13 +542,38 @@ export function rustProjectActivity(
   }
   return projectActivityRows(projects, {
     items: [...items.components()].flatMap(([id, item]) =>
-      item.at || item.executing ? [{ ...item, id, at: item.at ?? "" }] : []),
+      item.at || item.executing ? [{ ...item, id, at: item.at ?? "" }] : [],
+    ),
   });
+}
+
+/**
+ * The project selector's open-task counts on the Rust engine: every task not done
+ * or cancelled, keyed by the checkout of the repository it runs in.
+ */
+export function rustSelectorCounts(
+  projects: readonly Project[],
+  tasks: readonly RustTask[],
+): Array<{ repoPath: string; count: number }> {
+  const counts = new Map<string, number>();
+  const repositories = projects.flatMap((project) => project.repositories);
+  for (const task of tasks) {
+    if (task.phase === "done" || task.phase === "cancelled") continue;
+    const origin = task.identity.repository;
+    const repo = repositories.find((candidate) =>
+      matchesRepository(candidate, origin, origin),
+    );
+    if (repo?.path) counts.set(repo.path, (counts.get(repo.path) ?? 0) + 1);
+  }
+  return [...counts].map(([repoPath, count]) => ({ repoPath, count }));
 }
 
 export type RustBoardTransport = ReturnType<typeof createRustBoardTransport>;
 
-export function useRustTasks(enabled: boolean, boardTransport: RustBoardTransport = transport) {
+export function useRustTasks(
+  enabled: boolean,
+  boardTransport: RustBoardTransport = transport,
+) {
   return useQuery({
     ...pushQuery,
     queryKey: rustTaskListKey,
@@ -544,7 +620,8 @@ export function rustInvalidationFromFrame(
   } else if (frame.event === "invalidate" && frame.data !== null) {
     try {
       const parsed = change.safeParse(JSON.parse(frame.data));
-      if (parsed.success) invalidate(parsed.data.taskId, parsed.data.detailOnly);
+      if (parsed.success)
+        invalidate(parsed.data.taskId, parsed.data.detailOnly);
     } catch {
       // Ignore malformed events. A subsequent refresh or invalidation recovers the view.
     }
@@ -634,8 +711,7 @@ export async function listenForRustChanges(
             if (frame.event === "decisions") board?.decisionsChanged?.();
             if (frame.event === "theme" || frame.event === "refresh")
               board?.themeChanged?.();
-            if (frame.event === "catalog")
-              board?.catalogChanged?.();
+            if (frame.event === "catalog") board?.catalogChanged?.();
           }
         }
       } finally {
@@ -678,7 +754,15 @@ export function groupRustTasks(
     if (column !== "needs") columns[column].push(task);
     else if (task.attention !== "attention") columns.working.push(task);
   }
-  for (const column of ["needs", "queue", "working", "review", "merging", "closing", "history"] as const)
+  for (const column of [
+    "needs",
+    "queue",
+    "working",
+    "review",
+    "merging",
+    "closing",
+    "history",
+  ] as const)
     columns[column].sort((a, b) => compareRustTasksForColumn(a, b, column));
   return columns;
 }
@@ -737,7 +821,8 @@ export function rustQuestionText(question: RustQuestion): string {
   if ("retry" in question)
     return `The ${question.retry.role} could not finish. Try again?`;
   if ("accept" in question) return "Accept the external merge?";
-  if ("allowance" in question) return "The task needs more allowance before its next run.";
+  if ("allowance" in question)
+    return "The task needs more allowance before its next run.";
   return repairPrompts[question.repair];
 }
 
