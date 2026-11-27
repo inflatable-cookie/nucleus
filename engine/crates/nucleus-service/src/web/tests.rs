@@ -139,6 +139,24 @@ async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
 }
 
 #[tokio::test]
+async fn a_held_parent_survives_refresh_before_the_first_shell_snapshot() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (mut task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+    let instance = task.run().unwrap().launch().instance.clone();
+    task.record_send(&instance, 1).unwrap();
+    seed_task(&service, &task).await;
+    let row = service.task("worker").await.unwrap();
+    let mut state = service.state.lock().await;
+    state.registry_mode = true;
+    assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, true));
+    service
+        .host
+        .fixture_project_shell(&json!({"projects":[],"threads":[]}), "fixture-acp");
+    assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+    assert!(service.host.host_calls().is_empty());
+}
+
+#[tokio::test]
 async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     for id in ["task-one", "task-two"] {

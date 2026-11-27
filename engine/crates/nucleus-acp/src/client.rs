@@ -385,11 +385,13 @@ impl Invalidations {
                 }
                 continue;
             }
-            let chunk = tokio::time::timeout_at(self.deadline, self.response.chunk())
-                .await
-                .map_err(|_| Failure::Unavailable)?
-                .map_err(|_| Failure::Unavailable)?
-                .ok_or(Failure::Unavailable)?;
+            let chunk = tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(self.deadline) => return Err(Failure::Unavailable),
+                chunk = self.response.chunk() => chunk,
+            }
+            .map_err(|_| Failure::Unavailable)?
+            .ok_or(Failure::Unavailable)?;
             if chunk.is_empty() {
                 return Err(Failure::Unavailable);
             }
