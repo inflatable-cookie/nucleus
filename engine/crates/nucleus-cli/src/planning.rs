@@ -20,6 +20,13 @@ pub(super) enum Action {
         #[arg(long = "project")]
         additional_projects: Vec<String>,
     },
+    /// Reply to a delivered message with the handle from its Reply line.
+    Reply {
+        /// The handle from the message, such as r6e39f1a.
+        handle: String,
+        /// The reply, quoted if it contains spaces. Use - to read it from stdin.
+        text: String,
+    },
     /// Receive new project messages in this verified planner thread.
     #[command(name = "planner.claim")]
     PlannerClaim,
@@ -286,6 +293,10 @@ impl Action {
                     Some(json!({"to": to, "text": text})),
                 ));
             }
+            A::Reply { handle, text } => {
+                let text = reply_text(text, io::stdin().lock())?;
+                return Ok(reply_request(&handle, &text));
+            }
             A::PlannerClaim => return Ok((Method::POST, "/v1/planning/claim".into(), None)),
             A::LaneGet { .. } => return Err("use an authenticated report ticket".into()),
             A::PlanGet { project } => (Method::GET, project, "plan".into(), None),
@@ -470,11 +481,30 @@ fn planning_path(project: Option<&str>, path: &str) -> Result<String> {
 }
 
 fn stdin_text() -> Result<String> {
+    stdin_text_from(io::stdin().lock())
+}
+
+fn stdin_text_from(source: impl io::Read) -> Result<String> {
     let limit = u64::try_from(MAX_TEXT_BYTES)?;
-    Ok(String::from_utf8(read_with_limit(
-        io::stdin().lock(),
-        limit,
-    )?)?)
+    Ok(String::from_utf8(read_with_limit(source, limit)?)?)
+}
+
+/// The tell request that answers a delivered message's reply handle.
+fn reply_request(handle: &str, text: &str) -> (Method, String, Option<Value>) {
+    (
+        Method::POST,
+        "/v1/planning/tell".into(),
+        Some(json!({"to": {"reply": handle}, "text": text})),
+    )
+}
+
+/// A reply's text is typed on the command line, or read from stdin when it is `-`.
+fn reply_text(text: String, stdin: impl io::Read) -> Result<String> {
+    if text == "-" {
+        stdin_text_from(stdin)
+    } else {
+        Ok(text)
+    }
 }
 
 fn segment(value: &str) -> Result<&str> {
@@ -587,6 +617,82 @@ mod tests {
             body.unwrap(),
             serde_json::json!({"to":{"reply":"nreply_example"}, "text":"Answer"})
         );
+    }
+
+    /// Request cases shared with the service tests, so both sides name the same bodies.
+    fn shared_reply_fixtures() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../nucleus-service/tests/fixtures/tell-replies.json"
+        ))
+        .expect("shared reply fixtures")
+    }
+
+    fn fixture_argv(case: &serde_json::Value) -> Vec<&str> {
+        case["argv"]
+            .as_array()
+            .expect("argv")
+            .iter()
+            .map(|arg| arg.as_str().expect("argv string"))
+            .collect()
+    }
+
+    #[test]
+    fn reply_and_legacy_tell_commands_build_the_shared_fixture_bodies() {
+        let fixtures = shared_reply_fixtures();
+        for name in [
+            "shortReply",
+            "legacyReply",
+            "legacyJsonTell",
+            "expiredReply",
+        ] {
+            let case = &fixtures[name];
+            let parsed = Cli::try_parse_from(std::iter::once("nucleus").chain(fixture_argv(case)))
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let Action::Planning(action) = parsed.action else {
+                panic!("{name}: expected a planning command");
+            };
+            assert!(!action.uses_ticket(), "{name}");
+            let (method, path, body) = action.request().unwrap();
+            assert_eq!(method, reqwest::Method::POST, "{name}");
+            assert_eq!(path, "/v1/planning/tell", "{name}");
+            assert_eq!(body.unwrap(), case["body"], "{name}");
+        }
+    }
+
+    #[test]
+    fn reply_reads_its_text_from_stdin_in_the_shared_fixture() {
+        let case = &shared_reply_fixtures()["stdinReply"];
+        let parsed = Cli::try_parse_from(std::iter::once("nucleus").chain(fixture_argv(case)))
+            .expect("stdin reply");
+        let Action::Planning(Planning::Reply { handle, text }) = parsed.action else {
+            panic!("expected a reply");
+        };
+        assert_eq!(text, "-");
+        let text = super::reply_text(
+            text,
+            std::io::Cursor::new(case["stdin"].as_str().expect("stdin text")),
+        )
+        .unwrap();
+        let (_, _, body) = super::reply_request(&handle, &text);
+        assert_eq!(body.unwrap(), case["body"]);
+    }
+
+    #[test]
+    fn reply_text_reads_stdin_only_for_a_dash() {
+        assert_eq!(
+            super::reply_text("-".into(), std::io::Cursor::new("From stdin")).unwrap(),
+            "From stdin"
+        );
+        assert_eq!(
+            super::reply_text("Typed".into(), std::io::Cursor::new("ignored")).unwrap(),
+            "Typed"
+        );
+    }
+
+    #[test]
+    fn reply_cli_needs_a_handle_and_text() {
+        assert!(Cli::try_parse_from(["nucleus", "reply", "r6e39f1a"]).is_err());
+        assert!(Cli::try_parse_from(["nucleus", "reply"]).is_err());
     }
 
     #[test]

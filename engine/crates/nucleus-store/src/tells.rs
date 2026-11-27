@@ -179,6 +179,19 @@ impl Store {
             .optional()?)
     }
 
+    /// Is this handle already issued? The primary key spans expired handles too,
+    /// so a new handle must avoid every issued one, not only the unexpired ones.
+    ///
+    /// # Errors
+    /// Returns a storage error if the handle index cannot be read.
+    pub fn tell_reply_handle_issued(&self, handle: &str) -> Result<bool, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tell_reply_handles WHERE handle = ?1)",
+            [handle],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Recover an identical request's original recipient set and current receipts.
     ///
     /// # Errors
