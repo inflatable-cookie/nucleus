@@ -1263,6 +1263,10 @@ across projects. `item.list` and `decision.list` read the current records.
 New decisions require at least two options with distinct IDs and labels.
 Labels are compared after trimming. The board retains each option's ID from
 the read through the answer, including older decisions whose labels repeat.
+Decision answers on the board may use free text for ordinary decisions. An edited
+choice records its source option when available. Task-owned decisions apply an
+automatic gate and accept only an exact option; the store rejects free text for
+them. Answer notices include the custom text and its source option when present.
 Answering requires an operator binding and an explicit project. Answering a
 planner-authored or task-linked decision also delivers one answer notice
 through the planner message queue under ruling 52. A decision that belongs to a

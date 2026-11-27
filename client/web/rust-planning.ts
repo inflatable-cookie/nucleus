@@ -178,11 +178,12 @@ export function boardDecision(
       papercuts: [],
     },
     status,
+    gate: Boolean(decision.task),
     answer:
-      answer && chosen
+      answer && (chosen || answer.answer)
         ? {
-            optionId: chosen.id,
-            text: chosen.label,
+            ...(chosen ? { optionId: chosen.id } : {}),
+            text: answer.answer ?? chosen?.label ?? "",
             answeredBy: answer.author,
             answeredAt: iso(answer.answeredAtMs),
             relayed: null,
@@ -197,7 +198,8 @@ export function boardDecision(
     versions: [],
     stale: false,
     projectKey: key,
-    askerLabel: decision.author || "Planner",
+    projectName: project.name,
+    askerLabel: decision.authorLabel,
   };
 }
 
@@ -746,6 +748,8 @@ export function createRustPlanning(
       id: string;
       project?: string;
       optionId?: string;
+      answer?: string;
+      basedOnOptionId?: string;
       note?: string;
     }) => {
       const { row, record } = await recordOwner(
@@ -755,10 +759,10 @@ export function createRustPlanning(
         input.project,
       );
       const { optionId } = input;
-      if (!optionId || !record.options.some((option) => option.id === optionId))
-        throw new Error("Choose one of the decision's options.");
       const saved = await rust.answerDecision(row.id, record.id, {
-        optionId,
+        ...(optionId
+          ? { optionId }
+          : { answer: input.answer, basedOnOptionId: input.basedOnOptionId }),
         note: input.note || null,
       });
       return boardDecision(saved, row.board.key, row.project);

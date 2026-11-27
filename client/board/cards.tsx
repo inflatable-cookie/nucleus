@@ -989,24 +989,33 @@ export function decisionChoicePresentation(decision: DecisionView) {
     decision.choices ??
     decision.options.slice(0, 3).map((label) => ({ label, consequence: "" }));
   const identified = raw.some((choice) => "id" in choice);
-  const recommended = identified
-    ? undefined
-    : (decision.recommended ?? decision.options[0] ?? raw[0]?.label);
+  const recommended =
+    decision.recommended ??
+    raw.find((choice) => /\s*\(recommended\)\s*$/i.test(choice.label))?.label;
   const first = raw.find((choice) => choice.label === recommended);
-  const ordered = first ? [first, ...raw.filter((choice) => choice !== first)] : raw;
+  const ordered = first
+    ? [first, ...raw.filter((choice) => choice !== first)]
+    : raw;
   const labelCounts = new Map<string, number>();
   for (const { label } of raw) {
-    const visible = label.trim();
+    const visible = label.replace(/\s*\(recommended\)\s*$/i, "").trim();
     labelCounts.set(visible, (labelCounts.get(visible) ?? 0) + 1);
   }
   return {
     identified,
     choices: ordered.map((choice) => {
-      const optionId = "id" in choice && typeof choice.id === "string" ? choice.id : null;
-      const displayLabel = optionId && (labelCounts.get(choice.label.trim()) ?? 0) > 1
-        ? `${choice.label.trim()} (${optionId})`
-        : choice.label;
-      return { ...choice, optionId, displayLabel };
+      const optionId =
+        "id" in choice && typeof choice.id === "string" ? choice.id : null;
+      const visible = choice.label.replace(/\s*\(recommended\)\s*$/i, "").trim();
+      const displayLabel =
+        optionId && (labelCounts.get(visible) ?? 0) > 1
+          ? `${visible} (${optionId})`
+          : visible;
+      return {
+        ...choice,
+        optionId,
+        displayLabel,
+      };
     }),
     recommended,
   };
