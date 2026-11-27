@@ -91,16 +91,8 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     let head = service.fixture().start.clone();
     let (forge, _server) = publish_checkout_forge(head).await;
     service.forge = forge;
-    service.host = crate::tests::verified_native_fixture(
-        T3::new("http://127.0.0.1:9", "fixture").unwrap(),
-        home.path(),
-    );
-    let shell = |service: &Service, threads: serde_json::Value| {
-        service.host.fixture_held_shell(&json!({
-            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":threads}
-        }));
-    };
-    shell(&service, json!([]));
+    let (native, _archive) = empty_archive_fixture(1).await;
+    service.host = crate::tests::verified_native_fixture(native, home.path());
     service.fixture_mut().acp_provider = Some("fixture".into());
     // Helper cleanup runs on a profile whose Dispatch was never configured.
     assert!(service.state.lock().await.settings.dispatch.is_none());
@@ -111,6 +103,14 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
         .checkout(&service.fixture().checkout, REPOSITORY, &id)
         .unwrap();
     let base = checkout.path().to_owned();
+    let route = service.project_for(terminal.task.identity()).await.unwrap();
+    let binding = route.binding(&checkout).unwrap();
+    let shell = |service: &Service, threads: serde_json::Value| {
+        service.host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":threads,
+                "archivedThreads":archived_checkout_rows(&binding, &terminal.task)}
+        }));
+    };
 
     let server_home = tempfile::tempdir().unwrap();
     let at = server_home.path();
@@ -147,7 +147,7 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     tokio::time::sleep(Duration::from_millis(2500)).await;
     let parents = [provider.id().unwrap(), lookalike.id().unwrap()];
 
-    // A live role keeps every helper, and the wait names them.
+    // A live role retains the checkout and keeps every helper running.
     let task_thread = nucleus_hosts::parent_thread(&base);
     shell(
         &service,
@@ -157,19 +157,14 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     let Err(ServiceError::CheckoutRetained(cause)) = &outcome else {
         panic!("{outcome:?}");
     };
-    assert!(cause.contains("A task role is still running"), "{cause}");
+    assert!(cause.contains("every task thread is idle"), "{cause}");
     for (name, pid) in &pids {
-        assert_eq!(
-            cause.contains(&format!("PID {pid} (")),
-            HELPERS.contains(&name.as_str()),
-            "{name}: {cause}"
-        );
         assert!(alive(*pid), "{name}");
     }
     for kind in ["checkout_process_stop", "checkout_process_result"] {
         assert!(recorded(&service, &id, kind).await.is_empty());
     }
-    // The census behind this wait is repeated ever less often while the role runs.
+    // Rechecks of a task waiting for quiet shell evidence back off.
     for expected in [3, 6, 12] {
         let expected = Duration::from_secs(expected);
         // A pass takes the task's deadlines before it records a result.
@@ -190,16 +185,13 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
         assert!(matches!(
             state.wait_detail(&id),
             Some(crate::WaitDetail::Archive(shown))
-                if shown.contains("A task role is still running")
+                if shown.contains("every task thread is idle")
         ));
     }
 
     shell(&service, json!([]));
     let outcome = service.archive_done(&terminal).await;
-    assert!(
-        matches!(&outcome, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains("exited")),
-        "{outcome:?}"
-    );
+    assert_eq!(outcome.unwrap(), Action::Nothing);
     let results = recorded(&service, &id, "checkout_process_result").await;
     for result in &results {
         let pid = u32::try_from(result["process"]["pid"].as_u64().unwrap()).unwrap();
@@ -222,16 +214,9 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     assert!(provider.try_wait().unwrap().is_none());
     assert!(lookalike.try_wait().unwrap().is_none());
 
-    // The remaining processes still hold the checkout, as before.
-    let outcome = service.archive_done(&terminal).await;
-    assert!(
-        matches!(&outcome, Err(ServiceError::CheckoutProcess(blocker))
-            if !blocker.unverified && HOLDERS.iter().any(|name| blocker.pid == pids[*name])),
-        "{outcome:?}"
-    );
     let retained = recorded(&service, &id, "checkout_process_retained").await;
     assert!(retained.iter().any(|entry| entry["pid"] == pids["shared"]));
-    assert!(base.exists());
+    assert!(!base.exists());
 
     for name in HOLDERS {
         assert!(alive(pids[name]), "{name}");

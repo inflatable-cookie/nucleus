@@ -456,7 +456,7 @@ export function PullRequestCard({
   );
 }
 
-type ActivityEntry = { key: string; at: number; text: string; detail: string | null; tone: TimelineTone };
+type ActivityEntry = { key: string; at: number; text: string; detail: string | null; detailHint?: string; tone: TimelineTone };
 
 /** History as milestones, newest first. Records the board cannot present are skipped. */
 export function activityEntries(pages: readonly RustHistoryPage[]): ActivityEntry[] {
@@ -546,10 +546,14 @@ export function ActivityList({
           <View style={{ marginTop: space.xs - 1 }}>
             <Dot c={c} tone={entry.tone} />
           </View>
-          <Text style={{ ...typeScale.body, color: r.foreground, flex: 1, minWidth: 0 }}>
-            {entry.text}
-            {entry.detail ? <Text style={{ color: metaText(c).color }}>{`  ${entry.detail}`}</Text> : null}
-          </Text>
+          <View style={{ flex: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap" }}>
+            <Text style={{ ...typeScale.body, color: r.foreground }}>{entry.text}</Text>
+            {entry.detail ? (
+              entry.detailHint ? (
+                <Hint c={c} text={entry.detailHint} focusable><Text style={{ ...typeScale.body, color: metaText(c).color }}>{`  ${entry.detail}`}</Text></Hint>
+              ) : <Text style={{ ...typeScale.body, color: metaText(c).color }}>{`  ${entry.detail}`}</Text>
+            ) : null}
+          </View>
         </View>
       ))}
     </View>

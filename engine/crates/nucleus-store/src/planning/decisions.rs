@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use rusqlite::{Connection, OptionalExtension, Transaction};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
     Decision, DecisionAnswer, DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption,
@@ -167,7 +167,7 @@ impl Store {
         id: &str,
         stamp: WriteAt<'_>,
     ) -> Result<bool, StoreError> {
-        self.set_decision_withdrawn(project, id, true, stamp)
+        self.set_decision_withdrawn(project, id, true, None, stamp)
     }
 
     /// Reopen a standalone decision whose cause has returned.
@@ -180,7 +180,26 @@ impl Store {
         id: &str,
         stamp: WriteAt<'_>,
     ) -> Result<bool, StoreError> {
-        self.set_decision_withdrawn(project, id, false, stamp)
+        self.set_decision_withdrawn(project, id, false, None, stamp)
+    }
+
+    /// Close a legacy process decision and record why it was superseded.
+    ///
+    /// # Errors
+    /// Returns an error if the decision or its history cannot be saved.
+    pub fn supersede_process_decision(
+        &mut self,
+        project: &str,
+        id: &str,
+        stamp: WriteAt<'_>,
+    ) -> Result<bool, StoreError> {
+        self.set_decision_withdrawn(
+            project,
+            id,
+            true,
+            Some("Checkout retirement now follows Dispatch, T3, and Git."),
+            stamp,
+        )
     }
 
     fn set_decision_withdrawn(
@@ -188,6 +207,7 @@ impl Store {
         project: &str,
         id: &str,
         withdrawn: bool,
+        superseded: Option<&str>,
         stamp: WriteAt<'_>,
     ) -> Result<bool, StoreError> {
         let tx = self.planning_write()?;
@@ -196,6 +216,7 @@ impl Store {
         };
         let rearm = !withdrawn && decision.is_process_custody() && decision.answer.is_some();
         if decision.task.is_some()
+            || (superseded.is_some() && !decision.is_process_custody())
             || (!rearm && (decision.withdrawn == withdrawn || decision.answer.is_some()))
         {
             return Ok(false);
@@ -204,15 +225,19 @@ impl Store {
             decision.answer = None;
         }
         decision.withdrawn = withdrawn;
-        save(
-            &tx,
-            DecisionRecord,
-            project,
-            id,
-            if withdrawn { "withdraw" } else { "reopen" },
-            &decision,
-            stamp,
-        )?;
+        let action = match (withdrawn, superseded) {
+            (_, Some(_)) => "supersede",
+            (true, None) => "withdraw",
+            (false, None) => "reopen",
+        };
+        save(&tx, DecisionRecord, project, id, action, &decision, stamp)?;
+        if let Some(note) = superseded {
+            tx.execute(
+                "UPDATE planning_history SET snapshot = json_set(snapshot, '$.note', ?1)
+                 WHERE sequence = ?2",
+                params![note, tx.last_insert_rowid()],
+            )?;
+        }
         tx.commit()?;
         Ok(true)
     }

@@ -122,8 +122,9 @@ export function itemActivity(item: ItemDetail) {
           : entry.action === "park" || entry.action === "drop"
             ? "muted"
             : "accent";
-      const detail = [entry.actor, entry.recipient, entry.note].filter(Boolean).join(" · ") || null;
-      return { key: `${index}`, at: entry.atMs, text, detail, tone };
+      const detail = [entry.actorLabel ?? entry.actor, entry.recipientLabel ?? entry.recipient, entry.note].filter(Boolean).join(" · ") || null;
+      const detailHint = [entry.actor, entry.recipient].filter(Boolean).join(" · ");
+      return { key: `${index}`, at: entry.atMs, text, detail, detailHint: detailHint || undefined, tone };
     })
     .sort((a, b) => b.at - a.at);
 }
@@ -388,7 +389,7 @@ export function RustItemDialog({
         />
       )}
       {item.state === "parked" && (
-        <Panel c={c} label="Parked" tone={revisitDue(item.revisitAt) ? "warning" : "muted"} eyebrow="Parked" by={entry?.actor}>
+        <Panel c={c} label="Parked" tone={revisitDue(item.revisitAt) ? "warning" : "muted"} eyebrow="Parked" by={entry?.actorLabel} byHint={entry?.actor}>
           <Text selectable style={{ ...typeScale.body, color: r.foreground }}>{item.reason || "Parked without a reason."}</Text>
           <View style={{ ...row, gap: space.xs }}>
             <Text style={metaText(c)}>Revisit</Text>
@@ -418,7 +419,8 @@ export function RustItemDialog({
           label={item.disposition === "completed" ? "Completed" : "Deprecated"}
           tone={item.disposition === "completed" ? "success" : "muted"}
           eyebrow={item.disposition === "completed" ? "Completed" : "Deprecated"}
-          by={entry?.actor}
+          by={entry?.actorLabel}
+          byHint={entry?.actor}
         >
           <Text selectable style={{ ...typeScale.body, color: item.reason ? r.foreground : metaText(c).color }}>
             {item.reason || "No note."}
@@ -504,7 +506,7 @@ function ItemAge({ c, item, entry }: { c: Colors; item: ItemDetail; entry: ItemH
   const filed = item.createdAtMs;
   const edited = item.history.findLast((record) => record.action === "edit")?.atMs ?? null;
   const tip = [
-    entry ? `${verb} ${clockTime(entry.atMs)}${entry.actor ? ` · ${entry.actor}` : ""}` : null,
+    entry ? `${verb} ${clockTime(entry.atMs)}${entry.actorLabel ? ` · ${entry.actorLabel}` : ""}${entry.actor ? ` (${entry.actor})` : ""}` : null,
     filed !== null && (entry || item.state === "open") ? `Filed ${clockTime(filed)}` : null,
     edited !== null ? `Edited ${clockTime(edited)}` : null,
   ]
@@ -524,6 +526,7 @@ function Panel({
   tone,
   eyebrow,
   by,
+  byHint,
   help,
   children,
 }: {
@@ -532,6 +535,7 @@ function Panel({
   tone: TimelineTone;
   eyebrow: string;
   by?: string;
+  byHint?: string;
   help?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -556,7 +560,11 @@ function Panel({
         </Text>
         {help}
         <View style={{ flex: 1 }} />
-        {by ? <Text style={metaText(c)}>{by}</Text> : null}
+        {by ? (
+          byHint ? (
+            <Hint c={c} text={byHint} focusable><Text style={metaText(c)}>{by}</Text></Hint>
+          ) : <Text style={metaText(c)}>{by}</Text>
+        ) : null}
       </View>
       {children}
     </View>
@@ -593,7 +601,11 @@ function AssessPanel({
             <Hint c={c} text={new Date(assessed.atMs).toLocaleString()} focusable>
               <Text style={metaText(c)}>{`With planner since ${clockTime(assessed.atMs)}`}</Text>
             </Hint>
-            {assessed.recipient ? <Text style={metaText(c)}>{`· ${assessed.recipient}`}</Text> : null}
+            {assessed.recipient ? (
+              <Hint c={c} text={assessed.recipient} focusable>
+                <Text style={metaText(c)}>{`· ${assessed.recipientLabel ?? "Agent thread"}`}</Text>
+              </Hint>
+            ) : null}
           </>
         ) : null}
         <View style={{ flex: 1 }} />
@@ -770,7 +782,7 @@ function ContextLine({ c, item, laneName }: { c: Colors; item: ItemDetail; laneN
       {item.author ? (
         <View style={{ ...row, gap: space.xs }}>
           {label("By")}
-          <Hint c={c} text={item.author} focusable><Text style={metaText(c)}>{item.authorLabel ?? (item.author.startsWith("mcp:launch:") ? "Thread" : item.author)}</Text></Hint>
+          <Hint c={c} text={item.author} focusable><Text style={metaText(c)}>{item.authorLabel ?? "Agent thread"}</Text></Hint>
         </View>
       ) : null}
     </View>

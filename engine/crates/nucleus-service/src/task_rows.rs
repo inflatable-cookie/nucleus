@@ -184,29 +184,6 @@ impl Service {
             .count())
     }
 
-    pub(super) async fn operator_snooze_wait(&self, row: &TaskRow) -> Option<ServiceError> {
-        let state = self.state.lock().await;
-        let WaitDetail::OperatorSnoozed {
-            version,
-            thread,
-            until,
-            ..
-        } = state.wait_detail(&row.task.identity().id)?
-        else {
-            return None;
-        };
-        (*version == row.version
-            && *until > now_ms()
-            && self
-                .host
-                .row_visibility_hint(thread)
-                .is_none_or(|row| row.snoozed_until_ms == Some(*until)))
-        .then(|| ServiceError::OperatorSnoozed {
-            thread: thread.clone(),
-            until: *until,
-        })
-    }
-
     pub(super) async fn owned_delivery_snoozes(
         &self,
         row: &TaskRow,

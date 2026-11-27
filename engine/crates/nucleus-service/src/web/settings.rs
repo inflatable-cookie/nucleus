@@ -599,11 +599,17 @@ pub(super) async fn clear_planner(
     let service = api.service;
     let saved = task::spawn(async move {
         save_projects(&service, revision, move |projects| {
-            projects
+            let entry = projects
                 .projects
                 .get_mut(&project)
-                .ok_or(StorageError::SettingsConflict)?
-                .planner_claim = None;
+                .ok_or(StorageError::SettingsConflict)?;
+            if let Some(claim) = entry.planner_claim.take() {
+                for thread in [Some(claim.thread), claim.replaced].into_iter().flatten() {
+                    if !entry.claimed_planner_threads.contains(&thread) {
+                        entry.claimed_planner_threads.push(thread);
+                    }
+                }
+            }
             Ok(())
         })
         .await
@@ -775,6 +781,11 @@ fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), S
         }
         if let Some(project) = current.projects.get_mut(&id) {
             if edits.planner_claim.is_some() && edits.planner_claim != project.planner_claim {
+                return Err(changed_route());
+            }
+            if !edits.claimed_planner_threads.is_empty()
+                && edits.claimed_planner_threads != project.claimed_planner_threads
+            {
                 return Err(changed_route());
             }
             project.name = edits.name;

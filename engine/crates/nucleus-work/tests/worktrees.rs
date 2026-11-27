@@ -791,7 +791,21 @@ fn retire_stages_same_volume_trash_removes_git_registration_and_prunes_only_owne
     let linked = trash_root.join("linked-1-1");
     std::os::unix::fs::symlink(&symlink_target, &linked).unwrap();
 
-    nucleus_work::prune_trash(storage.work(), u64::MAX).unwrap();
+    let name = entries[0].file_name().unwrap().to_str().unwrap();
+    let (_, suffix) = name.split_once("task-trash-").unwrap();
+    let (timestamp, _) = suffix.rsplit_once('-').unwrap();
+    let retirement_ms: u64 = timestamp.parse().unwrap();
+    let expiry = retirement_ms + 24 * 60 * 60 * 1000;
+    nucleus_work::prune_trash(storage.work(), expiry - 1, |_| panic!("entry is too young"))
+        .unwrap();
+    assert!(entries[0].exists());
+    nucleus_work::prune_trash(storage.work(), expiry, |entry| {
+        assert_eq!(entry, entries[0]);
+        false
+    })
+    .unwrap();
+    assert!(entries[0].exists());
+    nucleus_work::prune_trash(storage.work(), expiry, |_| true).unwrap();
     assert!(!entries[0].exists());
     assert!(foreign.join("keep").is_file());
     assert!(linked.is_symlink());
@@ -821,7 +835,7 @@ fn trash_pruning_reports_each_failed_entry_and_retries_it_later() {
         fs::write(failed.join("unexpected"), "keep").unwrap();
     }
 
-    let error = nucleus_work::prune_trash(storage.work(), u64::MAX).unwrap_err();
+    let error = nucleus_work::prune_trash(storage.work(), u64::MAX, |_| true).unwrap_err();
     assert!(!healthy.exists());
     for failed in &entries {
         assert!(error.to_string().contains(failed.to_str().unwrap()));
@@ -832,7 +846,7 @@ fn trash_pruning_reports_each_failed_entry_and_retries_it_later() {
         );
         fs::remove_file(failed.join("unexpected")).unwrap();
     }
-    nucleus_work::prune_trash(storage.work(), u64::MAX).unwrap();
+    nucleus_work::prune_trash(storage.work(), u64::MAX, |_| true).unwrap();
     assert_eq!(fs::read_dir(trash).unwrap().count(), 0);
 }
 
@@ -913,7 +927,7 @@ fn retire_recovers_interrupted_cleanup_without_dot_git_file_and_preserves_unpubl
         assert!(!listed.contains("ns-task-1155"));
         assert!(listed.contains("ns-task-sibling"));
 
-        nucleus_work::prune_trash(storage.work(), u64::MAX).unwrap();
+        nucleus_work::prune_trash(storage.work(), u64::MAX, |_| true).unwrap();
     }
 }
 

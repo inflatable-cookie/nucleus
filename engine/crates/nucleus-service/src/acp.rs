@@ -152,10 +152,6 @@ impl Service {
         let carry_row = !task.phase().is_terminal() && (active_in_shell || handover.is_some());
         let active_child = active_in_shell || run_keeps_turn(state, row);
         if task.phase().is_terminal()
-            || matches!(
-                state.wait_detail(id),
-                Some(crate::WaitDetail::OperatorSnoozed { .. })
-            )
             || (!active_child
                 && matches!(
                     state.wait_detail(id),
@@ -302,13 +298,9 @@ impl Service {
         {
             return Err(HostError::Binding.into());
         }
-        let thread = write.thread_id().ok_or(ServiceError::Input)?.to_owned();
-        if write.delivery_row().is_some() || nucleus_hosts::is_pinned_parent_hold(command) {
-            write.allow_owned_snoozes(self.owned_delivery_snoozes(row, &thread).await?);
-        }
-        if let Some(parent) = write.delivery_row() {
-            self.check_parent_snooze(row, write.binding(), parent)
-                .await?;
+        if write.starts_turn() {
+            let thread = write.thread_id().ok_or(ServiceError::Input)?;
+            write.allow_owned_snoozes(self.owned_delivery_snoozes(row, thread).await?);
         }
         // Record the wire and deadline before sending. A restart or transport
         // error can replay this exact command against T3's durable receipt.
@@ -328,13 +320,6 @@ impl Service {
                         .await?;
                 }
                 Ok(true)
-            }
-            (Err(ParentSendError::NotSent(HostError::OperatorSnoozed { until })), record) => {
-                if let Some((record, _)) = record {
-                    self.finish_parent_delivery(row, &record, ParentResult::Pending, 0)
-                        .await?;
-                }
-                Err(ServiceError::OperatorSnoozed { thread, until })
             }
             (Err(ParentSendError::Rejected), Some((record, mut frozen))) => {
                 let command = frozen

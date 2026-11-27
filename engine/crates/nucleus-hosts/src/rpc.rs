@@ -55,14 +55,21 @@ pub(crate) enum ThreadReply {
     Closed { row: Value, sequence: Option<u64> },
 }
 
-#[derive(Clone)]
+pub(crate) type ShellRevision = (u64, Option<u64>);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ThreadFence {
     pub(crate) row: Option<Arc<Value>>,
-    revision: (u64, Option<u64>),
+    revision: ShellRevision,
     row_revision: Option<(u64, bool)>,
 }
 
 impl ThreadFence {
+    pub(crate) fn at_or_after(&self, sequence: u64) -> bool {
+        self.row_revision
+            .is_some_and(|(revision, _)| revision >= sequence)
+    }
+
     pub(crate) fn covers(&self, sequence: u64) -> bool {
         self.row_revision.is_some_and(|(revision, initial)| {
             if initial {
@@ -592,7 +599,7 @@ impl Rpc {
                 if let Some(row) = fence.row.as_deref().filter(|row| closed_row(row)) {
                     let reply = ThreadReply::Closed {
                         row: row.clone(),
-                        sequence: shell.revision(),
+                        sequence: shell.row_revision(id).map(|(revision, _)| revision),
                     };
                     return Ok(ThreadObservation { reply, fence });
                 }
@@ -703,11 +710,15 @@ impl Rpc {
         ThreadFence {
             row: shell.and_then(|shell| shell.marker(id)),
             row_revision: shell.and_then(|shell| shell.row_revision(id)),
-            revision: (
-                self.shell_epoch.load(Ordering::Relaxed),
-                shell.and_then(ThreadSnapshots::revision),
-            ),
+            revision: self.shell_revision(shell),
         }
+    }
+
+    pub(crate) fn shell_revision(&self, shell: Option<&ThreadSnapshots>) -> ShellRevision {
+        (
+            self.shell_epoch.load(Ordering::Relaxed),
+            shell.and_then(ThreadSnapshots::revision),
+        )
     }
 
     pub(crate) fn thread_row_with_revision(&self, id: &str) -> (Option<Arc<Value>>, Option<u64>) {
