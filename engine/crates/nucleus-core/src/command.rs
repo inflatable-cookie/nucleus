@@ -192,6 +192,9 @@ impl Task {
         if run.as_ref().is_some_and(|run| run.revoked) {
             return;
         }
+        if self.phase != phase {
+            self.threads.missing_report_from = None;
+        }
         let reminder_cause = run
             .as_ref()
             .filter(|run| run.report_reminder_for().is_some() && run.report.is_none())
@@ -500,17 +503,19 @@ impl Task {
 
     /// Retire a proven unsent reservation so another subscription can be selected.
     pub fn discard_paused_reservation(&mut self, observation: &Observation) -> bool {
-        let unsent = self.run.as_ref().is_some_and(|run| {
+        let Some(run) = self.run.as_ref().filter(|run| {
             !run.revoked
                 && run.last_send_at_ms.is_none()
                 && run.report.is_none()
-                && run.report_reminder_for().is_none()
                 && observation.current(&run.launch.instance) == Some(RunState::ReadyToSend)
-        });
-        if unsent {
-            self.run = None;
+        }) else {
+            return false;
+        };
+        if let Some(original) = &run.report_reminder_for {
+            self.threads.missing_report_from = Some(original.clone());
         }
-        unsent
+        self.run = None;
+        true
     }
 
     /// Obtain the ID the next reservation will use so the caller can freeze its wire.
@@ -581,6 +586,7 @@ impl Task {
         }
         run.last_send_at_ms = Some(now_ms);
         self.threads.bind(&run.launch);
+        self.threads.missing_report_from = None;
         Ok(())
     }
 
@@ -907,6 +913,7 @@ impl Task {
         self.attempts = 0;
         self.question = None;
         self.work_continuation = None;
+        self.threads.missing_report_from = None;
     }
 
     fn check_move(&self, phase: Phase, observation: &Observation) -> Result<(), CommandError> {

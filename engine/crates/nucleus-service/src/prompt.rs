@@ -224,7 +224,8 @@ impl Prompt<'_> {
             let _ = writeln!(text, "PR: {}\nPR head: {}", pr.url, pr.head);
         }
         if let Some(thread) = self.replaced_thread {
-            let _ = writeln!(text, "Replaced worker thread: {thread}");
+            let role = section.to_ascii_lowercase();
+            let _ = writeln!(text, "Replaced {role} thread: {thread}");
         }
         if self.role == Role::Worker
             && report_only.is_none()
@@ -237,6 +238,12 @@ impl Prompt<'_> {
 
     fn write_history(&self, text: &mut String) {
         let task = &self.row.task;
+        if let Some(original) = task.threads().missing_report_from() {
+            let _ = writeln!(
+                text,
+                "Run {original} ended without an authenticated report. Use the existing checkout and the context below to verify what is complete, finish the assignment, and submit the requested report using this run's binding."
+            );
+        }
         if self.role == Role::Worker
             && let Some(Verdict::Reviewed {
                 head,

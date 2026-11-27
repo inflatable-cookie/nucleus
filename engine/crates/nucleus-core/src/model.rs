@@ -620,6 +620,8 @@ pub struct Threads {
     pub(crate) applied_review_sequence: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) settled_scratch: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) missing_report_from: Option<String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub(crate) earlier_scratch: std::collections::BTreeMap<u64, PathBuf>,
 }
@@ -640,6 +642,12 @@ impl Threads {
             Role::Reviewer => self.reviewer_profile.as_ref(),
         }
         .map(|bound| &bound.selected)
+    }
+
+    /// The ended run whose report a replacement assignment should recover.
+    #[must_use]
+    pub fn missing_report_from(&self) -> Option<&str> {
+        self.missing_report_from.as_deref()
     }
 
     pub(crate) fn bind(&mut self, launch: &PreparedLaunch) {
