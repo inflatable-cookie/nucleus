@@ -427,7 +427,7 @@ impl Service {
             && let Some(worktree) = worktree
         {
             return Ok(self
-                .verify_linked_checkout(route.checkout.clone(), worktree.into())
+                .verify_linked_checkout(&worktree, route.checkout.clone(), (&worktree).into())
                 .await?);
         }
         Ok(true)

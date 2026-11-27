@@ -550,9 +550,13 @@ impl Service {
     ) -> Result<Option<TitleTarget>, ServiceError> {
         let identity = task.identity();
         let route = self.resolve_project(state, identity)?;
-        let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
-        let binding = route.binding(&checkout)?;
+        // The state lock is held here, so this touches no checkout.
+        let path = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &identity.repository,
+            &identity.id,
+        );
+        let binding = route.thread_binding(&path, &format!("ns-{}", identity.id))?;
         Ok(route
             .checkout
             .to_str()
@@ -679,8 +683,8 @@ impl Service {
         }
         let identity = row.task.identity();
         let route = self.project_for(identity).await?;
-        let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, task_id)?;
+        let worktrees = self.worktrees();
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, task_id)?;
         let binding = route.binding(&checkout)?;
         let Some(target) = route
             .checkout
@@ -1228,7 +1232,7 @@ mod tests {
         );
         assert!(subject.ask_allowance(1, 1));
         let id = &subject.identity().id;
-        let worktrees = service.worktrees().expect("fixture worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,
@@ -1378,7 +1382,7 @@ mod tests {
             None,
         );
         let id = subject.identity().id.clone();
-        let worktrees = service.worktrees().expect("fixture worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,

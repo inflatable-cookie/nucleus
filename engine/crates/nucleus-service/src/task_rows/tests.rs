@@ -81,7 +81,7 @@ impl Fixture {
     async fn new(task: &Task) -> Self {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let binding = {
-            let work = service.worktrees().unwrap();
+            let work = service.worktrees();
             let checkout = work
                 .checkout(&service.fixture().checkout, &task.identity().repository, ID)
                 .unwrap();

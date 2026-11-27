@@ -20,6 +20,7 @@ pub(crate) const REENTRY_CHECK: Duration = Duration::from_secs(3);
 /// Only this long after a role message is sent does the short interval apply.
 pub(crate) const REENTRY_WINDOW_MS: u64 = 30_000;
 pub(crate) const FORGE_RETRY: Duration = Duration::from_secs(30);
+pub(crate) const VOLUME_RETRY: Duration = Duration::from_mins(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Priority {
@@ -170,6 +171,11 @@ pub(crate) struct Schedule {
 enum Recovery {
     CheckAt(Instant),
     Blocked,
+    /// The work volume could not be verified `misses` times in a row.
+    Volume {
+        after: Instant,
+        misses: u32,
+    },
 }
 
 impl Schedule {
@@ -201,7 +207,7 @@ impl Schedule {
 
     pub(crate) fn wake(&mut self, id: &str, due: Instant, priority: Priority) {
         let due = match self.workspace.get(id) {
-            Some(Recovery::CheckAt(after)) => due.max(*after),
+            Some(Recovery::CheckAt(after) | Recovery::Volume { after, .. }) => due.max(*after),
             Some(Recovery::Blocked) => return,
             None => due,
         };
@@ -222,8 +228,8 @@ impl Schedule {
     pub(crate) fn recover_workspace(&mut self, id: &str, now: Instant, phase: Phase) -> bool {
         let next = match self.workspace.get(id).copied() {
             Some(Recovery::CheckAt(due)) if due <= now => Recovery::Blocked,
-            Some(prior) => prior,
-            None => Recovery::CheckAt(now + T3_RETRY_DELAY),
+            Some(prior @ (Recovery::CheckAt(_) | Recovery::Blocked)) => prior,
+            Some(Recovery::Volume { .. }) | None => Recovery::CheckAt(now + T3_RETRY_DELAY),
         };
         self.workspace.insert(id.into(), next);
         self.park(id);
@@ -231,6 +237,21 @@ impl Schedule {
             self.wake(id, due, Priority::Effect.for_phase(phase));
         }
         next == Recovery::Blocked
+    }
+
+    /// Retry a task whose work volume could not be verified, doubling the delay
+    /// from [`RETRY`] up to [`VOLUME_RETRY`].
+    pub(crate) fn await_volume(&mut self, id: &str, now: Instant, phase: Phase) {
+        let misses = match self.workspace.get(id) {
+            Some(Recovery::Volume { misses, .. }) => misses.saturating_add(1),
+            _ => 0,
+        };
+        let delay = RETRY.saturating_mul(1 << misses.min(8)).min(VOLUME_RETRY);
+        let after = now + delay;
+        self.workspace
+            .insert(id.into(), Recovery::Volume { after, misses });
+        self.park(id);
+        self.wake(id, after, Priority::Effect.for_phase(phase));
     }
 
     pub(crate) fn recheck(&mut self, id: &str, now: Instant) {

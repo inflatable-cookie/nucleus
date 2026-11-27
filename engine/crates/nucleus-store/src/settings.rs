@@ -6,7 +6,7 @@ use std::{
     os::fd::OwnedFd,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use longhorn_config::{
@@ -47,6 +47,12 @@ pub enum StorageError {
     MissingVolume,
     #[error("the pinned, writable work volume is unavailable")]
     VolumeUnavailable,
+    /// A write or removal which outlived its caller and holds its owner.
+    #[error(
+        "The work volume or layout cannot be verified: {step} has not returned after {}. This waits until it does. If it never does, restart the engine.",
+        age(.since)
+    )]
+    CallHeld { step: &'static str, since: Instant },
     #[error("Barge could not place {class}: {reason}")]
     BargePlacement { class: &'static str, reason: String },
     #[error("the storage path is outside the pinned volume")]
@@ -69,6 +75,15 @@ pub enum StorageError {
     ConfinedDirectory(#[from] rustix::io::Errno),
     #[error("an isolated engine is already serving this profile or its lock is unreadable")]
     ProfileLock,
+}
+
+fn age(since: &Instant) -> String {
+    let seconds = since.elapsed().as_secs();
+    if seconds < 120 {
+        format!("{seconds} seconds")
+    } else {
+        format!("{} minutes", seconds / 60)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -553,6 +568,17 @@ impl EngineStorage {
             storage.verify_optional(path)?;
         }
         Ok(storage)
+    }
+
+    /// Hold on to the work and scratch roots a running service starts with, so a
+    /// missing or substituted root is unavailable until the original returns.
+    ///
+    /// # Errors
+    /// Returns an error if either root cannot be created or opened.
+    pub fn pin_roots(&mut self) -> Result<(), StorageError> {
+        self.work = self.work.clone().pinned()?;
+        self.scratch = self.scratch.clone().pinned()?;
+        Ok(())
     }
 
     /// The profile home used for durable state.

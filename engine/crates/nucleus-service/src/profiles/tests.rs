@@ -732,7 +732,7 @@ fn retained_role_task(
         url: format!("https://github.com/{REPOSITORY}/pull/1"),
         head: head.clone(),
     };
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, id)
         .unwrap();
@@ -972,7 +972,7 @@ fn stored_reminder(
     role: Role,
     required: bool,
 ) -> (Task, nucleus_hosts::Binding, nucleus_core::Head) {
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, REMINDER_TASK)
         .unwrap();

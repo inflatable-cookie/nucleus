@@ -1334,7 +1334,7 @@ impl Card {
             ),
         };
         let archive_detail = match detail {
-            Some(crate::WaitDetail::Archive(message)) if task.phase() == Phase::Done => {
+            Some(crate::WaitDetail::Archive(message)) if task.phase().is_terminal() => {
                 Some(message.as_str())
             }
             _ => None,

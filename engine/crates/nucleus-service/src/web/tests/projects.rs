@@ -993,7 +993,7 @@ async fn paired_board_reports_the_same_planner_scope_as_planning_routes() {
 
 async fn assert_workspace_limit(registry: &Registry, tasks: [&Task; 2]) {
     let service = &registry.service;
-    let worktrees = service.worktrees().expect("synthetic worktree root");
+    let worktrees = service.worktrees();
     for task in tasks {
         let identity = task.identity();
         let route = service.project_for(identity).await.expect("member route");
@@ -2416,7 +2416,7 @@ async fn registry_gate_refuses_cross_project_wrong_push_remote_and_moved_native_
     let service = &registry.service;
     let alpha = registry.task("alpha-planner", "first").await;
     let beta = registry.task("beta-planner", "second").await;
-    let worktrees = service.worktrees().expect("worktree root");
+    let worktrees = service.worktrees();
     let alpha_route = service
         .project_for(alpha.identity())
         .await

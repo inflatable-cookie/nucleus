@@ -669,7 +669,9 @@ impl Service {
             repo.path.clone()
         };
         if let Some(path) = &target.worktree_path {
-            return Ok(self.verify_linked_checkout(root, path.into()).await?);
+            return Ok(self
+                .verify_linked_checkout(&row.id, root, path.into())
+                .await?);
         }
         Ok(true)
     }

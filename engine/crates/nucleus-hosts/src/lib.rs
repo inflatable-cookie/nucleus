@@ -921,9 +921,11 @@ impl T3Pass<'_> {
                 runtime.extend(helpers);
             }
         }
-        Ok(inventory
-            .writer(checkout, self.run_scratch.as_deref(), &runtime)?
-            .is_none())
+        let scratch = self.run_scratch.as_deref();
+        process::verify_roots(&[Some(checkout), scratch])
+            .await
+            .map_err(process::coverage_error)?;
+        Ok(inventory.writer(checkout, scratch, &runtime)?.is_none())
     }
 
     async fn process_inventory(&self) -> Result<&Inventory, HostError> {
@@ -950,9 +952,11 @@ impl T3Pass<'_> {
 
 impl TaskHost for T3Pass<'_> {
     async fn retirement_writer(&self, root: &Path) -> Result<Option<u32>, HostError> {
-        self.process_inventory()
-            .await?
-            .writer(root, None, &std::collections::HashSet::new())
+        let inventory = self.process_inventory().await?;
+        process::verify_roots(&[Some(root)])
+            .await
+            .map_err(process::coverage_error)?;
+        inventory.writer(root, None, &std::collections::HashSet::new())
     }
 
     async fn terminal_orphans(

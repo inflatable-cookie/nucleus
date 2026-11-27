@@ -564,7 +564,7 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
             .map(|task| task.id),
         Some(id.into())
     );
-    let worktrees = service.worktrees().expect("worktree root");
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, id)
         .expect("checkout");
@@ -582,7 +582,7 @@ async fn a_cold_pass_consumes_an_authenticated_report_despite_an_old_custody_blo
         let head = service.fixture().start.clone();
         let (forge, _, server) = forge_fixture_for_branch(&head, "ns-worker").await;
         service.forge = forge;
-        let worktrees = service.worktrees().unwrap();
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(&service.fixture().checkout, REPOSITORY, "worker")
             .unwrap();
@@ -749,7 +749,7 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
         let identity = task.identity().clone();
         let task = Task::new(identity.clone(), "Fixture".into(), None);
         let binding = {
-            let work = service.worktrees().unwrap();
+            let work = service.worktrees();
             let checkout = work
                 .checkout(
                     &service.fixture().checkout,
@@ -1119,7 +1119,7 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     let (_home, mut service) = fixture(forge);
     let repo = service.fixture().checkout.clone();
     let old_head = service.fixture().start.clone();
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees.checkout(&repo, REPOSITORY, "partial").unwrap();
     checkout.allocate(&old_head).unwrap();
     let path = checkout.path().to_owned();
@@ -1208,6 +1208,12 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     forge_server.abort();
 }
 
+fn checkouts(service: &Service) -> usize {
+    std::fs::read_dir(service.storage.work().path())
+        .expect("work root")
+        .count()
+}
+
 async fn run_workspace_recheck(
     service: &Service,
     task: &str,
@@ -1244,7 +1250,7 @@ async fn interrupted_checkout_with_a_sent_worker_is_preserved() {
     ))
     .await;
     let (_home, service) = fixture(forge);
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, "sent")
         .unwrap();
@@ -1399,7 +1405,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         Task::new(shape.identity().clone(), shape.brief().text.clone(), None)
     };
     let pass = async |service: &Service| service.pass().await.expect("queue pass");
-    assert!(!service.storage.work().path().exists());
+    assert_eq!(checkouts(&service), 0);
     service
         .state
         .lock()
@@ -1821,14 +1827,10 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
         project_default_slots: 1,
         ..nucleus_store::DispatchSettings::default()
     });
-    let root = service.storage.work().path();
-    assert!(
-        !root.exists(),
-        "the fresh profile has no managed checkout root"
-    );
+    assert_eq!(checkouts(&service), 0, "the fresh profile has no checkouts");
     let head = &service.fixture().start;
     let checkout_repo = &service.fixture().checkout;
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     for id in ["first-owned", "second-owned"] {
         let (shape, _, observation) = reservation(id, Entry::Brief, head);
         let mut task = Task::new(shape.identity().clone(), "Fixture".into(), None);
@@ -2140,6 +2142,7 @@ async fn host_backoff_does_not_delay_a_local_task_decision() {
 }
 
 mod close_requests;
+mod work_volume;
 
 #[tokio::test]
 async fn wait_retention_tracks_the_question_even_when_its_title_stays_the_same() {
