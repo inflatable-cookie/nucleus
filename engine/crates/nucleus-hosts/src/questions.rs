@@ -202,6 +202,17 @@ impl T3 {
             .is_some_and(|identity| !identity.is_child()))
     }
 
+    /// Read only the thread identity from the synchronized shell snapshot without
+    /// contacting the host.
+    /// # Errors
+    /// Returns an error for a malformed or mismatched shell row.
+    pub fn cached_thread_identity(&self, id: &str) -> Result<Option<PlannerIdentity>, HostError> {
+        let Some(row) = self.rpc.thread_row(id) else {
+            return Ok(None);
+        };
+        Self::parse_active_identity(&row, id)
+    }
+
     /// Read only the thread identity from a synchronized compact projection.
     /// # Errors
     /// Returns an error for an unreadable or mismatched identity.
@@ -214,8 +225,12 @@ impl T3 {
                 ThreadReply::Closed { .. } | ThreadReply::Missing => return Ok(None),
             }
         };
+        Self::parse_active_identity(&row, id)
+    }
+
+    fn parse_active_identity(row: &Value, id: &str) -> Result<Option<PlannerIdentity>, HostError> {
         let thread: PlannerIdentity =
-            serde_json::from_value(row).map_err(|_| HostError::Protocol)?;
+            serde_json::from_value(row.clone()).map_err(|_| HostError::Protocol)?;
         if thread.id != id {
             return Err(HostError::Binding);
         }

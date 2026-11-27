@@ -4544,40 +4544,57 @@ async fn unknown_caller_cannot_watch_or_unwatch_and_makes_no_t3_calls() {
             .status(),
         StatusCode::FORBIDDEN
     );
-    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
 
-    for verb in ["watch", "unwatch"] {
+    // Both unknown callers and callers absent from the synchronized shell are refused with 0 T3 calls.
+    for actor in ["unknown-caller", "uncached-agent"] {
+        for verb in ["watch", "unwatch"] {
+            assert_eq!(
+                watch_via(&registry.api, actor, "missing", verb)
+                    .await
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+        }
         assert_eq!(
-            watch_via(&registry.api, "unknown-caller", "missing", verb)
-                .await
-                .status(),
+            caller_request(
+                &registry.api,
+                Method::GET,
+                "/v1/tasks/missing/watchers",
+                actor,
+                Value::Null,
+            )
+            .await
+            .status(),
             StatusCode::FORBIDDEN
         );
     }
-    assert_eq!(
-        caller_request(
-            &registry.api,
-            Method::GET,
-            "/v1/tasks/missing/watchers",
-            "unknown-caller",
-            Value::Null,
-        )
-        .await
-        .status(),
-        StatusCode::FORBIDDEN
-    );
-    registry
-        .notices
-        .lock()
+
+    let alpha_root = registry
+        .service
+        .host
+        .cached_project("alpha-native")
         .unwrap()
-        .archived_threads
-        .insert("archived-agent".into());
+        .root;
+    registry.service.host.fixture_project_shell(
+        &json!({
+            "projects": [{"id": "alpha-native", "workspaceRoot": alpha_root}],
+            "threads": [{
+                "id": "archived-agent",
+                "projectId": "external-native",
+                "updatedAt": "2026-11-27T12:00:00Z",
+                "archivedAt": "2026-11-27T12:01:00Z",
+                "deletedAt": null,
+            }]
+        }),
+        "fixture-acp",
+    );
     assert_eq!(
         watch_via(&registry.api, "archived-agent", "missing", "watch")
             .await
             .status(),
         StatusCode::FORBIDDEN
     );
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
 }
 
 #[tokio::test]
@@ -4817,7 +4834,27 @@ async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
         .unwrap();
     let target_ref = format!("{ALPHA_REPO}#{number}");
 
-    // "standalone-agent" has no planner_route and no run ticket, only a live T3 thread.
+    let alpha_root = registry
+        .service
+        .host
+        .cached_project("alpha-native")
+        .unwrap()
+        .root;
+    // "standalone-agent" has no planner_route and no run ticket, only a synchronized shell thread.
+    registry.service.host.fixture_project_shell(
+        &json!({
+            "projects": [{"id": "alpha-native", "workspaceRoot": alpha_root}],
+            "threads": [{
+                "id": "standalone-agent",
+                "projectId": "external-native",
+                "updatedAt": "2026-11-27T12:00:00Z",
+                "archivedAt": null,
+                "deletedAt": null,
+            }]
+        }),
+        "fixture-acp",
+    );
+    let reads = registry.reads.load(Ordering::Relaxed);
     let watched =
         json_body(watch_via(&registry.api, "standalone-agent", &target_ref, "watch").await).await;
     assert_eq!(watched["watching"], true);
@@ -4846,6 +4883,7 @@ async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
     .await;
     assert_eq!(status["watchers"], json!({"count": 1, "watching": true}));
     assert!(status.get("commands").is_none());
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
 
     settle_phase(&registry.service, "alpha-task", "done", Some(PR)).await;
     let row = registry.service.task("alpha-task").await.unwrap();
@@ -4859,34 +4897,14 @@ async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
         assert_eq!(recipients, vec!["alpha-planner", "standalone-agent"]);
     }
 
-    // Cached shell threads do not trigger an extra T3 subscribeThread call.
-    registry.service.host.fixture_project_shell(
-        &json!({
-            "projects": [{"id": "alpha-native", "workspaceRoot": "/tmp/alpha"}],
-            "threads": [{
-                "id": "cached-agent",
-                "projectId": "external-native",
-                "updatedAt": "2026-11-27T12:00:00Z",
-                "archivedAt": null,
-                "deletedAt": null,
-            }]
-        }),
-        "fixture-acp",
-    );
     let reads = registry.reads.load(Ordering::Relaxed);
     assert_eq!(
-        watch_via(&registry.api, "cached-agent", &target_ref, "watch")
+        watch_via(&registry.api, "standalone-agent", &target_ref, "unwatch")
             .await
             .status(),
         StatusCode::OK
     );
     assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
-    assert_eq!(
-        watch_via(&registry.api, "cached-agent", &target_ref, "unwatch")
-            .await
-            .status(),
-        StatusCode::OK
-    );
 }
 
 #[tokio::test]

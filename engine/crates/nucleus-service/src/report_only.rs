@@ -633,11 +633,11 @@ impl Service {
             }
             Some(None) => {}
         }
-        // Any live, unarchived T3 thread may watch/inspect watch status across projects.
+        // Any live, unarchived T3 thread in the synchronized shell snapshot may watch/inspect
+        // watch status across projects without making request-time host RPC calls (ruling 11).
         let identity = self
             .host
-            .planner_identity(actor)
-            .await?
+            .cached_thread_identity(actor)?
             .ok_or(ServiceError::WatchAgentRequired)?;
         let state = self.state.lock().await;
         let default_repo = state.settings.projects.as_ref().and_then(|projects| {
