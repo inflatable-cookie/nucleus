@@ -90,9 +90,6 @@ pub(super) fn task_state_label(
         }
         .into();
     }
-    if matches!(detail, Some(WaitDetail::OperatorSnoozed { .. })) {
-        return phase_with_delay(task, None);
-    }
     // A capacity wait that carries a cause is a paused subscription group (ruling 51).
     if wait == Some(WaitReason::Capacity) && matches!(detail, Some(WaitDetail::Blocked(_))) {
         return phase_with_delay(task, Some("paused"));
@@ -419,10 +416,8 @@ impl Service {
     }
 
     pub(super) async fn watch_titles(&self) {
-        let Some(provider) = self.acp_provider() else {
-            return;
-        };
-        {
+        let provider = self.acp_provider();
+        if provider.is_some() {
             let mut state = self.state.lock().await;
             match state.store.tasks_without_titles() {
                 Ok(rows) => {
@@ -438,8 +433,12 @@ impl Service {
         }
         loop {
             self.host.wait_for_requests().await;
-            let threads = self.host.title_threads(provider);
-            let next = self.title_work(provider, &threads).await;
+            let threads =
+                provider.map_or_else(Vec::new, |provider| self.host.title_threads(provider));
+            let next = match provider {
+                Some(provider) => self.title_work(provider, &threads).await,
+                None => Ok(None),
+            };
             let checked_stability = next.is_ok();
             let wait = match next {
                 Ok(Some(receipt)) => {
@@ -447,7 +446,10 @@ impl Service {
                     if receipt.retry_at > now {
                         Some(Duration::from_millis(receipt.retry_at.abs_diff(now)))
                     } else {
-                        if let Err(error) = self.apply_title(provider, &receipt, now).await {
+                        if let Err(error) = self
+                            .apply_title(provider.unwrap_or_default(), &receipt, now)
+                            .await
+                        {
                             service_log!("{}: {error}", receipt.thread);
                         }
                         // The next due candidate can run before this title retries.
@@ -460,7 +462,10 @@ impl Service {
                     Some(Duration::from_secs(5))
                 }
             };
-            let row_wait = match self.reconcile_task_rows(provider, &threads).await {
+            let row_wait = match self
+                .reconcile_task_rows(provider.unwrap_or_default(), &threads)
+                .await
+            {
                 Ok(wait) => wait,
                 Err(error) => {
                     service_log!("{error}");

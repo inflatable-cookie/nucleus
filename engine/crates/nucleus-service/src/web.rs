@@ -66,7 +66,7 @@ fn board_wait_detail(detail: &crate::WaitDetail) -> Option<&str> {
         crate::WaitDetail::ConfirmingDelivery(message)
         | crate::WaitDetail::Observation(message) => Some(*message),
         crate::WaitDetail::Blocked(message) => Some(message.as_str()),
-        crate::WaitDetail::OperatorSnoozed { .. } | crate::WaitDetail::Archive(_) => None,
+        crate::WaitDetail::Archive(_) => None,
     }
 }
 

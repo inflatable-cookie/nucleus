@@ -791,7 +791,10 @@ impl Service {
         let audit = self
             .claim_watcher_notice(id, watcher, &attempt.command, retry)
             .await?;
-        match SendOutcome::classify(self.host.send_notice(dispatch).await, retry) {
+        match SendOutcome::classify(
+            self.send_notice_preserving_snooze(Some(id), dispatch).await,
+            retry,
+        ) {
             SendOutcome::Delivered | SendOutcome::Uncertain(_) => Ok(Spent),
             SendOutcome::RetryRejected => {
                 let mut rejected = audit;
@@ -902,7 +905,10 @@ impl Service {
             return Ok(Spent);
         };
         // The intent is durable before the write. Unknown delivery leaves it closed.
-        match SendOutcome::classify(self.host.send_notice(dispatch).await, retry) {
+        match SendOutcome::classify(
+            self.send_notice_preserving_snooze(Some(id), dispatch).await,
+            retry,
+        ) {
             SendOutcome::Delivered => Ok(Spent),
             SendOutcome::Uncertain(error) => {
                 if occurrence.propagate_uncertain {

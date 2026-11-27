@@ -298,10 +298,6 @@ impl Service {
         {
             return Err(HostError::Binding.into());
         }
-        if write.starts_turn() {
-            let thread = write.thread_id().ok_or(ServiceError::Input)?;
-            write.allow_owned_snoozes(self.owned_delivery_snoozes(row, thread).await?);
-        }
         // Record the wire and deadline before sending. A restart or transport
         // error can replay this exact command against T3's durable receipt.
         let attempt = if write.starts_turn() {
@@ -313,7 +309,12 @@ impl Service {
             None
         };
         let id = &row.task.identity().id;
-        let result = self.write_parent_with_snooze(id, &command, write).await?;
+        let mut journal = self.delivery_snooze_journal(Some(id));
+        let result = self
+            .host
+            .write_parent(write, |update| journal.record(update))
+            .await;
+        journal.settle().await;
         match (result, attempt) {
             (Ok(()), record) => {
                 if let Some((record, _)) = record {
@@ -329,9 +330,6 @@ impl Service {
                 let wire = serde_json::to_string(&frozen).map_err(StoreError::from)?;
                 let due = retry_ms();
                 let state = self.state.lock().await;
-                state
-                    .store
-                    .finish_parent_snooze(id, &record.command, None)?;
                 state.store.retry_parent_delivery(
                     id,
                     row.version,
@@ -350,41 +348,6 @@ impl Service {
             (Err(ParentSendError::NotSent(error)), None) => Err(self.parent_not_sent(error)),
             (Err(ParentSendError::Rejected), None) => Err(HostError::ParentHoldRejected.into()),
         }
-    }
-
-    async fn write_parent_with_snooze(
-        &self,
-        id: &str,
-        command: &str,
-        write: ParentWrite,
-    ) -> Result<Result<(), ParentSendError>, ServiceError> {
-        let mut store_error = None;
-        let result = self
-            .host
-            .write_parent(write, |intent| {
-                let state = self.state.try_lock().map_err(|_| HostError::Uncertain)?;
-                state
-                    .store
-                    .record_parent_snooze(
-                        id,
-                        command,
-                        &intent.thread,
-                        &intent,
-                        intent.until_ms,
-                        crate::now_ms(),
-                    )
-                    .map_err(|error| {
-                        store_error = Some(error);
-                        HostError::Uncertain
-                    })?;
-                self.title_wake.notify_one();
-                Ok(())
-            })
-            .await;
-        if let Some(error) = store_error {
-            return Err(error.into());
-        }
-        Ok(result)
     }
 
     async fn begin_parent_delivery(

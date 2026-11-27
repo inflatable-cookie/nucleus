@@ -217,7 +217,9 @@ impl Service {
             return Err(ServiceError::Input);
         }
         let sent = self.save(row, updated, &event("question_delivery")).await?;
-        let result = self.host.send_notice(dispatch).await;
+        let result = self
+            .send_notice_preserving_snooze(Some(&row.task.identity().id), dispatch)
+            .await;
         let not_sent = match &result {
             Ok(NoticeOutcome::NotSent(error)) => Some(*error),
             _ => None,

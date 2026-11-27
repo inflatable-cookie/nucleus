@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -66,7 +66,7 @@ struct NativeRow {
     live_holds: bool,
     parent_runs: Vec<Value>,
     delivered_messages: Vec<Value>,
-    readback_errors: usize,
+    peer: Option<Value>,
 }
 
 impl NativeRow {
@@ -135,13 +135,16 @@ impl Fixture {
             let mut row = seen.lock().unwrap();
             match request["tag"].as_str().unwrap() {
                 "orchestration.subscribeThread" => {
-                    if row.readback_errors > 0 {
-                        row.readback_errors -= 1;
-                        return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Failure","cause":[
-                            {"_tag":"Fail","error":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":expected}}
-                        ]}});
-                    }
                     let target = &request["payload"]["threadId"];
+                    if let Some(peer) = row.peer.as_ref().filter(|peer| &peer["id"] == target) {
+                        return json!({"_tag":"Chunk","requestId":request["id"],"values":[
+                            {"kind":"snapshot","snapshotSequence":1 + row.commands.len(),"projection":{
+                                "thread":peer,"runs":[],"messages":[],"runtimeRequests":[],
+                                "providerThreads":[],"turnItems":[],"subagents":[]
+                            }},
+                            {"kind":"synchronized"}
+                        ]});
+                    }
                     if row.live_holds && target != &expected {
                         return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Failure","cause":[
                             {"_tag":"Fail","error":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":target,
@@ -173,6 +176,16 @@ impl Fixture {
                         }));
                         row.commands.push(payload.clone());
                         return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{"sequence":9}}});
+                    }
+                    if let Some(peer) = row.peer.as_mut().filter(|peer| peer["id"] == payload["threadId"]) {
+                        peer["snoozedUntil"] = match payload["type"].as_str() {
+                            Some("message.dispatch") => Value::Null,
+                            Some("thread.snooze") => payload["snoozedUntil"].clone(),
+                            other => panic!("unexpected peer command {other:?}"),
+                        };
+                        row.commands.push(payload.clone());
+                        return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success",
+                            "value":{"sequence":1 + row.commands.len()}}});
                     }
                     assert_eq!(payload["threadId"], expected);
                     row.commands.push(payload.clone());
@@ -291,11 +304,7 @@ impl Fixture {
                 "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},
                 "status":"idle","activeRunId":null,"pendingRuntimeRequest":null,"pendingBackgroundTasks":[]}]
         });
-        if let Some(revision) = revision
-            .or_else(|| (row.instant_holds || row.live_holds).then(|| 1 + row.commands.len()))
-        {
-            shell["snapshotSequence"] = json!(revision);
-        }
+        shell["snapshotSequence"] = json!(revision.unwrap_or(1 + row.commands.len()));
         if row.instant_holds || row.live_holds {
             shell["threads"][0]
                 .as_object_mut()
@@ -304,6 +313,9 @@ impl Fixture {
         }
         if let Some(child) = &row.child {
             shell["threads"].as_array_mut().unwrap().push(child.clone());
+        }
+        if let Some(peer) = &row.peer {
+            shell["threads"].as_array_mut().unwrap().push(peer.clone());
         }
         self.service.host.fixture_project_shell(&shell, PROVIDER);
     }
@@ -370,6 +382,37 @@ impl Fixture {
         self.service
             .visibility_time
             .store(visibility_time, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn snoozed_peer(&self, thread: &str, provider: &str, parent: Option<&str>) {
+        let mut peer = json!({
+            "id":thread, "projectId":self.binding.project_id,
+            "worktreePath":self.binding.worktree_path,"branch":self.binding.branch,
+            "providerInstanceId":provider,"status":"idle","activeRunId":null,
+            "pendingRuntimeRequest":null,"pendingBackgroundTasks":[],
+            "snoozedUntil":OPERATOR_SNOOZE,"snoozedAt":"2026-01-01T00:00:00Z",
+        });
+        if let Some(parent) = parent {
+            peer["lineage"] = json!({
+                "parentThreadId":parent,"rootThreadId":parent,"relationshipToParent":"subagent",
+            });
+        }
+        self.native.lock().unwrap().peer = Some(peer);
+        self.publish_shell();
+    }
+
+    async fn restore_operator_horizon(&self, thread: &str) {
+        let (restored, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
+            self.service.reconcile_delivery_snoozes(),
+        ))
+        .await;
+        restored.unwrap();
+        assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
+        let restore = self.native.lock().unwrap().commands.last().unwrap().clone();
+        assert_eq!(restore["type"], "thread.snooze");
+        assert_eq!(restore["threadId"], thread);
+        assert_eq!(restore["snoozedUntil"], OPERATOR_SNOOZE);
+        observe_restored_delivery_snooze(self).await;
     }
 
     fn child(&self, id: &str, busy: bool) {
@@ -655,11 +698,16 @@ async fn a_hold_restores_an_operator_snooze_applied_after_preparation() {
             .unwrap()
     );
 
-    let pending = pending_parent_snooze(service).await;
+    let pending = pending_delivery_snooze(service).await;
     assert_eq!(pending.command, command);
     assert_eq!(fixture.commands(), ["message.dispatch"]);
-    service.reconcile_parent_snoozes().await.unwrap();
-    observe_restored_parent_snooze(&fixture).await;
+    fixture.publish_shell();
+    let (restored, calls) =
+        nucleus_hosts::T3::count_pass_calls(Box::pin(service.reconcile_delivery_snoozes())).await;
+    restored.unwrap();
+    assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
+    assert!(!calls.contains_key("orchestration.subscribeThread"));
+    observe_restored_delivery_snooze(&fixture).await;
     let stored = fixture.parent_record(&row).await;
     assert_eq!(stored.command, command);
     assert_eq!(stored.result, nucleus_store::ParentResult::Accepted);
@@ -676,37 +724,174 @@ async fn a_hold_restores_an_operator_snooze_applied_after_preparation() {
     assert_eq!(native.until, OPERATOR_SNOOZE);
 }
 
-async fn pending_parent_snooze(service: &Service) -> nucleus_store::StoredParentSnooze {
-    let state = service.state.lock().await;
-    let due = state.store.next_parent_snooze().unwrap().unwrap();
-    let mut records = state.store.due_parent_snoozes(due).unwrap();
-    assert_eq!(records.len(), 1);
-    records.pop().unwrap()
-}
-
-async fn allow_parent_snooze_retry(service: &Service) {
-    let record = pending_parent_snooze(service).await;
-    service
-        .state
-        .lock()
-        .await
-        .store
-        .finish_parent_snooze(&record.task, &record.command, Some((record.attempt, 0)))
-        .unwrap();
-}
-
-async fn observe_restored_parent_snooze(fixture: &Fixture) {
-    let service = &fixture.service;
+#[tokio::test]
+async fn a_snoozed_parent_reenters_without_waiting_for_its_horizon() {
+    let (fixture, row) = instant_parent_fixture().await;
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
     fixture.publish_shell();
-    allow_parent_snooze_retry(service).await;
-    service.reconcile_parent_snoozes().await.unwrap();
+
+    fixture.service.reenter_retained_parent(&row).await.unwrap();
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+    fixture.publish_shell();
+    fixture.restore_operator_horizon(&fixture.thread).await;
+}
+
+#[tokio::test]
+async fn a_planner_notice_restores_the_operator_horizon_on_its_destination() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    let planner = "thread:planner";
+    fixture.snoozed_peer(planner, "fixture-planner-provider", None);
+    let mut delivery =
+        nucleus_hosts::T3::prepare_notice(planner.into(), "fixture-notice".into(), "Please decide")
+            .unwrap();
+    let authorization = service
+        .host
+        .authorize_notice(&delivery)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.native.lock().unwrap().peer.as_mut().unwrap()["snoozedAt"] =
+        json!("2026-01-02T00:00:00Z");
+    fixture.publish_shell();
+    let dispatch = authorization.record(&mut delivery).unwrap();
+
+    let result = service
+        .send_notice_preserving_snooze(None, dispatch)
+        .await
+        .unwrap();
+    assert_eq!(result, nucleus_hosts::NoticeOutcome::Accepted);
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+    fixture.publish_shell();
+    fixture.restore_operator_horizon(planner).await;
+}
+
+#[tokio::test]
+async fn expired_operator_horizons_do_not_get_restored() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    let row = send_snoozed_hold(&fixture, &task).await;
+    let service = &fixture.service;
+    let pending = pending_delivery_snooze(service).await;
+    // Advance the recorded horizon past expiry independently of the real-time clock.
+    let db = rusqlite::Connection::open(service.storage.database().path().join("engine.sqlite"))
+        .unwrap();
+    db.execute(
+        "UPDATE delivery_snoozes SET until_ms=1 WHERE command=?1",
+        [&pending.command],
+    )
+    .unwrap();
+    fixture.publish_shell();
+
+    let (result, calls) =
+        nucleus_hosts::T3::count_pass_calls(Box::pin(service.reconcile_delivery_snoozes())).await;
+    result.unwrap();
+    assert!(calls.is_empty());
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
     assert!(
         service
             .state
             .lock()
             .await
             .store
-            .next_parent_snooze()
+            .next_delivery_snooze()
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fixture.parent_record(&row).await.result,
+        nucleus_store::ParentResult::Accepted
+    );
+}
+
+#[tokio::test]
+async fn retained_role_continues_while_both_rows_are_snoozed() {
+    let mut fixture = Fixture::new(&pending_task()).await;
+    let head = fixture.service.fixture().start.clone();
+    let (forge, _, forge_server) =
+        crate::tests::forge_fixture_for_branch(&head, &fixture.binding.branch).await;
+    Arc::get_mut(&mut fixture.service).unwrap().forge = forge;
+    let role = "thread:retained-reviewer";
+    let provider = "fixture-role-provider";
+    let (task, _, _) = crate::tests::reserved_reviewer_with(ID, &head, |task| {
+        nucleus_hosts::RunRequest {
+            binding: fixture.binding.clone(),
+            parent: Some(fixture.thread.clone()),
+            dispatch: nucleus_hosts::Dispatch::Continue {
+                profile: Some(nucleus_hosts::RoleProfile {
+                    instance_id: provider.into(),
+                    model: "fixture-model".into(),
+                    runtime_mode: "full-access".into(),
+                    options: Vec::new(),
+                }),
+            },
+            text: "Review the current head.".into(),
+        }
+        .inputs(&task.next_launch_instance().unwrap(), role.into(), now_ms())
+        .unwrap()
+    });
+    let service = &fixture.service;
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        service.lookup(&state, ID).unwrap()
+    };
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.snoozed_peer(role, provider, Some(&fixture.thread));
+
+    let result = service
+        .advance_due_task(&row, &service.host.fixture_pass())
+        .await;
+    assert!(
+        matches!(
+            result,
+            Ok(Action::Launch {
+                role: Role::Reviewer,
+                ..
+            })
+        ),
+        "{result:?}"
+    );
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+    fixture.publish_shell();
+    fixture.restore_operator_horizon(role).await;
+    assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
+    forge_server.abort();
+    assert!(forge_server.await.unwrap_err().is_cancelled());
+}
+
+async fn pending_delivery_snooze(service: &Service) -> nucleus_store::StoredDeliverySnooze {
+    let state = service.state.lock().await;
+    let due = state.store.next_delivery_snooze().unwrap().unwrap();
+    let mut records = state.store.due_delivery_snoozes(due).unwrap();
+    assert_eq!(records.len(), 1);
+    records.pop().unwrap()
+}
+
+async fn allow_delivery_snooze_retry(service: &Service) {
+    let record = pending_delivery_snooze(service).await;
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .finish_delivery_snooze(&record.command, Some((record.attempt, 0)))
+        .unwrap();
+}
+
+async fn observe_restored_delivery_snooze(fixture: &Fixture) {
+    let service = &fixture.service;
+    fixture.publish_shell();
+    allow_delivery_snooze_retry(service).await;
+    service.reconcile_delivery_snoozes().await.unwrap();
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .next_delivery_snooze()
             .unwrap()
             .is_none()
     );
@@ -735,52 +920,43 @@ async fn send_snoozed_hold(fixture: &Fixture, task: &Task) -> TaskRow {
 }
 
 #[tokio::test]
-async fn parent_snooze_survives_lost_readback_and_an_engine_restart() {
+async fn delivery_snooze_survives_a_delayed_shell_and_engine_restart() {
     let task = pending_task();
     let mut fixture = Fixture::new(&task).await;
     let row = send_snoozed_hold(&fixture, &task).await;
-    fixture.native.lock().unwrap().readback_errors = 1;
-    fixture.service.reconcile_parent_snoozes().await.unwrap();
-    assert_eq!(fixture.commands(), ["message.dispatch"]);
-    let recorded = pending_parent_snooze(&fixture.service).await;
+    let recorded = pending_delivery_snooze(&fixture.service).await;
     let intent: Value = serde_json::from_str(&recorded.intent).unwrap();
     assert_eq!(intent["until"], OPERATOR_SNOOZE);
+    assert!(intent["accepted_sequence"].is_number());
     assert_eq!(
         fixture.parent_record(&row).await.result,
         nucleus_store::ParentResult::Accepted
     );
 
     fixture.restart();
-    fixture.publish_shell();
-    let delivered = std::mem::take(&mut fixture.native.lock().unwrap().delivered_messages);
-    allow_parent_snooze_retry(&fixture.service).await;
-    fixture.service.reconcile_parent_snoozes().await.unwrap();
-    assert_eq!(
-        pending_parent_snooze(&fixture.service).await.intent,
-        recorded.intent
-    );
+    fixture.service.reconcile_delivery_snoozes().await.unwrap();
     assert_eq!(fixture.commands(), ["message.dispatch"]);
-    fixture.native.lock().unwrap().delivered_messages = delivered;
     fixture.publish_shell();
-    allow_parent_snooze_retry(&fixture.service).await;
-    fixture.service.reconcile_parent_snoozes().await.unwrap();
+    allow_delivery_snooze_retry(&fixture.service).await;
+    fixture.service.reconcile_delivery_snoozes().await.unwrap();
     assert_eq!(fixture.commands(), ["message.dispatch", "thread.snooze"]);
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
-    observe_restored_parent_snooze(&fixture).await;
+    observe_restored_delivery_snooze(&fixture).await;
 }
 
 #[tokio::test]
-async fn parent_snooze_replays_a_lost_reply_and_rotates_a_rejected_id() {
+async fn delivery_snooze_replays_a_lost_reply_and_rotates_a_rejected_id() {
     let task = pending_task();
     let fixture = Fixture::new(&task).await;
     let row = send_snoozed_hold(&fixture, &task).await;
+    fixture.publish_shell();
     let service = &fixture.service;
     for (reply, expected_attempt) in [(NextReply::Lost, 0), (NextReply::Rejected, 1)] {
-        allow_parent_snooze_retry(service).await;
+        allow_delivery_snooze_retry(service).await;
         fixture.native.lock().unwrap().next_reply = reply;
-        service.reconcile_parent_snoozes().await.unwrap();
+        service.reconcile_delivery_snoozes().await.unwrap();
         assert_eq!(
-            pending_parent_snooze(service).await.attempt,
+            pending_delivery_snooze(service).await.attempt,
             expected_attempt
         );
         assert_eq!(
@@ -788,9 +964,9 @@ async fn parent_snooze_replays_a_lost_reply_and_rotates_a_rejected_id() {
             nucleus_store::ParentResult::Accepted
         );
     }
-    allow_parent_snooze_retry(service).await;
-    service.reconcile_parent_snoozes().await.unwrap();
-    observe_restored_parent_snooze(&fixture).await;
+    allow_delivery_snooze_retry(service).await;
+    service.reconcile_delivery_snoozes().await.unwrap();
+    observe_restored_delivery_snooze(&fixture).await;
     let native = fixture.native.lock().unwrap();
     let [_, first, replay, fresh] = &native.commands[..] else {
         panic!("expected the hold and three restoration requests");
@@ -1042,6 +1218,7 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
     };
     let app = router(Arc::clone(service), []);
     let callback = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
     fixture.publish_shell();
     let label = "Starting reviewer round 1";
     let old = fixture.prepare_hold(label, None).await;
@@ -1052,6 +1229,9 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
             .await
             .unwrap()
     );
+
+    fixture.publish_shell();
+    fixture.restore_operator_horizon(&fixture.thread).await;
 
     let (output, mut frames) = tokio::sync::mpsc::unbounded_channel();
     let cwd = PathBuf::from(&fixture.binding.worktree_path);
@@ -1102,6 +1282,7 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
         nucleus_hosts::ParentStep::Delivered
     ));
     assert_eq!(calls, [("orchestration.subscribeThread", 1)].into());
+    fixture.restore_operator_horizon(&fixture.thread).await;
     eprintln!("queued parent receipt T3 calls: {calls:?}");
     let before_release = service.host.host_calls();
     tokio::time::timeout(std::time::Duration::from_secs(5), turn)
@@ -1157,11 +1338,14 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
     assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
     eprintln!("reserved reviewer send T3 calls: {calls:?}");
     assert!(crate::now_ms() < deadline);
+    assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
     assert_eq!(
         fixture.commands(),
         [
             "message.dispatch",
+            "thread.snooze",
             "message.dispatch",
+            "thread.snooze",
             "delegated_task.request"
         ]
     );
@@ -1183,7 +1367,7 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
 }
 
 #[tokio::test]
-async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
+async fn a_reserved_role_waiting_to_send_keeps_the_delivery_snoozed() {
     let fixture = Fixture::new(&pending_task()).await;
     let service = &fixture.service;
     let (mut worker, _, _) = reservation(ID, Entry::Brief, &service.fixture().start);
@@ -1580,18 +1764,22 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         .service
         .visibility_time
         .store(1_893_456_002_000, std::sync::atomic::Ordering::Relaxed);
-    let mut write = write;
-    write.allow_owned_snoozes(
+    assert!(
         service
-            .owned_delivery_snoozes(&row, &fixture.thread)
+            .deliver_parent(&row, write, None, true)
             .await
-            .unwrap(),
+            .unwrap()
     );
-    service
-        .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())
-        .await
-        .unwrap();
-    service.host.write_parent(write, |_| Ok(())).await.unwrap();
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .next_delivery_snooze()
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(fixture.commands(), ["thread.snooze", "message.dispatch"]);
     drop(fence);
     fixture.elapse_visibility_ms(HANDOVER_MS);
@@ -1612,21 +1800,18 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
             .await
             .unwrap()
     );
-    service.reconcile_parent_snoozes().await.unwrap();
+    publish_shell();
+    service.reconcile_delivery_snoozes().await.unwrap();
     assert_eq!(
         fixture.commands()[3..],
         ["message.dispatch", "thread.snooze"]
     );
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
-    observe_restored_parent_snooze(&fixture).await;
+    observe_restored_delivery_snooze(&fixture).await;
 
     fixture.native.lock().unwrap().until = Value::Null;
     publish_shell();
     let write = prepare().await.unwrap().unwrap();
-    service
-        .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())
-        .await
-        .unwrap();
     let (sent, calls) =
         nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write, |_| Ok(()))))
             .await;
@@ -2026,7 +2211,7 @@ async fn active_child_keeps_ownership_until_the_shell_observes_the_clear() {
     let fixture = Fixture::new(&pending_task()).await;
     let service = &fixture.service;
     let (task, _, _) = crate::tests::reserved_reviewer(ID, &service.fixture().start);
-    let row = create_visibility_row(&fixture, &task).await;
+    create_visibility_row(&fixture, &task).await;
     let owned = fixture.observed_snooze().await;
     fixture.child("reviewer", true);
     fixture.sync().await;
@@ -2037,30 +2222,6 @@ async fn active_child_keeps_ownership_until_the_shell_observes_the_clear() {
     let receipt = fixture.observed_snooze().await;
     assert_eq!(receipt.clear_attempted_for, Some(owned.until_ms));
     assert!(receipt.owns(prior.snoozed_until_ms));
-    service
-        .check_parent_snooze(
-            &row,
-            &fixture.binding,
-            RowObservation {
-                sequence: 1,
-                visibility: prior,
-            },
-        )
-        .await
-        .unwrap();
-    {
-        let mut state = service.state.lock().await;
-        service
-            .schedule_operator_snooze(
-                &mut state,
-                &row,
-                &fixture.thread,
-                owned.until_ms,
-                "stale delivery observation".into(),
-            )
-            .unwrap();
-        assert!(state.wait_detail(ID).is_none());
-    }
     service
         .reconcile_task_row(ID, PROVIDER, &fixture.thread)
         .await
@@ -2353,7 +2514,7 @@ fn plan_row(
 }
 
 #[tokio::test]
-async fn a_child_starting_after_planning_prevents_the_parent_snooze() {
+async fn a_child_starting_after_planning_prevents_the_delivery_snooze() {
     let fixture = Fixture::new(&pending_task()).await;
     fixture.publish_shell();
     let host = &fixture.service.host;

@@ -103,8 +103,6 @@ pub enum ServiceError {
     ParentHoldLoop,
     #[error("The T3 task turn ended immediately. Waiting briefly for role activity to change.")]
     ParentHoldBackoff { until: Instant },
-    #[error("You snoozed this thread until {}. Nucleus resumes when it wakes.", nucleus_hosts::snooze_deadline(*until))]
-    OperatorSnoozed { thread: String, until: u64 },
     #[error("run scratch is already reserved for another run")]
     RunScratchConflict,
     #[error("the task is outside this engine's configured project")]
@@ -293,12 +291,6 @@ enum WaitDetail {
     Observation(&'static str),
     Blocked(String),
     Archive(String),
-    OperatorSnoozed {
-        version: i64,
-        thread: String,
-        until: u64,
-        message: String,
-    },
 }
 
 struct State {
@@ -872,6 +864,11 @@ impl Service {
         }
         let mut state = self.state.lock().await;
         self.set_cached_host(&mut state, web::CachedHost::Reachable);
+        match state.store.wake_delivery_snooze(&hint.thread) {
+            Ok(true) => self.title_wake.notify_one(),
+            Ok(false) => {}
+            Err(error) => service_log!("operator snooze shell update: {error}"),
+        }
         let authorities = state.planner_authority.len();
         state.planner_thread_changed(&hint);
         if state.invalidate_enrolled_planner(&hint) {
@@ -883,7 +880,6 @@ impl Service {
         let State {
             thread_tasks,
             schedule,
-            waits,
             ..
         } = &mut *state;
         let now = Instant::now();
@@ -904,12 +900,8 @@ impl Service {
                 if tracked.role && prior != Some(&hint) {
                     self.title_wake.notify_one();
                 }
-                let still_snoozed = matches!(waits.get(id).and_then(|wait| wait.detail.as_ref()),
-                    Some(WaitDetail::OperatorSnoozed { thread, until, .. })
-                    if thread != &hint.thread || (hint.snoozed_until() == Some(*until) && !hint.closed()));
                 if activity_changed
-                    || !still_snoozed
-                        && (tracked.due || (tracked.role && hint.positive_role_activity()))
+                    || (tracked.due || (tracked.role && hint.positive_role_activity()))
                         && prior != Some(&hint)
                 {
                     schedule.wake(id, now, Priority::Decision);
@@ -1291,15 +1283,6 @@ impl Service {
             )?;
         }
         let row = &current;
-        if let Err(error @ ServiceError::OperatorSnoozed { thread, until }) = result {
-            return self.schedule_operator_snooze(
-                &mut state,
-                row,
-                thread,
-                *until,
-                error.to_string(),
-            );
-        }
         record_incomplete_observation(&mut state, row, result)?;
         let now = Instant::now();
         let checking_workspace = wait == Some(WaitReason::WorkspaceUnknown);
@@ -1440,45 +1423,6 @@ impl Service {
         if changed {
             self.title_wake.notify_one();
             self.publish(id, current.version);
-        }
-        Ok(())
-    }
-
-    fn schedule_operator_snooze(
-        &self,
-        state: &mut State,
-        row: &TaskRow,
-        thread: &str,
-        until: u64,
-        message: String,
-    ) -> Result<(), ServiceError> {
-        let id = &row.task.identity().id;
-        let operator = self
-            .host
-            .row_visibility_hint(thread)
-            .is_none_or(|row| row.snoozed_until_ms == Some(until))
-            && !state
-                .store
-                .row_snooze(id, thread)?
-                .is_some_and(|receipt| receipt.owns(Some(until)));
-        let delay = if operator {
-            until.saturating_sub(now_ms())
-        } else {
-            0
-        };
-        state
-            .schedule
-            .defer_effect(id, Instant::now() + Duration::from_millis(delay));
-        let detail = operator.then(|| WaitDetail::OperatorSnoozed {
-            version: row.version,
-            thread: thread.into(),
-            until,
-            message,
-        });
-        if state.observe_wait_detail(&row.task, Some(WaitReason::HostUnknown), detail)? {
-            self.desire_title(state, &row.task, row.number);
-            self.title_wake.notify_one();
-            self.publish(id, row.version);
         }
         Ok(())
     }
@@ -2338,13 +2282,11 @@ fn host_wait(row: &TaskRow, error: &HostError) -> (Option<WaitReason>, Option<Wa
 }
 
 /// An error with no more specific wait still names its cause, except where a
-/// later pass reads the newer row or free fence, or a snooze sets its own wait.
+/// later pass reads the newer row or free fence,.
 fn unmapped_wait(error: &ServiceError) -> (Option<WaitReason>, Option<WaitDetail>) {
     if matches!(
         error,
-        ServiceError::Store(StoreError::StaleTask)
-            | ServiceError::EffectInProgress
-            | ServiceError::OperatorSnoozed { .. }
+        ServiceError::Store(StoreError::StaleTask) | ServiceError::EffectInProgress
     ) {
         return (None, None);
     }

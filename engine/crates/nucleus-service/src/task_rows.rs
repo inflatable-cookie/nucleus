@@ -1,11 +1,11 @@
 //! Reconcile native visibility independently of dispatch and API reads.
 
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
 use nucleus_core::{Role, Task, WaitReason};
 use nucleus_hosts::{
-    ParentSendError, RowChange, RowChildren, RowObservation, RowVisibility, SendOutcome,
-    SnoozeRestoration,
+    DeliverySnooze, HostError, NoticeDispatch, NoticeOutcome, ParentSendError, RowChange,
+    RowChildren, RowVisibility, SendOutcome, SnoozeRestoration, SnoozeUpdate,
 };
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
@@ -133,6 +133,72 @@ fn confirm_snooze(receipt: &mut RowSnooze, shown: Option<u64>) -> bool {
     true
 }
 
+pub(super) struct DeliverySnoozeJournal<'a> {
+    service: &'a Service,
+    task: Option<&'a str>,
+    settlement: Option<SnoozeUpdate>,
+}
+
+impl DeliverySnoozeJournal<'_> {
+    pub(super) fn record(&mut self, update: SnoozeUpdate) -> Result<(), HostError> {
+        let SnoozeUpdate::Record(command, intent) = update else {
+            self.settlement = Some(update);
+            return Ok(());
+        };
+        let state = self
+            .service
+            .state
+            .try_lock()
+            .map_err(|_| HostError::Uncertain)?;
+        let save = || -> Result<(), nucleus_store::StoreError> {
+            let store = &state.store;
+            let owner = store.task_with_title_thread(&intent.thread)?;
+            if let Some(task) = owner.as_deref().or(self.task)
+                && store
+                    .row_snooze(task, &intent.thread)?
+                    .is_some_and(|receipt| receipt.owns(Some(intent.until_ms)))
+            {
+                return Ok(());
+            }
+            store.record_delivery_snooze(
+                &command,
+                &intent.thread,
+                &intent,
+                intent.until_ms,
+                now_ms(),
+            )
+        };
+        save().map_err(|error| {
+            service_log!("operator snooze: {error}");
+            HostError::Uncertain
+        })
+    }
+
+    pub(super) async fn settle(self) {
+        let Some(settlement) = self.settlement else {
+            // An uncertain send can still be reconciled from the normal thread reads.
+            self.service.title_wake.notify_one();
+            return;
+        };
+        let state = self.service.state.lock().await;
+        let result = match settlement {
+            SnoozeUpdate::Accepted(command, sequence) => {
+                state.store.accept_delivery_snooze(&command, sequence)
+            }
+            SnoozeUpdate::Discard(command) => state
+                .store
+                .finish_delivery_snooze(&command, None)
+                .map(|()| true),
+            SnoozeUpdate::Record(..) => return,
+        };
+        match result {
+            Ok(true) => self.service.title_wake.notify_one(),
+            Ok(false) => {}
+            Err(error) => service_log!("operator snooze receipt: {error}"),
+        }
+    }
+}
+
 impl Service {
     #[cfg_attr(
         not(test),
@@ -185,24 +251,29 @@ impl Service {
             .count())
     }
 
-    pub(super) async fn owned_delivery_snoozes(
+    pub(super) fn delivery_snooze_journal<'a>(
+        &'a self,
+        task: Option<&'a str>,
+    ) -> DeliverySnoozeJournal<'a> {
+        DeliverySnoozeJournal {
+            service: self,
+            task,
+            settlement: None,
+        }
+    }
+
+    pub(super) async fn send_notice_preserving_snooze(
         &self,
-        row: &TaskRow,
-        thread: &str,
-    ) -> Result<Vec<u64>, ServiceError> {
-        let receipt = self
-            .state
-            .lock()
-            .await
-            .store
-            .row_snooze(&row.task.identity().id, thread)?;
-        Ok(receipt.map_or_else(Vec::new, |receipt| {
-            [Some(receipt.until_ms), receipt.previous_until_ms]
-                .into_iter()
-                .flatten()
-                .filter(|&until| receipt.owns(Some(until)))
-                .collect()
-        }))
+        task: Option<&str>,
+        dispatch: NoticeDispatch,
+    ) -> Result<NoticeOutcome, HostError> {
+        let mut journal = self.delivery_snooze_journal(task);
+        let result = self
+            .host
+            .send_notice(dispatch, |update| journal.record(update))
+            .await;
+        journal.settle().await;
+        result
     }
 
     pub(super) async fn reconcile_task_rows(
@@ -210,7 +281,7 @@ impl Service {
         provider: &str,
         threads: &[String],
     ) -> Result<Option<Duration>, ServiceError> {
-        let mut next = Box::pin(self.reconcile_parent_snoozes()).await?;
+        let mut next = Box::pin(self.reconcile_delivery_snoozes()).await?;
         for thread in threads {
             let id = self
                 .state
@@ -232,48 +303,54 @@ impl Service {
             .map(|deadline| Duration::from_millis(deadline.saturating_sub(self.visibility_now()))))
     }
 
-    async fn reconcile_parent_snoozes(&self) -> Result<Option<u64>, ServiceError> {
+    async fn reconcile_delivery_snoozes(&self) -> Result<Option<u64>, ServiceError> {
         let now = now_ms();
-        let due = self.state.lock().await.store.due_parent_snoozes(now)?;
+        let due = self.state.lock().await.store.due_delivery_snoozes(now)?;
         for record in due {
-            let retry = if record.until_ms <= now {
-                None
+            let result = if record.until_ms <= now {
+                Ok(SnoozeRestoration::Complete)
             } else {
-                let intent = serde_json::from_str(&record.intent)
+                let intent: DeliverySnooze = serde_json::from_str(&record.intent)
                     .map_err(nucleus_store::StoreError::from)?;
-                let attempt = match self
-                    .host
-                    .restore_parent_snooze(&intent, record.attempt, || {
+                self.host
+                    .restore_delivery_snooze(&intent, record.attempt, || {
                         self.state.try_lock().is_ok_and(|state| {
                             state
                                 .store
-                                .parent_snooze_is_due(&record, now)
+                                .delivery_snooze_is_due(&record, now)
                                 .unwrap_or_else(|error| {
-                                    service_log!("parent snooze restoration: {error}");
+                                    service_log!("operator snooze restoration: {error}");
                                     false
                                 })
                         })
                     })
                     .await
-                {
-                    Ok(SnoozeRestoration::Complete) => None,
-                    Ok(SnoozeRestoration::Pending) => Some(record.attempt),
-                    Ok(SnoozeRestoration::Rejected) => Some(record.attempt.saturating_add(1)),
-                    Err(error) => {
-                        service_log!("parent snooze restoration: {error}");
-                        Some(record.attempt)
-                    }
-                };
-                attempt.map(|attempt| (attempt, (now_ms() + RECHECK_MS).min(record.until_ms)))
             };
             let state = self.state.lock().await;
-            if state.store.parent_snooze_is_due(&record, now)? {
-                state
-                    .store
-                    .finish_parent_snooze(&record.task, &record.command, retry)?;
+            if !state.store.delivery_snooze_is_due(&record, now)? {
+                continue;
             }
+            let due = (now_ms() + RECHECK_MS).min(record.until_ms);
+            let retry = match result {
+                Ok(SnoozeRestoration::Complete) => None,
+                Ok(SnoozeRestoration::Pending) => Some(record.attempt),
+                Ok(SnoozeRestoration::Rejected) => Some(record.attempt.saturating_add(1)),
+                Ok(SnoozeRestoration::Written(sequence)) => {
+                    state
+                        .store
+                        .note_snooze_restoration(&record.command, sequence, due)?;
+                    continue;
+                }
+                Err(error) => {
+                    service_log!("operator snooze restoration: {error}");
+                    Some(record.attempt)
+                }
+            };
+            state
+                .store
+                .finish_delivery_snooze(&record.command, retry.map(|attempt| (attempt, due)))?;
         }
-        let next = self.state.lock().await.store.next_parent_snooze()?;
+        let next = self.state.lock().await.store.next_delivery_snooze()?;
         Ok(next.map(|due| self.visibility_now() + due.saturating_sub(now_ms())))
     }
 
@@ -324,7 +401,7 @@ impl Service {
         let (row, prior, plan, ended, deadline) = {
             let mut state = self.state.lock().await;
             let row = self.lookup(&state, id)?;
-            if row.task.phase().is_terminal() || state.store.parent_snooze_pending(id, thread)? {
+            if row.task.phase().is_terminal() || state.store.delivery_snooze_pending(thread)? {
                 return Ok(None);
             }
             let prior = state.store.row_snooze(id, thread)?;
@@ -437,47 +514,6 @@ impl Service {
         match prior {
             Some(prior) => state.store.save_row_snooze(id, thread, prior)?,
             None => state.store.forget_row_snooze(id)?,
-        }
-        Ok(())
-    }
-
-    async fn snooze_for_delivery(
-        &self,
-        id: &str,
-        thread: &str,
-        visibility: RowVisibility,
-    ) -> Result<Option<RowSnooze>, ServiceError> {
-        let state = self.state.lock().await;
-        let receipt = state.store.row_snooze(id, thread)?;
-        if receipt
-            .as_ref()
-            .is_some_and(|prior| clear_observed(prior, visibility.snoozed_until_ms))
-            && self.host.row_visibility_hint(thread) == Some(visibility)
-        {
-            state.store.forget_row_snooze(id)?;
-            return Ok(None);
-        }
-        Ok(receipt)
-    }
-
-    pub(super) async fn check_parent_snooze(
-        &self,
-        row: &TaskRow,
-        binding: &nucleus_hosts::Binding,
-        observed: RowObservation,
-    ) -> Result<(), ServiceError> {
-        let thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
-        let id = &row.task.identity().id;
-        let visibility = observed.visibility;
-        let shown = visibility
-            .snoozed_until_ms
-            .filter(|&until| until > now_ms());
-        let receipt = self.snooze_for_delivery(id, &thread, visibility).await?;
-        let owned = receipt.filter(|receipt| receipt.owns(shown));
-        if let Some(until) = shown
-            && owned.is_none()
-        {
-            return Err(ServiceError::OperatorSnoozed { thread, until });
         }
         Ok(())
     }
