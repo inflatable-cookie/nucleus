@@ -471,7 +471,7 @@ impl Service {
         {
             runtime_settings.projects = Some(store.clean_removed_projects(&settings)?.value);
         }
-        native_inbox::withdraw_process_decisions(&mut store, &runtime_settings, project.as_ref())?;
+        native_inbox::supersede_process_decisions(&mut store, &runtime_settings, project.as_ref())?;
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
         if project.is_none() {
             host.use_held_shell();

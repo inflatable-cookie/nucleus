@@ -295,7 +295,8 @@ atomically renaming the directory into same-volume trash under the work root,
 then removing the Git worktree registration. The trash is recoverable for at
 least 24 hours. The background prune keeps entries with a process working
 directory or unresolved cwd evidence. An incomplete process sweep or census
-does not delay task closeout.
+does not delay task closeout. At startup, Nucleus closes open process-census
+decisions from older engines as superseded and records why in their history.
 An interrupted cleanup whose `.git` file was already unlinked still proves
 custody through its matching prunable Git registration. Git-ignored output goes
 with the checkout. Modified, added, non-ignored untracked or uncertain contents

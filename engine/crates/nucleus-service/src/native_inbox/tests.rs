@@ -20,7 +20,7 @@ const PROJECT: &str = "project:nucleus-rust-inbox";
 const PROVIDER: &str = "fixture-acp";
 
 #[tokio::test]
-async fn legacy_process_decisions_are_withdrawn_without_a_census() {
+async fn legacy_process_decisions_are_closed_as_superseded_without_a_census() {
     let (_home, service) = fixture(GitHub::new("fixture").unwrap());
     let mut state = service.state.lock().await;
     let State {
@@ -47,7 +47,22 @@ async fn legacy_process_decisions_are_withdrawn_without_a_census() {
     store
         .add_decision(project, "ordinary".into(), input, engine_stamp())
         .unwrap();
-    withdraw_process_decisions(store, settings, service.project.as_ref()).unwrap();
+    for _ in 0..2 {
+        supersede_process_decisions(store, settings, service.project.as_ref()).unwrap();
+    }
+    let history = store
+        .planning_history(
+            project,
+            nucleus_store::planning::RecordKind::Decision,
+            &legacy,
+        )
+        .unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[1].action, "supersede");
+    assert_eq!(
+        history[1].snapshot["note"],
+        "Checkout retirement now follows Dispatch, T3, and Git."
+    );
     let open = pending(&state, &service).unwrap();
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].id, "ordinary");

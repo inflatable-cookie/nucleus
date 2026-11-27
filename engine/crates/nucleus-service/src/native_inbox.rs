@@ -411,8 +411,8 @@ impl Service {
     }
 }
 
-// Withdraw decisions left by engines that used process custody as a closeout gate.
-pub(super) fn withdraw_process_decisions(
+// Close decisions left by engines that used process custody as a closeout gate.
+pub(super) fn supersede_process_decisions(
     store: &mut nucleus_store::Store,
     settings: &crate::web::RuntimeSettings,
     fixture: Option<&crate::Project>,
@@ -420,7 +420,7 @@ pub(super) fn withdraw_process_decisions(
     for project in settings.planning_projects(fixture) {
         for decision in store.decisions(project, true)? {
             if decision.is_process_custody() {
-                store.withdraw_decision(project, &decision.id, engine_stamp())?;
+                store.supersede_process_decision(project, &decision.id, engine_stamp())?;
             }
         }
     }
