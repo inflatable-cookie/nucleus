@@ -863,6 +863,7 @@ async fn a_queued_parent_releases_the_live_acp_turn_and_starts_the_reserved_revi
                 "binding":fixture.binding, "parent":fixture.thread, "method":"delegate",
                 "payload":{"type":"delegated_task.request","commandId":instance,
                     "parentThreadId":fixture.thread,"parentRunId":"parent-run-1","parentNodeId":"root-1",
+                    "completionWake":"settled_only",
                     "task":"Review the fixture.","modelSelection":{"instanceId":"provider","model":"fixture"}}
             })
             .to_string(),
