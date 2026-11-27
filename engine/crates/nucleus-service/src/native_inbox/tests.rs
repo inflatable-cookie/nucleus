@@ -28,7 +28,6 @@ async fn one_unresolved_process_creates_one_open_decision_until_cleared() {
         command: "fixture-worker".into(),
         started: Some(1),
         unverified: true,
-        detached: false,
     };
     for _ in 0..2 {
         service

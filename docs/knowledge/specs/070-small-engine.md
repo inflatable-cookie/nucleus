@@ -186,13 +186,12 @@ Later decisions carry their own attribution.
    archived, deleted or absent from the shell.
 
    The census discards PIDs confirmed absent or zombie at the cwd follow-up.
-   On macOS, a path resolved from the working directory's device and inode can
-   clear an unreadable listing for an unrelated checkout.
-   When Darwin reports a missing cwd or process root, a verified live birth
-   parent with the default root can establish that the error comes from the cwd
-   if the child still has its original program image and has used no superuser
-   privileges. The same PID's bounded file listing then holds only roots it
-   references. Missing lineage or file coverage keeps the custody fence in place.
+   On macOS, the working directory's device and inode can recover its path.
+   If that fails, a device reported for the working directory can rule out an
+   unrelated checkout or run scratch after a bounded directory walk verifies
+   that the device is absent, including from any nested mount. A failed cwd
+   metadata probe supplies no device evidence. An incomplete walk preserves
+   the custody fence.
    A task's retirement wait names the PID, command and reason. If the census
    cannot establish a process's cwd, it holds affected retirement and surfaces
    one Inbox decision for that process across the engine profile. Answers go

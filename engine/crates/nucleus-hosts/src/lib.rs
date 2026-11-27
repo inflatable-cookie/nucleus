@@ -464,16 +464,20 @@ impl T3Pass<'_> {
         Ok(self)
     }
 
-    /// Read a captured Darwin file-table shape and check its live process lineage.
-    #[cfg(target_os = "macos")]
+    /// Apply Darwin cwd follow-up rows to snapshots bracketing the probe.
+    #[cfg(all(target_os = "macos", feature = "loopback-fixture"))]
     #[doc(hidden)]
-    pub async fn with_fixture_detached_census(
+    pub fn with_fixture_cwd_followup(
         mut self,
         files: &[u8],
         ps: &[u8],
+        current_ps: &[u8],
+        observed: i64,
     ) -> Result<Self, HostError> {
         self.evidence = Arc::new(PassEvidence {
-            processes: OnceCell::new_with(Some(Ok(Inventory::scoped_fixture(files, ps).await?))),
+            processes: OnceCell::new_with(Some(Ok(Inventory::followup_fixture(
+                files, ps, current_ps, observed,
+            )?))),
             ..PassEvidence::default()
         });
         Ok(self)
@@ -992,10 +996,7 @@ impl T3Pass<'_> {
 impl TaskHost for T3Pass<'_> {
     async fn retirement_writer(&self, root: &Path) -> Result<Option<RetirementBlocker>, HostError> {
         let inventory = self.process_inventory().await?;
-        process::verify_roots(&[Some(root)])
-            .await
-            .map_err(process::coverage_error)?;
-        inventory.retirement_blocker(root)
+        inventory.retirement_blocker(root).await
     }
 
     async fn terminal_orphans(

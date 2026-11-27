@@ -1,10 +1,68 @@
-use std::path::PathBuf;
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use nix::fcntl::{FcntlArg, fcntl};
-use rustix::fs::{Mode, OFlags, fstat, open};
+use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, fstat, open, openat, stat, statat};
 use tokio::{task::JoinSet, time};
 
 use super::DEADLINE;
+
+const DIRECTORY: OFlags = OFlags::RDONLY
+    .union(OFlags::CLOEXEC)
+    .union(OFlags::DIRECTORY)
+    .union(OFlags::NONBLOCK)
+    .union(OFlags::NOFOLLOW);
+const MAX_ENTRIES: usize = 100_000;
+
+pub(super) async fn directory_devices(root: &Path) -> Option<HashSet<u32>> {
+    let root = root.to_path_buf();
+    let deadline = Instant::now() + DEADLINE;
+    let walk = tokio::task::spawn_blocking(move || devices_below(&root, deadline));
+    time::timeout(DEADLINE, walk).await.ok()?.ok()?
+}
+
+fn devices_below(root: &Path, deadline: Instant) -> Option<HashSet<u32>> {
+    let fd = open(root, DIRECTORY, Mode::empty()).ok()?;
+    let initial = fstat(&fd).ok()?;
+    let mut devices = HashSet::from([u32::from_ne_bytes(initial.st_dev.to_ne_bytes())]);
+    let mut stack = vec![Dir::new(fd).ok()?];
+    let mut remaining = MAX_ENTRIES;
+    // Include nested mounts. A root's device alone says nothing about them.
+    // Directory descriptors keep the walk inside the root without symlinks.
+    while let Some(dir) = stack.last_mut() {
+        let Some(entry) = dir.next() else {
+            stack.pop();
+            continue;
+        };
+        remaining = remaining.checked_sub(1)?;
+        if Instant::now() >= deadline {
+            return None;
+        }
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        if matches!(name.to_bytes(), b"." | b"..") {
+            continue;
+        }
+        let kind = match entry.file_type() {
+            FileType::Unknown => FileType::from_raw_mode(
+                statat(dir.fd().ok()?, name, AtFlags::SYMLINK_NOFOLLOW)
+                    .ok()?
+                    .st_mode,
+            ),
+            kind => kind,
+        };
+        if kind == FileType::Directory {
+            let child = openat(dir.fd().ok()?, name, DIRECTORY, Mode::empty()).ok()?;
+            devices.insert(u32::from_ne_bytes(fstat(&child).ok()?.st_dev.to_ne_bytes()));
+            stack.push(Dir::new(child).ok()?);
+        }
+    }
+    let final_root = stat(root).ok()?;
+    (final_root.st_dev == initial.st_dev && final_root.st_ino == initial.st_ino).then_some(devices)
+}
 
 pub(super) async fn recover(cwds: Vec<(u32, u32, u64)>) -> Vec<(u32, PathBuf)> {
     let mut reads = JoinSet::new();

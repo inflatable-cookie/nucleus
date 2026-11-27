@@ -2936,19 +2936,23 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
-    async fn before_cwd_followup(unrelated: u32, exited: u32, writer: u32) -> (Vec<u8>, Vec<u8>) {
-        let pids = format!("{unrelated},{exited},{writer}");
-        let ps = process_listing(
+    async fn process_rows(pids: &str) -> Vec<u8> {
+        process_listing(
             "/bin/ps",
             &[
                 "-ww",
                 "-p",
-                &pids,
+                pids,
                 "-o",
-                "pid=,ppid=,uid=,stat=,lstart=,flags=,acflag=,ucomm=",
+                "pid=,ppid=,uid=,stat=,lstart=,ucomm=",
             ],
         )
-        .await;
+        .await
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn before_cwd_followup(unrelated: u32, exited: u32, writer: u32) -> (Vec<u8>, Vec<u8>) {
+        let ps = process_rows(&format!("{unrelated},{exited},{writer}")).await;
         let lsof = process_listing(
             "/usr/sbin/lsof",
             &[
@@ -2968,16 +2972,57 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
+    async fn cwd_fields(pid: u32) -> String {
+        let listing = process_listing(
+            "/usr/sbin/lsof",
+            &[
+                "-a",
+                "-p",
+                &pid.to_string(),
+                "-d",
+                "cwd",
+                "-n",
+                "-P",
+                "-F0pfDn",
+            ],
+        )
+        .await;
+        String::from_utf8(listing).unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn cwd_device(lsof: &str) -> &str {
+        lsof.split('\0')
+            .find(|field| field.starts_with("D0x"))
+            .expect("real cwd device")
+    }
+
+    #[cfg(target_os = "macos")]
+    fn cwd_probe_second() -> i64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
     async fn forked_shell(cwd: &Path) -> (tokio::process::Child, u32) {
         use std::process::Stdio;
         use tokio::io::{AsyncBufReadExt, BufReader};
 
-        let mut parent = tokio::process::Command::new("/bin/sh")
+        let mut parent = tokio::process::Command::new("/bin/bash")
             .args([
                 "-c",
-                r#"exec 3<&0; (IFS= read -r ignored <&3) & printf '%s\n' "$!"; wait "$!""#,
+                r#"exec 3<&0; (cd "$1" && IFS= read -r ignored <&3) & printf '%s\n' "$!"; wait "$!""#,
+                "bash",
             ])
-            .current_dir(cwd)
+            .arg(cwd)
+            .current_dir("/")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .kill_on_drop(true)
@@ -3026,6 +3071,8 @@ mod tests {
             writer.id().unwrap(),
         )
         .await;
+        // The follow-up identifies a process by its start second.
+        tokio::time::sleep(Duration::from_secs(1)).await;
         let capture = || {
             service
                 .host
@@ -3075,7 +3122,87 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    async fn detached_cwd_file_evidence_holds_only_the_checkout_it_references() {
+    async fn cwd_metadata_error_still_holds_a_checkout_with_a_live_writer() {
+        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.fixture_mut().acp_provider = Some("fixture".into());
+        let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
+        let project = service.fixture();
+        let work = service.worktrees();
+        let id = &row.task.identity().id;
+        let checkout = work.checkout(&project.checkout, REPOSITORY, id).unwrap();
+        checkout.allocate(&project.start).unwrap();
+        let route = service.project_for(row.task.identity()).await.unwrap();
+        let binding = route.binding(&checkout).unwrap();
+
+        let (mut parent, pid) = forked_shell(checkout.path()).await;
+        let parent_pid = parent.id().unwrap();
+        // ps reports whole seconds and the follow-up must see the same lifetime.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let pids = format!("{pid},{parent_pid}");
+        let ps = process_rows(&pids).await;
+        let observed = cwd_probe_second();
+        let writer_cwd = cwd_fields(pid).await;
+        assert!(writer_cwd.contains(&format!("n{}\0", checkout.path().display())));
+        let parent_cwd = cwd_fields(parent_pid).await;
+        let current_ps = process_rows(&pids).await;
+        let scratch = service.storage.scratch().path();
+        let capture = |files: &str| {
+            service
+                .host
+                .pass(scratch)
+                .with_fixture_cwd_followup(files.as_bytes(), &ps, &current_ps, observed)
+                .unwrap()
+        };
+
+        // The child is inside the checkout. Its only listed open file is outside.
+        let failure = capture(&format!(
+            "{parent_cwd}p{pid}\0\nfcwd\0ncwd|rtd info error: No such file or directory\0\nftxt\0{}\0n/bin/bash\0\n",
+            cwd_device(&parent_cwd)
+        ));
+        let retirement = service
+            .retire_if_idle(
+                &failure,
+                &row.task,
+                &binding,
+                &checkout,
+                Some(&project.start),
+            )
+            .await;
+        assert!(
+            matches!(&retirement, Err(ServiceError::CheckoutProcess(blocker))
+            if blocker.pid == pid && blocker.unverified)
+        );
+        service
+            .schedule_result(
+                &row,
+                &retirement.map(|_| Action::Nothing),
+                crate::schedule::Priority::Closeout,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            service.state.lock().await.wait_detail(id),
+            Some(crate::WaitDetail::Archive(message))
+                if message.contains(&format!("PID {pid} (bash)")) && message.contains("could not rule out")
+        ));
+
+        // If only the device is readable, a match still holds the checkout.
+        let same_device = capture(&format!(
+            "{parent_cwd}p{pid}\0\nfcwd\0{}\0\n",
+            cwd_device(&writer_cwd)
+        ));
+        assert!(matches!(
+            service.retire_if_idle(&same_device, &row.task, &binding, &checkout, Some(&project.start)).await,
+            Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid && blocker.unverified
+        ));
+        assert!(checkout.path().exists());
+        drop(parent.stdin.take());
+        parent.wait().await.unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn pathless_cwd_on_another_device_allows_checkout_retirement() {
         let (home, service) = fixture(GitHub::new("fixture").unwrap());
         let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
         let project = service.fixture();
@@ -3089,77 +3216,20 @@ mod tests {
         service.host.fixture_held_shell(&json!({
             "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
         }));
-        let (mut parent, pid) = forked_shell(home.path()).await;
-        // Let the process start second pass before sampling its files.
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let parent_pid = parent.id().unwrap();
-        let selected = format!("{pid},{parent_pid}");
-        let ps = process_listing(
-            "/bin/ps",
-            &[
-                "-ww",
-                "-p",
-                &selected,
-                "-o",
-                "pid=,ppid=,uid=,stat=,lstart=,flags=,acflag=,ucomm=",
-            ],
-        )
-        .await;
-        // Darwin's field output after force-detaching the child's cwd volume.
-        // There is no cwd pathname, device or inode. The real child and parent
-        // still supply the same default-root lineage the production probe uses.
-        let table = |path: &Path| {
-            format!(
-                "p{parent_pid}\0\nfcwd\0n/\0\np{pid}\0\nfcwd\0ncwd|rtd info error: No such file or directory\0\nftxt\0tREG\0D0x100000f\0i1152921500312611982\0n/bin/bash\0\nf3\0tREG\0n{}\0\nf4\0tPIPE\0n->0xb38108b3ff47da0a\0\n",
-                path.display()
-            )
-        };
-        let scratch = service.storage.scratch().path();
-        let linked_files = table(&checkout.path().join(".git"));
-        let linked = service
-            .host
-            .pass(scratch)
-            .with_fixture_detached_census(linked_files.as_bytes(), &ps)
-            .await
-            .unwrap();
-        assert!(matches!(
-            service.retire_if_idle(&linked, &row.task, &binding, &checkout, Some(&project.start)).await,
-            Err(ServiceError::CheckoutProcess(blocker))
-                if blocker.pid == pid && blocker.detached && blocker.to_string().contains("open reference")
-        ));
-        assert!(checkout.path().exists());
 
-        let unrelated_files = table(&home.path().join("outside.log"));
-        let orphan = String::from_utf8(ps.clone())
-            .unwrap()
-            .lines()
-            .map(|line| {
-                let mut columns = line.split_whitespace();
-                let value = columns.next().unwrap();
-                if value.parse() == Ok(pid) {
-                    let _ = columns.next();
-                    format!("{value} 1 {}", columns.collect::<Vec<_>>().join(" "))
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let opaque = service
-            .host
-            .pass(scratch)
-            .with_fixture_detached_census(unrelated_files.as_bytes(), orphan.as_bytes())
-            .await
-            .unwrap();
-        assert!(matches!(
-            service.retire_if_idle(&opaque, &row.task, &binding, &checkout, Some(&project.start)).await,
-            Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid && blocker.unverified
-        ));
+        let mut outside = sleep_in_cwd(Path::new("/"));
+        let pid = outside.id().unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let ps = process_rows(&pid.to_string()).await;
+        let observed = cwd_probe_second();
+        let outside_cwd = cwd_fields(pid).await;
+        let current_ps = process_rows(&pid.to_string()).await;
+        // Preserve the real device field and omit the pathname and inode.
+        let files = format!("p{pid}\0\nfcwd\0{}\0\n", cwd_device(&outside_cwd));
         let unrelated = service
             .host
-            .pass(scratch)
-            .with_fixture_detached_census(unrelated_files.as_bytes(), &ps)
-            .await
+            .pass(service.storage.scratch().path())
+            .with_fixture_cwd_followup(files.as_bytes(), &ps, &current_ps, observed)
             .unwrap();
         assert_eq!(
             service
@@ -3174,9 +3244,8 @@ mod tests {
                 .unwrap(),
             Some(Retirement::Removed)
         );
-        assert!(parent.try_wait().unwrap().is_none());
-        drop(parent.stdin.take());
-        parent.wait().await.unwrap();
+        assert!(outside.try_wait().unwrap().is_none());
+        outside.kill().await.unwrap();
     }
 
     struct ProtectedTree(Vec<u32>);
