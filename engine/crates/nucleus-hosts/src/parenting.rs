@@ -1216,27 +1216,12 @@ impl T3 {
         {
             host_log!("{thread}: could not restore operator snooze: {error}");
         }
-        match reply? {
-            Reply::Value(value) => {
-                if expects_receipt
-                    && (value["sequence"].as_u64().is_none()
-                        || value["threadId"]
-                            .as_str()
-                            .is_some_and(|thread| Some(thread) != thread_id.as_deref()))
-                {
-                    return Err(ParentSendError::Unknown(HostError::Uncertain));
-                }
-                Ok(())
-            }
-            Reply::Failure(cause)
-                if message
-                    .as_ref()
-                    .is_some_and(|command| crate::dispatch_rejected(&cause, command)) =>
-            {
-                Err(ParentSendError::Rejected)
-            }
-            Reply::Failure(_) => Err(ParentSendError::Unknown(HostError::Uncertain)),
-        }
+        parent_send_result(
+            reply?,
+            expects_receipt,
+            thread_id.as_deref(),
+            message.as_deref(),
+        )
     }
 
     async fn restore_parent_snooze(
@@ -1398,6 +1383,33 @@ fn parent_accepts_reentry(row: &Value) -> bool {
                 Some(_)
             )
     )
+}
+
+fn parent_send_result(
+    reply: Reply,
+    expects_receipt: bool,
+    thread: Option<&str>,
+    message: Option<&str>,
+) -> Result<(), ParentSendError> {
+    match reply {
+        Reply::Value(value) => {
+            if expects_receipt
+                && (value["sequence"].as_u64().is_none()
+                    || value["threadId"]
+                        .as_str()
+                        .is_some_and(|actual| Some(actual) != thread))
+            {
+                return Err(ParentSendError::Unknown(HostError::Uncertain));
+            }
+            Ok(())
+        }
+        Reply::Failure(cause)
+            if message.is_some_and(|command| crate::dispatch_rejected(&cause, command)) =>
+        {
+            Err(ParentSendError::Rejected)
+        }
+        Reply::Failure(_) => Err(ParentSendError::Unknown(HostError::Uncertain)),
+    }
 }
 
 fn operator_snooze(row: &Value, owned: &[u64]) -> Option<String> {

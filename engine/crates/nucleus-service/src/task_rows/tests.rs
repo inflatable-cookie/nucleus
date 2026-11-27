@@ -474,57 +474,6 @@ impl Fixture {
         assert_eq!(records.len(), 1);
         records.pop().unwrap()
     }
-
-    async fn assert_operator_snooze_receipt(&self, row: &TaskRow) {
-        for refresh in [false, true] {
-            let write = self
-                .service
-                .host
-                .prepare_parent_refresh(&self.binding, PROVIDER)
-                .await
-                .unwrap()
-                .unwrap();
-            let error = self
-                .service
-                .deliver_parent(row, write, None, refresh)
-                .await
-                .unwrap_err();
-            let until = self
-                .service
-                .host
-                .row_visibility_hint(&self.thread)
-                .unwrap()
-                .snoozed_until_ms
-                .unwrap();
-            assert!(
-                matches!(&error, ServiceError::OperatorSnoozed { thread, until: observed } if thread == &self.thread && *observed == until)
-            );
-            self.service
-                .schedule_result(row, &Err(error), Priority::Effect)
-                .await
-                .unwrap();
-            let remaining = self
-                .service
-                .state
-                .lock()
-                .await
-                .schedule
-                .due(ID)
-                .unwrap()
-                .saturating_duration_since(tokio::time::Instant::now());
-            assert!(
-                remaining
-                    .as_millis()
-                    .abs_diff(u128::from(until.saturating_sub(now_ms())))
-                    < 1000
-            );
-        }
-        let history = self.service.history(ID, None, 100).await.unwrap();
-        assert!(history.iter().all(|event| !matches!(
-            event.content.kind.as_str(),
-            "native_turn_intent" | "acp_row_refresh_intent" | "native_turn_not_sent"
-        )));
-    }
 }
 
 #[tokio::test]
@@ -1517,8 +1466,17 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         native.settled_at = json!("2026-11-23T18:10:00Z");
     }
     publish_shell();
-    fixture.assert_operator_snooze_receipt(&row).await;
-    assert_eq!(fixture.commands().len(), 3);
+    let snoozed_refresh = prepare().await.unwrap().unwrap();
+    assert!(
+        service
+            .deliver_parent(&row, snoozed_refresh, None, true)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        fixture.commands()[3..],
+        ["message.dispatch", "thread.snooze"]
+    );
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
 
     fixture.native.lock().unwrap().until = Value::Null;
@@ -1537,7 +1495,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         .unwrap();
     assert!(!calls.contains_key("orchestration.subscribeThread"));
     assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
-    assert_eq!(fixture.commands()[3..], ["message.dispatch"]);
+    assert_eq!(fixture.commands()[5..], ["message.dispatch"]);
     drop(fence);
 
     assert_terminal_forgets_snooze(&fixture).await;

@@ -8,7 +8,7 @@ use nucleus_hosts::{
 };
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
-use crate::{Service, ServiceError, State, WaitDetail, now_ms, pass::DispatchTarget};
+use crate::{Service, ServiceError, State, now_ms, pass::DispatchTarget};
 
 const HORIZON_MS: u64 = 48 * 60 * 60 * 1_000;
 const RENEW_BEFORE_MS: u64 = HORIZON_MS / 2;
