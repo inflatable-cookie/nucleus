@@ -270,6 +270,8 @@ impl Inventory {
         }
         #[cfg(target_os = "macos")]
         let mut references = None;
+        #[cfg(target_os = "macos")]
+        let observed = orphans::observed_seconds().ok();
         if let Ok(listing) =
             read_listing("/usr/sbin/lsof", &args, Some(scratch), MAX_PROBE_OUTPUT).await
             && let Some(paths) = listing.cwd_followup()
@@ -324,8 +326,8 @@ impl Inventory {
             #[cfg(target_os = "macos")]
             {
                 self.recover_paths().await;
-                if let Some(references) = references {
-                    self.scope_detached(references).await;
+                if let (Some(references), Some(observed)) = (references, observed) {
+                    self.scope_detached(references, observed).await;
                 }
             }
         }
@@ -353,7 +355,7 @@ impl Inventory {
     }
 
     #[cfg(target_os = "macos")]
-    async fn scope_detached(&mut self, mut references: HashMap<u32, Vec<PathBuf>>) {
+    async fn scope_detached(&mut self, mut references: HashMap<u32, Vec<PathBuf>>, observed: i64) {
         // Darwin's cwd error also covers a custom process root. A live birth
         // parent with the default root and a child that has neither exec'd
         // nor used privilege rule out an error reading a custom process root.
@@ -371,7 +373,9 @@ impl Inventory {
                 }
                 let parent = self.processes.get(&process.parent)?;
                 let (started, parent_started) = (process.started?, parent.started?);
-                (parent_started <= started).then_some(detached::Ancestry {
+                // ps reports whole seconds. A younger PID could have been
+                // recycled between its file listing and the identity read.
+                (parent_started <= started && started < observed).then_some(detached::Ancestry {
                     pid,
                     started,
                     parent: process.parent,
@@ -390,7 +394,9 @@ impl Inventory {
     pub(crate) async fn scoped_fixture(files: &[u8], ps: &[u8]) -> Result<Self, HostError> {
         let mut inventory = Self::from_listings(files, ps, geteuid().as_raw(), 0)?;
         let references = detached::file_references(files).ok_or(HostError::Protocol)?;
-        inventory.scope_detached(references).await;
+        inventory
+            .scope_detached(references, orphans::observed_seconds()?)
+            .await;
         Ok(inventory)
     }
 

@@ -121,7 +121,7 @@ fn settled(started: &str, observed: i64) -> bool {
     start_epoch(started).is_some_and(|start| start + SETTLE_SECONDS <= observed)
 }
 
-fn observed_seconds() -> Result<i64, HostError> {
+pub(super) fn observed_seconds() -> Result<i64, HostError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| HostError::Uncertain)?;

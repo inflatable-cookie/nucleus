@@ -3090,7 +3090,10 @@ mod tests {
             "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
         }));
         let (mut parent, pid) = forked_shell(home.path()).await;
-        let selected = format!("{pid},{}", parent.id().unwrap());
+        // Let the process start second pass before sampling its files.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let parent_pid = parent.id().unwrap();
+        let selected = format!("{pid},{parent_pid}");
         let ps = process_listing(
             "/bin/ps",
             &[
@@ -3107,7 +3110,7 @@ mod tests {
         // still supply the same default-root lineage the production probe uses.
         let table = |path: &Path| {
             format!(
-                "p{pid}\0\nfcwd\0ncwd|rtd info error: No such file or directory\0\nftxt\0tREG\0D0x100000f\0i1152921500312611982\0n/bin/bash\0\nf3\0tREG\0n{}\0\nf4\0tPIPE\0n->0xb38108b3ff47da0a\0\n",
+                "p{parent_pid}\0\nfcwd\0n/\0\np{pid}\0\nfcwd\0ncwd|rtd info error: No such file or directory\0\nftxt\0tREG\0D0x100000f\0i1152921500312611982\0n/bin/bash\0\nf3\0tREG\0n{}\0\nf4\0tPIPE\0n->0xb38108b3ff47da0a\0\n",
                 path.display()
             )
         };
