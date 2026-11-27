@@ -20,6 +20,63 @@ const PROJECT: &str = "project:nucleus-rust-inbox";
 const PROVIDER: &str = "fixture-acp";
 
 #[tokio::test]
+async fn one_unresolved_process_creates_one_open_decision_until_cleared() {
+    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let mut state = service.state.lock().await;
+    let blocker = nucleus_hosts::RetirementBlocker {
+        pid: 91988,
+        command: "fixture-worker".into(),
+        started: Some(1),
+        unverified: true,
+    };
+    for _ in 0..2 {
+        service
+            .raise_process_decision(&mut state, &blocker)
+            .unwrap();
+    }
+    service
+        .clear_process_decisions(&mut state, vec![(91988, 1)])
+        .unwrap();
+    let open = pending(&state, &service).unwrap();
+    assert_eq!(open.len(), 1);
+    assert!(open[0].task.is_none());
+    assert!(
+        open[0]
+            .input
+            .question
+            .contains("PID 91988 (fixture-worker)")
+    );
+    let decision = &open[0];
+    let operator = Authority::Operator {
+        actor: "fixture operator".into(),
+    };
+    for option in ["wait", "checked"] {
+        service
+            .record_decision_answer(
+                &mut state,
+                &decision.project_id,
+                &decision.id,
+                DecisionAnswerInput {
+                    option_id: option.into(),
+                    note: None,
+                },
+                &operator,
+            )
+            .unwrap();
+        assert_eq!(pending(&state, &service).unwrap(), open);
+        service
+            .raise_process_decision(&mut state, &blocker)
+            .unwrap();
+        service
+            .clear_process_decisions(&mut state, vec![(91988, 1)])
+            .unwrap();
+        assert_eq!(pending(&state, &service).unwrap(), open);
+    }
+    service.clear_process_decisions(&mut state, vec![]).unwrap();
+    assert!(pending(&state, &service).unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn an_inbox_ui_attempt_is_claimed_once_and_the_reply_is_consumed() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
     service.native_inbox = Some(NativeInbox::open(&service).unwrap());

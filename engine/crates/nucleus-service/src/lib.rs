@@ -84,6 +84,8 @@ pub use web::{
 pub enum ServiceError {
     #[error("{0}")]
     ArchiveEvidence(String),
+    #[error("{0}")]
+    CheckoutProcess(nucleus_hosts::RetirementBlocker),
     #[error("T3 parent message was not sent: {reason}")]
     ParentNotSent {
         reason: String,
@@ -626,6 +628,9 @@ impl Service {
         let (result, calls) = Box::pin(T3::count_pass_calls(self.run_batch(host))).await;
         let mut state = self.state.lock().await;
         state.last_pass_calls = calls;
+        if let Some(processes) = host.unresolved_processes() {
+            self.clear_process_decisions(&mut state, processes)?;
+        }
         state.scheduler_error = result.as_ref().err().map(|error| match error {
             ServiceError::Project => "the task is outside this engine's configured project",
             ServiceError::Settings(_) | ServiceError::Store(_) => {
@@ -1238,7 +1243,9 @@ impl Service {
         let mut state = self.state.lock().await;
         let mut current = self.lookup(&state, id)?;
         let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
-            && current.task.phase() == Phase::Done
+            && (current.task.phase() == Phase::Done
+                || (current.task.phase() == Phase::Cancelled
+                    && matches!(result, Err(ServiceError::CheckoutProcess(_)))))
             && current.task.run().is_none()
             && !matches!(result, Ok(Action::Nothing));
         let held = held_call(result);
@@ -1277,6 +1284,11 @@ impl Service {
             return Ok(());
         }
         let (mut wait, mut detail) = task_wait(row, result);
+        if let Err(ServiceError::CheckoutProcess(blocker)) = result
+            && blocker.unverified
+        {
+            self.raise_process_decision(&mut state, blocker)?;
+        }
         if wait == Some(WaitReason::Capacity)
             && current.task.phase() == Phase::Working
             && current.task.first_launch()
@@ -2250,6 +2262,10 @@ fn task_wait(
         Err(ServiceError::ArchiveEvidence(cause)) => (
             Some(Wait::Stopping),
             Some(WaitDetail::Blocked(cause.clone())),
+        ),
+        Err(ServiceError::CheckoutProcess(blocker)) => (
+            Some(Wait::Stopping),
+            Some(WaitDetail::Blocked(blocker.to_string())),
         ),
         Err(ServiceError::ParentRecoveryPlanner { retry_at }) => observation(
             Wait::Question,
