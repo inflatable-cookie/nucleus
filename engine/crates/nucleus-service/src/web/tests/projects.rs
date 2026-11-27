@@ -3831,16 +3831,14 @@ async fn watchers_notify_across_projects_dedupe_origin_and_skip_unwatched() {
     }
     registry.task("alpha-planner", "alpha-done").await;
     registry.task("alpha-planner", "alpha-cancel").await;
-    let done_ref = format!(
-        "{ALPHA_REPO}#{}",
-        registry
-            .service
-            .task("alpha-done")
-            .await
-            .unwrap()
-            .number
-            .unwrap()
-    );
+    let done_number = registry
+        .service
+        .task("alpha-done")
+        .await
+        .unwrap()
+        .number
+        .unwrap();
+    let done_ref = format!("{ALPHA_REPO}#{done_number}");
     let cancel_ref = format!(
         "{ALPHA_REPO}#{}",
         registry
@@ -3854,7 +3852,7 @@ async fn watchers_notify_across_projects_dedupe_origin_and_skip_unwatched() {
 
     let w1 = json_body(watch_via(&registry.api, "beta-planner", &done_ref, "watch").await).await;
     assert_eq!(w1["watching"], true);
-    assert_eq!(w1["reference"], done_ref);
+    assert_eq!(w1["reference"], format!("nucleus-fixture#{done_number}"));
     assert!(w1.get("outcome").is_none());
 
     for (actor, target, verb) in [
@@ -3966,7 +3964,7 @@ async fn ticket_caller_watches_across_projects_and_receives_completion_notice() 
     };
     let mut runner_task = runner.task.clone();
     let _ = runner_task.reconcile(&observation);
-    runner_task
+    let bearer = runner_task
         .reserve_launch(
             &observation,
             LaunchInputs {
@@ -3993,7 +3991,10 @@ async fn ticket_caller_watches_across_projects_and_receives_completion_notice() 
                 .method(Method::POST)
                 .uri(format!("/v1/runs/alpha-runner/{instance}/watch"))
                 .header(HOST, LOCAL_HOST)
-                .header(AUTHORIZATION, format!("Bearer {}", hex::encode(credential)))
+                .header(
+                    AUTHORIZATION,
+                    format!("Bearer {}", hex::encode(bearer.as_bytes())),
+                )
                 .header("content-type", "application/json")
                 .body(Body::from(json!({"task": "alpha-target"}).to_string()))
                 .unwrap(),
