@@ -15,7 +15,10 @@ use axum::{
     Json, Router,
     extract::State,
     http::{HeaderMap, StatusCode},
-    response::sse::{Event, Sse},
+    response::{
+        IntoResponse,
+        sse::{Event, Sse},
+    },
     routing::{get, post},
 };
 use futures_util::stream;
@@ -163,9 +166,22 @@ async fn stdin_eof_drains_queued_replies_and_exits_successfully() {
 
 #[tokio::test]
 async fn inbox_holds_concurrent_native_forms_and_sends_one_answer_per_live_request() {
+    inbox_forms(false).await;
+}
+
+#[tokio::test]
+async fn inbox_reconnects_after_engine_error() {
+    inbox_forms(true).await;
+}
+
+async fn inbox_forms(fail_first_stream: bool) {
     let fixture = Arc::new(Fixture {
         state: AtomicU8::new(0),
         commands: AtomicUsize::new(0),
+        detail_calls: AtomicUsize::new(0),
+        detail_failures: AtomicUsize::new(0),
+        stream_calls: AtomicUsize::new(0),
+        stream_failures: AtomicUsize::new(usize::from(fail_first_stream)),
         stream_ready: Notify::new(),
         changes: broadcast::channel(8).0,
     });
@@ -184,7 +200,24 @@ async fn inbox_holds_concurrent_native_forms_and_sends_one_answer_per_live_reque
                 Json(json!({"pending":pending}))
             }),
         )
-        .route("/v1/acp/inbox/events", get(events))
+        .route(
+            "/v1/acp/inbox/events",
+            get(async |State(fixture): State<Arc<Fixture>>| {
+                fixture.stream_calls.fetch_add(1, Ordering::Relaxed);
+                if fixture
+                    .stream_failures
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+                    .is_ok()
+                {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({"error":"transient"})),
+                    )
+                        .into_response();
+                }
+                events(State(fixture)).await.into_response()
+            }),
+        )
         .route(
             "/v1/acp/inbox/answer",
             post(
@@ -257,6 +290,9 @@ async fn inbox_holds_concurrent_native_forms_and_sends_one_answer_per_live_reque
     assert_eq!(ended["id"], 2);
     assert_eq!(ended["result"]["stopReason"], "end_turn");
     assert_eq!(fixture.commands.load(Ordering::Relaxed), 2);
+    if fail_first_stream {
+        assert!(fixture.stream_calls.load(Ordering::Relaxed) >= 2);
+    }
     server.abort();
 }
 
@@ -295,6 +331,10 @@ async fn unbound_new_is_inert_and_load_refuses() {
 struct Fixture {
     state: AtomicU8,
     commands: AtomicUsize,
+    detail_calls: AtomicUsize,
+    detail_failures: AtomicUsize,
+    stream_calls: AtomicUsize,
+    stream_failures: AtomicUsize,
     stream_ready: Notify,
     changes: broadcast::Sender<()>,
 }
@@ -303,6 +343,17 @@ async fn view(
     State(fixture): State<Arc<Fixture>>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
+    fixture.detail_calls.fetch_add(1, Ordering::Relaxed);
+    if fixture
+        .detail_failures
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+        .is_ok()
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error":"transient"})),
+        );
+    }
     let state = fixture.state.load(Ordering::Relaxed);
     if state == 6
         || (state == 7
@@ -408,6 +459,10 @@ async fn loopback() -> (
     let fixture = Arc::new(Fixture {
         state: AtomicU8::new(1),
         commands: AtomicUsize::new(0),
+        detail_calls: AtomicUsize::new(0),
+        detail_failures: AtomicUsize::new(0),
+        stream_calls: AtomicUsize::new(0),
+        stream_failures: AtomicUsize::new(0),
         stream_ready: Notify::new(),
         changes: broadcast::channel(8).0,
     });
@@ -453,6 +508,22 @@ async fn loopback() -> (
     write_pointer(&pointer, &binding);
     let agent = AgentIo::spawn(Some(&pointer), Some(&checkout));
     (agent, fixture, home, server)
+}
+
+#[tokio::test]
+async fn attach_retries_engine_error_and_succeeds() {
+    let (mut agent, fixture, _home, server) = loopback().await;
+    fixture.detail_failures.store(1, Ordering::Relaxed);
+    let opened = agent
+        .call(
+            1,
+            "session/load",
+            json!({"sessionId": SESSION, "cwd": "/fixture"}),
+        )
+        .await;
+    assert_eq!(opened["result"]["sessionId"], SESSION);
+    assert_eq!(fixture.detail_calls.load(Ordering::Relaxed), 2);
+    server.abort();
 }
 
 fn write_pointer(path: &Path, binding: &impl serde::Serialize) {

@@ -326,30 +326,27 @@ async fn accepted(response: Response) -> Result<Response, Failure> {
     match response.status() {
         StatusCode::UNAUTHORIZED => Err(Failure::Unauthorized),
         status if status.is_success() => Ok(response),
-        status if status.is_server_error() => {
-            let Failure::Refused(message) = rejection(response).await else {
-                unreachable!()
-            };
-            Err(Failure::Engine(message))
-        }
+        status if status.is_server_error() => Err(Failure::Engine(
+            error_message(response, "engine returned an unreadable error").await,
+        )),
         _ => Err(rejection(response).await),
     }
 }
 
 async fn rejection(response: Response) -> Failure {
+    Failure::Refused(error_message(response, "Nucleus refused the request.").await)
+}
+
+async fn error_message(response: Response, fallback: &str) -> String {
     #[derive(Deserialize)]
     struct Rejection {
         error: String,
     }
-    let message = body(response)
+    body(response)
         .await
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Rejection>(&bytes).ok())
-        .map_or_else(
-            || "Nucleus refused the request.".into(),
-            |reply| reply.error,
-        );
-    Failure::Refused(message)
+        .map_or_else(|| fallback.to_owned(), |reply| reply.error)
 }
 
 async fn body(mut response: Response) -> Result<Vec<u8>, Failure> {
@@ -447,6 +444,21 @@ mod tests {
         let (client, server) = fixture(Some(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 22\r\n\r\n{\"error\":\"store busy\"}")).await;
         let error = client.inbox().await.err().unwrap();
         assert_eq!(error.to_string(), "Nucleus could not answer: store busy");
+        check_log(&client, "503");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unreadable_server_error_has_engine_fallback() {
+        let (client, server) = fixture(Some(
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+        ))
+        .await;
+        let error = client.inbox().await.err().unwrap();
+        assert_eq!(
+            error.to_string(),
+            "Nucleus could not answer: engine returned an unreadable error"
+        );
         check_log(&client, "503");
         server.await.unwrap();
     }

@@ -317,16 +317,17 @@ impl Session {
 }
 
 async fn attach(client: &ServiceClient) -> Result<client::Detail, Failure> {
+    let mut last = Failure::Unavailable;
     for delay in [0, 1, 2, 4, 8, 15] {
         if delay > 0 {
             tokio::time::sleep(Duration::from_secs(delay)).await;
         }
         match client.detail().await {
-            Err(Failure::Unavailable) => {}
+            Err(error @ (Failure::Unavailable | Failure::Engine(_))) => last = error,
             result => return result,
         }
     }
-    Err(Failure::Unavailable)
+    Err(last)
 }
 
 async fn task_prompt(

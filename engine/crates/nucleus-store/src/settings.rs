@@ -878,7 +878,8 @@ impl<S: SettingsValue> SettingsDomain<S> {
                     .as_ref()
                     .map_or_else(BTreeSet::new, RefCell::take);
                 eprintln!(
-                    "Upgraded {} to settings version {}. Removed keys {keys:?}. Verified backup at {}",
+                    "{} Upgraded {} to settings version {}. Removed keys {keys:?}. Verified backup at {}",
+                    time::OffsetDateTime::now_utc(),
                     S::FILE,
                     receipt.to(),
                     receipt.safety_backup().path.display()

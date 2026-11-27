@@ -133,7 +133,7 @@ async fn follow(
         }
         .await;
         match result {
-            Err(Failure::Unavailable) => {
+            Err(Failure::Unavailable | Failure::Engine(_)) => {
                 tokio::time::sleep(Duration::from_secs(delay)).await;
                 delay = (delay * 2).min(30);
             }
