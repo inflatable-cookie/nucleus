@@ -526,6 +526,8 @@ It logs each recovery attempt to `acp.log` and backs off between attempts.
 
 Keep the serve launcher's log under the configured log root. On SIGINT,
 SIGTERM or SIGHUP, `serve` logs the signal and its uptime and shuts down.
+If the scheduler stops, `serve` logs the cause and exits with an error so
+clients can restart it.
 Once `serve` holds the profile lock, it records the run before initializing
 the service. The next start reports the last log time and how the previous
 run ended, including errors and SIGKILL during initialization. The pass
@@ -707,13 +709,11 @@ callbacks.
 The fixture uses the `nucleus` binary. Run `configure --home <profile>
 --enable` with an existing fixture directory. Start `serve` with
 that profile, the registered `--acp-provider`, and the local T3
-endpoint. Set the control key, T3 bearer and GitHub token in the environment.
+endpoint. Set the control key, T3 caller key, T3 bearer and GitHub token in
+the environment.
 The CLI's `admit`, `task`, `next`, `history` and task commands use the loopback
 API. Every route requires the configured loopback Host and a same-origin Origin
 when supplied. `report` reads the role's owner-only ticket and the report from stdin.
-For the live proof, bind a separate key to the idle fixture origin thread with
-`--fixture-origin-thread` and `NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY`. Use that key
-to submit and answer as the bound fixture planner.
 
 ## Settings
 

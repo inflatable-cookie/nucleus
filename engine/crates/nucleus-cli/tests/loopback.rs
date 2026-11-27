@@ -159,7 +159,6 @@ async fn controller_key_comes_from_the_selected_environment_variable() {
             let output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
                 .args(["--endpoint", &endpoint, "next", task])
                 .env("NUCLEUS_ENGINE_CONTROL_KEY", &key)
-                .env("NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY", hex::encode([9; 32]))
                 .output()
                 .expect("CLI output");
             assert!(
@@ -221,7 +220,6 @@ async fn promote_and_demote_cli_commands_send_versioned_task_commands() {
             let output = Command::new(env!("CARGO_BIN_EXE_nucleus"))
                 .args(args)
                 .env("NUCLEUS_ENGINE_CONTROL_KEY", &key)
-                .env("NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY", hex::encode([9; 32]))
                 .output()
                 .expect("CLI output");
             assert!(

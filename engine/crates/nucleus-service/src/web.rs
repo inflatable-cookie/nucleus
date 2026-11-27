@@ -1615,7 +1615,7 @@ impl IntoResponse for ApiError {
                     | ServiceError::DependencyEdit(_)
                     | ServiceError::Store(
                         nucleus_store::StoreError::StaleTask
-                        | nucleus_store::StoreError::DependencyCycle
+                        | nucleus_store::StoreError::DependencyCycle { .. }
                         | nucleus_store::StoreError::AllowanceNotExhausted
                         | nucleus_store::StoreError::NumbersNeedSeed
                         | nucleus_store::StoreError::PlanningConflict,

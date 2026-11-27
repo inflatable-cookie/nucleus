@@ -103,8 +103,9 @@ far behind. A task branch left by an earlier allocation keeps its head when the
 published base already holds it and it contains the prerequisite merges below.
 
 The start must contain the recorded merge commit of every prerequisite that
-landed on the same repository and base. A failed fetch or a missing landing is a
-workspace wait that names its cause. Nucleus never falls back to the local head.
+landed on the same repository and base. A failed fetch or commit lookup
+reports the Git failure. A missing landing names the prerequisite.
+Nucleus never falls back to the local head.
 
 Review-entry tasks start at their recorded head, and report-only tasks at their
 pinned planning commit.
@@ -112,9 +113,11 @@ pinned planning commit.
 ### Wait states and prerequisites
 
 Record first-dispatch prerequisites and deliberate post-dispatch waits as
-separate task facts. Missing or cancelled prerequisite work needs an owner
-edit. A hold and a dependency wait are independent. On release, the scheduler
-observes current capacity and preserves the task's identity and order. The
+separate task facts. Dependency edits reject and name cycles across
+first-dispatch prerequisites and unreleased waits. Missing or cancelled
+prerequisite work needs an owner edit. A hold and a dependency wait are
+independent. On release, the scheduler observes current capacity and preserves
+the task's identity and order. The
 [dependency owner](../../../engine/crates/nucleus-service/src/dependencies.rs)
 and [Spec 070 commands](../specs/070-small-engine.md#commands) own the precise
 updates and exits.
@@ -301,6 +304,8 @@ place. The task and project fences span removal. Clean worktrees and checkouts
 with only unstaged deletions of files at that exact published head retire by
 atomically renaming the directory into same-volume trash under the work root,
 removing the Git worktree registration, and deleting the trash asynchronously.
+Pruning reports each failure and continues with the other entries. It
+preserves ownership markers for retry and reports any failure to restore one.
 An interrupted cleanup whose `.git` file was already unlinked still proves
 custody through its matching prunable Git registration. Git-ignored output goes
 with the checkout. Modified, added, non-ignored untracked or uncertain contents
