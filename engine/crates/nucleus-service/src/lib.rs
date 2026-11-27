@@ -58,8 +58,8 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostCalls, HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
 use nucleus_store::{
-    DispatchMode, EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError,
-    TaskRow,
+    DispatchMode, EngineStorage, Event, EventDraft, SettingsFile, StorageDirectory, StorageError,
+    Store, StoreError, TaskRow,
 };
 use nucleus_work::{Checkout, WorkError, Worktrees, checkout_path};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
@@ -1049,15 +1049,15 @@ impl Service {
 
     async fn watch_trash(&self) {
         loop {
-            let work = self.storage.work().clone();
-            self.prune("checkout trash", move || {
-                nucleus_work::prune_trash(&work, now_ms())
-            })
-            .await;
-            let scratch = self.storage.scratch().clone();
-            self.prune("checkout quarantine", move || {
-                nucleus_work::prune_quarantines(&scratch, now_ms())
-            })
+            let work = self.storage.work();
+            self.prune("checkout trash", work, nucleus_work::prune_trash)
+                .await;
+            let scratch = self.storage.scratch();
+            self.prune(
+                "checkout quarantine",
+                scratch,
+                nucleus_work::prune_quarantines,
+            )
             .await;
             self.trash_wake.notified().await;
         }
@@ -1066,13 +1066,17 @@ impl Service {
     async fn prune(
         &self,
         kind: &'static str,
-        job: impl FnOnce() -> Result<(), WorkError> + Send + 'static,
+        root: &StorageDirectory,
+        job: fn(&StorageDirectory, u64) -> Result<(), WorkError>,
     ) {
+        let root = root.clone();
         let result = self
             .volume
             .run(kind, "pruning", volume::Limit::Change, move |custody| {
+                // Read first: a read which hangs must not count as a running removal.
+                root.verify()?;
                 let _step = custody.mutate()?;
-                job()
+                job(&root, now_ms())
             })
             .await;
         if let Err(error) = result.map_err(WorkError::from).and_then(|done| done) {

@@ -152,6 +152,8 @@ impl Service {
         // A ticket left behind names no current run, so it cannot report.
         let _ = self
             .scratch_job(task, "clearing a report ticket", move |root, custody| {
+                // Read first: a read which hangs must not count as a running write.
+                root.verify().map_err(WorkError::from)?;
                 let _step = custody.mutate().map_err(WorkError::from)?;
                 ticket::clear(root, &run);
                 Ok(())
@@ -1626,6 +1628,7 @@ impl Service {
         let id = prior.identity().id.clone();
         self.scratch_job(&id, "writing run scratch", move |root, custody| {
             let run = reserved.run().ok_or(ServiceError::Input)?;
+            root.verify().map_err(WorkError::from)?;
             {
                 let _step = custody.mutate().map_err(WorkError::from)?;
                 write_prompt_artifacts(root, run, &prior, &lanes, &size)?;
