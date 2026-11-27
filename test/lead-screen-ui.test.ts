@@ -417,4 +417,3 @@ test("a long version list pages honestly instead of rendering every version", as
   );
   assert.doesNotMatch(ui.text(), /Showing the latest 8 of 12 versions\./);
 });
-

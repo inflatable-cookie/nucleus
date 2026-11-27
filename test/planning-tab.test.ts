@@ -296,4 +296,3 @@ test("865 a draft is stale once the plan moves past its version; reapply keeps i
     "draft order and horizons win, the newer note and completion condition come along, and new lanes follow",
   );
 });
-

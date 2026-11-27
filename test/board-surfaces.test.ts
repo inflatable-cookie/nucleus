@@ -179,4 +179,3 @@ test("a toned badge reads by its tinted fill, with no outline", async () => {
     toneSurface(dark.statusWarning, roles(c).raised),
   );
 });
-

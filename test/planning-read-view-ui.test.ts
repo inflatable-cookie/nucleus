@@ -88,7 +88,3 @@ test("1616 mounted: board pane dividers appear at wide widths and disappear when
     board.close();
   }
 });
-
-
-
-
