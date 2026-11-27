@@ -192,7 +192,7 @@ impl Board {
                 get(settings::get).put(settings::put),
             )
             .route_layer(middleware::from_fn_with_state(
-                self.clone(),
+                (api.clone(), self.clone()),
                 authorize_browser,
             ));
         board
@@ -381,7 +381,7 @@ async fn revoke(
 }
 
 async fn authorize_browser(
-    State(board): State<Board>,
+    State((api, board)): State<(Api, Board)>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
@@ -414,6 +414,7 @@ async fn authorize_browser(
     };
     request.extensions_mut().insert(session.authority);
     let scope = session.scope.for_request();
+    super::reauthorize_known(&api, &scope).await?;
     request.extensions_mut().insert(scope.clone());
     request.extensions_mut().insert(BrowserSession {
         // A public cache key, distinct from the cookie and its stored digest.

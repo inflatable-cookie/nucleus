@@ -5298,3 +5298,325 @@ async fn gone_watcher_is_dropped_and_recorded_while_origin_falls_back() {
             .is_empty()
     );
 }
+
+async fn board_get(board: &Router, path: &str, cookie: &str) -> Response {
+    board
+        .clone()
+        .oneshot(
+            Request::get(path)
+                .header(HOST, "127.0.0.1:9")
+                .header("x-nucleus-board", "1")
+                .header(axum::http::header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn pair_planner_board(board: &Router, actor: &str) -> String {
+    let link = caller_request(board, Method::POST, "/v1/board/link", actor, json!({})).await;
+    assert_eq!(link.status(), StatusCode::OK);
+    let url = json_body(link).await["url"].as_str().unwrap().to_owned();
+    let token = url.split("#token=").nth(1).unwrap();
+    let paired = board
+        .clone()
+        .oneshot(
+            Request::post("/api/engine/pair")
+                .header(HOST, "127.0.0.1:9")
+                .header("x-nucleus-board", "1")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(paired.status(), StatusCode::NO_CONTENT);
+    paired
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+async fn acp_keys(api: &Router, path: &str, actor: &str) -> (String, String) {
+    let res = caller_request(api, Method::POST, path, actor, json!({})).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_body(res).await;
+    let binding: nucleus_core::acp::Binding = serde_json::from_str(
+        &std::fs::read_to_string(body["bindingPath"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    (
+        hex::encode(binding.credential),
+        hex::encode(binding.command_credential.unwrap()),
+    )
+}
+
+async fn assert_board_reauthorized(board: &Router, cookie: &str, alpha: &str, task_id: &str) {
+    let session = board_get(board, "/api/engine/session", cookie).await;
+    assert_eq!(session.status(), StatusCode::OK);
+    assert_eq!(json_body(session).await["planningProjects"], json!([alpha]));
+    let tasks = board_get(board, "/api/engine/tasks", cookie).await;
+    assert_eq!(tasks.status(), StatusCode::OK);
+    let list = json_body(tasks).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["identity"]["id"], task_id);
+}
+
+fn spawn_enrollments(service: &Arc<Service>) -> tokio::task::JoinHandle<()> {
+    let service = Arc::clone(service);
+    tokio::spawn(async move { service.watch_enrollments().await })
+}
+
+async fn acp_call(
+    api: &Router,
+    method: Method,
+    path: &str,
+    key: &str,
+    body: Option<Value>,
+) -> StatusCode {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(HOST, "127.0.0.1:9")
+        .header(AUTHORIZATION, format!("Bearer {key}"));
+    let body = match body {
+        Some(value) => {
+            req = req.header("content-type", "application/json");
+            Body::from(value.to_string())
+        }
+        None => Body::empty(),
+    };
+    api.clone()
+        .oneshot(req.body(body).unwrap())
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn assert_acp_reauthorized(
+    service: &Service,
+    api: &Router,
+    task_id: &str,
+    read_key: &str,
+    write_key: &str,
+    cmd: Value,
+) {
+    service.state.lock().await.enrolled_planners.clear();
+    assert_eq!(
+        acp_call(
+            api,
+            Method::GET,
+            &format!("/v1/tasks/{task_id}"),
+            read_key,
+            None
+        )
+        .await,
+        StatusCode::OK
+    );
+    service.state.lock().await.enrolled_planners.clear();
+    assert_eq!(
+        acp_call(
+            api,
+            Method::POST,
+            &format!("/v1/tasks/{task_id}/commands"),
+            write_key,
+            Some(cmd),
+        )
+        .await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn planner_paired_board_and_acp_sessions_reauthorize_after_stream_drop_and_restart() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+    let task_id = "reauth-task";
+    let admitted = submit(&registry.api, "alpha-planner", task_id, None).await;
+    assert_eq!(admitted.status(), StatusCode::CREATED);
+    let (read_key, write_key) = acp_keys(
+        &registry.api,
+        &format!("/v1/tasks/{task_id}/acp"),
+        "alpha-planner",
+    )
+    .await;
+    let board = registry_board_api(&registry);
+    let cookie = pair_planner_board(&board, "alpha-planner").await;
+
+    // Stream drop: ACP read, ACP write and board sessions each reauthorize project scope.
+    let worker = spawn_enrollments(&registry.service);
+    assert_acp_reauthorized(
+        &registry.service,
+        &registry.api,
+        task_id,
+        &read_key,
+        &write_key,
+        json!({"hold": "reauth check"}),
+    )
+    .await;
+    registry
+        .service
+        .state
+        .lock()
+        .await
+        .enrolled_planners
+        .clear();
+    assert_board_reauthorized(&board, &cookie, &alpha, task_id).await;
+
+    // Restart: persisted board cookie and ACP read/write sessions reauthorize planner scope.
+    worker.abort();
+    let _ = worker.await;
+    drop(board);
+    let restarted = registry.reopen();
+    let worker = spawn_enrollments(&restarted.service);
+    let restarted_board = registry_board_api(&restarted);
+    assert_board_reauthorized(&restarted_board, &cookie, &alpha, task_id).await;
+    assert_acp_reauthorized(
+        &restarted.service,
+        &restarted.api,
+        task_id,
+        &read_key,
+        &write_key,
+        json!("release"),
+    )
+    .await;
+    worker.abort();
+}
+
+async fn reject_ticket_503_host(repo_root: &Path) -> (T3, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut http, _) = listener.accept().await.unwrap();
+        let mut buf = [0; 2048];
+        let _ = http.read(&mut buf).await.unwrap();
+        http.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+    });
+    let host = T3::new(&format!("http://{address}"), "fixture").unwrap();
+    host.fixture_held_shell(&json!({
+        "kind": "snapshot",
+        "snapshot": {
+            "snapshotSequence": 1,
+            "projects": [{
+                "id": "alpha-native",
+                "workspaceRoot": repo_root,
+                "defaultModelSelection": {"instanceId": "fixture-provider", "model": "fixture-model"}
+            }],
+            "threads": []
+        }
+    }));
+    (host, server)
+}
+
+#[tokio::test]
+async fn tell_pre_send_unavailable_returns_stored_row_to_pending() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    let alpha = registry
+        .service
+        .state
+        .lock()
+        .await
+        .live_planner_project("alpha-planner")
+        .expect("alpha")
+        .to_owned();
+    let repo_root = registry
+        .service
+        .state
+        .lock()
+        .await
+        .settings
+        .projects
+        .as_ref()
+        .unwrap()
+        .projects[&alpha]
+        .repositories[0]
+        .path
+        .clone();
+
+    let items = format!("/v1/planning/{alpha}/items");
+    let created = json_body(
+        post_as(
+            &registry.api,
+            &items,
+            &BOARD_KEY,
+            &json!({"kind": "lead", "title": "Pre-send 503", "body": "Launch hits 503."}),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let (v1, _) = item_latest_version(&registry.api, &alpha, &id).await;
+    registry.archived.store(true, Ordering::Relaxed);
+    assert_eq!(
+        post_as(
+            &registry.api,
+            &format!("{items}/{id}/assess"),
+            &BOARD_KEY,
+            &json!({"version": v1}),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    let (host, reject_server) = reject_ticket_503_host(&repo_root).await;
+    let Registry {
+        home: _home,
+        service,
+        api,
+        ..
+    } = registry;
+    drop(api);
+    let settings = service.settings.clone();
+    drop(service);
+    let revision = settings.read::<nucleus_store::Projects>().unwrap().revision;
+    settings
+        .edit(&revision, |projects: &mut nucleus_store::Projects| {
+            projects.projects.get_mut(&alpha).unwrap().repositories[0]
+                .planner_threads
+                .clear();
+            Ok(())
+        })
+        .unwrap();
+    let service = registry_service(&settings, host);
+    let row = service
+        .state
+        .lock()
+        .await
+        .store
+        .next_tell()
+        .unwrap()
+        .expect("queued assess tell");
+    service.advance_tell(&row).await.unwrap();
+    let after = service
+        .state
+        .lock()
+        .await
+        .store
+        .next_tell()
+        .unwrap()
+        .expect("tell returned to pending");
+    assert!(matches!(after.state, nucleus_store::TellState::Pending));
+    reject_server.await.unwrap();
+}

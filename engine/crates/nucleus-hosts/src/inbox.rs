@@ -312,7 +312,11 @@ impl T3 {
         } else {
             Read::One
         };
-        match self
+        let mut claim = EffectClaim {
+            rpc: &self.rpc,
+            key: None,
+        };
+        let reply = self
             .rpc
             .call_guarded(write.method, write.payload, class, || {
                 let Some((fence, root)) = &write.fence else {
@@ -327,12 +331,32 @@ impl T3 {
                 }) {
                     return Err(HostError::Binding);
                 }
-                Ok(self.rpc.claim_effect(&write.id))
+                if !self.rpc.claim_effect(&write.id) {
+                    return Ok(false);
+                }
+                claim.key = Some(write.id.clone());
+                Ok(true)
             })
-            .await?
-        {
-            Reply::Value(_) => Ok(()),
+            .await?;
+        match reply {
+            Reply::Value(_) => {
+                claim.key = None;
+                Ok(())
+            }
             Reply::Failure(_) => Err(HostError::Uncertain),
+        }
+    }
+}
+
+struct EffectClaim<'a> {
+    rpc: &'a crate::rpc::Rpc,
+    key: Option<String>,
+}
+
+impl Drop for EffectClaim<'_> {
+    fn drop(&mut self) {
+        if let Some(key) = self.key.take() {
+            self.rpc.release_effect(&key);
         }
     }
 }

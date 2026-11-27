@@ -1,0 +1,1 @@
+Failed Inbox writes release their in-memory effect claim so retries send again, pre-send T3 write failures are recorded as not sent instead of uncertain delivery, planner-paired board and ACP sessions reauthorize their project scope after restarts or shell drops, and open questions rebind when their planner thread is gone or re-send when no send was attempted.

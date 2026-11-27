@@ -696,6 +696,7 @@ async fn authorize_task(
         });
         scope
     };
+    reauthorize_known(&api, &scope).await?;
     if selector.contains('#') {
         // A task session proves its bound ID. Resolve the selector in its
         // controller's scope before handing that ID to the route.

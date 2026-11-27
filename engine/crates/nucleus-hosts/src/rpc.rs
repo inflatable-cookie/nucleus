@@ -49,6 +49,19 @@ pub(crate) enum Reply {
     Failure(Value),
 }
 
+pub(crate) enum CallError {
+    NotSent(HostError),
+    Unknown(HostError),
+}
+
+impl CallError {
+    const fn into_host_error(self) -> HostError {
+        match self {
+            Self::NotSent(error) | Self::Unknown(error) => error,
+        }
+    }
+}
+
 pub(crate) enum ThreadReply {
     Snapshot(Value),
     Missing,
@@ -349,6 +362,16 @@ impl Rpc {
         })
     }
 
+    #[cfg(any(test, feature = "loopback-fixture"))]
+    pub(crate) fn socket_clear_for_test(&self) {
+        *self.socket.lock().expect("request socket") = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_retry_for_test(&self) {
+        self.retry.lock().expect("host retry").until = time::Instant::now();
+    }
+
     pub(crate) fn retry_at(&self) -> Option<time::Instant> {
         let at = self.retry.lock().expect("host retry").until;
         (at > time::Instant::now()).then_some(at)
@@ -426,12 +449,25 @@ impl Rpc {
         read: Read,
         check: impl FnOnce() -> Result<bool, HostError> + Send,
     ) -> Result<Reply, HostError> {
-        self.check_retry()?;
+        self.call_write(method, payload, read, check)
+            .await
+            .map_err(CallError::into_host_error)
+    }
+
+    pub(crate) async fn call_write(
+        &self,
+        method: &'static str,
+        payload: impl Serialize + Send,
+        read: Read,
+        check: impl FnOnce() -> Result<bool, HostError> + Send,
+    ) -> Result<Reply, CallError> {
+        self.check_retry().map_err(CallError::NotSent)?;
         let _admission = self
             .admission
             .enter(!matches!(read, Read::Background))
-            .await?;
-        Box::pin(self.call_locked(method, payload, read, check)).await
+            .await
+            .map_err(CallError::NotSent)?;
+        Box::pin(self.call_locked_tracked(method, payload, read, check)).await
     }
 
     pub(crate) async fn write_guarded(
@@ -441,19 +477,14 @@ impl Rpc {
         class: Read,
         check: impl FnOnce() -> Result<(), HostError> + Send,
     ) -> Result<Reply, ParentSendError> {
-        let mut reached_send = false;
-        self.call_guarded(method, payload, class, || {
+        self.call_write(method, payload, class, || {
             check()?;
-            reached_send = true;
             Ok(true)
         })
         .await
-        .map_err(|error| {
-            if reached_send {
-                ParentSendError::Unknown(error)
-            } else {
-                ParentSendError::NotSent(error)
-            }
+        .map_err(|error| match error {
+            CallError::NotSent(error) => ParentSendError::NotSent(error),
+            CallError::Unknown(error) => ParentSendError::Unknown(error),
         })
     }
 
@@ -465,20 +496,20 @@ impl Rpc {
         }
     }
 
-    async fn call_locked(
+    async fn call_locked_tracked(
         &self,
         method: &'static str,
         payload: impl Serialize + Send,
         read: Read,
         check: impl FnOnce() -> Result<bool, HostError> + Send,
-    ) -> Result<Reply, HostError> {
-        self.check_retry()?;
+    ) -> Result<Reply, CallError> {
+        self.check_retry().map_err(CallError::NotSent)?;
         let writes_thread = matches!(
             method,
             "orchestration.dispatchCommand" | "orchestration.launchThread"
         );
         let thread_args = if writes_thread || matches!(read, Read::Thread) {
-            serde_json::to_value(&payload).map_err(|_| HostError::Protocol)?
+            serde_json::to_value(&payload).map_err(|_| CallError::NotSent(HostError::Protocol))?
         } else {
             Value::Null
         };
@@ -492,14 +523,24 @@ impl Rpc {
         let mut socket = self
             .request_connection()
             .await
-            .inspect_err(|error| self.record_timeout(method, target, *error))?;
+            .inspect_err(|error| self.record_timeout(method, target, *error))
+            .map_err(CallError::NotSent)?;
         match self.check_retry().and_then(|()| check()) {
             Ok(true) => {}
             outcome => {
                 *self.socket.lock().expect("request socket") = Some(socket);
-                return outcome.map(|_| Reply::Value(Value::Null));
+                return outcome
+                    .map(|_| Reply::Value(Value::Null))
+                    .map_err(CallError::NotSent);
             }
         }
+        let encoded = match socket.encode_request(method, payload) {
+            Ok(encoded) => encoded,
+            Err(error) => {
+                *self.socket.lock().expect("request socket") = Some(socket);
+                return Err(CallError::NotSent(error));
+            }
+        };
         if writes_thread
             && let Some(shell) = self.snapshots.lock().expect("thread snapshots").as_mut()
         {
@@ -509,7 +550,7 @@ impl Rpc {
         }
         self.traffic.record(method);
         let mut in_flight = InterruptedCall(Some(self));
-        let result = time::timeout(DEADLINE, socket.call(method, payload, read))
+        let result = time::timeout(DEADLINE, socket.send_encoded(encoded.0, encoded.1, read))
             .await
             .unwrap_or(Err(HostError::Timeout));
         in_flight.0 = None;
@@ -534,7 +575,7 @@ impl Rpc {
                 }
             }
         }
-        result
+        result.map_err(CallError::Unknown)
     }
 
     pub(crate) fn record_timeout(
@@ -613,7 +654,7 @@ impl Rpc {
             (fence, policy.reason(snapshots.as_ref(), id))
         };
         self.check_thread_read(before.row.as_deref(), policy)?;
-        let reply = Box::pin(self.call_locked(
+        let reply = Box::pin(self.call_locked_tracked(
             "orchestration.subscribeThread",
             json!({"threadId":id,"requestCompletionMarker":true,"acceptBoundedSnapshot":true,
                 "acceptCompactTurnItems":true,"acceptDedupedBodies":true}),
@@ -624,7 +665,8 @@ impl Rpc {
                 Ok(true)
             },
         ))
-        .await?;
+        .await
+        .map_err(CallError::into_host_error)?;
         let mut snapshots = self.snapshots.lock().expect("thread snapshots");
         let fence = self.fence_at(id, snapshots.as_ref());
         let same_marker = before.matches(&fence);
@@ -750,6 +792,13 @@ impl Rpc {
         }
         effects.push_back(key.into());
         true
+    }
+
+    pub(crate) fn release_effect(&self, key: &str) {
+        let mut effects = self.recent_effects.lock().expect("host effects");
+        if let Some(index) = effects.iter().rposition(|prior| prior == key) {
+            effects.remove(index);
+        }
     }
 
     pub(crate) fn with_shell<T>(&self, read: impl FnOnce(Option<&ThreadSnapshots>) -> T) -> T {
@@ -1067,12 +1116,11 @@ impl Connection {
         })
     }
 
-    async fn call(
+    fn encode_request(
         &mut self,
         method: &str,
-        payload: impl Serialize + Send,
-        read: Read,
-    ) -> Result<Reply, HostError> {
+        payload: impl Serialize,
+    ) -> Result<(String, String), HostError> {
         #[derive(Serialize)]
         struct Request<'a, P> {
             #[serde(rename = "_tag")]
@@ -1082,16 +1130,26 @@ impl Connection {
             payload: P,
             headers: [(); 0],
         }
-        self.next_id = self.next_id.checked_add(1).ok_or(HostError::Protocol)?;
-        let id = self.next_id.to_string();
-        self.send(Request {
+        let next_id = self.next_id.checked_add(1).ok_or(HostError::Protocol)?;
+        let id = next_id.to_string();
+        let text = encode_frame(&Request {
             kind: "Request",
             id: &id,
             tag: method,
             payload,
             headers: [],
-        })
-        .await?;
+        })?;
+        self.next_id = next_id;
+        Ok((id, text))
+    }
+
+    async fn send_encoded(
+        &mut self,
+        id: String,
+        text: String,
+        read: Read,
+    ) -> Result<Reply, HostError> {
+        self.send_text(text).await?;
         let mut snapshot = None;
         for _ in 0..MAX_MESSAGES {
             for frame in self.frames().await? {
@@ -1160,15 +1218,23 @@ impl Connection {
     }
 
     async fn send(&mut self, frame: impl Serialize + Send) -> Result<(), HostError> {
-        let text = serde_json::to_string(&frame).map_err(|_| HostError::Protocol)?;
-        if text.len() > MAX_FRAME {
-            return Err(HostError::Protocol);
-        }
+        self.send_text(encode_frame(&frame)?).await
+    }
+
+    async fn send_text(&mut self, text: String) -> Result<(), HostError> {
         self.socket
             .send(Message::Text(text.into()))
             .await
             .map_err(|_| HostError::Unavailable)
     }
+}
+
+fn encode_frame(frame: &impl Serialize) -> Result<String, HostError> {
+    let text = serde_json::to_string(frame).map_err(|_| HostError::Protocol)?;
+    if text.len() > MAX_FRAME {
+        return Err(HostError::Protocol);
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

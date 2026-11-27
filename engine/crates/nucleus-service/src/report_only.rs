@@ -233,7 +233,7 @@ impl SendOutcome {
                 error: None,
             },
             Ok(NoticeOutcome::Rejected) => Self::RetryRejected,
-            Err(error @ HostError::Deferred { .. }) => Self::Reopen {
+            Ok(NoticeOutcome::NotSent(error)) => Self::Reopen {
                 rejected: false,
                 error: Some(error),
             },
@@ -1097,4 +1097,184 @@ fn report_branches(identity: &Identity, checkout: &Checkout<'_>) -> Result<Branc
         &identity.base,
         checkout.branch(),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::{native_fixture, native_fixture_with_ticket_gate};
+    use nucleus_core::{
+        Entry, Forge, Host, LaunchInputs, Observation, Observed, Report, ReportDelivery, RunState,
+    };
+    use nucleus_forge::GitHub;
+    use serde_json::{Value, json};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    async fn seed_report_ready(service: &Service) -> TaskRow {
+        let head = service.fixture().start.clone();
+        let mut task = Task::new_report_only(
+            Identity {
+                id: "report-notice".into(),
+                reference: "Report notice".into(),
+                repository: service.fixture().repository.clone(),
+                base: service.fixture().base.clone(),
+                entry: Entry::Brief,
+                origin_thread: None,
+            },
+            "Report brief".into(),
+            "local-fixture".into(),
+            "qa".into(),
+            head.clone(),
+        );
+        let mut observation = Observation {
+            host: Observed::Unknown,
+            forge: Observed::Known(Forge::Absent),
+            workspace: Observed::Known(Workspace::Clean(head.clone())),
+        };
+        task.reconcile(&observation);
+        let credential = task
+            .reserve_launch(
+                &observation,
+                LaunchInputs {
+                    scratch: None,
+                    thread: "worker-thread".into(),
+                    started_at: 1,
+                    input: "fixture".into(),
+                },
+                &[4; 32],
+            )
+            .unwrap();
+        let instance = task.run().unwrap().launch().instance.clone();
+        task.record_send(&instance, 2).unwrap();
+        task.record_report(
+            &instance,
+            credential.as_bytes(),
+            Report::ReportReady(ReportDelivery {
+                artifact: ReportArtifact {
+                    key: "qa".into(),
+                    version: 1,
+                    digest: "0".repeat(64),
+                },
+                headline: None,
+                summary: "Report ready".into(),
+                head: Some(head),
+            }),
+        )
+        .unwrap();
+        observation.host = Observed::Known(Host::Current {
+            instance,
+            state: RunState::Ended,
+        });
+        assert_eq!(
+            task.reconcile(&observation),
+            Action::Advance(Phase::ReportReady)
+        );
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create(&task, &event("fixture"))
+            .unwrap();
+        service.task("report-notice").await.unwrap()
+    }
+
+    async fn prime_report_503(checkout: &std::path::Path) -> (T3, tokio::task::JoinHandle<()>) {
+        let reject = Arc::new(AtomicBool::new(false));
+        let (host, server) =
+            native_fixture_with_ticket_gate(Arc::clone(&reject), move |req| {
+                assert_eq!(req["tag"], "orchestration.subscribeThread");
+                json!({
+                    "_tag":"Chunk","requestId":req["id"],"values":[
+                        {"kind":"snapshot","snapshotSequence":2,"projection":{
+                            "thread":{"id":"planner-a","projectId":"local-fixture","updatedAt":"2026-11-24T10:00:00Z"},
+                            "messages":[],"runs":[]
+                        }},
+                        {"kind":"synchronized"}
+                    ]
+                })
+            })
+            .await;
+        host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{
+                "snapshotSequence":2,
+                "projects":[{"id":"local-fixture","workspaceRoot":checkout}],
+                "threads":[{
+                    "id":"planner-a","projectId":"local-fixture",
+                    "updatedAt":"2026-11-24T10:00:00Z","archivedAt":null,"deletedAt":null
+                }]
+            }
+        }));
+        let probe = T3::prepare_notice("planner-a".into(), "probe".into(), "probe").unwrap();
+        let _ = host.observe_notice(&probe).await.unwrap();
+        reject.store(true, Ordering::Relaxed);
+        host.fixture_disconnect();
+        (host, server)
+    }
+
+    #[tokio::test]
+    async fn pre_send_notice_failure_reopens_report_notice_while_post_send_stays_uncertain() {
+        // Part 1: pre-send 503 reopens the stored report-ready notice and records not_sent.
+        let (_home, mut service) = crate::tests::fixture(GitHub::new("unused-test-forge").unwrap());
+        let checkout = service.fixture().checkout.clone();
+        let (host, server) = prime_report_503(&checkout).await;
+        service.host = host;
+        let row = seed_report_ready(&service).await;
+        let err = service
+            .advance_planner_notice(&row, PlannerNotice::ReportReady, "Report ready")
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, ServiceError::Host(HostError::Unavailable)));
+        let reopened = service.task("report-notice").await.unwrap();
+        assert!(!reopened.task.report_task().unwrap().notice_attempted);
+        let history = service.history("report-notice", None, 20).await.unwrap();
+        assert!(
+            history
+                .iter()
+                .any(|entry| entry.content.kind == "report_ready_planner_notice_not_sent")
+        );
+        server.abort();
+
+        // Part 2: post-send drop leaves the stored report-ready notice spent.
+        let (_home, mut service) = crate::tests::fixture(GitHub::new("unused-test-forge").unwrap());
+        let checkout = service.fixture().checkout.clone();
+        let (host, server) = native_fixture(move |request| match request["tag"].as_str() {
+            Some("orchestration.subscribeShell") => json!({
+                "_tag":"Chunk","requestId":request["id"],"values":[
+                    {"kind":"snapshot","snapshotSequence":1,"snapshot":{
+                        "projects":[{"id":"local-fixture","workspaceRoot":checkout}],
+                        "threads":[{"id":"planner-a","projectId":"local-fixture","updatedAt":"2026-11-24T10:00:00Z"}]
+                    }},
+                    {"kind":"synchronized"}
+                ]
+            }),
+            Some("orchestration.subscribeThread") => json!({
+                "_tag":"Chunk","requestId":request["id"],"values":[
+                    {"kind":"snapshot","snapshotSequence":2,"projection":{
+                        "thread":{"id":"planner-a","projectId":"local-fixture"},
+                        "messages":[],"runs":[]
+                    }},
+                    {"kind":"synchronized"}
+                ]
+            }),
+            Some("orchestration.dispatchCommand") => Value::Null,
+            other => panic!("unexpected request: {other:?}"),
+        })
+        .await;
+        service.host = host;
+        let row = seed_report_ready(&service).await;
+        let err = service
+            .advance_planner_notice(&row, PlannerNotice::ReportReady, "Report ready")
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, ServiceError::Host(HostError::Unavailable)));
+        let spent = service.task("report-notice").await.unwrap();
+        assert!(spent.task.report_task().unwrap().notice_attempted);
+        server.abort();
+    }
 }

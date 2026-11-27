@@ -32,7 +32,7 @@ use crate::{
 const DEADLINE: Duration = Duration::from_secs(5);
 const MAX_PROBE_OUTPUT: u64 = 8 * 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ProcessEvidenceFailure {
     #[error("the census timed out")]
     Timeout,
