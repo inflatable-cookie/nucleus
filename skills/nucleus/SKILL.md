@@ -42,9 +42,18 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   State the change and its acceptance checks.
   ```
 
-  Set `queue.notifyOriginOnCloseout: true` on admission or amend for a completion notice.
+  Completion notices arrive by default: the dispatching planner gets one queued notice when the task reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` on admission or amend to turn them off.
   Set `queue.priority: promoted` under `queue` at admission only to dispatch ahead of normal tasks when slots free (brief amendments cannot change `queue.priority`; use `promote` or `demote` instead).
   Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
+  To put a task on a specific or stronger model, add a profile request under
+  `queue` with the profile ID from Settings → Profiles and a reason:
+  `profileRequests: {worker: {profileId: ID, reason: "why", required: true}}`
+  (`reviewer` works the same way). `required: true` makes it the profile used,
+  never a hint. A Frontier profile is used only this way, with a reason, and
+  applies directly at the Low, Normal and High usage levels (Spec 052).
+  On a running task, `amend` the brief, then `move REF working` with no
+  `--instruction`. A retained worker keeps its first profile until a request
+  like this replaces it in a fresh worker thread with the work so far.
   `task.add` resolves those references before dispatch can start.
   Set `queue.mergeHold: true` with a nonblank `queue.mergeHoldReason` to wait
   for a named condition after work, review and required checks finish.
@@ -153,7 +162,13 @@ proof must be sufficient for approval. Treat live-store counts as planner
 evidence and name any remaining planner check.
 
 Keep the pinned checkout clean and leave tracked files, branch and PR unchanged.
+PR review target: 8. Approve a sound PR with no bugs and list minor gaps as
+non-blocking suggestions. Request changes for a bug, a missing failure-path
+test, a misleading description or an unmet brief requirement. A brief can set
+another target. Nucleus publishes the review, so never post one yourself.
 Report `approve` or `changes` through the assigned route at the assigned head,
-with concrete findings, locations and impact. An unfinished review earns no
+with concrete findings, locations and impact. Open the summary with the score
+line (`8/10, target 8: …`) and label findings `issue (blocking):` or
+`suggestion (non-blocking):`, as the `pr-etiquette` skill describes. An unfinished review earns no
 verdict. If asked to recover a missing callback, report only your own same-head
 findings and the checks you actually performed.

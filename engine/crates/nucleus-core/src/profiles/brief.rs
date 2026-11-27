@@ -12,7 +12,8 @@ pub struct BriefPolicy {
     pub complexity: Option<Complexity>,
     pub priority: Option<QueuePriority>,
     pub critical: bool,
-    pub notify_origin_on_closeout: bool,
+    #[serde(default, deserialize_with = "optional_notify")]
+    notify_origin_on_closeout: Option<bool>,
     merge_hold: Option<bool>,
     #[serde(default, deserialize_with = "optional_text")]
     merge_hold_reason: Option<String>,
@@ -49,6 +50,15 @@ fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<()>, D::
 
 fn optional_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
     text_scalar(deserializer).map(Some)
+}
+
+fn optional_notify<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
+    match yaml_serde::Value::deserialize(deserializer)? {
+        yaml_serde::Value::Bool(value) => Ok(Some(value)),
+        _ => Err(de::Error::custom(
+            "expected a Boolean notifyOriginOnCloseout value",
+        )),
+    }
 }
 
 fn optional_bool<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
@@ -135,6 +145,13 @@ impl fmt::Display for BriefPolicyError {
 impl std::error::Error for BriefPolicyError {}
 
 impl BriefPolicy {
+    /// Whether the dispatching planner gets a completion notice at Done or
+    /// Cancelled. Notices are on unless the brief sets `false` (ruling 55).
+    #[must_use]
+    pub fn notifies_origin_on_closeout(&self) -> bool {
+        self.notify_origin_on_closeout.unwrap_or(true)
+    }
+
     /// Validate routing keys on a new brief.
     ///
     /// # Errors

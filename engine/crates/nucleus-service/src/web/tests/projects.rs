@@ -3418,10 +3418,10 @@ async fn opted_in_completion_survives_restart_and_retries_once_to_the_claimed_pl
 }
 
 #[tokio::test]
-async fn done_completion_names_the_pull_and_an_omitted_opt_in_stays_silent() {
+async fn done_completion_names_the_pull_and_an_opt_out_stays_silent() {
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
-    for (id, opt) in [("quiet", ""), ("done", "  notifyOriginOnCloseout: true\n")] {
+    for (id, opt) in [("quiet", "  notifyOriginOnCloseout: false\n"), ("done", "")] {
         let brief = format!("---\nqueue:\n  complexity: low\n{opt}---\n# Ship correction");
         assert_eq!(
             caller_request(
@@ -3457,6 +3457,10 @@ async fn done_completion_names_the_pull_and_an_omitted_opt_in_stays_silent() {
             assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
         } else {
             assert_eq!(notices.sends.len(), 1);
+            assert_eq!(
+                notices.sends[0]["dispatchMode"]["type"],
+                "queue_after_active"
+            );
             assert_eq!(
                 notices.sends[0]["text"],
                 format!("#{} Ship correction is done · {PR}", row.number.unwrap())

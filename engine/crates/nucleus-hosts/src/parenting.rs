@@ -288,6 +288,9 @@ fn parent_hold(
     command: &str,
     prompt: &str,
 ) -> ParentWrite {
+    // ACP receives only text, so give holds with the same role label distinct prompts.
+    let fingerprint = format!("{:x}", Sha256::digest(command));
+    let prompt = format!("{prompt} [{}]", &fingerprint[..16]);
     ParentWrite::new(
         binding,
         provider,
