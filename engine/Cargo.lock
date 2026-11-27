@@ -1651,6 +1651,7 @@ dependencies = [
  "longhorn-credential-keyring",
  "longhorn-git-workspace",
  "longhorn-redact",
+ "nucleus-acp",
  "nucleus-core",
  "nucleus-forge",
  "nucleus-hosts",
