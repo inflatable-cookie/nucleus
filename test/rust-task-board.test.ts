@@ -1515,7 +1515,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   held = {
     ...held,
     phase: "merging",
-    lifecycle: task("held-task", "merging").lifecycle,
+    lifecycle: { ...task("held-task", "merging").lifecycle, admittedAtMs: held.lifecycle.admittedAtMs },
     wait: "merge_hold",
     hold: { reason: mergeHoldReason },
     stateLabel: "Merge held by planner",
