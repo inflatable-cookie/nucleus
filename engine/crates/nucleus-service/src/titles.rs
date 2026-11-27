@@ -192,6 +192,7 @@ fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
         Some(WaitReason::ChecksPending) => "checks",
         Some(WaitReason::AssignmentTooLarge) => "size",
         Some(WaitReason::Stopping) => "stopping",
+        Some(WaitReason::EngineBlocked) => "blocked",
         Some(WaitReason::OperatorDeclined) => "declined",
         Some(WaitReason::Running | WaitReason::Hold | WaitReason::MergeHold) | None => return None,
     })
@@ -835,6 +836,7 @@ mod tests {
             W::Prerequisite,
             W::Capacity,
             W::AssignmentTooLarge,
+            W::EngineBlocked,
         ];
         for task in [&task, &review] {
             for wait in waits {

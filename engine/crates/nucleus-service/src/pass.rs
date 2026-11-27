@@ -225,7 +225,7 @@ impl Service {
                     .await?
                     .is_none()
             {
-                return Err(ServiceError::ArchiveEvidence(
+                return Err(ServiceError::CheckoutRetained(
                     "Waiting for the checkout to be idle before removal.".into(),
                 ));
             }
@@ -236,7 +236,7 @@ impl Service {
             .archive_retirement_head(row, &route, &checkout, &workspace)
             .await?;
         let retained = || {
-            ServiceError::ArchiveEvidence(
+            ServiceError::CheckoutRetained(
                 "The task checkout was retained. Inspect its local changes.".into(),
             )
         };
@@ -255,7 +255,7 @@ impl Service {
             let (publication, _) = self.read_forge(task, &checkout).await?;
             if !matches!(publication, Forge::Merged { ref pr, .. } if Some(pr) == task.pull_request())
             {
-                return Err(ServiceError::ArchiveEvidence(
+                return Err(ServiceError::CheckoutRetained(
                     "The merged pull request does not confirm the retained checkout's recorded head.".into(),
                 ));
             }
@@ -268,7 +268,7 @@ impl Service {
                 ServiceError::ReportCheckout("the checkout changed after publication was proved"),
             ),
             Some(Retirement::Retained) => Err(retained()),
-            None => Err(ServiceError::ArchiveEvidence(
+            None => Err(ServiceError::CheckoutRetained(
                 "Waiting for the checkout to be idle before removal.".into(),
             )),
             Some(Retirement::Removed | Retirement::Absent) => Ok(Action::Nothing),
@@ -2260,13 +2260,8 @@ impl Service {
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
             let mut state = self.state.lock().await;
-            if !state
-                .settings
-                .dispatch
-                .as_ref()
-                .is_some_and(|d| d.mode == DispatchMode::Running)
-            {
-                return Err(ServiceError::ArchiveEvidence(
+            if state.dispatch_mode() != DispatchMode::Running {
+                return Err(ServiceError::CheckoutRetained(
                     "Process cleanup is waiting for Dispatch.".into(),
                 ));
             }
@@ -2285,13 +2280,8 @@ impl Service {
             let mut state = self.state.try_lock().map_err(|_| {
                 ServiceError::ArchiveEvidence("Checking checkout processes again.".into())
             })?;
-            if !state
-                .settings
-                .dispatch
-                .as_ref()
-                .is_some_and(|d| d.mode == DispatchMode::Running)
-            {
-                return Err(ServiceError::ArchiveEvidence(
+            if state.dispatch_mode() != DispatchMode::Running {
+                return Err(ServiceError::CheckoutRetained(
                     "Process cleanup is waiting for Dispatch.".into(),
                 ));
             }
@@ -2333,7 +2323,7 @@ impl Service {
             .map_err(|error| match error {
                 HostError::RowChildBusy => {
                     let names: Vec<_> = helpers.iter().map(OrphanProcess::describe).collect();
-                    ServiceError::ArchiveEvidence(format!(
+                    ServiceError::CheckoutRetained(format!(
                         "A task role is still running. Provider helpers in the task checkout or run scratch stay until it ends: {}.",
                         names.join(", ")
                     ))
@@ -2372,12 +2362,7 @@ impl Service {
             None => None,
         };
         let state = self.state.lock().await;
-        if state
-            .settings
-            .dispatch
-            .as_ref()
-            .is_some_and(|dispatch| dispatch.mode != DispatchMode::Running)
-        {
+        if state.dispatch_mode() != DispatchMode::Running {
             return Ok(None);
         }
         self.host
@@ -3328,24 +3313,51 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_cleanup_stops_only_the_checkout_orphan_tree() {
-        exercise_terminal_orphan_cleanup(false, false, true).await;
+        exercise_terminal_orphan_cleanup(
+            false,
+            false,
+            true,
+            Some(nucleus_store::DispatchSettings::default()),
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn terminal_cleanup_stops_only_the_settled_scratch_orphan_tree() {
-        exercise_terminal_orphan_cleanup(true, false, false).await;
+        exercise_terminal_orphan_cleanup(
+            true,
+            false,
+            false,
+            Some(nucleus_store::DispatchSettings::default()),
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn terminal_cleanup_handles_pre_upgrade_scratch() {
-        exercise_terminal_orphan_cleanup(true, true, false).await;
+        exercise_terminal_orphan_cleanup(
+            true,
+            true,
+            false,
+            Some(nucleus_store::DispatchSettings::default()),
+        )
+        .await;
     }
 
-    async fn exercise_terminal_orphan_cleanup(in_scratch: bool, legacy: bool, host_tree: bool) {
+    #[tokio::test]
+    async fn terminal_cleanup_runs_when_dispatch_was_never_configured() {
+        exercise_terminal_orphan_cleanup(false, false, false, None).await;
+    }
+
+    async fn exercise_terminal_orphan_cleanup(
+        in_scratch: bool,
+        legacy: bool,
+        host_tree: bool,
+        dispatch: Option<nucleus_store::DispatchSettings>,
+    ) {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         service.fixture_mut().acp_provider = Some("fixture".into());
-        service.state.lock().await.settings.dispatch =
-            Some(nucleus_store::DispatchSettings::default());
+        service.state.lock().await.settings.dispatch = dispatch;
         let (terminal, scratch) = if in_scratch {
             let (row, scratch) = settled_cleanup_task(&service, home.path(), legacy).await;
             (row, Some(scratch))

@@ -21,6 +21,13 @@ pub(crate) const REENTRY_CHECK: Duration = Duration::from_secs(3);
 pub(crate) const REENTRY_WINDOW_MS: u64 = 30_000;
 pub(crate) const FORGE_RETRY: Duration = Duration::from_secs(30);
 pub(crate) const VOLUME_RETRY: Duration = Duration::from_mins(1);
+/// The longest delay between retries of a failure which keeps repeating.
+pub(crate) const LONG_RETRY: Duration = Duration::from_mins(10);
+
+/// [`RETRY`] doubled for each earlier miss, up to `cap`.
+fn doubled(misses: u32, cap: Duration) -> Duration {
+    RETRY.saturating_mul(1 << misses.min(8)).min(cap)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Priority {
@@ -160,6 +167,8 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
 pub(crate) struct Schedule {
     tasks: BTreeMap<String, Pending>,
     workspace: BTreeMap<String, Recovery>,
+    /// Earlier failures in a row for each task which is backing off.
+    failures: BTreeMap<String, u32>,
     scan_at: Instant,
     cursor: Option<String>,
     archive_cursor: Option<String>,
@@ -183,6 +192,7 @@ impl Schedule {
         Self {
             tasks: BTreeMap::new(),
             workspace: BTreeMap::new(),
+            failures: BTreeMap::new(),
             scan_at: Instant::now(),
             cursor: None,
             archive_cursor: None,
@@ -192,6 +202,9 @@ impl Schedule {
     }
 
     pub(crate) fn dispatch_changed(&mut self, running: bool) {
+        if running {
+            self.retry_failures(Instant::now());
+        }
         self.resume = (running && crate::diagnostics::enabled()).then(|| Resume {
             at: Instant::now(),
             at_ms: crate::now_ms(),
@@ -246,15 +259,38 @@ impl Schedule {
             Some(Recovery::Volume { misses, .. }) => misses.saturating_add(1),
             _ => 0,
         };
-        let delay = RETRY.saturating_mul(1 << misses.min(8)).min(VOLUME_RETRY);
-        let after = now + delay;
+        let after = now + doubled(misses, VOLUME_RETRY);
         self.workspace
             .insert(id.into(), Recovery::Volume { after, misses });
         self.park(id);
         self.wake(id, after, Priority::Effect.for_phase(phase));
     }
 
+    /// The delay before retrying a task which failed again, up to [`LONG_RETRY`].
+    /// Any other wake can still bring the task forward.
+    pub(crate) fn back_off(&mut self, id: &str) -> Duration {
+        let misses = self
+            .failures
+            .entry(id.into())
+            .and_modify(|misses| *misses = misses.saturating_add(1))
+            .or_insert(0);
+        doubled(*misses, LONG_RETRY)
+    }
+
+    /// The next failure of this task starts again from [`RETRY`].
+    pub(crate) fn reset_failures(&mut self, id: &str) {
+        self.failures.remove(id);
+    }
+
+    /// Something outside the tasks changed, so retry every failing task now.
+    pub(crate) fn retry_failures(&mut self, now: Instant) {
+        for id in std::mem::take(&mut self.failures).into_keys() {
+            self.wake(&id, now, Priority::Wake);
+        }
+    }
+
     pub(crate) fn recheck(&mut self, id: &str, now: Instant) {
+        self.reset_failures(id);
         if let Some(recovery) = self.workspace.get_mut(id) {
             *recovery = Recovery::CheckAt(now);
         }
