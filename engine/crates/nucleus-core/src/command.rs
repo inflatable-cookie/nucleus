@@ -72,6 +72,8 @@ pub enum CommandError {
     ReportAlreadyReceived,
     ReportPolicyChanged,
     QueuePriorityChanged,
+    MergeHoldOwner,
+    MergeHoldChangeTooLate,
     ReportOwnerAction,
     ReportAcceptanceMismatch,
     ReportInstructionRequired,
@@ -109,6 +111,8 @@ impl fmt::Display for CommandError {
             Self::QueuePriorityChanged => {
                 "queue.priority is read at admission only; use promote or demote commands"
             }
+            Self::MergeHoldOwner => "the planner who placed the merge hold or the operator must release it",
+            Self::MergeHoldChangeTooLate => "the brief's merge hold cannot change once merging has started; use nucleus release REF to lift it",
             Self::ReportOwnerAction => {
                 "use complete to accept the delivered report or move to work with an instruction"
             }
@@ -774,9 +778,56 @@ impl Task {
                         Authority::Operator { .. } => HoldBy::Operator,
                         Authority::Planner { .. } => HoldBy::Planner,
                     }),
+                    actor: None,
+                    since_ms: None,
                 });
             }
-            Command::Release => self.hold = None,
+            Command::Release => {
+                if self.hold.is_some() {
+                    self.hold = None;
+                } else {
+                    self.check_merge_hold_owner(authority)?;
+                    self.merge_hold = None;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply the validated merge hold declaration at admission or when it changes.
+    ///
+    /// # Errors
+    /// Returns an error if a change would override another owner's hold or
+    /// if the task has already reached merging.
+    pub fn set_brief_merge_hold(
+        &mut self,
+        reason: Option<&str>,
+        authority: &Authority,
+        since_ms: u64,
+    ) -> Result<(), CommandError> {
+        if matches!(self.phase, Phase::Merging | Phase::Closing) || self.phase.is_terminal() {
+            return Err(CommandError::MergeHoldChangeTooLate);
+        }
+        self.check_merge_hold_owner(authority)?;
+        let (by, actor) = match authority {
+            Authority::Operator { actor } => (HoldBy::Operator, actor),
+            Authority::Planner { actor } => (HoldBy::Planner, actor),
+        };
+        self.merge_hold = reason.map(|reason| Hold {
+            reason: reason.into(),
+            by: Some(by),
+            actor: Some(actor.clone()),
+            since_ms: Some(since_ms),
+        });
+        Ok(())
+    }
+
+    fn check_merge_hold_owner(&self, authority: &Authority) -> Result<(), CommandError> {
+        if let Authority::Planner { actor } = authority
+            && let Some(hold) = &self.merge_hold
+            && (hold.by != Some(HoldBy::Planner) || hold.actor.as_ref() != Some(actor))
+        {
+            return Err(CommandError::MergeHoldOwner);
         }
         Ok(())
     }
