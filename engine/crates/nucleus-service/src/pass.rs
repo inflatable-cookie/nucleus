@@ -14,8 +14,8 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
     ActiveChild, Binding, ControlDispatch, DoneArchive, HostError, LaunchRequest,
-    NoticeAuthorization, NoticeTarget, ParentAttempt, ParentRun, ParentStep, SendOutcome,
-    StopProgress, T3, TaskHost, launch_diagnostic,
+    NoticeAuthorization, NoticeTarget, OrphanProcess, ParentAttempt, ParentRun, ParentStep,
+    SendOutcome, StopProgress, T3, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{
     CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, StoreError, TaskRow,
@@ -2220,7 +2220,8 @@ impl Service {
         let roots = self.retirement_roots(task, checkout).await?;
         let mut retained = Vec::new();
         let mut found = None;
-        for root in roots {
+        for root in &roots {
+            let root = root.clone();
             let scan = host.terminal_orphans(&root, scratch).await?;
             retained.extend(scan.retained);
             if found.is_none() && !scan.targets.is_empty() {
@@ -2237,9 +2238,7 @@ impl Service {
                 .store
                 .claim_task_effect(&task.identity().id, &record, false)?;
         }
-        let Some((root, mut targets)) = found else {
-            return Ok(());
-        };
+        let helpers = host.terminal_helpers(&roots, scratch).await?;
         let parent = nucleus_hosts::parent_thread(checkout.path());
         let roles: Vec<_> = [
             Some(parent.as_str()),
@@ -2249,6 +2248,13 @@ impl Service {
         .into_iter()
         .flatten()
         .collect();
+        self.hold_helpers_for_live_roles(&parent, &roles, &helpers)?;
+        // Own-code orphans go first; helpers take a pass with no such tree.
+        let (roots, mut targets) = match found {
+            Some((root, targets)) => (vec![root], targets),
+            None if !helpers.is_empty() => (roots, helpers),
+            None => return Ok(()),
+        };
         for force in [false, true] {
             if force {
                 tokio::time::sleep(Duration::from_secs(2)).await;
@@ -2271,7 +2277,7 @@ impl Service {
                     .to_string();
             state.store.claim_task_effect(id, &intent, false)?;
             drop(state);
-            targets = nucleus_hosts::verify_orphans(&targets, &root, scratch, force).await?;
+            targets = nucleus_hosts::verify_orphans(&targets, &roots, scratch, force).await?;
             if targets.is_empty() {
                 break;
             }
@@ -2310,6 +2316,30 @@ impl Service {
         Err(ServiceError::ArchiveEvidence(
             "Checking that checkout processes have exited.".into(),
         ))
+    }
+
+    /// Provider helpers belong to a finished session only once every task role is quiet.
+    fn hold_helpers_for_live_roles(
+        &self,
+        parent: &str,
+        roles: &[&str],
+        helpers: &[OrphanProcess],
+    ) -> Result<(), ServiceError> {
+        if helpers.is_empty() {
+            return Ok(());
+        }
+        self.host
+            .retire_with_quiet_shell(parent, roles, || ())
+            .map_err(|error| match error {
+                HostError::RowChildBusy => {
+                    let names: Vec<_> = helpers.iter().map(OrphanProcess::describe).collect();
+                    ServiceError::ArchiveEvidence(format!(
+                        "A task role is still running. Provider helpers in the task checkout or run scratch stay until it ends: {}.",
+                        names.join(", ")
+                    ))
+                }
+                error => error.into(),
+            })
     }
 
     // Both callers hold the current task and project fences through Git retirement.
@@ -2626,6 +2656,8 @@ mod start_tests;
 
 #[cfg(test)]
 mod tests {
+    mod provider_helpers;
+
     use std::sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
