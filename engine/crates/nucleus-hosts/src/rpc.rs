@@ -56,7 +56,7 @@ pub(crate) enum ThreadReply {
     Closed { row: Value, sequence: Option<u64> },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ThreadFence {
     pub(crate) row: Option<Arc<Value>>,
     revision: (u64, Option<u64>),
@@ -64,6 +64,11 @@ pub(crate) struct ThreadFence {
 }
 
 impl ThreadFence {
+    pub(crate) fn at_or_after(&self, sequence: u64) -> bool {
+        self.row_revision
+            .is_some_and(|(revision, _)| revision >= sequence)
+    }
+
     pub(crate) fn covers(&self, sequence: u64) -> bool {
         self.row_revision.is_some_and(|(revision, initial)| {
             if initial {

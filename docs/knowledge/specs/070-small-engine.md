@@ -149,7 +149,7 @@ Later decisions carry their own attribution.
    - Views update by push (task and version invalidations), never by polling. Nothing a viewer does causes a host call.
    - Tom, 2026-11-24, after T3 began deferring the engine's requests: "Nucleus needs to be light on calling T3 - I did ask for that more than once". Following TypeScript's `T3Reads` (one held shell subscription, thread snapshots reused while their change marker holds, exact reads only for threads a command just wrote to) and `reconcileTaskRow` (write a title or snooze only when it differs), a pass with nothing changed makes no thread reads and no writes. Each pass records its host call counts. A host deferral is honoured as a due time for the whole host, never retried sooner.
    - Tom, 2026-11-24 (fourth time of asking): "we need to audit the system for any place that calls T3, justify its existence and make sure it's asking for the minimum amount of information it actually needs, and on a reasonable schedule". From that audit, every T3 call follows these rules:
-     - One held shell per host answers project, lifecycle, identity, title and visibility questions. No one-shot shell reads.
+     - One held shell per host answers project, lifecycle, identity, title and visibility questions for live threads.
      - Thread reads are bounded and decide from T3's coverage fields. A full thread history is never requested.
      - Monitoring reuses a thread's last observation while its shell marker holds. Exact reads happen only for a due effect, an ambiguous reply or an ordered safety fence, and one read is shared across the steps of that effect.
      - Done thread housekeeping uses the synchronized shell. It makes no thread reads on ordinary ticks.
@@ -161,9 +161,11 @@ Later decisions carry their own attribution.
    `hasMoreHistory` describes the history window. `turnItemsOmitLocalVisible`
    describes the compact timeline representation. Native run and request
    evidence keeps its meaning in either form. Settlement of an observed native
-   run, parent refresh and parent unarchive use the bound held shell row. The
-   row must show no active turn, outstanding request or pending background work
-   at a revision at or after the observed run or thread. Delivery follows
+   run, parent refresh and unarchive use a bound shell row at or after the
+   observed revision. The row must show no active turn, outstanding request or
+   pending background work. The live subscription omits archived rows. An
+   exact bound archive that needs a quiet decision uses the archived shell on
+   demand and discards its evidence if the live shell changes. Delivery follows
    the matching native run or the command receipt. A missing timeline item
    cannot prove past delivery or absence. T3's `message.dispatch` deduplicates
    the exact frozen command ID, so a parent hold pinned to the ACP provider and

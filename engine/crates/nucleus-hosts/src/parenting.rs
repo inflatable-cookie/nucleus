@@ -113,7 +113,7 @@ pub struct ArchiveWrite {
 /// Native mutation bound to the same project and checkout as the evidence.
 pub struct ParentWrite {
     wire: FrozenParentWrite,
-    idle_at: Option<(String, u64)>,
+    unarchive_fence: Option<ThreadFence>,
     stranded_at: Option<Arc<Value>>,
     delivery: Option<Box<ParentDelivery>>,
     owned_snoozes: Vec<u64>,
@@ -183,7 +183,7 @@ impl ParentWrite {
                 provider: provider.into(),
                 child_thread: None,
             },
-            idle_at: None,
+            unarchive_fence: None,
             stranded_at: None,
             delivery: None,
             owned_snoozes: Vec::new(),
@@ -363,12 +363,13 @@ async fn initial_parent<'a>(
 fn unarchive_parent(
     binding: &Binding,
     provider: &str,
-    thread: String,
+    thread: &str,
     sequence: u64,
+    fence: ThreadFence,
 ) -> ParentWrite {
     let payload = json!({"type":"thread.unarchive", "threadId":thread, "commandId":format!("{thread}-unarchive-{sequence}")});
     let mut write = ParentWrite::new(binding, provider, Method::Continue, payload);
-    write.idle_at = Some((thread, sequence));
+    write.unarchive_fence = Some(fence);
     write
 }
 
@@ -518,17 +519,7 @@ impl T3 {
             .rpc
             .with_shell(|shell| shell.map(|s| self.rpc.fence_at("", Some(s))))
             .ok_or(HostError::Uncertain)?;
-        let Reply::Value(value) = self
-            .rpc
-            .call(
-                "orchestration.getArchivedShellSnapshot",
-                json!({}),
-                Read::Background,
-            )
-            .await?
-        else {
-            return Err(HostError::Uncertain);
-        };
+        let value = self.archived_shell().await?;
         let rows = value["threads"].as_array().ok_or(HostError::Protocol)?;
         let mut candidates = Vec::new();
         for row in rows {
@@ -709,8 +700,7 @@ impl T3 {
                 }));
             }
             if let Some(attempt) = prior_turn.as_ref()
-                && (attempt.recorded_failure
-                    || !(attempt.released && projection.archived_in_shell()))
+                && (attempt.recorded_failure || !(attempt.released && projection.archived()))
             {
                 let message = message_id(attempt.command);
                 let recoverable = projection.parent_recoverable(&message, provider);
@@ -744,15 +734,16 @@ impl T3 {
             }
             let sequence = projection.sequence();
             if projection.archived() {
-                if !self.quiet_row_at(&thread, sequence, |row| {
-                    !row["archivedAt"].is_null()
-                        && row["deletedAt"].is_null()
-                        && parent_row_matches(row, binding, provider)
-                }) {
+                let Some(fence) = self
+                    .quiet_archive_at(&thread, sequence, |row| {
+                        parent_row_matches(row, binding, provider)
+                    })
+                    .await?
+                else {
                     return Ok(ParentStep::Wait);
-                }
+                };
                 return Ok(ParentStep::Write(unarchive_parent(
-                    binding, provider, thread, sequence,
+                    binding, provider, &thread, sequence, fence,
                 )));
             }
             if replay
@@ -1024,28 +1015,6 @@ impl T3 {
         self.observe_thread(binding, thread, policy).await
     }
 
-    fn check_unarchive(
-        &self,
-        binding: &Binding,
-        provider: &str,
-        idle_at: Option<&(String, u64)>,
-    ) -> Result<(), HostError> {
-        if let Some((thread, sequence)) = idle_at
-            && !self.quiet_row_at(thread, *sequence, |row| {
-                !row["archivedAt"].is_null()
-                    && row["deletedAt"].is_null()
-                    && parent_row_matches(row, binding, provider)
-            })
-        {
-            return Err(HostError::ParentPreflight {
-                predicate: "held shell has no current quiet archived row",
-                prepared: *sequence,
-                observed: self.rpc.thread_row_with_revision(thread).1,
-            });
-        }
-        Ok(())
-    }
-
     fn check_reentry(
         &self,
         child: &ActiveChild,
@@ -1090,11 +1059,13 @@ impl T3 {
                 Read::One,
                 write.runtime.as_deref(),
                 || {
-                    self.check_unarchive(
-                        &write.wire.binding,
-                        &write.wire.provider,
-                        write.idle_at.as_ref(),
-                    )?;
+                    if let Some(fence) = &write.unarchive_fence
+                        && thread_id
+                            .as_deref()
+                            .is_none_or(|thread| !self.rpc.same_thread(thread, fence))
+                    {
+                        return Err(HostError::Uncertain);
+                    }
                     if let Some(runtime) = &write.runtime
                         && self.parent_runtime_hint().as_ref() != Some(runtime)
                     {

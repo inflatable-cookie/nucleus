@@ -655,6 +655,15 @@ fn shell_row(view: &Value) -> Value {
     row
 }
 
+fn archived_shell_reply(revision: u64, row: &Value) -> (&'static str, Response) {
+    (
+        "orchestration.getArchivedShellSnapshot",
+        Response::Value(json!({
+            "snapshotSequence":revision,"projects":[],"threads":[row],
+        })),
+    )
+}
+
 fn hold_shell(client: &T3, view: &Value) {
     client
         .rpc
@@ -1468,13 +1477,32 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
 }
 
 #[tokio::test]
-async fn parent_unarchive_rechecks_the_quiet_shell_before_sending() {
+async fn parent_unarchive_requires_current_archived_shell_evidence() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let archived = parent_snapshot(&binding, "completed", true);
-    let mut row = shell_row(&archived);
-    let (host, native) = server(vec![("orchestration.dispatchCommand", Response::Success)]).await;
-    hold_shell(&host, &archived);
+    let row = shell_row(&archived);
+    let mut busy = row.clone();
+    busy["pendingBackgroundTasks"] = json!([{"kind":"command","taskId":"late-work"}]);
+    let mut responses = Vec::new();
+    for (revision, row) in [(15, &row), (16, &busy), (17, &row), (18, &row)] {
+        responses.extend([
+            (
+                "orchestration.subscribeThread",
+                Response::ParentSnapshot(archived.clone()),
+            ),
+            archived_shell_reply(revision, row),
+        ]);
+    }
+    responses.push(("orchestration.dispatchCommand", Response::Success));
+    let (host, native) = server(responses).await;
+    let shell = |revision| {
+        host.rpc
+            .fixture_shell(&json!({"kind":"snapshot","snapshot":{
+                "snapshotSequence":revision,"projects":[],"threads":[]}
+            }));
+    };
+    shell(16);
     let pass = quiet_pass(&host);
     let prepare = || {
         Box::pin(host.prepare_parent(
@@ -1486,28 +1514,23 @@ async fn parent_unarchive_rechecks_the_quiet_shell_before_sending() {
             pass.profile_catalog(),
         ))
     };
+    assert!(matches!(prepare().await.unwrap(), crate::ParentStep::Wait));
+    assert!(matches!(prepare().await.unwrap(), crate::ParentStep::Wait));
     let crate::ParentStep::Write(stale) = prepare().await.unwrap() else {
         panic!("the quiet archived parent should unarchive");
     };
-    row["pendingBackgroundTasks"] = json!([{"kind":"command","taskId":"late-work"}]);
-    host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
+    host.rpc.clear_shell();
+    shell(18);
     assert!(matches!(
         host.write_parent(stale).await,
-        Err(crate::ParentSendError::NotSent(
-            HostError::ParentPreflight { .. }
-        ))
+        Err(crate::ParentSendError::NotSent(HostError::Uncertain))
     ));
-    assert!(matches!(prepare().await.unwrap(), crate::ParentStep::Wait));
-    row["pendingBackgroundTasks"] = json!([]);
-    host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
     let crate::ParentStep::Write(write) = prepare().await.unwrap() else {
-        panic!("background work has settled");
+        panic!("the new shell has confirmed archive evidence");
     };
     host.write_parent(write).await.unwrap();
     let requests = native.await.unwrap();
-    let payload: Value = serde_json::from_str(requests[0].payload.get()).unwrap();
+    let payload: Value = serde_json::from_str(requests.last().unwrap().payload.get()).unwrap();
     assert_eq!(payload["type"], "thread.unarchive");
     assert_eq!(payload["threadId"], row["id"]);
 }
@@ -2077,10 +2100,7 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
     restored["turnItemsOmitLocalVisible"] = json!(true);
     restored["projection"]["turnItems"] = json!([]);
     restored["projection"]["thread"]["updatedAt"] = json!("2026-11-24T16:42:26Z");
-    let mut restored_row = restored["projection"]["thread"].clone();
-    restored_row["latestRunId"] = json!(NATIVE_RUN);
-    restored_row["status"] = json!("interrupted");
-    restored_row["pendingBackgroundTasks"] = json!([]);
+    let mut restored_row = shell_row(&restored);
     restored_row["visibleItemCount"] = json!(50_000);
     let mut operator_snoozed = restored.clone();
     operator_snoozed["projection"]["thread"]["snoozedUntil"] = json!("2099-06-01T12:00:00.000Z");
@@ -2088,7 +2108,11 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
     settled["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:00:00Z");
     let probe = "orchestration.subscribeThread";
     let command = "orchestration.dispatchCommand";
+    let archive_row = shell_row(&archived);
     let (client, server) = server(vec![
+        (probe, Response::Snapshot(archived.clone())),
+        (probe, Response::Snapshot(archived)),
+        archived_shell_reply(16, &archive_row),
         (command, Response::Success),
         (probe, Response::Snapshot(operator_snoozed)),
         (probe, Response::Snapshot(settled)),
@@ -2098,8 +2122,7 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
     client
         .rpc
         .fixture_shell(&json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":15, "projects":[], "threads":[],
-            "archivedThreads":[shell_row(&archived)]
+            "snapshotSequence":15, "projects":[], "threads":[]
         }}));
     let pass = quiet_pass(&client);
     let retained = pass
@@ -2154,8 +2177,8 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
         .expect("record settled continuation");
     assert_eq!(pass.send(dispatch).await.unwrap(), SendOutcome::Sent);
     let sent = server.await.expect("scripted host");
-    let unarchive: Value = serde_json::from_str(sent[0].payload.get()).expect("unarchive payload");
-    let message: Value = serde_json::from_str(sent[3].payload.get()).expect("continuation payload");
+    let unarchive: Value = serde_json::from_str(sent[3].payload.get()).expect("unarchive payload");
+    let message: Value = serde_json::from_str(sent[6].payload.get()).expect("continuation payload");
     assert_eq!(
         unarchive,
         json!({"type":"thread.unarchive", "threadId":THREAD, "commandId":format!("{instance}-unarchive")})
@@ -2476,12 +2499,12 @@ fn replay_script(
         (probe, Response::Snapshot(ended)),
     ];
     if archive {
+        let archived = snapshot(binding, instance, "interrupted", true);
+        let row = shell_row(&archived);
         steps.extend([
             (command, Response::Success),
-            (
-                probe,
-                Response::Snapshot(snapshot(binding, instance, "interrupted", true)),
-            ),
+            (probe, Response::Snapshot(archived)),
+            archived_shell_reply(17, &row),
         ]);
     }
     steps
@@ -2557,6 +2580,9 @@ async fn revoked_replay(archive: bool) {
                 .expect("archive"),
             StopProgress::Waiting
         );
+        client.rpc.fixture_shell(
+            &json!({"kind":"thread.removed","sequence":17,"location":"active","threadId":THREAD}),
+        );
     }
     assert_eq!(
         quiet_pass(&client)
@@ -2604,11 +2630,14 @@ async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
     idle["projection"]["runs"] = json!([]);
     let mut archived = idle.clone();
     archived["projection"]["thread"]["archivedAt"] = json!("2026-11-23T16:00:00Z");
+    let mut archive_row = shell_row(&quiet);
+    archive_row["archivedAt"] = archived["projection"]["thread"]["archivedAt"].clone();
     let (client, server) = server(vec![
         (probe, Response::Snapshot(idle.clone())),
         (command, Response::Success),
         (probe, Response::Snapshot(idle)),
         (probe, Response::Snapshot(archived)),
+        archived_shell_reply(17, &archive_row),
     ])
     .await;
     hold_shell(&client, &quiet);
@@ -2634,6 +2663,9 @@ async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
             .expect("stale archive readback"),
         StopProgress::Write(_)
     ));
+    client.rpc.fixture_shell(
+        &json!({"kind":"thread.removed","sequence":17,"location":"active","threadId":THREAD}),
+    );
     assert_eq!(
         pass.stop(run, &binding, late, true)
             .await

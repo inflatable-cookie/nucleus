@@ -82,7 +82,7 @@ pub use questions::{
     NoticeTarget, PlannerIdentity, PlannerThread,
 };
 pub use rpc::ThreadHint;
-use rpc::{Read, Reply, Rpc, ThreadReply, closed_row};
+use rpc::{Read, Reply, Rpc, ThreadFence, ThreadReply, closed_row};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
 pub use task_row::{RowChange, RowChildren, RowObservation, RowVisibility, snooze_deadline};
@@ -194,6 +194,7 @@ pub enum StopProgress {
 pub struct ControlDispatch {
     binding: Binding,
     payload: Value,
+    unarchive_fence: Option<ThreadFence>,
 }
 
 impl ControlDispatch {
@@ -211,7 +212,7 @@ pub struct ReplayAuthorization {
     wire: Wire,
     prior_send: Option<u64>,
     revoked: bool,
-    archived: bool,
+    unarchive_fence: Option<ThreadFence>,
     parent_row: Option<RowObservation>,
     queued_continuation: bool,
 }
@@ -244,8 +245,9 @@ impl ReplayAuthorization {
 
     #[must_use]
     pub fn unarchive(&self) -> Option<ControlDispatch> {
-        self.archived.then(|| ControlDispatch {
+        self.unarchive_fence.as_ref().map(|fence| ControlDispatch {
             binding: self.wire.binding.clone(),
+            unarchive_fence: Some(fence.clone()),
             payload: json!({
                 "type":"thread.unarchive", "commandId":format!("{}-unarchive", self.instance), "threadId":self.thread,
             }),
@@ -268,7 +270,7 @@ impl ReplayAuthorization {
     /// Returns an error if the run or its delivery state changed after authorization.
     pub fn record(self, task: &mut nucleus_core::Task) -> Result<RunDispatch, HostError> {
         let run = task.run().ok_or(HostError::Binding)?;
-        if self.archived
+        if self.unarchive_fence.is_some()
             || run.launch().instance != self.instance
             || run.launch().input != self.input
             || run.revoked() != self.revoked
@@ -755,7 +757,8 @@ impl T3 {
         }
         let state = match &thread {
             Some(thread)
-                if thread.archived_in_shell()
+                if thread.archived()
+                    && !thread.deleted()
                     && wire.method == Method::Continue
                     && run.last_send_at_ms().is_none()
                     && !run.revoked() =>
@@ -796,6 +799,74 @@ impl T3 {
         })
     }
 
+    async fn projection_quiet(
+        &self,
+        thread: &str,
+        view: &Projection,
+        matches: impl FnOnce(&Value) -> bool + Send,
+    ) -> Result<bool, HostError> {
+        let revision = view.sequence();
+        if view.archived() {
+            Ok(self
+                .quiet_archive_at(thread, revision, matches)
+                .await?
+                .is_some())
+        } else {
+            Ok(self.quiet_row_at(thread, revision, matches))
+        }
+    }
+
+    // The live subscription omits archived rows. Fetch archive evidence only
+    // for an exact, already-bound archive, and fence it by live shell changes.
+    async fn quiet_archive_at(
+        &self,
+        thread: &str,
+        revision: u64,
+        matches: impl FnOnce(&Value) -> bool + Send,
+    ) -> Result<Option<ThreadFence>, HostError> {
+        let Some(fence) = self
+            .rpc
+            .with_shell(|shell| shell.map(|shell| self.rpc.fence_at(thread, Some(shell))))
+        else {
+            return Ok(None);
+        };
+        let quiet = |row: &Value| {
+            row["deletedAt"].is_null()
+                && row["archivedAt"].is_string()
+                && row_activity(row) == RowChildren::Quiet
+                && matches(row)
+        };
+        let confirmed = if let Some(row) = &fence.row {
+            fence.at_or_after(revision) && quiet(row)
+        } else {
+            let archive = self.archived_shell().await?;
+            let rows = archive["threads"].as_array().ok_or(HostError::Protocol)?;
+            archive["snapshotSequence"]
+                .as_u64()
+                .is_some_and(|seq| seq >= revision)
+                && rows
+                    .iter()
+                    .find(|row| row["id"] == thread)
+                    .is_some_and(quiet)
+        };
+        Ok((confirmed && self.rpc.same_thread(thread, &fence)).then_some(fence))
+    }
+
+    async fn archived_shell(&self) -> Result<Value, HostError> {
+        match self
+            .rpc
+            .call(
+                "orchestration.getArchivedShellSnapshot",
+                json!({}),
+                Read::Background,
+            )
+            .await?
+        {
+            Reply::Value(value) => Ok(value),
+            Reply::Failure(_) => Err(HostError::Uncertain),
+        }
+    }
+
     fn verify_retained_target(
         &self,
         wire: &Wire,
@@ -832,17 +903,6 @@ impl T3 {
             )?;
         }
         task_row::check_delivery_snooze(&row, &[])
-    }
-
-    async fn thread_command(&self, payload: Value) -> Result<(), HostError> {
-        match self
-            .rpc
-            .call("orchestration.dispatchCommand", payload, Read::One)
-            .await?
-        {
-            Reply::Value(_) => Ok(()),
-            Reply::Failure(_) => Err(HostError::Uncertain),
-        }
     }
 }
 
@@ -886,13 +946,11 @@ impl T3Pass<'_> {
         thread: &str,
         projection: Option<&Projection>,
     ) -> Result<bool, HostError> {
-        if let Some(projection) = projection
-            && !projection.deleted()
+        if let Some(view) = projection.filter(|projection| !projection.deleted())
             && !self
                 .host
-                .quiet_row_at(thread, projection.sequence(), |row| {
-                    binding.matches_shell_row(row)
-                })
+                .projection_quiet(thread, view, |row| binding.matches_shell_row(row))
+                .await?
         {
             return Ok(false);
         }
@@ -1093,12 +1151,17 @@ impl TaskHost for T3Pass<'_> {
                 });
             }
         }
-        let background_pending = state == RunState::Ended
-            && thread.as_ref().is_some_and(|thread| {
+        let background_pending =
+            if let Some(view) = thread.as_ref().filter(|_| state == RunState::Ended) {
                 !self
                     .host
-                    .terminal_role_quiet(&wire, &run.launch().thread, thread.sequence())
-            });
+                    .projection_quiet(&run.launch().thread, view, |row| {
+                        retained_row_matches(&wire, row)
+                    })
+                    .await?
+            } else {
+                false
+            };
         if !background_pending
             && state == RunState::Ended
             && thread
@@ -1208,10 +1271,26 @@ impl TaskHost for T3Pass<'_> {
         if state != RunState::ReadyToSend {
             return Err(HostError::Uncertain);
         }
+        let id = &run.launch().thread;
+        let unarchive_fence = if let Some(archived) = thread
+            .as_ref()
+            .filter(|view| continuation && view.archived())
+        {
+            Some(
+                self.host
+                    .quiet_archive_at(id, archived.sequence(), |row| {
+                        retained_row_matches(&wire, row)
+                    })
+                    .await?
+                    .ok_or(HostError::WorkspaceBusy)?,
+            )
+        } else {
+            None
+        };
+        // The unarchive fence already proves native quiet. Legacy sends also check local writers.
+        let unchecked_thread = thread.as_ref().filter(|_| unarchive_fence.is_none());
         if (run.revoked() || (continuation && !queued))
-            && !self
-                .quiet(&wire.binding, &run.launch().thread, thread.as_ref())
-                .await?
+            && !self.quiet(&wire.binding, id, unchecked_thread).await?
         {
             return Err(HostError::WorkspaceBusy);
         }
@@ -1228,7 +1307,7 @@ impl TaskHost for T3Pass<'_> {
             instance: run.launch().instance.clone(),
             thread: run.launch().thread.clone(),
             input: run.launch().input.clone(),
-            archived: continuation && thread.is_some_and(|thread| thread.archived()),
+            unarchive_fence,
             wire,
             prior_send: run.last_send_at_ms(),
             revoked: run.revoked(),
@@ -1238,7 +1317,33 @@ impl TaskHost for T3Pass<'_> {
     }
 
     async fn write_control(&self, dispatch: ControlDispatch) -> Result<(), HostError> {
-        self.host.thread_command(dispatch.payload).await
+        let thread = dispatch.payload["threadId"]
+            .as_str()
+            .ok_or(HostError::Binding)?
+            .to_owned();
+        match self
+            .host
+            .rpc
+            .call_guarded(
+                "orchestration.dispatchCommand",
+                dispatch.payload,
+                Read::One,
+                || {
+                    if dispatch
+                        .unarchive_fence
+                        .as_ref()
+                        .is_some_and(|fence| !self.host.rpc.same_thread(&thread, fence))
+                    {
+                        return Err(HostError::Uncertain);
+                    }
+                    Ok(true)
+                },
+            )
+            .await?
+        {
+            Reply::Value(_) => Ok(()),
+            Reply::Failure(_) => Err(HostError::Uncertain),
+        }
     }
 
     async fn send(&self, dispatch: RunDispatch) -> Result<SendOutcome, HostError> {
@@ -1303,6 +1408,7 @@ impl TaskHost for T3Pass<'_> {
         {
             return Ok(StopProgress::Write(ControlDispatch {
                 binding: wire.binding,
+                unarchive_fence: None,
                 payload: json!({
                     "type": command, "commandId": format!("{}-{command}", launch.instance),
                     "threadId": launch.thread, "runId": target,
@@ -1393,6 +1499,7 @@ fn archive_command(run: &Run, wire: &Wire) -> StopProgress {
     let launch = run.launch();
     StopProgress::Write(ControlDispatch {
         binding: wire.binding.clone(),
+        unarchive_fence: None,
         payload: json!({
             "type":"thread.archive", "commandId":format!("{}-archive", launch.instance), "threadId":launch.thread,
         }),

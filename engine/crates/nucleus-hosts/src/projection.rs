@@ -615,10 +615,6 @@ impl Projection {
         self.thread.deleted_at.is_some()
     }
 
-    pub(crate) fn archived_in_shell(&self) -> bool {
-        self.archived() && self.shell_closed == Some(RetainedThread::Idle)
-    }
-
     pub(crate) fn activity(&self, message_id: &str) -> Option<RunActivity> {
         if self.windowed || self.thread.deleted_at.is_some() {
             return None;
