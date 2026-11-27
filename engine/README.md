@@ -512,10 +512,16 @@ cancellation goes through the same command preflight as other clients.
 The ACP launcher calls `nucleus ensure` for the same profile and endpoint
 as `nucleus serve`. It reuses a healthy listener only when its controller
 credential and database path match. When the port is absent, it serializes
-startup and passes the lock to the detached engine. A later ACP launch can
-recover a stopped service. Keep the serve launcher's log under the configured
-log root. The pass logs once when one task has held it for a minute, naming the
-task and the step.
+startup and passes the lock to the detached engine. A running ACP client
+also calls the launcher after at least two seconds of connection refusals.
+It logs each recovery attempt to `acp.log` and backs off between attempts.
+
+Keep the serve launcher's log under the configured log root. On SIGINT,
+SIGTERM or SIGHUP, `serve` logs the signal and its uptime and shuts down.
+Once `serve` holds the profile lock, it records the run before initializing
+the service. The next start reports the last log time and how the previous
+run ended, including errors and SIGKILL during initialization. The pass
+logs once when one task has held it for a minute, naming the task and the step.
 
 ### Set up T3
 
@@ -577,7 +583,9 @@ instance's command path if it differs. A matching registration stays in
 place. Other provider IDs and running sessions are left alone.
 
 The launcher ensures the engine on `127.0.0.1` and execs Rust ACP over
-stdio with the profile's binding directory and `loadSession: true`. Install
+stdio with the profile's binding directory and `loadSession: true`.
+Refresh the installed launcher with `t3 install --adopt` when upgrading
+to ACP client recovery. Clients get recovery on their next launch. Install
 waits for the exact T3 registration, the `nucleus` model probe and the
 engine's observation of the pinned Rust Inbox. During the TS transition, a
 still-pinned TS Inbox defers Rust Inbox setup. Rerun install once that Inbox

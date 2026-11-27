@@ -31,16 +31,16 @@ pub(super) async fn scheduler<F: Future>(work: F) -> F::Output {
     }
 }
 
-fn format_line(message: std::fmt::Arguments<'_>) -> String {
-    let message = message.to_string().replace(['\r', '\n'], " ");
-    format!("{} {message}", time::OffsetDateTime::now_utc())
-}
-
 #[cfg(test)]
 pub(super) static TEST_LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 pub(super) fn line(message: std::fmt::Arguments<'_>) {
-    let formatted = format_line(message);
+    let message = message.to_string().replace(['\r', '\n'], " ");
+    if log::log_enabled!(target: "nucleus::serve", log::Level::Warn) {
+        log::warn!(target: "nucleus::serve", "{message}");
+        return;
+    }
+    let formatted = format!("{} {message}", time::OffsetDateTime::now_utc());
     #[cfg(test)]
     TEST_LINES.lock().unwrap().push(formatted.clone());
     let _ = writeln!(std::io::stderr().lock(), "{formatted}");

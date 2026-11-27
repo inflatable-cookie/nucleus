@@ -6,7 +6,6 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
-    process::Stdio,
     time::Duration,
 };
 
@@ -169,7 +168,7 @@ pub(crate) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
                         ProviderRegistration::Ready | ProviderRegistration::Registered
                     ),
             )?;
-            ensure(&launcher).await?;
+            nucleus_acp::ensure_launcher(&launcher).await?;
             let key = read_key_file(&key_file)?;
             let health = engine_health(endpoint, &key).await?;
             if !same_engine(&health, &storage) || health["engine"]["t3Endpoint"] != host.endpoint()
@@ -352,6 +351,7 @@ fn launcher_script(
     acp: &Path,
 ) -> Result<String> {
     let key_file = quote(key_file)?;
+    let launcher = quote(&directory.join(LAUNCHER))?;
     let home = directory.parent().ok_or("invalid engine home")?;
     let home = quote(home)?;
     let serve = quote(serve)?;
@@ -359,6 +359,10 @@ fn launcher_script(
     let bindings = quote(&storage.database().path().join("acp-bindings"))?;
     let scratch = quote(storage.scratch().path())?;
     let log = quote(&storage.log().path().join("acp.log"))?;
+    let endpoint = format!("127.0.0.1:{port}");
+    let ensure = format!(
+        "{acp} --endpoint {endpoint} ensure --home {home} --control-key-file {key_file} --serve-launcher {serve}"
+    );
     Ok(format!(
         r#"{MARKER}set -eu
 umask 077
@@ -366,10 +370,10 @@ unset {INSTALL_BEARER} NUCLEUS_ACP_SESSION
 export TMPDIR={scratch} TMP={scratch} TEMP={scratch}
 export PATH={home}/bin:"${{PATH:-/usr/bin:/bin}}"
 exec 2>>{log}
-{acp} --endpoint 127.0.0.1:{port} ensure --home {home} --control-key-file {key_file} --serve-launcher {serve}
-if [ "${{1-}}" = --ensure-only ]; then exit 0; fi
+if [ "${{1-}}" = --ensure-only ]; then exec {ensure}; fi
+{ensure}
 export NUCLEUS_ACP_BINDINGS={bindings}
-exec {acp} acp "$@"
+exec {acp} --endpoint {endpoint} acp --ensure-launcher {launcher} "$@"
 "#
     ))
 }
@@ -447,24 +451,6 @@ pub(super) fn read_key_file(path: &Path) -> Result<[u8; 32]> {
         return Err("engine health credential must contain 64 lowercase hex digits".into());
     }
     Ok(key)
-}
-
-async fn ensure(launcher: &Path) -> Result<()> {
-    let running = tokio::process::Command::new(launcher)
-        .arg("--ensure-only")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .kill_on_drop(true)
-        .status();
-    if !tokio::time::timeout(Duration::from_secs(30), running)
-        .await??
-        .success()
-    {
-        return Err(
-            "the local engine did not report healthy; check the serve launcher and log".into(),
-        );
-    }
-    Ok(())
 }
 
 pub(super) async fn engine_health(endpoint: SocketAddr, key: &[u8; 32]) -> Result<Value> {
@@ -604,6 +590,7 @@ mod tests {
         assert_eq!(fs::metadata(&launcher).expect("metadata").ino(), inode);
         let script = String::from_utf8(installed).expect("script");
         assert!(script.contains("serve '\\''engine'\\''"));
+        assert!(script.contains("acp --ensure-launcher"));
         assert!(!script.contains(&"ab".repeat(32)));
 
         executable(&launcher);

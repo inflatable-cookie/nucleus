@@ -1576,6 +1576,7 @@ dependencies = [
  "clap",
  "futures-util",
  "hex",
+ "log",
  "nucleus-acp",
  "nucleus-core",
  "nucleus-forge",
@@ -1645,6 +1646,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.3.4",
  "hex",
+ "log",
  "longhorn-core",
  "longhorn-credential-keyring",
  "longhorn-git-workspace",
@@ -1676,6 +1678,7 @@ name = "nucleus-store"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "log",
  "longhorn-config",
  "longhorn-core",
  "longhorn-storage-layout",

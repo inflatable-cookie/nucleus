@@ -38,8 +38,8 @@ pub use inbox::InboxBinding;
 pub use parent_delivery::{ParentDelivery, ParentResult};
 pub use review_publication::{ReviewIntent, ReviewPublication, ReviewPublicationOutcome};
 pub use settings::{
-    Backups, BargePaths, EngineSettings, EngineStorage, RetentionSettings, SettingsFile,
-    SettingsSnapshot, SettingsValue, StorageError, StoragePlacement, VerifiedBackup,
+    Backups, BargePaths, EngineSettings, EngineStorage, LockedProfile, RetentionSettings,
+    SettingsFile, SettingsSnapshot, SettingsValue, StorageError, StoragePlacement, VerifiedBackup,
 };
 pub use settings_domains::{
     DispatchMode, DispatchSettings, Hosts, NamedProfile, PlannerClaim, Profiles, ProjectSettings,
