@@ -1,6 +1,6 @@
 use std::{
-    convert::Infallible,
     future::Future,
+    io,
     pin::pin,
     sync::{
         Arc,
@@ -29,20 +29,23 @@ use crate::{client::ServiceClient, inbox, presentation::Presentation, task_promp
 #[derive(Clone)]
 struct Fixture {
     changes: Arc<Mutex<Option<mpsc::UnboundedReceiver<()>>>>,
-    state: usize,
+    state: Arc<AtomicUsize>,
     attached: Arc<Notify>,
 }
 
 async fn events(
     State(fixture): State<Fixture>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Sse<impl Stream<Item = Result<Event, io::Error>>> {
     let receiver = fixture.changes.lock().await.take().unwrap();
     fixture.attached.notify_one();
     Sse::new(stream::unfold(
         (true, receiver),
         |(first, mut receiver)| async move {
-            if !first {
-                receiver.recv().await?;
+            if !first && receiver.recv().await.is_none() {
+                return Some((
+                    Err(io::Error::from(io::ErrorKind::ConnectionAborted)),
+                    (false, receiver),
+                ));
             }
             Some((
                 Ok(Event::default()
@@ -56,7 +59,7 @@ async fn events(
 
 fn server(
     listener: TcpListener,
-    state: usize,
+    state: Arc<AtomicUsize>,
 ) -> (mpsc::UnboundedSender<()>, Arc<Notify>, JoinHandle<()>) {
     let (send, receive) = mpsc::unbounded_channel();
     let attached = Arc::new(Notify::new());
@@ -72,14 +75,34 @@ fn server(
             "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
             "phase":"working", "lifecycle":{"steps":[{"key":"working","label":"Working","state":"current","tone":"accent"}],"admittedAtMs":0,"transcript":{"cards":[],"completedReviews":0,"merged":false,"externalAcceptances":[]}},
             "parentHold":"hold", "activeChild":false,
-            "reference":format!("fixture#{}", f.state)
+            "reference":format!("fixture#{}", f.state.load(Ordering::Relaxed))
         })))))
-        .route("/v1/acp/inbox", get(async |State(f): State<Fixture>| ([(axum::http::header::CONNECTION, "close")], Json(json!({"pending":[{"field":format!("field{}", f.state),"question":"Continue?","choices":[{"id":"yes","label":"Yes"}],"offer":true}]})))))
+        .route("/v1/acp/inbox", get(async |State(f): State<Fixture>| ([(axum::http::header::CONNECTION, "close")], Json(json!({"pending":[{"field":format!("field{}", f.state.load(Ordering::Relaxed)),"question":"Continue?","choices":[{"id":"yes","label":"Yes"}],"offer":true}]})))))
         .with_state(fixture);
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
     (send, attached, handle)
+}
+
+async fn shown(frames: &mut mpsc::UnboundedReceiver<serde_json::Value>, inbox: bool, state: usize) {
+    let expected = if inbox {
+        format!("field{state}")
+    } else {
+        format!("fixture#{state}")
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let frame = frames.recv().await.unwrap();
+            if (!inbox || frame["method"] == "elicitation/create")
+                && frame.to_string().contains(&expected)
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the ACP session did not show {expected}"));
 }
 
 fn binding(endpoint: std::net::SocketAddr, inbox_session: bool) -> SessionBinding {
@@ -104,7 +127,7 @@ fn binding(endpoint: std::net::SocketAddr, inbox_session: bool) -> SessionBindin
 async fn run_reconnect(inbox_session: bool) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
-    let (stream, attached, server_task) = server(listener, 1);
+    let (stream, attached, server_task) = server(listener, Arc::new(AtomicUsize::new(1)));
     let binding = binding(endpoint, inbox_session);
     let mut client = ServiceClient::new(&binding).unwrap();
     let (output, mut frames) = mpsc::unbounded_channel();
@@ -140,19 +163,7 @@ async fn run_reconnect(inbox_session: bool) {
         .await;
     });
     // Wait until the first snapshot was presented, then close the stream and listener.
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let frame = frames.recv().await.unwrap();
-            if inbox_session && frame["method"] == "elicitation/create" {
-                break;
-            }
-            if !inbox_session && frame.to_string().contains("fixture#1") {
-                break;
-            }
-        }
-    })
-    .await
-    .unwrap();
+    shown(&mut frames, inbox_session, 1).await;
     tokio::time::timeout(Duration::from_secs(5), attached.notified())
         .await
         .unwrap();
@@ -169,20 +180,12 @@ async fn run_reconnect(inbox_session: bool) {
         "turn spun during reconnect delay"
     );
     let listener = TcpListener::bind(endpoint).await.unwrap();
-    let (_stream, _attached, server_task) = server(listener, 2);
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let frame = frames.recv().await.unwrap();
-            if inbox_session && frame.to_string().contains("field2") {
-                break;
-            }
-            if !inbox_session && frame.to_string().contains("fixture#2") {
-                break;
-            }
-        }
-    })
-    .await
-    .unwrap();
+    let state = Arc::new(AtomicUsize::new(2));
+    let (stream, _attached, server_task) = server(listener, Arc::clone(&state));
+    shown(&mut frames, inbox_session, 2).await;
+    state.store(3, Ordering::Relaxed);
+    stream.send(()).unwrap();
+    shown(&mut frames, inbox_session, 3).await;
     turn.abort();
     server_task.abort();
     assert!(turn.await.unwrap_err().is_cancelled());
