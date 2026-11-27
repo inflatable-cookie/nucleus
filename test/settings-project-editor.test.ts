@@ -194,30 +194,6 @@ function harness(
         ...projectOf(input.key),
         version: projectOf(input.key).version + 1,
       }),
-    registerAgent: (input: any) =>
-      reply("agent.register", input, {
-        ...projectOf(input.project),
-        version: projectOf(input.project).version + 1,
-        agents: [
-          ...(projectOf(input.project).agents ?? []),
-          {
-            name: input.name,
-            purpose: input.purpose,
-            agentId: input.agentId,
-            hostId: "host",
-            registeredBy: "operator (board)",
-            registeredAt: "2026-11-11T10:00:00.000Z",
-          },
-        ],
-      }),
-    unregisterAgent: (input: any) =>
-      reply("agent.unregister", input, {
-        ...projectOf(input.project),
-        version: projectOf(input.project).version + 1,
-        agents: (projectOf(input.project).agents ?? []).filter(
-          (agent) => agent.name !== input.name,
-        ),
-      }),
     setSlots: (input: any) =>
       reply("queue.project-dispatch-limit", input, { ok: true }),
     setRepository: (input: any) => reply("repository.set", input, {}),

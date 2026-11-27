@@ -478,7 +478,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       const current = boardProject(input.key, project);
       if (!current) throw new Error("The project has no repository for this board.");
       return {
-        project: current, target: null, digest, cancellation: null,
+        project: current, target: null, digest,
         tasks: tasks.map(({ taskId, version }) => ({ taskId, version })),
         items: tasks.map(({ taskId, label }) => ({ kind: "task", id: taskId, label, shared: false })),
       } satisfies api.ProjectManagementPreview;

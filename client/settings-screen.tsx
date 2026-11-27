@@ -88,10 +88,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     mergeProject = useRpc(api.projectMerge),
     mergeCheck = useRpc(api.projectMergeCheck);
   const previewRemoval = useRpc(api.projectManagementPreview),
-    removeProject = useRpc(api.projectManage),
-    resetRemoval = useRpc(api.projectResetCancellation);
-  const cancelTasks = useRpc(api.bulkDisposition),
-    cancellationReceipt = useRpc(api.bulkDispositionDetail);
+    removeProject = useRpc(api.projectManage);
   const queryClient = useQueryClient();
   const [settingsTab, setSettingsTab] = useSettingsSection("capacity");
   const fetchProfileUsage = useRpc(rustProfileUsage);
@@ -484,9 +481,6 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                 removal: {
                   previewRpc: previewRemoval,
                   removeRpc: removeProject,
-                  cancelRpc: cancelTasks,
-                  cancellationRpc: cancellationReceipt,
-                  resetRpc: resetRemoval,
                 },
                 refresh: () =>
                   Promise.all([

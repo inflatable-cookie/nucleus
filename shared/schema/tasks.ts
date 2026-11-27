@@ -5,12 +5,7 @@ import { taskDecisionFactSchema } from "../task-stop";
 import { z } from "zod";
 import { holdKindSchema, taskPhaseSchema } from "../schema/task-primitives";
 import {
-  checkpointStateSchema,
   completionSchema,
-  proofExecutionRecordSchema,
-  proofFileRecordSchema,
-  proofOnlyResultSchema,
-  proofReceiptAcceptanceSchema,
   reportAcceptanceSchema,
   reviewEntryRecordSchema,
   submissionSchema,
@@ -204,19 +199,6 @@ export const taskSchema = submissionSchema
     workerModel: z.string().nullable().default(null),
     workerModels: z.array(z.string()).default([]),
     resolution: resolutionSchema.default(() => resolutionSchema.parse({})),
-    /** Task 405: append-only author-side proof execution evidence; the task allowance is one. */
-    proofExecutions: z.array(proofExecutionRecordSchema).default([]),
-    /** nucleus#1142: append-only worker proof files delivered for a head, copied into Nucleus's own scratch. */
-    proofFiles: z.array(proofFileRecordSchema).default([]),
-    /** Task 662: an owner may retire a spent brief proof declaration once; it can never be named again. */
-    proofExecutionRetired: z.boolean().default(false),
-    proofOnlyResult: proofOnlyResultSchema.nullable().default(null),
-    proofReceiptAcceptance: proofReceiptAcceptanceSchema
-      .nullable()
-      .default(null),
-    checkpoints: checkpointStateSchema.default(() =>
-      checkpointStateSchema.parse({}),
-    ),
     prUrl: z.string().nullable(),
     prHead: z.string().nullable(),
     coordinatorGeneration: z.number(),

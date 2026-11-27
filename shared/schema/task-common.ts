@@ -56,6 +56,3 @@ export const taskTitleSchema = z
   .min(1)
   .max(MAX_TITLE_LENGTH, "Title must be 200 characters or fewer");
 
-// Bounded deliberate worker checkpoints per task. The counter is durable and
-// survives restart; a fourth receipt enters ordinary needs-attention handling.
-export const CHECKPOINT_BUDGET = 3;
