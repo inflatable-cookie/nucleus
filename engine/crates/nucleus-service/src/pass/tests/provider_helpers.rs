@@ -200,8 +200,8 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     // The remaining processes still hold the checkout, as before.
     let outcome = service.archive_done(&terminal).await;
     assert!(
-        matches!(&outcome, Err(ServiceError::ArchiveEvidence(cause))
-            if HOLDERS.iter().any(|name| cause.contains(&format!("PID {} ", pids[*name])))),
+        matches!(&outcome, Err(ServiceError::CheckoutProcess(blocker))
+            if !blocker.unverified && HOLDERS.iter().any(|name| blocker.pid == pids[*name])),
         "{outcome:?}"
     );
     let retained = recorded(&service, &id, "checkout_process_retained").await;

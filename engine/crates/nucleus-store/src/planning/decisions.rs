@@ -13,6 +13,21 @@ pub(crate) const USAGE_PERMISSION_INDEX: &str =
     ON planning_decisions(id) WHERE json_extract(snapshot, '$.task.kind') = 'usage_permission'";
 
 pub const USAGE_APPROVE: &str = "approve";
+const PROCESS_DECISION: &str = "closeout-process-";
+
+impl Decision {
+    /// The stable decision key for one observed process lifetime.
+    #[must_use]
+    pub fn process_id(pid: u32, started: i64) -> String {
+        format!("{PROCESS_DECISION}{pid}-{started}")
+    }
+
+    /// A process custody decision remains open until the census clears it.
+    #[must_use]
+    pub fn is_process_custody(&self) -> bool {
+        self.author == "Nucleus" && self.task.is_none() && self.id.starts_with(PROCESS_DECISION)
+    }
+}
 
 /// Data needed to bind a Low usage decision in the task admission transaction.
 pub struct UsagePermission<'a> {
@@ -142,6 +157,66 @@ impl Store {
         Ok(decision)
     }
 
+    /// Withdraw an open, standalone decision when its cause has cleared.
+    ///
+    /// # Errors
+    /// Returns an error if the decision cannot be read or written.
+    pub fn withdraw_decision(
+        &mut self,
+        project: &str,
+        id: &str,
+        stamp: WriteAt<'_>,
+    ) -> Result<bool, StoreError> {
+        self.set_decision_withdrawn(project, id, true, stamp)
+    }
+
+    /// Reopen a standalone decision whose cause has returned.
+    ///
+    /// # Errors
+    /// Returns an error if the decision cannot be read or written.
+    pub fn reopen_decision(
+        &mut self,
+        project: &str,
+        id: &str,
+        stamp: WriteAt<'_>,
+    ) -> Result<bool, StoreError> {
+        self.set_decision_withdrawn(project, id, false, stamp)
+    }
+
+    fn set_decision_withdrawn(
+        &mut self,
+        project: &str,
+        id: &str,
+        withdrawn: bool,
+        stamp: WriteAt<'_>,
+    ) -> Result<bool, StoreError> {
+        let tx = self.planning_write()?;
+        let Some(mut decision) = read::<Decision>(&tx, DecisionRecord, project, id)? else {
+            return Ok(false);
+        };
+        let rearm = !withdrawn && decision.is_process_custody() && decision.answer.is_some();
+        if decision.task.is_some()
+            || (!rearm && (decision.withdrawn == withdrawn || decision.answer.is_some()))
+        {
+            return Ok(false);
+        }
+        if rearm {
+            decision.answer = None;
+        }
+        decision.withdrawn = withdrawn;
+        save(
+            &tx,
+            DecisionRecord,
+            project,
+            id,
+            if withdrawn { "withdraw" } else { "reopen" },
+            &decision,
+            stamp,
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// Record the answer. Task-linked decisions require the exact question row to remain current.
     ///
     /// # Errors
@@ -197,6 +272,20 @@ impl Store {
             answered_at_ms: stamp.at_ms,
         });
         save(&tx, DecisionRecord, project, id, "answer", &decision, stamp)?;
+        if decision.is_process_custody() {
+            // Keep the operator's answer in history and the same decision in
+            // the Inbox. Only a fresh process observation can settle custody.
+            decision.answer = None;
+            save(
+                &tx,
+                DecisionRecord,
+                project,
+                id,
+                "await_custody",
+                &decision,
+                stamp,
+            )?;
+        }
         let queued = if !same_answer && let Some((tell, tell_id)) = notice {
             insert_decision_tell(&tx, project, tell, tell_id)?;
             true

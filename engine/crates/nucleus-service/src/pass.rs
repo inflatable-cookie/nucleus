@@ -2360,10 +2360,8 @@ impl Service {
         let threads: Vec<_> = threads.into_iter().flatten().collect();
         // Each lookup uses the pass's shared process census.
         for root in self.retirement_roots(task, checkout).await? {
-            if let Some(pid) = host.retirement_writer(&root).await? {
-                return Err(ServiceError::ArchiveEvidence(format!(
-                    "PID {pid} has its working directory in the task checkout or run scratch."
-                )));
+            if let Some(blocker) = host.retirement_writer(&root).await? {
+                return Err(ServiceError::CheckoutProcess(blocker));
             }
         }
         let observed = match head {
@@ -2904,12 +2902,7 @@ mod tests {
                 path
             });
             for root in [checkout.path(), current.as_path(), earlier.as_path()] {
-                let mut child = tokio::process::Command::new("/bin/sleep")
-                    .arg("60")
-                    .current_dir(root)
-                    .kill_on_drop(true)
-                    .spawn()
-                    .unwrap();
+                let mut child = sleep_in_cwd(root);
                 let pid = child.id().unwrap();
                 let host = service
                     .host
@@ -2924,12 +2917,367 @@ mod tests {
                     .await;
                 child.kill().await.unwrap();
                 assert!(
-                    matches!(&result, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
+                    matches!(&result, Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid),
                     "{result:?}"
                 );
                 assert!(checkout.path().exists());
             }
         }
+    }
+
+    fn sleep_in_cwd(cwd: &Path) -> tokio::process::Child {
+        tokio::process::Command::new("/bin/sleep")
+            .arg("60")
+            .current_dir(cwd)
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn process_listing(command: &str, args: &[&str]) -> Vec<u8> {
+        let listing = tokio::process::Command::new(command)
+            .env("LC_ALL", "C")
+            .env("TZ", "UTC")
+            .args(args)
+            .output()
+            .await
+            .unwrap();
+        assert!(listing.status.success(), "{listing:?}");
+        listing.stdout
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn exit_without_reaping(child: &mut tokio::process::Child) {
+        let pid = child.id().unwrap().to_string();
+        child.start_kill().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = process_listing("/bin/ps", &["-p", &pid, "-o", "stat="]).await;
+                if String::from_utf8_lossy(&state)
+                    .trim_start()
+                    .starts_with('Z')
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("fixture child exited");
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn process_rows(pids: &str) -> Vec<u8> {
+        process_listing(
+            "/bin/ps",
+            &[
+                "-ww",
+                "-p",
+                pids,
+                "-o",
+                "pid=,ppid=,uid=,stat=,lstart=,ucomm=",
+            ],
+        )
+        .await
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn before_cwd_followup(unrelated: u32, exited: u32, writer: u32) -> (Vec<u8>, Vec<u8>) {
+        let ps = process_rows(&format!("{unrelated},{exited},{writer}")).await;
+        let lsof = process_listing(
+            "/usr/sbin/lsof",
+            &[
+                "-a",
+                "-p",
+                &unrelated.to_string(),
+                "-d",
+                "cwd",
+                "-n",
+                "-P",
+                "-F0pfn",
+            ],
+        )
+        .await;
+        assert!(String::from_utf8_lossy(&lsof).contains("elsewhere^A"));
+        (lsof, ps)
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn cwd_fields(pid: u32) -> String {
+        let listing = process_listing(
+            "/usr/sbin/lsof",
+            &[
+                "-a",
+                "-p",
+                &pid.to_string(),
+                "-d",
+                "cwd",
+                "-n",
+                "-P",
+                "-F0pfDn",
+            ],
+        )
+        .await;
+        String::from_utf8(listing).unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn cwd_device(lsof: &str) -> &str {
+        lsof.split('\0')
+            .find(|field| field.starts_with("D0x"))
+            .expect("real cwd device")
+    }
+
+    #[cfg(target_os = "macos")]
+    fn cwd_probe_second() -> i64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn forked_shell(cwd: &Path) -> (tokio::process::Child, u32) {
+        use std::process::Stdio;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let mut parent = tokio::process::Command::new("/bin/bash")
+            .args([
+                "-c",
+                r#"exec 3<&0; (cd "$1" && IFS= read -r ignored <&3) & printf '%s\n' "$!"; wait "$!""#,
+                "bash",
+            ])
+            .arg(cwd)
+            .current_dir("/")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut pid = String::new();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            BufReader::new(parent.stdout.take().unwrap()).read_line(&mut pid),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        (parent, pid.trim().parse().unwrap())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn real_census_rows_allow_unrelated_closeout_and_name_a_live_writer() {
+        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.fixture_mut().acp_provider = Some("fixture".into());
+        let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
+        let id = &row.task.identity().id;
+        let head = &service.fixture().start;
+        let route = service.project_for(row.task.identity()).await.unwrap();
+        let work = service.worktrees();
+        let checkout = work.checkout(&route.checkout, REPOSITORY, id).unwrap();
+        checkout.allocate(head).unwrap();
+        let binding = service
+            .checkout_binding(row.task.identity(), &route, &checkout)
+            .unwrap();
+        service.host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
+        }));
+        let scratch = service.storage.scratch().path();
+        let outside = home.path().join("elsewhere^A");
+        std::fs::create_dir(&outside).unwrap();
+        let mut unrelated = sleep_in_cwd(&outside);
+        let mut exited = sleep_in_cwd(checkout.path());
+        let inside = checkout.path().join("writer^A");
+        std::fs::create_dir(&inside).unwrap();
+        let mut writer = sleep_in_cwd(&inside);
+        let (lsof, ps) = before_cwd_followup(
+            unrelated.id().unwrap(),
+            exited.id().unwrap(),
+            writer.id().unwrap(),
+        )
+        .await;
+        // The follow-up identifies a process by its start second.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let capture = || {
+            service
+                .host
+                .pass(scratch)
+                .with_fixture_census(&lsof, &ps, scratch)
+        };
+
+        // The ps rows still name the exited child, and kill(0) still sees its PID.
+        exit_without_reaping(&mut exited).await;
+        let fixture = capture().await.unwrap();
+        assert_eq!(fixture.unresolved_processes(), Some(vec![]));
+        exited.wait().await.unwrap();
+        let retirement = service
+            .retire_if_idle(&fixture, &row.task, &binding, &checkout, Some(head))
+            .await;
+        let pid = writer.id().unwrap();
+        assert!(
+            matches!(&retirement, Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid && !blocker.unverified)
+        );
+        let result = retirement.map(|_| Action::Nothing);
+        service
+            .schedule_result(&row, &result, crate::schedule::Priority::Closeout)
+            .await
+            .unwrap();
+        {
+            let state = service.state.lock().await;
+            assert!(matches!(
+                state.wait_detail(id),
+                Some(crate::WaitDetail::Archive(message)) if message.contains(&format!("PID {pid} (sleep)")) && message.contains("working directory")
+            ));
+        }
+        assert!(checkout.path().exists());
+
+        writer.kill().await.unwrap();
+        let cleared = capture().await.unwrap();
+        assert_eq!(
+            service
+                .retire_if_idle(&cleared, &row.task, &binding, &checkout, Some(head))
+                .await
+                .unwrap(),
+            Some(Retirement::Removed)
+        );
+        assert!(!checkout.path().exists());
+        assert!(unrelated.try_wait().unwrap().is_none());
+        unrelated.kill().await.unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn cwd_metadata_error_still_holds_a_checkout_with_a_live_writer() {
+        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.fixture_mut().acp_provider = Some("fixture".into());
+        let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
+        let project = service.fixture();
+        let work = service.worktrees();
+        let id = &row.task.identity().id;
+        let checkout = work.checkout(&project.checkout, REPOSITORY, id).unwrap();
+        checkout.allocate(&project.start).unwrap();
+        let route = service.project_for(row.task.identity()).await.unwrap();
+        let binding = route.binding(&checkout).unwrap();
+
+        let (mut parent, pid) = forked_shell(checkout.path()).await;
+        let parent_pid = parent.id().unwrap();
+        // ps reports whole seconds and the follow-up must see the same lifetime.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let pids = format!("{pid},{parent_pid}");
+        let ps = process_rows(&pids).await;
+        let observed = cwd_probe_second();
+        let writer_cwd = cwd_fields(pid).await;
+        assert!(writer_cwd.contains(&format!("n{}\0", checkout.path().display())));
+        let parent_cwd = cwd_fields(parent_pid).await;
+        let current_ps = process_rows(&pids).await;
+        let scratch = service.storage.scratch().path();
+        let capture = |files: &str| {
+            service
+                .host
+                .pass(scratch)
+                .with_fixture_cwd_followup(files.as_bytes(), &ps, &current_ps, observed)
+                .unwrap()
+        };
+
+        // The child is inside the checkout. Its only listed open file is outside.
+        let failure = capture(&format!(
+            "{parent_cwd}p{pid}\0\nfcwd\0ncwd|rtd info error: No such file or directory\0\nftxt\0{}\0n/bin/bash\0\n",
+            cwd_device(&parent_cwd)
+        ));
+        let retirement = service
+            .retire_if_idle(
+                &failure,
+                &row.task,
+                &binding,
+                &checkout,
+                Some(&project.start),
+            )
+            .await;
+        assert!(
+            matches!(&retirement, Err(ServiceError::CheckoutProcess(blocker))
+            if blocker.pid == pid && blocker.unverified)
+        );
+        service
+            .schedule_result(
+                &row,
+                &retirement.map(|_| Action::Nothing),
+                crate::schedule::Priority::Closeout,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            service.state.lock().await.wait_detail(id),
+            Some(crate::WaitDetail::Archive(message))
+                if message.contains(&format!("PID {pid} (bash)")) && message.contains("could not rule out")
+        ));
+
+        // If only the device is readable, a match still holds the checkout.
+        let same_device = capture(&format!(
+            "{parent_cwd}p{pid}\0\nfcwd\0{}\0\n",
+            cwd_device(&writer_cwd)
+        ));
+        assert!(matches!(
+            service.retire_if_idle(&same_device, &row.task, &binding, &checkout, Some(&project.start)).await,
+            Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid && blocker.unverified
+        ));
+        assert!(checkout.path().exists());
+        drop(parent.stdin.take());
+        parent.wait().await.unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn pathless_cwd_on_another_device_allows_checkout_retirement() {
+        let (home, service) = fixture(GitHub::new("fixture").unwrap());
+        let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
+        let project = service.fixture();
+        let work = service.worktrees();
+        let checkout = work
+            .checkout(&project.checkout, REPOSITORY, &row.task.identity().id)
+            .unwrap();
+        checkout.allocate(&project.start).unwrap();
+        let route = service.project_for(row.task.identity()).await.unwrap();
+        let binding = route.binding(&checkout).unwrap();
+        service.host.fixture_held_shell(&json!({
+            "kind":"snapshot","snapshot":{"snapshotSequence":1,"projects":[],"threads":[]}
+        }));
+
+        let mut outside = sleep_in_cwd(Path::new("/"));
+        let pid = outside.id().unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let ps = process_rows(&pid.to_string()).await;
+        let observed = cwd_probe_second();
+        let outside_cwd = cwd_fields(pid).await;
+        let current_ps = process_rows(&pid.to_string()).await;
+        // Preserve the real device field and omit the pathname and inode.
+        let files = format!("p{pid}\0\nfcwd\0{}\0\n", cwd_device(&outside_cwd));
+        let unrelated = service
+            .host
+            .pass(service.storage.scratch().path())
+            .with_fixture_cwd_followup(files.as_bytes(), &ps, &current_ps, observed)
+            .unwrap();
+        assert_eq!(
+            service
+                .retire_if_idle(
+                    &unrelated,
+                    &row.task,
+                    &binding,
+                    &checkout,
+                    Some(&project.start)
+                )
+                .await
+                .unwrap(),
+            Some(Retirement::Removed)
+        );
+        assert!(outside.try_wait().unwrap().is_none());
+        outside.kill().await.unwrap();
     }
 
     struct ProtectedTree(Vec<u32>);
@@ -3221,7 +3569,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            matches!(&outcome, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {pid} "))),
+            matches!(&outcome, Err(ServiceError::CheckoutProcess(blocker)) if blocker.pid == pid),
             "{outcome:?}"
         );
         assert!(
@@ -3287,19 +3635,14 @@ mod tests {
             }));
         };
         shell(json!([]));
-        let mut writer = tokio::process::Command::new("/bin/sleep")
-            .arg("60")
-            .current_dir(checkout.path())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+        let mut writer = sleep_in_cwd(checkout.path());
         let writer_host = service
             .host
             .pass(service.storage.scratch().path())
             .with_fixture_process_cwd(writer.id().unwrap(), checkout.path())
             .for_task(&task, None);
         assert!(
-            matches!(service.retire_if_idle(&writer_host, &task, &binding, &checkout, Some(head)).await, Err(ServiceError::ArchiveEvidence(cause)) if cause.contains(&format!("PID {}", writer.id().unwrap())))
+            matches!(service.retire_if_idle(&writer_host, &task, &binding, &checkout, Some(head)).await, Err(ServiceError::CheckoutProcess(blocker)) if Some(blocker.pid) == writer.id())
         );
         assert!(checkout.path().exists());
         writer.kill().await.unwrap();
