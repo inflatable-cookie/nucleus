@@ -358,6 +358,9 @@ async fn reads_which_never_return_do_not_hold_back_their_task() {
     let hung = Hung::install(&mut service, home.path());
     hung.0.holds.store(3, Ordering::SeqCst);
     service.volume.check = Duration::from_secs(2);
+    // The third hung call goes past the limit.
+    service.volume.unreturned = 2;
+    service.volume.spacing = Duration::from_secs(1);
     let service = Arc::new(service);
     let api = api(&service);
 

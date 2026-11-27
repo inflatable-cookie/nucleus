@@ -134,8 +134,8 @@ Checkout, run scratch and checkout Git calls run on their own threads, outside
 the state lock and under a deadline. API reads and run reports answer while such
 a call waits, and the pass rechecks the task row before its next send. A call
 past its deadline can start no further mutation, including a fetch. A hung read
-never holds back later calls; after sixteen of a task's calls have not returned,
-it starts one more every five minutes. A mutation already started holds back its
+never holds back later calls; once sixteen of a task's calls have not returned,
+each further hung call delays that task's next ones by five minutes. A mutation already started holds back its
 task until it returns, or until the volume has gone and returned or been
 remounted and the mutation is older than eleven minutes, longer than Git may
 run. A published-base fetch holds back its whole repository the same way. A

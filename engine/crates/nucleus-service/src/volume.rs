@@ -23,8 +23,6 @@ use tokio::{
 
 use crate::{Service, ServiceError};
 
-/// Hung calls one owner may collect before each further one must wait its turn.
-const UNRETURNED: usize = 16;
 /// A pass step older than this is logged once.
 const STUCK: Duration = Duration::from_mins(1);
 
@@ -39,7 +37,9 @@ pub(crate) enum Limit {
 pub(crate) struct WorkVolume {
     pub(crate) check: Duration,
     pub(crate) change: Duration,
-    /// Past [`UNRETURNED`] hung calls, an owner starts one more this often.
+    /// The hung calls an owner may collect before further ones take turns.
+    pub(crate) unreturned: usize,
+    /// Past that limit, how long after a hung call an owner starts any other.
     pub(crate) spacing: Duration,
     /// Longer than Git may run before it is killed.
     pub(crate) outlived: Duration,
@@ -58,8 +58,8 @@ struct Abandoned {
 struct Hung {
     /// Each is shared with its thread until it returns.
     calls: Vec<Arc<Custody>>,
-    /// When a call was last started past the limit.
-    extra: Option<Instant>,
+    /// When a call was last abandoned.
+    latest: Option<Instant>,
 }
 
 impl Abandoned {
@@ -67,23 +67,17 @@ impl Abandoned {
         self.owners.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Whether this owner may start another call beside its hung ones. The
-    /// number of threads grows slowly past the limit and never stops progress.
-    fn has_room(&self, owner: &str, spacing: Duration) -> bool {
+    /// Whether this owner may start another call beside its hung ones. Past the
+    /// limit each new hung call makes the owner wait, so threads grow slowly and
+    /// progress never stops. Calls which return cost nothing.
+    fn has_room(&self, owner: &str, limit: usize, spacing: Duration) -> bool {
         let mut owners = self.owners();
         let Some(hung) = owners.get_mut(owner) else {
             return true;
         };
         // A call which has returned no longer shares its custody.
         hung.calls.retain(|custody| Arc::strong_count(custody) > 1);
-        if hung.calls.len() < UNRETURNED {
-            return true;
-        }
-        if hung.extra.is_some_and(|at| at.elapsed() < spacing) {
-            return false;
-        }
-        hung.extra = Some(Instant::now());
-        true
+        hung.calls.len() < limit || hung.latest.is_none_or(|at| at.elapsed() >= spacing)
     }
 
     /// Whether an earlier mutation of this owner could still take effect. This
@@ -120,13 +114,10 @@ impl Drop for Waiting<'_> {
     fn drop(&mut self) {
         if let Some(custody) = self.unsettled.take() {
             custody.abandon();
-            self.volume
-                .abandoned
-                .owners()
-                .entry(self.owner.into())
-                .or_default()
-                .calls
-                .push(custody);
+            let mut owners = self.volume.abandoned.owners();
+            let hung = owners.entry(self.owner.into()).or_default();
+            hung.latest = Some(Instant::now());
+            hung.calls.push(custody);
         }
         self.volume.waiting.send_modify(|waiting| {
             if let Some(count) = waiting.get_mut(self.owner) {
@@ -144,6 +135,7 @@ impl WorkVolume {
         Self {
             check: Duration::from_mins(2),
             change: Duration::from_mins(12),
+            unreturned: 16,
             spacing: Duration::from_mins(5),
             outlived: Duration::from_mins(11),
             waiting: watch::Sender::default(),
@@ -164,7 +156,10 @@ impl WorkVolume {
         job: impl FnOnce(Arc<Custody>) -> T + Send + 'static,
     ) -> Pin<Box<impl Future<Output = Result<T, StorageError>>>> {
         Box::pin(async move {
-            if !self.abandoned.has_room(owner, self.spacing) {
+            if !self
+                .abandoned
+                .has_room(owner, self.unreturned, self.spacing)
+            {
                 return Err(StorageError::VolumeUnavailable);
             }
             let _step = Step::enter(step);
@@ -398,8 +393,7 @@ mod tests {
         service.volume.check = Duration::from_millis(10);
         service.volume.spacing = Duration::from_hours(1);
         let mut hung = Vec::new();
-        // The last of these is the first allowed past the limit.
-        for _ in 0..=UNRETURNED {
+        for _ in 0..service.volume.unreturned {
             let (release, wait) = mpsc::channel::<()>();
             hung.push(release);
             let lost = service
@@ -411,8 +405,11 @@ mod tests {
         }
         assert!(!quick(&service.volume, OWNER).await);
         assert!(quick(&service.volume, "another").await);
-        // Every earlier call is still hung when the next turn comes.
-        service.volume.spacing = Duration::ZERO;
+        // Every earlier call is still hung when the turn comes, and calls which
+        // return leave it open for the rest of a pass.
+        service.volume.spacing = Duration::from_millis(200);
+        time::sleep(Duration::from_millis(250)).await;
+        assert!(quick(&service.volume, OWNER).await);
         assert!(quick(&service.volume, OWNER).await);
     }
 }
