@@ -129,7 +129,7 @@ async fn run_reconnect(inbox_session: bool) {
     let endpoint = listener.local_addr().unwrap();
     let (stream, attached, server_task) = server(listener, Arc::new(AtomicUsize::new(1)));
     let binding = binding(endpoint, inbox_session);
-    let mut client = ServiceClient::new(&binding).unwrap();
+    let mut client = ServiceClient::new(&binding, None).unwrap();
     let (output, mut frames) = mpsc::unbounded_channel();
     let polls = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&polls);

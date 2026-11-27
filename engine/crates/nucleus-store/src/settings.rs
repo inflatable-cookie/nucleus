@@ -903,13 +903,17 @@ impl<S: SettingsValue> SettingsDomain<S> {
                     .retired_keys
                     .as_ref()
                     .map_or_else(BTreeSet::new, RefCell::take);
-                eprintln!(
-                    "{} Upgraded {} to settings version {}. Removed keys {keys:?}. Verified backup at {}",
-                    time::OffsetDateTime::now_utc(),
+                let message = format!(
+                    "Upgraded {} to settings version {}. Removed keys {keys:?}. Verified backup at {}",
                     S::FILE,
                     receipt.to(),
                     receipt.safety_backup().path.display()
                 );
+                if log::log_enabled!(target: "nucleus::serve", log::Level::Warn) {
+                    log::warn!(target: "nucleus::serve", "{message}");
+                } else {
+                    eprintln!("{} {message}", time::OffsetDateTime::now_utc());
+                }
                 Ok(())
             }
             Err(MigrationRewriteError::NotRequired) => Ok(()),

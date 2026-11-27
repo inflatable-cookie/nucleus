@@ -1,5 +1,6 @@
 mod ensure;
 mod planning;
+mod serve_log;
 mod t3_setup;
 
 use std::{
@@ -33,6 +34,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::{
     net::TcpListener,
+    signal::unix::{Signal, SignalKind, signal},
     time::{self, Instant},
 };
 
@@ -57,7 +59,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Action {
     /// Serve the Nucleus ACP agent on stdio.
-    Acp,
+    Acp {
+        /// The installed provider launcher for this engine endpoint.
+        #[arg(long, hide = true)]
+        ensure_launcher: Option<PathBuf>,
+    },
     /// Start the local engine if a verified instance is not running.
     Ensure(ensure::Args),
     /// Enable the engine and optionally set its storage placement and overrides.
@@ -281,8 +287,8 @@ enum Placement {
 async fn main() -> Result<()> {
     let Cli { endpoint, action } = Cli::parse();
     match action {
-        Action::Acp => {
-            if let Err(error) = nucleus_acp::run().await {
+        Action::Acp { ensure_launcher } => {
+            if let Err(error) = nucleus_acp::run(endpoint, ensure_launcher).await {
                 // Runtime shutdown can wait indefinitely for Tokio's blocking stdin read.
                 eprintln!("Error: {error:?}");
                 std::process::exit(1);
@@ -306,11 +312,10 @@ async fn main() -> Result<()> {
                 Authority::Operator { actor }
             };
             std::panic::set_hook(Box::new(|info| {
-                eprintln!(
-                    "{} {}",
-                    ::time::OffsetDateTime::now_utc(),
+                serve_log::line(format_args!(
+                    "{}",
                     info.to_string().replace(['\r', '\n'], " ")
-                );
+                ));
             }));
             let result = async {
                 let provider = acp_provider.ok_or("supply the T3 ACP provider")?;
@@ -327,11 +332,10 @@ async fn main() -> Result<()> {
             }
             .await;
             if let Err(error) = result {
-                eprintln!(
-                    "{} {}",
-                    ::time::OffsetDateTime::now_utc(),
+                serve_log::line(format_args!(
+                    "{}",
                     error.to_string().replace(['\r', '\n'], " ")
-                );
+                ));
                 std::process::exit(1);
             }
             Ok(())
@@ -418,6 +422,8 @@ async fn serve(
     fixture_origin_thread: Option<String>,
     board_assets: Option<&Path>,
 ) -> Result<()> {
+    let started = Instant::now();
+    let signals = ShutdownSignals::new()?;
     loopback(endpoint)?;
     let actor = match &authority {
         Authority::Operator { actor } | Authority::Planner { actor } => actor,
@@ -455,16 +461,68 @@ async fn serve(
     let service = Service::open_projects(&settings, provider, host, forge, callback, command)?;
     let service = service.with_inbox_from_env()?;
     let service = Arc::new(service);
-    let api = match board_assets {
-        Some(path) => router_with_board_and_t3_callers(
-            Arc::clone(&service),
-            controllers,
-            path,
-            Some(t3_caller_key),
-        )?,
-        None => router_with_t3_callers(Arc::clone(&service), controllers, Some(t3_caller_key)),
-    };
-    let tcp = TcpListener::bind(endpoint).await?;
+    serve_log::start(settings.home())?;
+    // Keep the service's profile lock through the final log and disposition.
+    let result = async {
+        let api = match board_assets {
+            Some(path) => router_with_board_and_t3_callers(
+                Arc::clone(&service),
+                controllers,
+                path,
+                Some(t3_caller_key),
+            )?,
+            None => router_with_t3_callers(Arc::clone(&service), controllers, Some(t3_caller_key)),
+        };
+        let tcp = TcpListener::bind(endpoint).await?;
+        serve_http(tcp, api, Arc::clone(&service), signals, started).await
+    }
+    .await;
+    if let Err(error) = &result {
+        serve_log::line(format_args!(
+            "Nucleus engine exited with an error after {:.3}s: {}",
+            started.elapsed().as_secs_f64(),
+            error.to_string().replace(['\r', '\n'], " ")
+        ));
+    }
+    serve_log::finish(result.is_ok())?;
+    if result.is_err() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+struct ShutdownSignals {
+    interrupt: Signal,
+    terminate: Signal,
+    hangup: Signal,
+}
+
+impl ShutdownSignals {
+    fn new() -> io::Result<Self> {
+        Ok(Self {
+            interrupt: signal(SignalKind::interrupt())?,
+            terminate: signal(SignalKind::terminate())?,
+            hangup: signal(SignalKind::hangup())?,
+        })
+    }
+
+    async fn next(&mut self) -> &'static str {
+        tokio::select! {
+            _ = self.interrupt.recv() => "SIGINT",
+            _ = self.terminate.recv() => "SIGTERM",
+            _ = self.hangup.recv() => "SIGHUP",
+        }
+    }
+}
+
+async fn serve_http(
+    tcp: TcpListener,
+    api: axum::Router,
+    service: Arc<Service>,
+    mut signals: ShutdownSignals,
+    started: Instant,
+) -> Result<()> {
+    let address = tcp.local_addr()?;
     let watch = Arc::clone(&service);
     let watcher = tokio::spawn(async move {
         watch.watch_host().await;
@@ -477,32 +535,31 @@ async fn serve(
                         if let Err(error) = outcome.result
                             && !error.is_held_call()
                         {
-                            eprintln!(
-                                "{} {}: {error}",
-                                ::time::OffsetDateTime::now_utc(),
-                                outcome.task
-                            );
+                            serve_log::line(format_args!("{}: {error}", outcome.task));
                         }
                     }
                 }
                 Err(error) => {
-                    eprintln!("{} {error}", ::time::OffsetDateTime::now_utc());
+                    serve_log::line(format_args!("{error}"));
                     tokio::time::sleep(Duration::from_secs(3)).await;
                 }
             }
         }
     });
-    println!(
-        "{} Nucleus engine listening on http://{}",
-        ::time::OffsetDateTime::now_utc(),
-        tcp.local_addr()?
-    );
+    serve_log::listening(address);
     let result = tokio::select! {
         result = axum::serve(tcp, api) => result,
-        result = tokio::signal::ctrl_c() => result,
+        signal = signals.next() => {
+            serve_log::line(format_args!(
+                "Nucleus engine shutting down on {signal} after {:.3}s",
+                started.elapsed().as_secs_f64()
+            ));
+            Ok(())
+        },
     };
     watcher.abort();
     cycle.abort();
+    let _ = tokio::join!(watcher, cycle);
     Ok(result?)
 }
 

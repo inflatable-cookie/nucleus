@@ -1,0 +1,1 @@
+Running ACP clients restart an unreachable engine after sustained connection refusals. The engine logs shutdown signals and uptime, and the next start reports how the previous run ended and when it last logged.

@@ -3,7 +3,11 @@
 macro_rules! host_log {
     ($($arg:tt)*) => {{
         let message = format!($($arg)*).replace(['\r', '\n'], " ");
-        eprintln!("{} {message}", ::time::OffsetDateTime::now_utc());
+        if log::log_enabled!(target: "nucleus::serve", log::Level::Warn) {
+            log::warn!(target: "nucleus::serve", "{message}");
+        } else {
+            eprintln!("{} {message}", ::time::OffsetDateTime::now_utc());
+        }
     }};
 }
 

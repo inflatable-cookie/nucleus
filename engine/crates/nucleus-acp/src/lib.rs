@@ -3,12 +3,17 @@
 mod client;
 mod inbox;
 mod presentation;
+mod recovery;
 
-use std::{collections::BTreeMap, env, io, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap, env, io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration,
+};
 
 use client::{Failure, ServiceClient};
 use nucleus_core::acp::SessionBinding;
 use presentation::Presentation;
+use recovery::Recovery;
+pub use recovery::{connection_refused, ensure_launcher};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
@@ -25,6 +30,7 @@ struct Agent {
     sessions: BTreeMap<String, Session>,
     model: &'static str,
     structured: bool,
+    recovery: Option<Arc<Recovery>>,
 }
 
 struct Session {
@@ -48,10 +54,11 @@ impl Drop for Turn {
 }
 
 /// Serve the Nucleus ACP protocol on standard input and output.
+/// A configured launcher can recover the same local engine endpoint.
 ///
 /// # Errors
 /// Returns an error when startup, binding validation or stdio fails.
-pub async fn run() -> io::Result<()> {
+pub async fn run(endpoint: SocketAddr, ensure_launcher: Option<PathBuf>) -> io::Result<()> {
     let launch_cwd = env::current_dir().ok();
     if let Some(workspace) = &launch_cwd
         && let Ok(SessionBinding::Task(binding)) = client::binding(workspace)
@@ -76,6 +83,7 @@ pub async fn run() -> io::Result<()> {
         sessions: BTreeMap::new(),
         model: MODELS[0],
         structured: env::var("NUCLEUS_ACP_TEXT_FALLBACK").as_deref() != Ok("1"),
+        recovery: ensure_launcher.map(|path| Arc::new(Recovery::new(endpoint, path))),
     };
     let input = async {
         let mut lines = BufReader::new(tokio::io::stdin()).lines();
@@ -191,7 +199,10 @@ impl Agent {
                 if loading && params["sessionId"] != binding.id() {
                     return Err(Failure::Binding);
                 }
-                (binding.id().to_owned(), Some(ServiceClient::new(&binding)?))
+                (
+                    binding.id().to_owned(),
+                    Some(ServiceClient::new(&binding, self.recovery.clone())?),
+                )
             }
             Err(Failure::Missing) if !loading => {
                 let mut random = [0; 16];
