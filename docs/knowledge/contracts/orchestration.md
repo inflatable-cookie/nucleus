@@ -130,18 +130,22 @@ After repairing the checkout, the owner can use Recheck at the version shown by 
 
 ### Work volume outages
 
-Checkout, run scratch and checkout Git calls run off the engine's request
-threads, outside the state lock and under a deadline. API reads and run reports
-answer while such a call waits, and the pass rechecks the task row before its
-next send. A call past its deadline keeps its task waiting until it returns, and
-it starts no removal or rename afterwards.
+Checkout, run scratch and checkout Git calls run on their own threads, outside
+the state lock and under a deadline. API reads and run reports answer while such
+a call waits, and the pass rechecks the task row before its next send. A call
+past its deadline can start no further mutation. It holds back its task only
+while a mutation it had already started is still running, or once sixteen of the
+task's calls have not returned. A quarantine stopped after its move stays
+pending for the owner to check.
 
-A task whose work volume or layout cannot be verified waits with that reason and
-retries with a delay that doubles to one minute. This wait never becomes a
-blocked checkout, and an absent path under an unverified root is not evidence of
-absence. The engine creates the work root at startup and during allocation. A
-remounted Barge class resumes when it has the same directory and volume ID. See
-the [work volume gate](../../../engine/crates/nucleus-service/src/volume.rs).
+A task whose work volume or layout, including its registered checkout, cannot be
+verified waits with that reason and retries with a delay that doubles to one
+minute. This wait never becomes a blocked checkout, and an absent path under an
+unverified root is not evidence of absence. The engine creates the work and
+scratch roots at startup and holds on to those directories. A missing or
+substitute directory is refused and never recreated. A remounted root resumes
+when it has the same directory and volume ID. See the
+[work volume gate](../../../engine/crates/nucleus-service/src/volume.rs).
 
 ## Worker run
 

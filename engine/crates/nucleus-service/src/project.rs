@@ -9,7 +9,7 @@ use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Identity, Role};
 use nucleus_forge::Branches;
 use nucleus_hosts::{Binding, HostError, RoleProfile};
-use nucleus_store::RepositorySettings;
+use nucleus_store::{RepositorySettings, StorageError};
 use nucleus_work::{Checkout, WorkError};
 
 use crate::{Service, ServiceError, State, volume::Limit};
@@ -165,12 +165,25 @@ impl Service {
         let checkout = route.checkout.clone();
         let base = identity.base.clone();
         let git = self.git.clone();
+        let (work, scratch) = (self.storage.work().clone(), self.storage.scratch().clone());
+        let verify = move |_| {
+            verify_repository(&repository, &checkout, &base, &git).or_else(|refused| {
+                // A refusal with the volume or checkout unavailable says nothing
+                // about the project.
+                work.verify().map_err(WorkError::from)?;
+                scratch.verify().map_err(WorkError::from)?;
+                if !checkout.is_dir() {
+                    return Err(WorkError::from(StorageError::VolumeUnavailable).into());
+                }
+                Err(refused)
+            })
+        };
         self.volume
             .run(
                 &identity.id,
                 "verifying the project checkout",
                 Limit::Check,
-                move |_| verify_repository(&repository, &checkout, &base, &git),
+                verify,
             )
             .await
             .map_err(WorkError::from)?
@@ -398,6 +411,8 @@ pub(crate) mod git_gate {
     #[derive(Default)]
     pub struct Gate {
         pub entered: AtomicUsize,
+        /// Hold only this many calls. Zero holds every call until release.
+        pub holds: AtomicUsize,
         released: Mutex<bool>,
         ready: Condvar,
     }
@@ -423,7 +438,11 @@ pub(crate) mod git_gate {
     pub fn enter(path: &PathBuf) {
         let gate = gates().lock().unwrap().get(path).cloned();
         if let Some(gate) = gate {
-            gate.entered.fetch_add(1, Ordering::SeqCst);
+            let earlier = gate.entered.fetch_add(1, Ordering::SeqCst);
+            let holds = gate.holds.load(Ordering::SeqCst);
+            if holds != 0 && earlier >= holds {
+                return;
+            }
             let released = gate.released.lock().unwrap();
             drop(
                 gate.ready

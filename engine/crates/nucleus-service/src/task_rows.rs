@@ -316,7 +316,7 @@ impl Service {
         let identity = task.identity();
         let route = self.project_for(identity).await?;
         let work = self.worktrees();
-        let checkout = work.checkout(&route.checkout, &identity.repository, id)?;
+        let checkout = work.registered(&route.checkout, &identity.repository, id)?;
         let binding = route.binding(&checkout)?;
         let Some(target) = route
             .checkout

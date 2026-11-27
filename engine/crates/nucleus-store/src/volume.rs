@@ -57,6 +57,7 @@ impl PinnedVolume {
                 scratch: scratch.into(),
             },
             path,
+            pin: None,
         })
     }
 
@@ -94,6 +95,7 @@ impl PinnedVolume {
 pub struct StorageDirectory {
     root: DirectoryRoot,
     path: PathBuf,
+    pin: Option<Arc<Mutex<Anchor>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,8 +111,8 @@ enum DirectoryRoot {
     },
 }
 
-/// The Barge class directory the engine is using. A remount gives the same
-/// directory a new device number, accepted only on proof of the same volume.
+/// A directory the engine is using. A remount gives it a new device number,
+/// accepted only on proof of the same volume.
 #[derive(Debug)]
 struct Anchor {
     // Held open so the inode cannot be reused while the engine runs.
@@ -131,14 +133,17 @@ impl Anchor {
         })
     }
 
-    fn open(anchor: &Mutex<Self>, class_root: &Path) -> Result<OwnedFd, StorageError> {
-        let current = open(class_root, DIRECTORY, Mode::empty()).map_err(|error| {
-            if error == rustix::io::Errno::NOENT {
-                StorageError::VolumeUnavailable
-            } else {
-                error.into()
-            }
-        })?;
+    fn hold(path: &Path, directory: OwnedFd) -> Result<Arc<Mutex<Self>>, StorageError> {
+        // Without a volume ID a remounted directory stays unavailable until restart.
+        let volume_id = PinnedVolume::detect(path)
+            .ok()
+            .map(|volume| volume.volume_id);
+        let anchor = Self::new(directory.into(), volume_id)?;
+        Ok(Arc::new(Mutex::new(anchor)))
+    }
+
+    /// Accept the directory just opened at the anchored path.
+    fn admit(anchor: &Mutex<Self>, path: &Path, current: OwnedFd) -> Result<OwnedFd, StorageError> {
         let current = File::from(current);
         let found = current.metadata()?;
         let (device, inode, volume_id) = {
@@ -150,7 +155,7 @@ impl Anchor {
             let expected = volume_id
                 .filter(|_| found.ino() == inode)
                 .ok_or(StorageError::VolumeUnavailable)?;
-            if !PinnedVolume::detect(class_root)?
+            if !PinnedVolume::detect(path)?
                 .volume_id
                 .eq_ignore_ascii_case(&expected)
             {
@@ -169,6 +174,7 @@ impl StorageDirectory {
         Ok(Self {
             root: DirectoryRoot::Native,
             path,
+            pin: None,
         })
     }
 
@@ -179,18 +185,28 @@ impl StorageDirectory {
         }
         let class = Self::native(class_root.to_path_buf())?;
         class.verify()?;
-        let directory = File::from(open(class_root, DIRECTORY, Mode::empty())?);
-        // Without a volume ID a remounted class stays unavailable until restart.
-        let volume_id = PinnedVolume::detect(class_root)
-            .ok()
-            .map(|volume| volume.volume_id);
+        let directory = open(class_root, DIRECTORY, Mode::empty())?;
         Ok(Self {
             root: DirectoryRoot::Barge {
                 class_root: class_root.to_path_buf(),
-                anchor: Arc::new(Mutex::new(Anchor::new(directory, volume_id)?)),
+                anchor: Anchor::hold(class_root, directory)?,
             },
             path,
+            pin: None,
         })
+    }
+
+    /// Create this directory if it is missing and hold on to the one found.
+    /// From then on a missing directory or a substitute at its path is
+    /// unavailable, and nothing recreates it.
+    ///
+    /// # Errors
+    /// Returns an error if the directory cannot be created or opened.
+    pub fn pinned(mut self) -> Result<Self, StorageError> {
+        self.ensure()?;
+        let directory = self.walk_from(self.open_root()?, &self.path, false)?;
+        self.pin = Some(Anchor::hold(&self.path, directory)?);
+        Ok(self)
     }
 
     #[must_use]
@@ -237,16 +253,36 @@ impl StorageDirectory {
         if (expected.st_dev, expected.st_ino) != (found.st_dev, found.st_ino) {
             return Err(StorageError::VolumeUnavailable);
         }
-        self.walk_from(current, &self.path, false)
+        self.walk_from(current, &self.path, false).map(drop)
     }
 
     fn walk(&self, path: &Path, create: bool) -> Result<(), StorageError> {
-        let root = match &self.root {
-            DirectoryRoot::Native => open(self.root(), DIRECTORY, Mode::empty())?,
-            DirectoryRoot::Pinned { volume, scratch } => volume.open_mount(Some(scratch))?,
-            DirectoryRoot::Barge { class_root, anchor } => Anchor::open(anchor, class_root)?,
-        };
-        self.walk_from(root, path, create)
+        let root = self.open_root()?;
+        // Checked before anything is created, so a substitute stays untouched.
+        if let Some(pin) = &self.pin {
+            let found = self
+                .walk_from(root.try_clone()?, &self.path, false)
+                .map_err(|_| StorageError::VolumeUnavailable)?;
+            Anchor::admit(pin, &self.path, found)?;
+        }
+        self.walk_from(root, path, create).map(drop)
+    }
+
+    fn open_root(&self) -> Result<OwnedFd, StorageError> {
+        match &self.root {
+            DirectoryRoot::Native => Ok(open(self.root(), DIRECTORY, Mode::empty())?),
+            DirectoryRoot::Pinned { volume, scratch } => volume.open_mount(Some(scratch)),
+            DirectoryRoot::Barge { class_root, anchor } => {
+                let current = open(class_root, DIRECTORY, Mode::empty()).map_err(|error| {
+                    if error == rustix::io::Errno::NOENT {
+                        StorageError::VolumeUnavailable
+                    } else {
+                        error.into()
+                    }
+                })?;
+                Anchor::admit(anchor, class_root, current)
+            }
+        }
     }
 
     fn root(&self) -> &Path {
@@ -262,7 +298,7 @@ impl StorageDirectory {
         mut directory: OwnedFd,
         path: &Path,
         create: bool,
-    ) -> Result<(), StorageError> {
+    ) -> Result<OwnedFd, StorageError> {
         let device = fstat(&directory)?.st_dev;
         for component in relative(self.root(), path)?.components() {
             let Component::Normal(name) = component else {
@@ -282,7 +318,7 @@ impl StorageDirectory {
                 return Err(StorageError::OutsideVolume);
             }
         }
-        Ok(())
+        Ok(directory)
     }
 }
 
@@ -426,6 +462,37 @@ mod tests {
         ));
         std::fs::remove_dir_all(&class).unwrap();
         std::fs::rename(&away, &class).unwrap();
+        directory.verify().unwrap();
+    }
+
+    #[test]
+    fn a_pinned_directory_refuses_a_substitute_and_is_never_recreated() {
+        let volume = tempfile::tempdir().unwrap();
+        let root = volume.path().canonicalize().unwrap();
+        let path = root.join("work");
+        let directory = StorageDirectory::native(path.clone())
+            .unwrap()
+            .pinned()
+            .unwrap();
+        directory.ensure_child(Path::new("bucket")).unwrap();
+
+        let away = root.join("away");
+        std::fs::rename(&path, &away).unwrap();
+        for result in [directory.verify(), directory.ensure()] {
+            assert!(matches!(result, Err(StorageError::VolumeUnavailable)));
+        }
+        assert!(!path.exists());
+        std::fs::create_dir(&path).unwrap();
+        for result in [
+            directory.verify(),
+            directory.clone().ensure_child(Path::new("bucket")),
+        ] {
+            assert!(matches!(result, Err(StorageError::VolumeUnavailable)));
+        }
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::rename(&away, &path).unwrap();
         directory.verify().unwrap();
     }
 }

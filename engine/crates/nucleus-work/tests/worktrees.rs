@@ -2,14 +2,14 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, atomic::AtomicBool},
+    sync::Arc,
 };
 
 use longhorn_git_workspace::{GitCredential, GitFailure, GitPolicy};
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Workspace};
 use nucleus_store::{EngineSettings, SettingsFile};
-use nucleus_work::{Retirement, WorkError, Worktrees};
+use nucleus_work::{Custody, Retirement, WorkError, Worktrees};
 
 struct LocalGit;
 
@@ -977,10 +977,65 @@ fn an_abandoned_job_removes_nothing() {
     });
 
     // The caller stopped waiting before the call reached its rename.
-    let abandoned = Arc::new(AtomicBool::new(true));
-    assert!(matches!(job(abandoned), Err(WorkError::Storage(_))));
+    let custody = Arc::new(Custody::default());
+    custody.abandon();
+    assert!(matches!(job(custody), Err(WorkError::Storage(_))));
     assert!(checkout.path().join(".git").is_file());
     assert_eq!(checkout.retire(&head).unwrap(), Retirement::Removed);
+}
+
+/// Stops the caller's wait as one named Git command starts.
+struct AbandonAt(Arc<Custody>, &'static str);
+
+impl GitPolicy for AbandonAt {
+    fn isolate(&self, command: &mut Command) {
+        if command.get_args().any(|argument| argument == self.1) {
+            self.0.abandon();
+        }
+        LocalGit.isolate(command);
+    }
+
+    fn credential(&self, _: &str) -> Result<Option<GitCredential>, GitFailure> {
+        Ok(None)
+    }
+
+    fn refresh_credential(&self, _: &GitCredential) -> Option<GitCredential> {
+        None
+    }
+}
+
+#[test]
+fn a_quarantine_abandoned_midway_deletes_no_further_custody() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let head = repository(&repo);
+    let worktrees = worktrees(root.path());
+    let checkout = worktrees
+        .checkout(&repo, "example/fixture", "task-midway")
+        .unwrap();
+    checkout.allocate(&head).unwrap();
+    let admin = git(checkout.path(), &["rev-parse", "--absolute-git-dir"]);
+    let admin = Path::new(admin.trim_end_matches('\n'));
+    fs::remove_file(admin.join("index")).unwrap();
+    fs::write(admin.join("locked"), "initializing").unwrap();
+    let custody = Arc::new(Custody::default());
+    // The read before the branch delete outlasts the caller.
+    let policy = AbandonAt(Arc::clone(&custody), "for-each-ref");
+    let redactor = Redactor::new([], RedactionRules::common());
+    let job = checkout.job(policy, redactor, |checkout| {
+        checkout.quarantine_initialization(1000)
+    });
+
+    assert!(matches!(job(custody), Err(WorkError::Storage(_))));
+    assert_eq!(
+        git(&repo, &["rev-parse", "ns-task-midway"]).trim_end(),
+        head.as_str()
+    );
+    // The marker keeps the next attempt from starting over.
+    assert!(matches!(
+        checkout.quarantine_initialization(2000),
+        Err(WorkError::QuarantinePending)
+    ));
 }
 
 #[test]

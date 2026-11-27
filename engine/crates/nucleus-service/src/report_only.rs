@@ -248,7 +248,7 @@ impl Service {
     ) -> Result<Head, ServiceError> {
         let route = self.project_for(identity).await?;
         let worktrees = self.worktrees();
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         let local = self.verify_route(identity, &route).await?;
         let branches = report_branches(identity, &checkout)?;
         let head = self.forge.branch_head(&branches, &identity.base).await?;
@@ -443,7 +443,7 @@ impl Service {
         let identity = task.identity();
         let route = self.project_for(identity).await?;
         let worktrees = self.worktrees();
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         let binding = self.checkout_binding(identity, &route, &checkout)?;
         let branches = report_branches(identity, &checkout)?;
         self.verify_route(identity, &route).await?;

@@ -7,8 +7,8 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -132,11 +132,62 @@ pub enum Retirement {
     Removed,
 }
 
+/// Shared by a blocking call and the caller awaiting it. A caller which stops
+/// waiting refuses every later mutation and can tell whether one is running.
+#[derive(Debug, Default)]
+pub struct Custody(Mutex<Claim>);
+
+#[derive(Debug, Default)]
+struct Claim {
+    abandoned: bool,
+    mutating: u32,
+}
+
+/// One admitted mutation, running until this is dropped.
+#[derive(Debug)]
+pub struct Mutation<'a>(&'a Custody);
+
+impl Custody {
+    /// Admit one mutation.
+    ///
+    /// # Errors
+    /// Refuses once the caller has stopped waiting.
+    pub fn mutate(&self) -> Result<Mutation<'_>, StorageError> {
+        let mut claim = self.claim();
+        if claim.abandoned {
+            return Err(StorageError::VolumeUnavailable);
+        }
+        claim.mutating += 1;
+        Ok(Mutation(self))
+    }
+
+    /// Stop waiting for the call.
+    pub fn abandon(&self) {
+        self.claim().abandoned = true;
+    }
+
+    /// Whether an admitted mutation is still running.
+    #[must_use]
+    pub fn mutating(&self) -> bool {
+        self.claim().mutating > 0
+    }
+
+    fn claim(&self) -> std::sync::MutexGuard<'_, Claim> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Drop for Mutation<'_> {
+    fn drop(&mut self) {
+        self.0.claim().mutating -= 1;
+    }
+}
+
 pub struct Worktrees<'a> {
     root: StorageDirectory,
     scratch: StorageDirectory,
     git: Git<'a>,
-    abandoned: Arc<AtomicBool>,
+    custody: Arc<Custody>,
 }
 
 pub struct Checkout<'a> {
@@ -144,6 +195,18 @@ pub struct Checkout<'a> {
     repository: PathBuf,
     path: PathBuf,
     branch: String,
+}
+
+// An unreadable registered checkout is an unverified layout, which can return.
+fn require_registered(repository: &Path) -> Result<(), WorkError> {
+    let found = repository
+        .canonicalize()
+        .map_err(|_| StorageError::VolumeUnavailable)?;
+    if found == repository {
+        Ok(())
+    } else {
+        Err(WorkError::WrongCheckout)
+    }
 }
 
 fn quarantine_stamp(name: &str, directory: &fs::Metadata) -> String {
@@ -340,7 +403,7 @@ impl<'a> Worktrees<'a> {
             root: storage.work().clone(),
             scratch: storage.scratch().clone(),
             git: Git::new(policy, redactor),
-            abandoned: Arc::default(),
+            custody: Arc::default(),
         }
     }
 
@@ -349,6 +412,20 @@ impl<'a> Worktrees<'a> {
     /// # Errors
     /// Returns an error if the task ID or repository path cannot be used.
     pub fn checkout(
+        &self,
+        repository: &Path,
+        repository_id: &str,
+        task_id: &str,
+    ) -> Result<Checkout<'_>, WorkError> {
+        self.registered(&repository.canonicalize()?, repository_id, task_id)
+    }
+
+    /// [`Worktrees::checkout`] without reading the filesystem. The registered
+    /// path must already be canonical, which an owned job checks before it acts.
+    ///
+    /// # Errors
+    /// Returns an error if the task ID cannot be used.
+    pub fn registered(
         &self,
         repository: &Path,
         repository_id: &str,
@@ -364,7 +441,7 @@ impl<'a> Worktrees<'a> {
         let branch = format!("ns-{task_id}");
         Ok(Checkout {
             worktrees: self,
-            repository: repository.canonicalize()?,
+            repository: repository.into(),
             path: checkout_path(self.root.path(), repository_id, task_id),
             branch,
         })
@@ -393,16 +470,16 @@ impl Checkout<'_> {
         &self.branch["ns-".len()..]
     }
 
-    /// Own this checkout for a blocking executor. The caller sets `abandoned`
-    /// when it stops waiting, which refuses any destructive step still ahead. A
-    /// failure with the work root unverified reports the volume, whatever the
-    /// operation saw.
+    /// Own this checkout for a blocking executor. The caller abandons the
+    /// `Custody` when it stops waiting, which refuses every mutation still
+    /// ahead. A failure with the work root or registered checkout unavailable
+    /// reports the volume, whatever the operation saw.
     pub fn job<P, T, F>(
         &self,
         policy: P,
         redactor: Redactor,
         operation: F,
-    ) -> impl FnOnce(Arc<AtomicBool>) -> Result<T, WorkError> + Send + 'static + use<P, T, F>
+    ) -> impl FnOnce(Arc<Custody>) -> Result<T, WorkError> + Send + 'static + use<P, T, F>
     where
         P: GitPolicy + Send + 'static,
         F: FnOnce(&Checkout<'_>) -> Result<T, WorkError> + Send + 'static,
@@ -412,12 +489,12 @@ impl Checkout<'_> {
         let repository = self.repository.clone();
         let path = self.path.clone();
         let branch = self.branch.clone();
-        move |abandoned| {
+        move |custody| {
             let worktrees = Worktrees {
                 root,
                 scratch,
                 git: Git::new(&policy, redactor),
-                abandoned,
+                custody,
             };
             let checkout = Checkout {
                 worktrees: &worktrees,
@@ -425,9 +502,11 @@ impl Checkout<'_> {
                 path,
                 branch,
             };
-            let result = operation(&checkout);
+            let result =
+                require_registered(&checkout.repository).and_then(|()| operation(&checkout));
             if result.is_err() {
                 worktrees.root.verify()?;
+                require_registered(&checkout.repository)?;
             }
             result
         }
@@ -602,7 +681,7 @@ impl Checkout<'_> {
             return Ok(Retirement::Absent);
         };
         self.require_unlocked(&admin)?;
-        self.admit_change()?;
+        let _step = self.admit()?;
         self.remove(&["--force"])?;
         Ok(Retirement::Removed)
     }
@@ -620,21 +699,27 @@ impl Checkout<'_> {
         }
         if let Some((admin, _)) = self.prunable_identity()? {
             self.require_unlocked(&admin)?;
-            self.admit_change()?;
+            let _step = self.admit()?;
             self.remove(&["--force"])?;
         }
         let parent = self.path.parent().ok_or(WorkError::InvalidPath)?;
         let bucket = parent
             .strip_prefix(self.worktrees.root.path())
             .map_err(|_| WorkError::WrongCheckout)?;
-        self.worktrees.root.ensure_child(bucket)?;
+        {
+            let _step = self.admit()?;
+            self.worktrees.root.ensure_child(bucket)?;
+        }
         let path = self.path.to_str().ok_or(WorkError::InvalidPath)?;
         let args = match self.branch_head()? {
             None => vec!["worktree", "add", "-b", &self.branch, path, start.as_str()],
             Some(head) if head == *start => vec!["worktree", "add", path, &self.branch],
             Some(_) => return Err(WorkError::WrongBranchHead),
         };
-        self.git(&self.repository, &args)?;
+        {
+            let _step = self.admit()?;
+            self.git(&self.repository, &args)?;
+        }
         self.observe()
     }
 
@@ -645,8 +730,10 @@ impl Checkout<'_> {
     /// Returns an error if the registration, initialization marker, index or
     /// branch has changed, or if the original directory cannot be renamed.
     pub fn quarantine_initialization(&self, time_ms: u64) -> Result<(), WorkError> {
-        self.worktrees.root.verify()?;
-        self.worktrees.scratch.ensure_child(Path::new(QUARANTINE))?;
+        {
+            let _step = self.admit()?;
+            self.worktrees.scratch.ensure_child(Path::new(QUARANTINE))?;
+        }
         let root = self.worktrees.scratch.path().join(QUARANTINE);
         let pending = root.join(format!(".{}.pending", self.branch));
         if !missing(&pending)? {
@@ -668,25 +755,34 @@ impl Checkout<'_> {
 
         let name = format!("{}-{time_ms}", &self.branch["ns-".len()..]);
         let destination = root.join(&name);
-        let mut marker = fs::File::create_new(&pending)?;
-        marker.write_all(quarantine_stamp(&name, &metadata).as_bytes())?;
-        marker.sync_all()?;
-        if let Err(error) = self.admit_change() {
+        {
+            let _step = self.admit()?;
+            let mut marker = fs::File::create_new(&pending)?;
+            marker.write_all(quarantine_stamp(&name, &metadata).as_bytes())?;
+            marker.sync_all()?;
+        }
+        let moved = self.admit().and_then(|_step| {
+            renameat_with(CWD, &self.path, CWD, &destination, RenameFlags::NOREPLACE)
+                .map_err(|error| WorkError::QuarantineMove(error.into()))
+        });
+        if let Err(error) = moved {
+            // Nothing moved, so only this attempt's unused marker is removed.
             let _ = fs::remove_file(&pending);
             return Err(error);
         }
-        if let Err(error) =
-            renameat_with(CWD, &self.path, CWD, &destination, RenameFlags::NOREPLACE)
+        // Past the move, a refused step leaves the marker for the owner to check.
         {
-            let _ = fs::remove_file(&pending);
-            return Err(WorkError::QuarantineMove(error.into()));
+            let _step = self.admit()?;
+            fs::hard_link(&pending, destination.join(QUARANTINE_MARKER))?;
         }
-        fs::hard_link(&pending, destination.join(QUARANTINE_MARKER))?;
         if !missing(&self.path)? {
             return Err(WorkError::WrongCheckout);
         }
-        // The task fence excludes allocation. Git validates the named registration.
-        self.remove(&["--force", "--force"])?;
+        {
+            // The task fence excludes allocation. Git validates the named registration.
+            let _step = self.admit()?;
+            self.remove(&["--force", "--force"])?;
+        }
         let branch = format!("refs/heads/{}", self.branch);
         let head = identity.head_oid();
         let found = self.git(&self.repository, &["for-each-ref", QUARANTINE_REF, &branch])?;
@@ -695,8 +791,10 @@ impl Checkout<'_> {
                 return Err(WorkError::WrongBranchHead);
             }
             let delete = ["update-ref", "--no-deref", "-d", &branch, head];
+            let _step = self.admit()?;
             self.git(&self.repository, &delete)?;
         }
+        let _step = self.admit()?;
         fs::remove_file(pending)?;
         Ok(())
     }
@@ -936,8 +1034,10 @@ impl Checkout<'_> {
             return Ok(Retirement::Retained);
         }
         self.require_unlocked(&admin)?;
-        self.worktrees.root.verify()?;
-        self.worktrees.root.ensure_child(Path::new(TRASH))?;
+        {
+            let _step = self.admit()?;
+            self.worktrees.root.ensure_child(Path::new(TRASH))?;
+        }
         let device = self.worktrees.root.path().metadata()?.dev();
         let trash_root = self.worktrees.root.path().join(TRASH);
         let trash_info = trash_root.symlink_metadata()?;
@@ -952,6 +1052,7 @@ impl Checkout<'_> {
             return Err(WorkError::WrongCheckout);
         }
 
+        let staging = self.admit()?;
         let stamp_ms = unix_now_ms();
         let mut entry;
         let mut name;
@@ -970,7 +1071,8 @@ impl Checkout<'_> {
             let mut marker = fs::File::create_new(entry.join(TRASH_MARKER))?;
             marker.write_all(trash_stamp(&name, &entry_info, &checkout_info).as_bytes())?;
             marker.sync_all()?;
-            self.admit_change()?;
+            drop(staging);
+            let _step = self.admit()?;
             renameat_with(
                 CWD,
                 &self.path,
@@ -989,6 +1091,8 @@ impl Checkout<'_> {
         if !missing(&self.path)? {
             return Err(WorkError::WrongCheckout);
         }
+        // A refusal here leaves a prunable registration, which the next pass retires.
+        let _step = self.admit()?;
         self.remove(&["--force"])?;
         Ok(Retirement::Removed)
     }
@@ -1002,13 +1106,11 @@ impl Checkout<'_> {
         self.prunable_identity()?.ok_or(WorkError::WrongCheckout)
     }
 
-    // The last check before a removal or rename.
-    fn admit_change(&self) -> Result<(), WorkError> {
+    // Asked before each mutation: the work root still verifies and the caller
+    // still waits. The guard lasts as long as that one step.
+    fn admit(&self) -> Result<Mutation<'_>, WorkError> {
         self.worktrees.root.verify()?;
-        if self.worktrees.abandoned.load(Ordering::SeqCst) {
-            return Err(StorageError::VolumeUnavailable.into());
-        }
-        Ok(())
+        Ok(self.worktrees.custody.mutate()?)
     }
 
     fn require_unlocked(&self, admin: &Path) -> Result<(), WorkError> {

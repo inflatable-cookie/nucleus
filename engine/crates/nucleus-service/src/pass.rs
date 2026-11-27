@@ -138,7 +138,7 @@ impl Service {
         }
         let task = task.clone();
         let id = task.identity().id.clone();
-        self.scratch_job(&id, "finding run scratch", move |root| {
+        self.scratch_job(&id, "finding run scratch", move |root, _| {
             let found = find_run_scratch(root.path(), &task);
             // Absence counts only while the root it was read under is still there.
             root.verify().map_err(WorkError::from)?;
@@ -151,7 +151,8 @@ impl Service {
         let run = run.clone();
         // A ticket left behind names no current run, so it cannot report.
         let _ = self
-            .scratch_job(task, "clearing a report ticket", move |root| {
+            .scratch_job(task, "clearing a report ticket", move |root, custody| {
+                let _step = custody.mutate().map_err(WorkError::from)?;
                 ticket::clear(root, &run);
                 Ok(())
             })
@@ -211,7 +212,7 @@ impl Service {
             }
         }
         let worktrees = self.worktrees();
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         let binding = self.checkout_binding(identity, &route, &checkout)?;
         let workspace = self.observe_checkout_for_retirement(&checkout).await?;
         if workspace == Workspace::Absent {
@@ -396,7 +397,7 @@ impl Service {
             None
         };
         let worktrees = self.worktrees();
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         let (forge, target, forge_error) = if task.report_task().is_some() {
             (Observed::Unknown, None, None)
         } else {
@@ -680,7 +681,7 @@ impl Service {
         let identity = task.identity();
         let route = self.project_for(identity).await?;
         let worktrees = self.worktrees();
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         self.read_forge(task, &checkout)
             .await
             .map(|(forge, _)| forge)
@@ -1248,7 +1249,7 @@ impl Service {
         };
         let route = self.project_for(identity).await?;
         let worktrees = self.worktrees();
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         let binding = self.checkout_binding(identity, &route, &checkout)?;
         if let Some(child) = self
             .host
@@ -1333,7 +1334,7 @@ impl Service {
             self.accept_parent_readback(row, prior.as_ref()).await?;
         }
         let worktrees = self.worktrees();
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         let _ = self.send_run_parent(row, &checkout, write, prior).await?;
         Ok(())
     }
@@ -1623,9 +1624,13 @@ impl Service {
         let (prior, reserved) = (prior.clone(), reserved.clone());
         let endpoint = format!("http://{}", self.callback);
         let id = prior.identity().id.clone();
-        self.scratch_job(&id, "writing run scratch", move |root| {
+        self.scratch_job(&id, "writing run scratch", move |root, custody| {
             let run = reserved.run().ok_or(ServiceError::Input)?;
-            write_prompt_artifacts(root, run, &prior, &lanes, &size)?;
+            {
+                let _step = custody.mutate().map_err(WorkError::from)?;
+                write_prompt_artifacts(root, run, &prior, &lanes, &size)?;
+            }
+            let _step = custody.mutate().map_err(WorkError::from)?;
             ticket::prepare(root, &reserved, run, &credential, &endpoint)
         })
         .await
@@ -2173,7 +2178,7 @@ impl Service {
     ) -> Result<Vec<PathBuf>, ServiceError> {
         let (task, checkout) = (task.clone(), checkout.path().to_owned());
         let id = task.identity().id.clone();
-        self.scratch_job(&id, "finding run scratch", move |root| {
+        self.scratch_job(&id, "finding run scratch", move |root, _| {
             let earlier = task
                 .earlier_run_scratch()
                 .filter_map(|(instance, recorded)| {

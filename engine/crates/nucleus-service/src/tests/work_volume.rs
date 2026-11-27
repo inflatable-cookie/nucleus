@@ -175,8 +175,16 @@ async fn assert_volume_wait(service: &Service) {
     ));
 }
 
-#[tokio::test]
-async fn a_removed_work_root_holds_checkout_work_and_resumes_when_it_returns() {
+#[derive(Clone, Copy)]
+enum Gone {
+    WorkRoot,
+    /// An empty directory stands where the work root was.
+    SubstitutedWorkRoot,
+    RegisteredCheckout,
+}
+
+/// Take a directory away under the running service, then put the original back.
+async fn holds_and_resumes(gone: Gone) {
     let Outage {
         home,
         service,
@@ -186,9 +194,17 @@ async fn a_removed_work_root_holds_checkout_work_and_resumes_when_it_returns() {
     } = outage().await;
     let service = Arc::new(service);
     let api = api(&service);
-    let root = service.storage.work().path().to_owned();
-    let away = home.path().join("work-away");
-    std::fs::rename(&root, &away).unwrap();
+    let work = service.storage.work().path().to_owned();
+    let repository = service.fixture().checkout.clone();
+    let lost = match gone {
+        Gone::WorkRoot | Gone::SubstitutedWorkRoot => &work,
+        Gone::RegisteredCheckout => &repository,
+    };
+    let away = home.path().join("away");
+    std::fs::rename(lost, &away).unwrap();
+    if matches!(gone, Gone::SubstitutedWorkRoot) {
+        std::fs::create_dir(lost).unwrap();
+    }
 
     reads_answer(&api).await;
     // Repeated misses keep retrying and never turn into a blocked checkout.
@@ -197,22 +213,58 @@ async fn a_removed_work_root_holds_checkout_work_and_resumes_when_it_returns() {
         assert_volume_wait(&service).await;
         reads_answer(&api).await;
     }
+    if matches!(gone, Gone::RegisteredCheckout) {
+        let row = service.task("reviewer").await.unwrap();
+        let route = service.project_for(row.task.identity()).await.unwrap();
+        assert!(matches!(
+            service.verify_route(row.task.identity(), &route).await,
+            Err(ServiceError::Workspace(nucleus_work::WorkError::Storage(_)))
+        ));
+    }
     report_is_accepted(&api, &report).await;
-    assert!(!root.exists(), "nothing recreates a missing work root");
-    std::fs::rename(&away, &root).unwrap();
+    match gone {
+        Gone::SubstitutedWorkRoot => {
+            assert_eq!(std::fs::read_dir(lost).unwrap().count(), 0);
+            std::fs::remove_dir(lost).unwrap();
+        }
+        Gone::WorkRoot | Gone::RegisteredCheckout => {
+            assert!(!lost.exists(), "nothing recreates a missing directory");
+        }
+    }
+    std::fs::rename(&away, lost).unwrap();
 
     let (mut applied, mut launched) = (false, false);
     pass_until(&service, |outcome| {
         applied |= outcome.task == "worker"
             && matches!(outcome.result, Ok(Action::Advance(Phase::Reviewing)));
         launched |= launches_review(outcome);
-        applied && launched
+        // A missing checkout does not stop a report which needs no checkout.
+        (applied || matches!(gone, Gone::RegisteredCheckout)) && launched
     })
     .await;
-    let checkout = nucleus_work::checkout_path(&root, REPOSITORY, "reviewer");
+    assert_eq!(
+        service.task("worker").await.unwrap().task.phase(),
+        Phase::Reviewing
+    );
+    let checkout = nucleus_work::checkout_path(&work, REPOSITORY, "reviewer");
     assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), head.as_str());
-    assert!(nucleus_work::checkout_path(&root, REPOSITORY, "worker").is_dir());
+    assert!(nucleus_work::checkout_path(&work, REPOSITORY, "worker").is_dir());
     forge.abort();
+}
+
+#[tokio::test]
+async fn a_removed_work_root_holds_checkout_work_and_resumes_when_it_returns() {
+    holds_and_resumes(Gone::WorkRoot).await;
+}
+
+#[tokio::test]
+async fn an_empty_substitute_work_root_is_refused_until_the_original_returns() {
+    holds_and_resumes(Gone::SubstitutedWorkRoot).await;
+}
+
+#[tokio::test]
+async fn an_unavailable_registered_checkout_waits_as_the_volume_does() {
+    holds_and_resumes(Gone::RegisteredCheckout).await;
 }
 
 /// Releases the stubbed Git calls even when an assertion fails.
@@ -296,7 +348,7 @@ async fn a_hung_checkout_call_never_blocks_reads_or_a_report_for_its_own_task() 
 }
 
 #[tokio::test]
-async fn a_call_past_its_deadline_is_not_repeated_and_the_pass_resumes_after_it_returns() {
+async fn a_read_which_never_returns_does_not_hold_back_its_task() {
     let Outage {
         home,
         mut service,
@@ -304,33 +356,16 @@ async fn a_call_past_its_deadline_is_not_repeated_and_the_pass_resumes_after_it_
         ..
     } = outage().await;
     let hung = Hung::install(&mut service, home.path());
-    service.volume.check = Duration::from_millis(200);
+    hung.0.holds.store(1, Ordering::SeqCst);
+    service.volume.check = ANSWER;
     let service = Arc::new(service);
     let api = api(&service);
 
     pass_until(&service, waits_for_volume).await;
     assert_volume_wait(&service).await;
     reads_answer(&api).await;
-    let started = hung.0.entered.load(Ordering::SeqCst);
-    pass_until(&service, waits_for_volume).await;
-    assert_eq!(
-        hung.0.entered.load(Ordering::SeqCst),
-        started,
-        "no second call starts while the first is outstanding"
-    );
-
-    drop(hung);
-    // The released calls and the allocation need the ordinary deadline again.
-    let mut service = service;
-    drop(api);
-    tokio::time::timeout(ANSWER, async {
-        while Arc::get_mut(&mut service).is_none() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the API released the service");
-    Arc::get_mut(&mut service).unwrap().volume.check = ANSWER;
+    // The first call stays hung while the retry starts afresh and succeeds.
     pass_until(&service, launches_review).await;
+    drop(hung);
     forge.abort();
 }

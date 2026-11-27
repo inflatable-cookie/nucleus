@@ -555,6 +555,17 @@ impl EngineStorage {
         Ok(storage)
     }
 
+    /// Hold on to the work and scratch roots a running service starts with, so a
+    /// missing or substituted root is unavailable until the original returns.
+    ///
+    /// # Errors
+    /// Returns an error if either root cannot be created or opened.
+    pub fn pin_roots(&mut self) -> Result<(), StorageError> {
+        self.work = self.work.clone().pinned()?;
+        self.scratch = self.scratch.clone().pinned()?;
+        Ok(())
+    }
+
     /// The profile home used for durable state.
     #[must_use]
     pub fn home(&self) -> &Path {

@@ -684,7 +684,7 @@ impl Service {
         let identity = row.task.identity();
         let route = self.project_for(identity).await?;
         let worktrees = self.worktrees();
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, task_id)?;
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, task_id)?;
         let binding = route.binding(&checkout)?;
         let Some(target) = route
             .checkout

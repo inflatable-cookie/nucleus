@@ -972,7 +972,7 @@ fn stored_reminder(
     role: Role,
     required: bool,
 ) -> (Task, nucleus_hosts::Binding, nucleus_core::Head) {
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, REMINDER_TASK)
         .unwrap();

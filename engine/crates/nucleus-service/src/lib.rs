@@ -430,10 +430,8 @@ impl Service {
         callback: SocketAddr,
         report_command: PathBuf,
     ) -> Result<Self, ServiceError> {
-        let storage = settings.storage()?;
-        // Only startup and allocation create the work root.
-        storage.work().ensure()?;
-        storage.scratch().ensure()?;
+        let mut storage = settings.storage()?;
+        storage.pin_roots()?;
         storage.builds().ensure()?;
         storage.log().ensure()?;
         let git = project::LocalGit(storage.scratch().path().into());
@@ -1068,7 +1066,10 @@ impl Service {
     ) {
         let result = self
             .volume
-            .run(kind, "pruning", volume::Limit::Change, move |_| job())
+            .run(kind, "pruning", volume::Limit::Change, move |custody| {
+                let _step = custody.mutate()?;
+                job()
+            })
             .await;
         if let Err(error) = result.map_err(WorkError::from).and_then(|done| done) {
             service_log!("{kind} housekeeping: {error}");
