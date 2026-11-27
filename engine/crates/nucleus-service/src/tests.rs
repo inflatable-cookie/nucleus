@@ -154,7 +154,7 @@ pub(super) fn reservation_at(
             entry,
             origin_thread: None,
         },
-        "---\ncomplexity: normal\n---\n\nFixture introduction.\n\n# Synthetic change\n\nFixture details.".into(),
+        "---\ncomplexity: normal\nqueue:\n  notifyOriginOnCloseout: false\n---\n\nFixture introduction.\n\n# Synthetic change\n\nFixture details.".into(),
         (entry == Entry::ReviewEntry).then(|| pr.clone()),
     );
     let observation = Observation {

@@ -1193,3 +1193,23 @@ fn a_paused_instructed_revision_reselects_unless_the_brief_requires_its_profile(
         }
     }
 }
+
+#[test]
+fn completion_notices_are_on_unless_the_brief_opts_out() {
+    let notifies = |brief: &str| {
+        BriefPolicy::parse(brief)
+            .unwrap()
+            .notifies_origin_on_closeout()
+    };
+    assert!(notifies(
+        "---\nqueue:\n  complexity: low\n---\n# Fix rounding"
+    ));
+    assert!(notifies("Plain brief."));
+    assert!(notifies(
+        "---\nqueue:\n  notifyOriginOnCloseout: true\n---\n# Fix rounding"
+    ));
+    assert!(!notifies(
+        "---\nqueue:\n  notifyOriginOnCloseout: false\n---\n# Fix rounding"
+    ));
+    assert!(BriefPolicy::parse("---\nqueue:\n  notifyOriginOnCloseout: maybe\n---\nBody").is_err());
+}
