@@ -52,26 +52,6 @@ pub enum ProcessEvidenceFailure {
     Cwd { pid: u32 },
 }
 
-/// A process that holds a retirement root or whose custody could not be verified.
-#[derive(Debug, PartialEq, Eq)]
-pub struct RetirementBlocker {
-    pub pid: u32,
-    pub command: String,
-    pub started: Option<i64>,
-    pub unverified: bool,
-}
-
-impl std::fmt::Display for RetirementBlocker {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(out, "PID {} ({}) ", self.pid, self.command)?;
-        if self.unverified {
-            out.write_str("has an unreadable working directory. The local process check could not rule out this checkout or its run scratch.")
-        } else {
-            out.write_str("has its working directory in the task checkout or run scratch.")
-        }
-    }
-}
-
 pub(crate) const fn coverage_error(error: HostError) -> HostError {
     HostError::ProcessCoverage(match error {
         HostError::ProcessCoverage(reason) => reason,
@@ -103,7 +83,6 @@ struct ProcessPaths {
     ambiguous_path: bool,
     cwd_device: Option<u32>,
     cwd_inode: Option<u64>,
-    command: String,
     started: Option<i64>,
 }
 
@@ -128,15 +107,14 @@ impl Inventory {
         Self::process_fixture(2, path)
     }
 
-    #[cfg(any(test, feature = "loopback-fixture"))]
-    pub(crate) fn process_fixture(pid: u32, path: &Path) -> Self {
+    #[cfg(test)]
+    fn process_fixture(pid: u32, path: &Path) -> Self {
         let mut inventory = Self::quiet_fixture();
         inventory.processes.insert(
             pid,
             ProcessPaths {
                 parent: 1,
                 cwd: Some(path.into()),
-                command: "fixture-process".into(),
                 ..ProcessPaths::default()
             },
         );
@@ -305,25 +283,6 @@ impl Inventory {
         }
     }
 
-    #[cfg(all(target_os = "macos", feature = "loopback-fixture"))]
-    pub(crate) fn followup_fixture(
-        files: &[u8],
-        ps: &[u8],
-        current_ps: &[u8],
-        observed: i64,
-    ) -> Result<Self, HostError> {
-        let user = geteuid().as_raw();
-        let mut inventory = Self::from_listings(&[], ps, user, 0)?;
-        let missing = inventory.processes.keys().copied().collect();
-        inventory.apply_followup(
-            missing,
-            process_paths(files)?,
-            Self::from_listings(&[], current_ps, user, 0)?,
-            Some(observed),
-        );
-        Ok(inventory)
-    }
-
     #[cfg(target_os = "macos")]
     async fn recover_paths(&mut self) {
         let unresolved = self
@@ -373,7 +332,6 @@ impl Inventory {
                 process.parent = parent;
                 let started = columns.by_ref().take(5).collect::<Vec<_>>().join(" ");
                 process.started = orphans::start_epoch(&started);
-                process.command = columns.collect::<Vec<_>>().join(" ");
                 live.insert(pid, process);
             }
         }
@@ -424,11 +382,10 @@ impl Inventory {
         }
     }
 
-    pub(crate) async fn retirement_blocker(
-        &self,
-        root: &Path,
-    ) -> Result<Option<RetirementBlocker>, HostError> {
-        verify_roots(&[Some(root)]).await.map_err(coverage_error)?;
+    pub(crate) async fn trash_clear(&self, root: &Path) -> bool {
+        if verify_roots(&[Some(root)]).await.is_err() {
+            return false;
+        }
         let runtime = HashSet::new();
         let activity = self.activity(root, None, &runtime);
         #[cfg(target_os = "macos")]
@@ -443,38 +400,7 @@ impl Inventory {
         } else {
             activity
         };
-        let (pid, unverified) = match activity {
-            Activity::Busy(pid) => (pid, false),
-            Activity::Unknown(Some(pid)) => (pid, true),
-            Activity::Unknown(None) => {
-                return Err(HostError::ProcessCoverage(
-                    ProcessEvidenceFailure::Incomplete,
-                ));
-            }
-            Activity::Quiet => return Ok(None),
-        };
-        let process = &self.processes[&pid];
-        Ok(Some(RetirementBlocker {
-            pid,
-            command: if process.command.is_empty() {
-                "command unavailable".into()
-            } else {
-                process.command.clone()
-            },
-            started: process.started,
-            unverified,
-        }))
-    }
-
-    pub(crate) fn unresolved(&self) -> Option<Vec<(u32, i64)>> {
-        if self.processes.is_empty() {
-            return None;
-        }
-        self.processes
-            .iter()
-            .filter(|(_, paths)| paths.unverified())
-            .map(|(&pid, paths)| Some((pid, paths.started?)))
-            .collect()
+        matches!(activity, Activity::Quiet)
     }
 
     pub(crate) fn writer(

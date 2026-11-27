@@ -249,8 +249,12 @@ impl Fixture {
     }
 
     fn publish_shell(&self) {
+        self.publish_shell_at(None);
+    }
+
+    fn publish_shell_at(&self, revision: Option<usize>) {
         let row = self.native.lock().unwrap();
-        let shell = json!({
+        let mut shell = json!({
             "projects":[{"id":self.binding.project_id,"workspaceRoot":self.service.fixture().checkout}],
             "threads":[{"id":self.thread,"projectId":self.binding.project_id,"providerInstanceId":PROVIDER,
                 "worktreePath":self.binding.worktree_path,"branch":self.binding.branch,
@@ -258,9 +262,12 @@ impl Fixture {
                 "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},
                 "status":"idle","activeRunId":null,"pendingRuntimeRequest":null,"pendingBackgroundTasks":[]}]
         });
-        let mut shell = shell;
+        if let Some(revision) = revision
+            .or_else(|| (row.instant_holds || row.live_holds).then(|| 1 + row.commands.len()))
+        {
+            shell["snapshotSequence"] = json!(revision);
+        }
         if row.instant_holds || row.live_holds {
-            shell["snapshotSequence"] = json!(1 + row.commands.len());
             shell["threads"][0]
                 .as_object_mut()
                 .unwrap()
@@ -1405,7 +1412,11 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         service.lookup(&state, ID).unwrap()
     };
     fixture.sync().await;
-    fixture.publish_shell();
+    let publish_shell = || {
+        let revision = 1 + fixture.native.lock().unwrap().commands.len();
+        fixture.publish_shell_at(Some(revision));
+    };
+    publish_shell();
     let fence = service.effect(&row).await.unwrap();
     let prepare = || async {
         let (write, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
@@ -1454,13 +1465,13 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         native.until = json!(OPERATOR_SNOOZE);
         native.settled_at = json!("2026-11-23T18:10:00Z");
     }
-    fixture.publish_shell();
+    publish_shell();
     fixture.assert_operator_snooze_receipt(&row).await;
     assert_eq!(fixture.commands().len(), 3);
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
 
     fixture.native.lock().unwrap().until = Value::Null;
-    fixture.publish_shell();
+    publish_shell();
     let write = prepare().await.unwrap().unwrap();
     service
         .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())

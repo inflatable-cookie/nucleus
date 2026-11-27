@@ -14,7 +14,7 @@ use axum::{
 };
 use nucleus_core::{
     CallbackCredential, CheckState, Entry, Forge, Head, Host, LaunchInputs, Observation, Observed,
-    PullRequest, Run, Workspace,
+    PullRequest, Role, Run, Workspace,
 };
 use nucleus_hosts::{
     Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
@@ -439,13 +439,6 @@ impl TaskHost for Due {
         unreachable!("no retirement in the replay fixture")
     }
 
-    async fn retirement_writer(
-        &self,
-        _: &Path,
-    ) -> Result<Option<nucleus_hosts::RetirementBlocker>, HostError> {
-        unreachable!("no retirement in the replay fixture")
-    }
-
     async fn profile_catalog(&self) -> Result<&nucleus_hosts::ProfileCatalog, HostError> {
         unreachable!("only revoked runs are exercised")
     }
@@ -457,7 +450,7 @@ impl TaskHost for Due {
         unreachable!("no new reservation in the replay fixture")
     }
 
-    async fn observe_retained(&self, _: &Binding, _: &str) -> Result<Host, HostError> {
+    async fn observe_retained_role(&self, _: &Binding, _: &str) -> Result<Host, HostError> {
         unreachable!("only replay gate is exercised")
     }
     async fn observe_run(&self, run: &Run, _: u64) -> Result<RunObservation, HostError> {
@@ -1102,6 +1095,34 @@ pub(super) async fn native_fixture(
     response: impl Fn(&Value) -> Value + Clone + Send + Sync + 'static,
 ) -> (T3, tokio::task::JoinHandle<()>) {
     native_fixture_with_traffic(response, None).await
+}
+
+pub(super) fn archive_snapshot_reply(request: &Value, sequence: u64, threads: &[Value]) -> Value {
+    assert_eq!(request["tag"], "orchestration.getArchivedShellSnapshot");
+    json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":{
+        "schemaVersion":2,"snapshotSequence":sequence,"projects":[],"threads":threads
+    }}})
+}
+
+pub(super) async fn empty_archive_fixture(sequence: u64) -> (T3, tokio::task::JoinHandle<()>) {
+    native_fixture(move |request| archive_snapshot_reply(request, sequence, &[])).await
+}
+
+pub(super) fn archived_checkout_rows(binding: &Binding, task: &Task) -> Vec<Value> {
+    let parent = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
+    [Role::Reviewer, Role::Worker]
+        .into_iter()
+        .filter_map(|role| task.threads().get(role))
+        .chain(std::iter::once(parent.as_str()))
+        .map(|id| {
+            json!({
+                "id":id, "projectId":binding.project_id, "branch":binding.branch,
+                "worktreePath":binding.worktree_path, "archivedAt":"2026-11-27T12:00:00Z",
+                "deletedAt":null, "status":"completed", "activeRunId":null,
+                "pendingRuntimeRequest":null, "pendingBackgroundTasks":[]
+            })
+        })
+        .collect()
 }
 
 pub(super) fn assert_scheduled_wait(
