@@ -567,6 +567,8 @@ impl Store {
         let mut query = self.connection.prepare_cached(
             "WITH cursor AS (SELECT coalesce((SELECT rowid FROM tasks WHERE id = ?2), 0) AS seq),
              due AS (SELECT rowid AS admitted, id FROM tasks WHERE (phase NOT IN ('done','cancelled') OR run IS NOT NULL)
+             AND NOT (phase IN ('done','cancelled') AND EXISTS
+                  (SELECT 1 FROM events e WHERE e.task_id = tasks.id AND e.kind = 'project_removed'))
              AND (run IS NOT NULL OR phase NOT IN ('report_ready','blocked','error')
                   OR phase = 'report_ready' AND coalesce(json_extract(report_task, '$.notice_attempted'), 0) = 0)
              AND (run IS NOT NULL OR coalesce(json_extract(question, '$.operator_decline'), '') != 'notified')
@@ -749,7 +751,8 @@ impl Store {
         Ok(())
     }
 
-    /// Page completed tasks for native thread housekeeping.
+    /// Page completed tasks for native thread housekeeping. A removed project's
+    /// tasks have no route left and are never due.
     /// # Errors
     /// Returns an error if the pending archive page cannot be read.
     pub fn archive_due_ids(
@@ -761,8 +764,10 @@ impl Store {
         let mut query = self.connection.prepare_cached(
             "SELECT id FROM tasks WHERE id > ?1 AND phase IN ('done','cancelled') AND run IS NULL
              AND (?3 OR (phase='done' AND report_task IS NOT NULL))
+             AND NOT EXISTS (SELECT 1 FROM events e WHERE e.task_id = tasks.id AND e.kind = 'project_removed')
              UNION SELECT n.task_id FROM completion_notices n JOIN tasks t ON t.id=n.task_id
              WHERE n.task_id > ?1 AND n.retry IS NOT NULL AND t.phase IN ('done','cancelled') AND t.run IS NULL
+             AND NOT EXISTS (SELECT 1 FROM events e WHERE e.task_id = t.id AND e.kind = 'project_removed')
              ORDER BY 1 LIMIT ?2",
         )?;
         let rows = query.query_map(

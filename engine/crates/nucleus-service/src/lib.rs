@@ -84,6 +84,9 @@ pub use web::{
 pub enum ServiceError {
     #[error("{0}")]
     ArchiveEvidence(String),
+    /// A checkout stays until its changes, publication, roles or Dispatch move.
+    #[error("{0}")]
+    CheckoutRetained(String),
     #[error("{0}")]
     CheckoutProcess(nucleus_hosts::RetirementBlocker),
     #[error("T3 parent message was not sent: {reason}")]
@@ -761,6 +764,9 @@ impl Service {
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
         if task.phase().is_terminal() {
+            if self.state.lock().await.retired_with_project(task)? {
+                return Ok(Action::Nothing);
+            }
             if task.run().is_some() {
                 return self.advance(row, host).await;
             }
@@ -965,13 +971,7 @@ impl Service {
 
     /// The operator's global dispatch mode from the in-memory read model.
     async fn dispatch_mode(&self) -> DispatchMode {
-        self.state
-            .lock()
-            .await
-            .settings
-            .dispatch
-            .as_ref()
-            .map_or(DispatchMode::Running, |dispatch| dispatch.mode)
+        self.state.lock().await.dispatch_mode()
     }
 
     async fn launch_capacity(
@@ -1244,12 +1244,6 @@ impl Service {
         let id = &row.task.identity().id;
         let mut state = self.state.lock().await;
         let mut current = self.lookup(&state, id)?;
-        let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
-            && (current.task.phase() == Phase::Done
-                || (current.task.phase() == Phase::Cancelled
-                    && matches!(result, Err(ServiceError::CheckoutProcess(_)))))
-            && current.task.run().is_none()
-            && !matches!(result, Ok(Action::Nothing));
         let held = held_call(result);
         if let Some((cause, since)) = held
             && since.elapsed() >= self.volume.stuck
@@ -1257,11 +1251,26 @@ impl Service {
         {
             service_log!("{id}: {cause}");
         }
-        if !archive_due
-            && held.is_none()
-            && !active(&current.task)
-            && !state.forge_requested.contains(id)
-            && state.acp_refresh_requests.get(id) != Some(&current.version)
+        let (mut wait, mut detail) = task_wait(row, result);
+        let retry_after = if backs_off(&current.task, wait, result) {
+            Some(state.schedule.back_off(id))
+        } else {
+            state.schedule.reset_failures(id);
+            None
+        };
+        // A cancelled task shows an archive cause only for a failure which backs off.
+        let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
+            && (current.task.phase() == Phase::Done
+                || (current.task.phase() == Phase::Cancelled && retry_after.is_some()))
+            && current.task.run().is_none()
+            && !matches!(result, Ok(Action::Nothing));
+        let retired = state.retired_with_project(&current.task)?;
+        if retired
+            || !archive_due
+                && held.is_none()
+                && !active(&current.task)
+                && !state.forge_requested.contains(id)
+                && state.acp_refresh_requests.get(id) != Some(&current.version)
         {
             if state.observe_wait(&current.task, None)? {
                 self.title_wake.notify_one();
@@ -1285,7 +1294,6 @@ impl Service {
             }
             return Ok(());
         }
-        let (mut wait, mut detail) = task_wait(row, result);
         if let Err(ServiceError::CheckoutProcess(blocker)) = result
             && blocker.unverified
         {
@@ -1335,7 +1343,7 @@ impl Service {
             && !checking_workspace
             && let Err(error) = result
         {
-            detail = Some(WaitDetail::Archive(error.to_string()));
+            detail = Some(WaitDetail::Archive(error_cause(error)));
         }
         if let Some((cause, _)) = held {
             // A terminal task shows only its archive cause.
@@ -1412,6 +1420,7 @@ impl Service {
                 }
                 _ => now + delay,
             };
+            let due = retry_after.map_or(due, |backoff| due.max(now + backoff));
             let priority = if wait == Some(WaitReason::Capacity) {
                 priority
             } else if row
@@ -2060,6 +2069,7 @@ impl Service {
             self.desire_title(state, task, prior.number);
         }
         state.schedule.reset_workspace(id);
+        state.schedule.reset_failures(id);
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
         state.activity.remove(id);
@@ -2261,9 +2271,13 @@ fn task_wait(
     let pre_wire = |cause| (Some(Wait::HostUnknown), Some(WaitDetail::BeforeSend(cause)));
     let observation = |wait, cause| (Some(wait), Some(WaitDetail::Observation(cause)));
     match result {
-        Err(ServiceError::ArchiveEvidence(cause)) => (
+        Err(
+            error @ (ServiceError::ArchiveEvidence(_)
+            | ServiceError::CheckoutRetained(_)
+            | ServiceError::ReportCheckout(_)),
+        ) => (
             Some(Wait::Stopping),
-            Some(WaitDetail::Blocked(cause.clone())),
+            Some(WaitDetail::Blocked(error.to_string())),
         ),
         Err(ServiceError::CheckoutProcess(blocker)) => (
             Some(Wait::Stopping),
@@ -2301,22 +2315,7 @@ fn task_wait(
                 "Waiting for delivery confirmation.",
             )),
         ),
-        Err(ServiceError::Host(error)) => {
-            let cause = match error {
-                HostError::Unavailable => Some("Couldn’t reach T3. Checking again."),
-                HostError::Timeout => Some("T3 didn’t respond in time. Checking again."),
-                HostError::RoleReplyPending { .. } => {
-                    Some("Waiting for T3 to confirm the role assignment.")
-                }
-                HostError::ProcessCoverage(failure) => Some(process_check_detail(*failure)),
-                _ => None,
-            };
-            if row.task.run().is_none_or(unsent) {
-                pre_wire(cause)
-            } else {
-                observation(Wait::HostUnknown, cause.unwrap_or("Waiting for T3."))
-            }
-        }
+        Err(ServiceError::Host(error)) => host_wait(row, error),
         Ok(Action::Wait(Wait::HostUnknown)) if row.task.run().is_some_and(unsent) => pre_wire(None),
         Ok(Action::Wait(Wait::HostUnknown))
             if row
@@ -2350,8 +2349,69 @@ fn task_wait(
             (Some(Wait::Capacity), None)
         }
         Ok(Action::Wait(reason)) => (Some(*reason), None),
-        _ => (None, None),
+        Ok(_) => (None, None),
+        Err(error) => unmapped_wait(error),
     }
+}
+
+fn host_wait(row: &TaskRow, error: &HostError) -> (Option<WaitReason>, Option<WaitDetail>) {
+    let cause = match error {
+        HostError::Unavailable => Some("Couldn’t reach T3. Checking again."),
+        HostError::Timeout => Some("T3 didn’t respond in time. Checking again."),
+        HostError::RoleReplyPending { .. } => {
+            Some("Waiting for T3 to confirm the role assignment.")
+        }
+        HostError::ProcessCoverage(failure) => Some(process_check_detail(*failure)),
+        _ => None,
+    };
+    let detail = if row.task.run().is_none_or(unsent) {
+        WaitDetail::BeforeSend(cause)
+    } else {
+        WaitDetail::Observation(cause.unwrap_or("Waiting for T3."))
+    };
+    (Some(WaitReason::HostUnknown), Some(detail))
+}
+
+/// An error with no more specific wait still names its cause, except where a
+/// later pass reads the newer row or free fence, or a snooze sets its own wait.
+fn unmapped_wait(error: &ServiceError) -> (Option<WaitReason>, Option<WaitDetail>) {
+    if matches!(
+        error,
+        ServiceError::Store(StoreError::StaleTask)
+            | ServiceError::EffectInProgress
+            | ServiceError::OperatorSnoozed { .. }
+    ) {
+        return (None, None);
+    }
+    let cause = error_cause(error);
+    let cause = format!(
+        "{}. Use Recheck after the repair.",
+        cause.trim_end_matches('.')
+    );
+    (
+        Some(WaitReason::EngineBlocked),
+        Some(WaitDetail::Blocked(cause)),
+    )
+}
+
+fn error_cause(error: &ServiceError) -> String {
+    match error {
+        ServiceError::Project => "The task's project checkout can't be used. Check its path, base branch and origin against Projects settings".into(),
+        error => error.to_string(),
+    }
+}
+
+/// Failures which the next few seconds are unlikely to clear: a step with no
+/// known wait, and a finished task's retained or occupied checkout.
+fn backs_off(task: &Task, wait: Option<WaitReason>, result: &Result<Action, ServiceError>) -> bool {
+    wait == Some(WaitReason::EngineBlocked)
+        || task.phase().is_terminal()
+            && matches!(
+                result,
+                Err(ServiceError::CheckoutRetained(_)
+                    | ServiceError::CheckoutProcess(_)
+                    | ServiceError::ReportCheckout(_))
+            )
 }
 
 const VOLUME_WAIT: &str = "The work volume or layout cannot be verified. Checking again.";
@@ -2443,6 +2503,19 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
 }
 
 impl State {
+    /// Dispatch which was never configured is running.
+    fn dispatch_mode(&self) -> DispatchMode {
+        self.settings
+            .dispatch
+            .as_ref()
+            .map_or(DispatchMode::Running, |dispatch| dispatch.mode)
+    }
+
+    /// Removal keeps a finished task as history which routes nowhere.
+    fn retired_with_project(&self, task: &Task) -> Result<bool, StoreError> {
+        Ok(task.phase().is_terminal() && self.store.task_project_removed(&task.identity().id)?)
+    }
+
     fn recheckable(&self, task: &Task) -> bool {
         let id = &task.identity().id;
         task.hold().is_none()
@@ -2451,7 +2524,8 @@ impl State {
                 Some(
                     WaitReason::WorkspaceBlocked
                     | WaitReason::ExternalMergeBlocked
-                    | WaitReason::ReviewPublicationBlocked,
+                    | WaitReason::ReviewPublicationBlocked
+                    | WaitReason::EngineBlocked,
                 ) => true,
                 Some(WaitReason::HostObservationBlocked) => {
                     matches!(self.wait_detail(id), Some(WaitDetail::Blocked(_)))

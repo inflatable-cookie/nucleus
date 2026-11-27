@@ -102,7 +102,8 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     };
     shell(&service, json!([]));
     service.fixture_mut().acp_provider = Some("fixture".into());
-    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings::default());
+    // Helper cleanup runs on a profile whose Dispatch was never configured.
+    assert!(service.state.lock().await.settings.dispatch.is_none());
     let terminal = cancelled_cleanup_task(&service).await;
     let id = terminal.task.identity().id.clone();
     let work = service.worktrees();
@@ -153,7 +154,7 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
         json!([{"id":"active-child","parentThreadId":task_thread,"status":"running"}]),
     );
     let outcome = service.archive_done(&terminal).await;
-    let Err(ServiceError::ArchiveEvidence(cause)) = &outcome else {
+    let Err(ServiceError::CheckoutRetained(cause)) = &outcome else {
         panic!("{outcome:?}");
     };
     assert!(cause.contains("A task role is still running"), "{cause}");
@@ -167,6 +168,30 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     }
     for kind in ["checkout_process_stop", "checkout_process_result"] {
         assert!(recorded(&service, &id, kind).await.is_empty());
+    }
+    // The census behind this wait is repeated ever less often while the role runs.
+    for expected in [3, 6, 12] {
+        let expected = Duration::from_secs(expected);
+        // A pass takes the task's deadlines before it records a result.
+        service.state.lock().await.schedule.park(&id);
+        let before = tokio::time::Instant::now();
+        service
+            .schedule_result(&terminal, &outcome, crate::schedule::Priority::Closeout)
+            .await
+            .unwrap();
+        let after = tokio::time::Instant::now();
+        let state = service.state.lock().await;
+        let due = state.schedule.due(&id).expect("retry");
+        assert!(
+            due - after <= expected && expected <= due - before,
+            "{:?} for {expected:?}",
+            due - before
+        );
+        assert!(matches!(
+            state.wait_detail(&id),
+            Some(crate::WaitDetail::Archive(shown))
+                if shown.contains("A task role is still running")
+        ));
     }
 
     shell(&service, json!([]));
