@@ -122,8 +122,9 @@ export function itemActivity(item: ItemDetail) {
           : entry.action === "park" || entry.action === "drop"
             ? "muted"
             : "accent";
-      const detail = [entry.actorLabel ?? entry.actor, entry.recipient, entry.note].filter(Boolean).join(" · ") || null;
-      return { key: `${index}`, at: entry.atMs, text, detail, detailHint: entry.actor, tone };
+      const detail = [entry.actorLabel ?? entry.actor, entry.recipientLabel ?? entry.recipient, entry.note].filter(Boolean).join(" · ") || null;
+      const detailHint = [entry.actor, entry.recipient].filter(Boolean).join(" · ");
+      return { key: `${index}`, at: entry.atMs, text, detail, detailHint: detailHint || undefined, tone };
     })
     .sort((a, b) => b.at - a.at);
 }
@@ -600,7 +601,11 @@ function AssessPanel({
             <Hint c={c} text={new Date(assessed.atMs).toLocaleString()} focusable>
               <Text style={metaText(c)}>{`With planner since ${clockTime(assessed.atMs)}`}</Text>
             </Hint>
-            {assessed.recipient ? <Text style={metaText(c)}>{`· ${assessed.recipient}`}</Text> : null}
+            {assessed.recipient ? (
+              <Hint c={c} text={assessed.recipient} focusable>
+                <Text style={metaText(c)}>{`· ${assessed.recipientLabel ?? "Agent thread"}`}</Text>
+              </Hint>
+            ) : null}
           </>
         ) : null}
         <View style={{ flex: 1 }} />

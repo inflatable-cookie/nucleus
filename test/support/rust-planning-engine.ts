@@ -119,11 +119,20 @@ export function planningEngine(now: () => number = Date.now) {
 
   const actorLabel = (project: string, actor: string) => {
     if (/^(operator|nucleus:operator|fixture-operator)$/i.test(actor) || /^operator via /i.test(actor)) return "Operator";
+    const isClaimedPlanner = (settings: PlanningProject | undefined) =>
+      settings &&
+      (settings.claimedPlannerThreads?.includes(actor) ||
+        settings.plannerClaim?.thread === actor ||
+        settings.plannerClaim?.replaced === actor);
     const settings = projectSettings[project];
-    if (settings?.claimedPlannerThreads?.includes(actor) || settings?.plannerClaim?.thread === actor || settings?.plannerClaim?.replaced === actor)
-      return `${settings.name} planner`;
+    const claimedProject = isClaimedPlanner(settings)
+      ? settings
+      : Object.values(projectSettings).find(isClaimedPlanner);
+    if (claimedProject) return `${claimedProject.name} planner`;
     return threadTitles.get(actor) || "Agent thread";
   };
+  const recipientLabel = (project: string, recipient: string) =>
+    recipient === "new planner thread" ? recipient : actorLabel(project, recipient);
   const record = (project: string, id: string, actor: string, atMs: number, action: string, snapshot: unknown) =>
     history.push({ project, id, sequence: ++sequence, actor, actorLabel: actorLabel(project, actor), atMs, action, snapshot });
 
@@ -180,7 +189,20 @@ export function planningEngine(now: () => number = Date.now) {
       return json(
         history
           .filter((row) => row.project === project && row.id === id)
-          .map(({ sequence, actor, actorLabel, atMs, action, snapshot }) => ({ sequence, actor, actorLabel, atMs, action, snapshot })),
+          .map(({ sequence, actor, actorLabel, atMs, action, snapshot }) => {
+            const recipient = typeof snapshot === "object" && snapshot !== null && "recipient" in snapshot && typeof snapshot.recipient === "string"
+              ? snapshot.recipient
+              : undefined;
+            return {
+              sequence,
+              actor,
+              actorLabel,
+              atMs,
+              action,
+              snapshot,
+              ...(action === "assess" && recipient ? { recipientLabel: recipientLabel(project, recipient) } : {}),
+            };
+          }),
       );
     if (!id) return json([...items.values()].filter((entry) => entry.project === project).map((entry) => withTimes(project, entry.item.id)));
     const entry = items.get(key(project, id));

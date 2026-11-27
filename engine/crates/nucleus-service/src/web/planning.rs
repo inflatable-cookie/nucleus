@@ -400,6 +400,8 @@ struct BoardHistory {
     #[serde(flatten)]
     history: History,
     actor_label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recipient_label: Option<String>,
 }
 
 fn is_claimed_planner(project: &nucleus_store::ProjectSettings, actor: &str) -> bool {
@@ -429,10 +431,18 @@ fn actor_label(
     if is_operator_actor(actor) {
         return "Operator".into();
     }
-    if let Some(project) = projects
-        .and_then(|projects| projects.projects.get(project_id))
-        .filter(|project| is_claimed_planner(project, actor))
-    {
+    if let Some(project) = projects.and_then(|projects| {
+        projects
+            .projects
+            .get(project_id)
+            .filter(|project| is_claimed_planner(project, actor))
+            .or_else(|| {
+                projects
+                    .projects
+                    .values()
+                    .find(|project| is_claimed_planner(project, actor))
+            })
+    }) {
         return format!("{} planner", project.name);
     }
     api.service
@@ -440,6 +450,20 @@ fn actor_label(
         .cached_thread_title(actor)
         .filter(|title| !title.trim().is_empty())
         .unwrap_or_else(|| "Agent thread".into())
+}
+
+fn history_recipient_label(
+    api: &Api,
+    projects: Option<&nucleus_store::Projects>,
+    project_id: &str,
+    history: &History,
+) -> Option<String> {
+    let recipient = history.snapshot.get("recipient")?.as_str()?;
+    Some(if recipient == "new planner thread" {
+        recipient.to_owned()
+    } else {
+        actor_label(api, projects, project_id, recipient)
+    })
 }
 
 fn item_author_label(
@@ -657,7 +681,7 @@ async fn assess_item(
     Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
     input: Result<Json<AssessItem>, JsonRejection>,
-) -> Result<Json<ItemWithTimes>, ApiError> {
+) -> Result<Response, ApiError> {
     let input = body(input)?;
     if session.is_some() && input.version.is_none_or(|version| version <= 0) {
         return Err(ApiError::Invalid);
@@ -666,7 +690,22 @@ async fn assess_item(
         .service
         .assess_planning_item(project.as_deref(), &id, input.version, &caller, &scope)
         .await?;
-    Ok(Json(saved))
+    let (state, project) = api
+        .service
+        .planning_state_in_scope(project.as_deref(), &scope)
+        .await?;
+    let author_label = item_author_label(
+        &api,
+        state.settings.projects.as_ref(),
+        &project,
+        &saved.item,
+    );
+    api.service.planning_changes.send_replace(());
+    Ok(Json(LabeledItem {
+        item: saved,
+        author_label,
+    })
+    .into_response())
 }
 
 #[derive(Default, Deserialize)]
@@ -811,6 +850,7 @@ async fn history(
         .into_iter()
         .map(|history| BoardHistory {
             actor_label: actor_label(&api, projects, &project, &history.actor),
+            recipient_label: history_recipient_label(&api, projects, &project, &history),
             history,
         })
         .collect();

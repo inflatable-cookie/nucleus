@@ -134,7 +134,9 @@ const footer = (ui: ReturnType<typeof mount>) =>
 
 test("lead · open: Send to planner has one button with no repository or complexity selects, then shows With planner since and Send again", async () => {
   const engine = planningEngine();
-  engine.setRecipient("acowtancy", "planner-acowtancy");
+  const recipient = "01adc496-18f0-4b9e-a22c-d1acb7facdab";
+  engine.setRecipient("acowtancy", recipient);
+  engine.setThreadTitle(recipient, "Acowtancy planner");
   engine.seed("acowtancy", lead({ id: "i-offline", title: "Offline marking queue", repositories: ["example/acowtancy-v2", "example/dairy"] }), {
     actor: "planner",
     atMs: now - 2 * DAY,
@@ -160,7 +162,14 @@ test("lead · open: Send to planner has one button with no repository or complex
     },
   ]);
   assert.equal(state(ui), "State: Open", "item stays open until the planner drops or promotes it");
-  assert.match(ui.text(), /planner-acowtancy/);
+  assert.match(ui.text(), /Acowtancy planner/);
+  assert.doesNotMatch(ui.text(), new RegExp(recipient));
+  ui.press("Activity, collapsed");
+  assert.ok(ui.query("Activity, expanded"), "Activity is open");
+  assert.ok(ui.text().split("Acowtancy planner").length >= 3, "activity repeats the readable recipient label");
+  assert.doesNotMatch(ui.text(), new RegExp(recipient));
+  ui.all(recipient).forEach((node) => node.props.onHoverIn());
+  assert.match(ui.text(), new RegExp(recipient));
   assert.ok(ui.query("Send lead to planner again"), "Send again offered after first send");
   // Sending again sends at the new version and records a second entry.
   const nextVersion = engine.item("acowtancy", "i-offline").version;

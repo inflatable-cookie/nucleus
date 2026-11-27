@@ -222,6 +222,7 @@ const history = z.array(
   z.object({
     actor: z.string(),
     actorLabel: z.string().default("Agent thread"),
+    recipientLabel: z.string().optional(),
     atMs: z.number().int(),
     action: z.string(),
     snapshot: z.unknown(),
@@ -506,6 +507,7 @@ export function createRustPlanning(
           disposition:
             entry.action === "drop" ? (snapshot?.disposition ?? "deprecated") : null,
           recipient: entry.action === "assess" ? (snapshot?.recipient ?? null) : null,
+          recipientLabel: entry.action === "assess" ? (entry.recipientLabel ?? null) : null,
         };
       }),
     };

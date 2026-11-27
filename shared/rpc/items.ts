@@ -20,6 +20,8 @@ export const itemHistoryEntrySchema = z.object({
   disposition: itemDisposition.nullable(),
   /** An assessment send's recipient thread or "new planner thread". */
   recipient: z.string().nullable().default(null),
+  /** The readable recipient label, when the engine knows it. */
+  recipientLabel: z.string().nullable().optional(),
 });
 
 export const itemDetailSchema = z.object({
