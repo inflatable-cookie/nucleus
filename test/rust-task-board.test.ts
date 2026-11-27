@@ -9,6 +9,8 @@ import { rustTaskCard as task } from "./support/rust-task-card";
 import { profilesSnapshot, type storageView } from "../client/web/rust-api";
 import {
   createRustBoardTransport,
+  groupRustTasks,
+  rustCardAgeAt,
   rustProjectActivity,
   rustWaitDetail,
   type RustCommand,
@@ -45,6 +47,61 @@ test("Rust board settings retain imported profile fields across edits", () => {
 });
 
 const head = "a".repeat(40);
+
+function stepEntered(row: RustTask, key: string, at: number): RustTask {
+  return {
+    ...row,
+    lifecycle: {
+      ...row.lifecycle,
+      steps: row.lifecycle.steps.map((step) => step.key === key ? { ...step, enteredAtMs: at } : step),
+    },
+  };
+}
+
+test("Rust task columns sort by their stable API lifecycle times", () => {
+  // These rows use the /v1/tasks summary shape consumed by the board transport.
+  const needs = [
+    { ...task("needs-new", "blocked"), attention: "attention" as const, stateSinceMs: 300, latestEventAtMs: 900, number: 3 },
+    { ...task("needs-old", "error"), attention: "attention" as const, stateSinceMs: null, latestEventAtMs: 1_000, number: 1 },
+    { ...task("needs-tie", "blocked"), attention: "attention" as const, stateSinceMs: 300, number: 2 },
+  ];
+  const queue = [
+    { ...task("queue-normal", "queued"), queuePriority: "normal" as const, number: 2 },
+    { ...task("queue-promoted", "queued"), queuePriority: "promoted" as const, number: 3 },
+    { ...task("queue-held", "queued"), queuePriority: "promoted" as const, hold: { reason: "Held" }, number: 1 },
+  ];
+  const working = [
+    stepEntered({ ...task("working-new", "working"), number: 2 }, "working", 300),
+    stepEntered({ ...task("working-old", "working"), number: 1 }, "working", 100),
+  ];
+  const review = [
+    stepEntered({ ...task("review-new", "reviewing"), number: 2 }, "review", 300),
+    stepEntered({ ...task("review-old", "report_ready"), number: 1 }, "report_ready", 100),
+  ];
+  const merging = [
+    stepEntered({ ...task("merge-new", "merging"), number: 2 }, "merge", 300),
+    stepEntered({ ...task("merge-old", "merging"), number: 1 }, "merge", 100),
+  ];
+  const closing = [
+    stepEntered({ ...task("close-new", "closing"), number: 2 }, "close", 300),
+    stepEntered({ ...task("close-old", "closing"), number: 1 }, "close", 100),
+  ];
+  const history = [
+    { ...task("history-old", "done"), lifecycle: { ...task("history-old", "done").lifecycle, finishedAtMs: 100 }, number: 1 },
+    { ...task("history-new", "cancelled"), lifecycle: { ...task("history-new", "cancelled").lifecycle, finishedAtMs: 300 }, number: 2 },
+  ];
+  const grouped = groupRustTasks([...needs, ...queue, ...working, ...review, ...merging, ...closing, ...history]);
+
+  assert.deepEqual(grouped.needs.map(({ identity }) => identity.id), ["needs-old", "needs-tie", "needs-new"]);
+  assert.deepEqual(grouped.queue.map(({ identity }) => identity.id), ["queue-promoted", "queue-normal", "queue-held"]);
+  assert.deepEqual(grouped.working.map(({ identity }) => identity.id), ["working-old", "working-new"]);
+  assert.deepEqual(grouped.review.map(({ identity }) => identity.id), ["review-old", "review-new"]);
+  assert.deepEqual(grouped.merging.map(({ identity }) => identity.id), ["merge-old", "merge-new"]);
+  assert.deepEqual(grouped.closing.map(({ identity }) => identity.id), ["close-old", "close-new"]);
+  assert.deepEqual(grouped.history.map(({ identity }) => identity.id), ["history-new", "history-old"]);
+  assert.equal(rustCardAgeAt(needs[1]!), needs[1]!.lifecycle.admittedAtMs);
+  assert.equal(rustCardAgeAt({ ...needs[0]!, latestEventAtMs: 2_000 }), 300);
+});
 
 test("project activity counts distinct recent tasks and linked planning items", () => {
   const repo = { origin: "example/board-fixture", path: "/fixture" };

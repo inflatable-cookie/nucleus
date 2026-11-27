@@ -58,7 +58,7 @@ import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
 import { RustTaskProgress } from "../task/rust-progress";
-import { rustCardAgeAt, rustQuestionText, rustTaskLabel, rustWaitDetail, type RustCommand, type RustTask } from "../web/rust-board";
+import { compareRustTasks, rustCardAgeAt, rustColumns, rustQuestionText, rustTaskLabel, rustWaitDetail, type RustCommand, type RustTask } from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
 
@@ -937,10 +937,11 @@ export function RustListRows({ c, rust, view }: {
   view: InboxListProps["view"];
 }) {
   const [limit, setLimit] = useState(rustPageSize);
-  const tasks = rust.tasks ?? [];
+  const tasks = [...(rust.tasks ?? [])].sort(compareRustTasks);
   const remaining = tasks.length - limit;
+  const ageAt = (task: RustTask) => rustCardAgeAt(task, rustColumns[task.phase] === view ? view : undefined);
   // Ages read the clock, as TypeScript cards do; a list without one does not tick.
-  useTick(tasks.some((task) => rustCardAgeAt(task) !== null) ? 30_000 : null);
+  useTick(tasks.some((task) => ageAt(task) !== null) ? 30_000 : null);
   return <>
     {tasks.slice(0, limit).map((task) => {
       // The task number alone, as on TypeScript cards; the project shows beside it.
@@ -948,7 +949,7 @@ export function RustListRows({ c, rust, view }: {
       const question = view === "needs" ? task.question : null;
       const title = question ? rustQuestionText(question) : task.title || reference;
       const detail = task.hold?.reason ?? rustWaitDetail(task);
-      const ageAt = rustCardAgeAt(task);
+      const cardAgeAt = ageAt(task);
       const project = rust.project(task);
       const canPrioritize = task.phase === "queued" || task.wait === "capacity";
       const promoted = task.queuePriority === "promoted";
@@ -959,7 +960,7 @@ export function RustListRows({ c, rust, view }: {
           tone: task.phase === "done" ? "success" : task.hold || task.attention === "attention" ? "warning" : "muted",
           state: task.stateLabel, detail: question ? null : detail,
         }}
-        age={ageAt === null ? null : relativeAge(ageAt)}
+        age={cardAgeAt === null ? null : relativeAge(cardAgeAt)}
         flags={canPrioritize && promoted ? <Badge label="Promoted" tone="accent" c={c} a11y="Promoted" /> : undefined}
         actions={canPrioritize && rust.onCommand ? (
           <View style={{ ...row, gap: space.xs }}>
