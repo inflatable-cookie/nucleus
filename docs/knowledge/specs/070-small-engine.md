@@ -795,6 +795,8 @@ Later decisions carry their own attribution.
 
 60. **Stop halts merges.** Tom, 2026-11-27 ("Stop halts merges (Recommended)"): when Dispatch is Stopped, nothing outward-facing happens. Approved PRs wait until Dispatch runs again, as review publication and retirement already do.
 
+61. **Nucleus keeps registered checkouts' default branch current.** Tom, 2026-11-27, confirming the planner's proposal: "Yeah confirm - the damage from not keeping up to date is generally worse, it's rare that anything would be working in the main checkout at the same time as Nucleus tasks landing". After Nucleus merges a PR, it fetches and fast-forwards that repository's registered checkout's local default branch to the merged commit. If that branch is checked out, this is a fast-forward-only merge in the working tree, which Git refuses if it would overwrite local changes. If another branch is checked out, only the local default-branch ref moves, also fast-forward only. A refusal, a diverged branch or a dirty conflict leaves the checkout untouched and is recorded in the task's history. It never resets, stashes, rebases or forces. Task starts still use the fetched published base (nucleus#1623), so a lagging checkout never blocks work. This changes #1623's rule that Nucleus never touches the registered checkout.
+
 ## The model
 
 ### Stored state per task
