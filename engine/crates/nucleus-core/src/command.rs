@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, num::NonZeroU64};
 
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -962,6 +962,27 @@ impl Task {
             .version
             .checked_add(1)
             .ok_or(CommandError::BriefVersionsExhausted)?;
+        let complexity = |policy: Option<&BriefPolicy>| {
+            policy
+                .and_then(|policy| policy.complexity)
+                .unwrap_or_default()
+        };
+        let before = complexity(previous.as_ref());
+        let after = complexity(next.as_ref());
+        if before != after {
+            self.threads.complexity_raised_at = NonZeroU64::new(version).filter(|_| after > before);
+            // Older rows lack the complexity under which the worker was selected.
+            // Seed that baseline before changing the brief.
+            if let Some(bound) = &mut self.threads.worker_profile {
+                bound.complexity.get_or_insert(before);
+            }
+            if let Some(run) = &mut self.run
+                && run.launch.role == Role::Worker
+                && let Some(bound) = &mut run.launch.profile
+            {
+                bound.complexity.get_or_insert(before);
+            }
+        }
         self.brief = Brief::new(text, version);
         Ok(())
     }

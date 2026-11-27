@@ -928,12 +928,13 @@ async fn next(
         Authority::Planner { actor } => Some(actor.as_str()),
         Authority::Operator { .. } => None,
     });
-    let (watcher_count, watching) = state
+    let (count, watching) = state
         .store
         .watcher_summary(&id, caller_thread)
         .map_err(ServiceError::from)?;
     Ok(Json(NextView {
         last_provider_limit: task.threads().last_provider_limit.clone(),
+        profile_reselections: crate::profiles::profile_reselections(task, &state),
         version: row.version,
         phase: summary.card.phase,
         queue_priority: summary.card.queue_priority,
@@ -956,10 +957,7 @@ async fn next(
         allowance: state.allowance_view(task).map_err(ServiceError::from)?,
         dependency_status: summary.dependency_status,
         dependency_edits,
-        watchers: crate::report_only::WatcherSummary {
-            count: watcher_count,
-            watching,
-        },
+        watchers: crate::report_only::WatcherSummary { count, watching },
         commands,
     }))
 }
@@ -1600,6 +1598,8 @@ impl From<&ReportTask> for ReportView {
 struct NextView {
     #[serde(skip_serializing_if = "Option::is_none")]
     last_provider_limit: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    profile_reselections: Vec<String>,
     version: i64,
     phase: Phase,
     queue_priority: QueuePriority,
