@@ -82,6 +82,8 @@ pub enum WorkError {
     QuarantineMove(#[source] std::io::Error),
     #[error("the task branch already exists at another head")]
     WrongBranchHead,
+    #[error("origin/{base} does not contain the landed commit of prerequisite {prerequisite}")]
+    UnlandedPrerequisite { base: String, prerequisite: String },
     #[error("worktree path is not usable with Git")]
     InvalidPath,
     #[error("worktree filesystem operation failed")]
@@ -111,6 +113,13 @@ pub enum GitOperation {
     Fetch,
     #[error("the Git checkout operation")]
     Other,
+}
+
+/// The commit a satisfied prerequisite recorded when it landed on the base.
+#[derive(Debug, Clone)]
+pub struct Landing {
+    pub prerequisite: String,
+    pub commit: Head,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,6 +404,36 @@ impl Checkout<'_> {
         redactor: Redactor,
         observation: CheckoutObservation,
     ) -> impl FnOnce() -> Result<Workspace, WorkError> + Send + 'static + use<P> {
+        self.blocking_job(policy, redactor, move |checkout| match observation {
+            CheckoutObservation::Standard => checkout.observe(),
+            CheckoutObservation::Retirement => checkout.observe_for_retirement(),
+        })
+    }
+
+    /// Prepare the fetch which picks a new task checkout's start from the
+    /// published base. See [`Checkout::published_start`].
+    pub fn published_start_job<P: GitPolicy + Send + 'static>(
+        &self,
+        policy: P,
+        redactor: Redactor,
+        base: String,
+        landings: Vec<Landing>,
+    ) -> impl FnOnce() -> Result<Head, WorkError> + Send + 'static + use<P> {
+        self.blocking_job(policy, redactor, move |checkout| {
+            checkout.published_start(&base, &landings)
+        })
+    }
+
+    fn blocking_job<P, T, J>(
+        &self,
+        policy: P,
+        redactor: Redactor,
+        job: J,
+    ) -> impl FnOnce() -> Result<T, WorkError> + Send + 'static + use<P, T, J>
+    where
+        P: GitPolicy + Send + 'static,
+        J: FnOnce(&Checkout<'_>) -> Result<T, WorkError> + Send + 'static,
+    {
         let root = self.worktrees.root.clone();
         let scratch = self.worktrees.scratch.clone();
         let repository = self.repository.clone();
@@ -406,17 +445,85 @@ impl Checkout<'_> {
                 scratch,
                 git: Git::new(&policy, redactor),
             };
-            let checkout = Checkout {
+            job(&Checkout {
                 worktrees: &worktrees,
                 repository,
                 path,
                 branch,
-            };
-            match observation {
-                CheckoutObservation::Standard => checkout.observe(),
-                CheckoutObservation::Retirement => checkout.observe_for_retirement(),
+            })
+        }
+    }
+
+    /// Fetch `origin`'s base into the registered object store and choose the
+    /// start of a task checkout. Only the remote-tracking ref moves. The local
+    /// base branch and the registered working tree are left alone.
+    ///
+    /// A task branch left by an earlier allocation keeps its own head when that
+    /// head is already published and holds every landing. Otherwise the start is
+    /// the published tip, which must hold them.
+    ///
+    /// # Errors
+    /// Returns an error if the fetch fails, history cannot be read, or the
+    /// start lacks a landed prerequisite.
+    pub fn published_start(&self, base: &str, landings: &[Landing]) -> Result<Head, WorkError> {
+        let tracking = format!("refs/remotes/origin/{base}");
+        self.git(
+            &self.repository,
+            &[
+                "fetch",
+                "--no-tags",
+                "--no-write-fetch-head",
+                "--no-recurse-submodules",
+                "origin",
+                &format!("+refs/heads/{base}:{tracking}"),
+            ],
+        )?;
+        let published: Head = self
+            .git(
+                &self.repository,
+                &["rev-parse", "--verify", &format!("{tracking}^{{commit}}")],
+            )?
+            .trim_end()
+            .parse()?;
+        if let Some(head) = self.branch_head()?
+            && self.contains(&head, &published)?
+            && self.unlanded(landings, &head)?.is_none()
+        {
+            return Ok(head);
+        }
+        match self.unlanded(landings, &published)? {
+            None => Ok(published),
+            Some(landing) => Err(WorkError::UnlandedPrerequisite {
+                base: base.into(),
+                prerequisite: landing.prerequisite.clone(),
+            }),
+        }
+    }
+
+    fn unlanded<'l>(
+        &self,
+        landings: &'l [Landing],
+        start: &Head,
+    ) -> Result<Option<&'l Landing>, WorkError> {
+        for landing in landings {
+            // A commit absent from the object store cannot be in the fetched history.
+            if self.require_commit(&landing.commit).is_err()
+                || !self.contains(&landing.commit, start)?
+            {
+                return Ok(Some(landing));
             }
         }
+        Ok(None)
+    }
+
+    fn branch_head(&self) -> Result<Option<Head>, WorkError> {
+        let branch = format!("refs/heads/{}", self.branch);
+        let found = self.git(
+            &self.repository,
+            &["for-each-ref", "--format=%(objectname)", &branch],
+        )?;
+        let found = found.trim_end_matches('\n');
+        Ok((!found.is_empty()).then(|| found.parse()).transpose()?)
     }
 
     /// Observe the owned checkout and any changes that prevent clean removal.
@@ -539,17 +646,10 @@ impl Checkout<'_> {
             .map_err(|_| WorkError::WrongCheckout)?;
         self.worktrees.root.ensure_child(bucket)?;
         let path = self.path.to_str().ok_or(WorkError::InvalidPath)?;
-        let branch_ref = format!("refs/heads/{}", self.branch);
-        let found = self.git(
-            &self.repository,
-            &["for-each-ref", "--format=%(objectname)", &branch_ref],
-        )?;
-        let args = if found.is_empty() {
-            vec!["worktree", "add", "-b", &self.branch, path, start.as_str()]
-        } else if found.trim_end_matches('\n') == start.as_str() {
-            vec!["worktree", "add", path, &self.branch]
-        } else {
-            return Err(WorkError::WrongBranchHead);
+        let args = match self.branch_head()? {
+            None => vec!["worktree", "add", "-b", &self.branch, path, start.as_str()],
+            Some(head) if head == *start => vec!["worktree", "add", path, &self.branch],
+            Some(_) => return Err(WorkError::WrongBranchHead),
         };
         self.git(&self.repository, &args)?;
         self.observe()

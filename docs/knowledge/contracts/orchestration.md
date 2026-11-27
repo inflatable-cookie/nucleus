@@ -94,6 +94,21 @@ pinned `[sources]` revisions. The checkout, branch and run scratch are bound
 before handing work to the worker. Follow [repository hooks](repository-hooks.md)
 and [worktree handling](../../../engine/crates/nucleus-work/src/lib.rs).
 
+### Checkout start
+
+A brief task's checkout starts from the published base. Nucleus fetches
+`origin`'s base branch into the registered repository, which moves only the
+remote-tracking ref. The local branch and working tree stay as they are, however
+far behind. A task branch left by an earlier allocation keeps its head when the
+published base already holds it and it contains the prerequisite merges below.
+
+The start must contain the recorded merge commit of every prerequisite that
+landed on the same repository and base. A failed fetch or a missing landing is a
+workspace wait that names its cause. Nucleus never falls back to the local head.
+
+Review-entry tasks start at their recorded head, and report-only tasks at their
+pinned planning commit.
+
 ### Wait states and prerequisites
 
 Record first-dispatch prerequisites and deliberate post-dispatch waits as
