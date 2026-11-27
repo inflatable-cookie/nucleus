@@ -1047,7 +1047,7 @@ impl DecisionNoticeFixture {
             PROVIDER,
         );
         let mut service = Service::open_projects(
-            &settings,
+            settings.lock_profile().unwrap(),
             PROVIDER.into(),
             host,
             GitHub::new("unused").unwrap(),

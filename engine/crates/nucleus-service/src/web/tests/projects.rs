@@ -334,7 +334,7 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
 fn registry_service(settings: &nucleus_store::SettingsFile, host: T3) -> Arc<Service> {
     Arc::new(
         Service::open_projects(
-            settings,
+            settings.lock_profile().expect("lock fixture profile"),
             "fixture-acp".into(),
             host,
             GitHub::new("fixture").expect("client"),

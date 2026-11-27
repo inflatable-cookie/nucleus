@@ -58,8 +58,8 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostCalls, HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
 use nucleus_store::{
-    DispatchMode, EngineStorage, Event, EventDraft, SettingsFile, StorageDirectory, StorageError,
-    Store, StoreError, TaskRow,
+    DispatchMode, EngineStorage, Event, EventDraft, LockedProfile, SettingsFile, StorageDirectory,
+    StorageError, Store, StoreError, TaskRow,
 };
 use nucleus_work::{Checkout, WorkError, Worktrees, checkout_path};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
@@ -274,7 +274,7 @@ pub struct Service {
     forge_until: AtomicU64,
     forge_retry_secs: AtomicU64,
     // Keep the exclusive OS lock for the service lifetime.
-    _profile: OwnedFd,
+    _profile: Arc<OwnedFd>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -404,7 +404,7 @@ impl Service {
         report_command: PathBuf,
     ) -> Result<Self, ServiceError> {
         Self::open_runtime(
-            settings,
+            settings.lock_profile()?,
             Some(project),
             None,
             host,
@@ -419,7 +419,7 @@ impl Service {
     /// # Errors
     /// Returns an error if service configuration or storage is invalid.
     pub fn open_projects(
-        settings: &SettingsFile,
+        profile: LockedProfile,
         acp_provider: String,
         host: T3,
         forge: GitHub,
@@ -430,7 +430,7 @@ impl Service {
             return Err(ServiceError::Project);
         }
         Self::open_runtime(
-            settings,
+            profile,
             None,
             Some(acp_provider),
             host,
@@ -441,7 +441,7 @@ impl Service {
     }
 
     fn open_runtime(
-        settings: &SettingsFile,
+        profile: LockedProfile,
         project: Option<Project>,
         registry_provider: Option<String>,
         host: T3,
@@ -449,7 +449,7 @@ impl Service {
         callback: SocketAddr,
         report_command: PathBuf,
     ) -> Result<Self, ServiceError> {
-        let mut storage = settings.storage()?;
+        let (settings, mut storage, lock) = profile.into_storage()?;
         storage.pin_roots()?;
         storage.builds().ensure()?;
         storage.log().ensure()?;
@@ -464,15 +464,14 @@ impl Service {
         {
             return Err(ServiceError::Ticket);
         }
-        let profile = storage.lock_profile()?;
-        let mut runtime_settings = web::RuntimeSettings::open(settings)?;
+        let mut runtime_settings = web::RuntimeSettings::open(&settings)?;
         let mut store = Store::open(&storage)?;
         if runtime_settings
             .projects
             .as_ref()
             .is_some_and(nucleus_store::Projects::has_pending_removals)
         {
-            runtime_settings.projects = Some(store.clean_removed_projects(settings)?.value);
+            runtime_settings.projects = Some(store.clean_removed_projects(&settings)?.value);
         }
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
         if project.is_none() {
@@ -483,7 +482,7 @@ impl Service {
             storage,
             volume: volume::WorkVolume::new(),
             git,
-            settings: settings.clone(),
+            settings,
             registry_provider,
             host,
             forge,
@@ -546,7 +545,7 @@ impl Service {
             visibility_time: AtomicU64::new(0),
             forge_until: AtomicU64::new(0),
             forge_retry_secs: AtomicU64::new(0),
-            _profile: profile,
+            _profile: lock,
         })
     }
 
