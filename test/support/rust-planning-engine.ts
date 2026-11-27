@@ -73,22 +73,6 @@ function declaredComplexity(body: string): string | null {
   return /^queue:\n(?:[ \t]+.*\n)*?[ \t]+complexity:[ \t]*([a-z_]+)/m.exec(front + "\n")?.[1] ?? null;
 }
 
-/** `BriefPolicy::with_complexity`: set `queue.complexity`, keeping the rest of the brief. */
-function withComplexity(body: string, complexity: string): string {
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(body);
-  if (!match) return `---\nqueue:\n  complexity: ${complexity}\n---\n${body}`;
-  const front = match[1]!;
-  const rest = body.slice(match[0].length);
-  const next = declaredComplexity(body)
-    ? front.replace(/complexity:\s*[a-z_]+/, `complexity: ${complexity}`)
-    : /^queue:[ \t]*\{/m.test(front)
-      ? front.replace(/^queue:[ \t]*\{/m, `queue: {complexity: ${complexity}, `)
-      : /^queue:[ \t]*$/m.test(front)
-        ? front.replace(/^queue:[ \t]*$/m, `queue:\n  complexity: ${complexity}`)
-        : `${front}\nqueue:\n  complexity: ${complexity}`;
-  return `---\n${next}\n---\n${rest}`;
-}
-
 const snapshot = (value: unknown) => ({ value, revision: "1", configured: true });
 
 const settings = () => ({
@@ -119,8 +103,7 @@ export function planningEngine(now: () => number = Date.now) {
   const history: Array<History & { project: string; id: string }> = [];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
   let sequence = 0;
-  let refusal: string | null = null;
-  let tasks = 0;
+  const recipients = new Map<string, string>();
 
   const record = (project: string, id: string, actor: string, atMs: number, action: string, snapshot: unknown) =>
     history.push({ project, id, sequence: ++sequence, actor, atMs, action, snapshot });
@@ -130,10 +113,17 @@ export function planningEngine(now: () => number = Date.now) {
     project: string,
     item: StoredItem,
     filed: { actor: string; atMs: number },
-    steps: Array<{ actor: string; atMs: number; action: string; item: StoredItem; note?: string }> = [],
+    steps: Array<{ actor: string; atMs: number; action: string; item: StoredItem; note?: string; recipient?: string }> = [],
   ) {
     record(project, item.id, filed.actor, filed.atMs, "add", { ...item, state: "open" });
-    for (const step of steps) record(project, item.id, step.actor, step.atMs, step.action, step.note ? { ...step.item, note: step.note } : step.item);
+    for (const step of steps) {
+      const snapshot = {
+        ...step.item,
+        ...(step.note ? { note: step.note } : {}),
+        ...(step.recipient ? { recipient: step.recipient } : {}),
+      };
+      record(project, item.id, step.actor, step.atMs, step.action, snapshot);
+    }
     items.set(key(project, item.id), { project, item, createdAtMs: filed.atMs });
   }
 
@@ -160,7 +150,7 @@ export function planningEngine(now: () => number = Date.now) {
     if (path === "/session") return json({ id: "operator-session", canEditSettings: true, planningProjects: null });
     if (path === "/settings") return json(settings());
     if (path === "/tasks") return json([]);
-    const match = /^\/planning\/([^/]+)\/(items|history\/item)(?:\/([^/]+))?(?:\/(park|drop|reopen|promote))?$/.exec(path);
+    const match = /^\/planning\/([^/]+)\/(items|history\/item)(?:\/([^/]+))?(?:\/(park|drop|reopen|assess))?$/.exec(path);
     if (!match) return json({ error: `no route ${path}` }, 404);
     const [, project, collection, rawId, action] = match as unknown as [string, string, string, string | undefined, string | undefined];
     const id = rawId && decodeURIComponent(rawId);
@@ -196,30 +186,12 @@ export function planningEngine(now: () => number = Date.now) {
         save({ ...base(current), state: "open" }, "reopen", body.note);
         return json(withTimes(project, id));
       }
-      case "promote": {
+      case "assess": {
         if (current.state !== "open" && current.state !== "parked") return conflict();
-        if (body.version !== undefined && body.version !== withTimes(project, id).version) return conflict();
-        const declared = declaredComplexity(current.body);
-        const rewrite = current.kind === "lead" && body.complexity && body.complexity !== declared;
-        if (!body.complexity && !declared) return json({ error: "the brief needs a complexity" }, 400);
-        const repos = planningProjects[project]!.repositories;
-        const bound = repos.filter((repo) => repo.hostProject);
-        const target = body.repository
-          ? repos.find((repo) => repo.origin === body.repository)
-          : bound.length === 1
-            ? bound[0]
-            : undefined;
-        if (!target) return json({ error: "choose a repository" }, 400);
-        if (!target.hostProject) return json({ error: "repository is not bound to T3" }, 400);
-        if (refusal) {
-          const error = refusal;
-          refusal = null;
-          return json({ error }, 503);
-        }
-        const taskId = `t-promoted-${++tasks}`;
-        const promotedBody = rewrite ? withComplexity(current.body, body.complexity) : current.body;
-        save({ ...base(current), body: promotedBody, taskLinks: [taskId], state: "promoted", taskId }, "promote");
-        return json({ identity: { id: taskId }, reference: `${target.origin.split("/")[1]}#${1200 + tasks}` }, 201);
+        if (!(body.version > 0) || body.version !== withTimes(project, id).version) return conflict();
+        const recipient = recipients.get(project) ?? "new planner thread";
+        record(project, id, "operator", at, "assess", { ...current, recipient });
+        return json(withTimes(project, id));
       }
       default: {
         if (method !== "PUT") return json({ error: "method" }, 405);
@@ -243,8 +215,8 @@ export function planningEngine(now: () => number = Date.now) {
     seed,
     writes,
     editElsewhere,
-    refuseNextAdmission: (error: string) => {
-      refusal = error;
+    setRecipient: (project: string, recipient: string) => {
+      recipients.set(project, recipient);
     },
     item: (project: string, id: string) => withTimes(project, id),
   };
