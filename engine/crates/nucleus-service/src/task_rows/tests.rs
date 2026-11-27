@@ -1618,6 +1618,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         ["message.dispatch", "thread.snooze"]
     );
     assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
+    observe_restored_parent_snooze(&fixture).await;
 
     fixture.native.lock().unwrap().until = Value::Null;
     publish_shell();
