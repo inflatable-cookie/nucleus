@@ -2,7 +2,8 @@
 //! own thread under a deadline, never on an async worker or under the state lock.
 //! A call past its deadline may never return, and it can start no further
 //! mutation. A hung read never holds back later calls. A mutation it had already
-//! started holds back its owner until it returns or can no longer take effect.
+//! started holds back its owner until that mutation ends: only its end proves it
+//! can no longer take effect.
 
 use std::{
     cell::Cell,
@@ -25,8 +26,6 @@ use crate::{Service, ServiceError};
 
 /// A pass step older than this is logged once.
 const STUCK: Duration = Duration::from_mins(1);
-/// How often the engine reads its roots whatever else it is doing.
-const PROBE: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy)]
 pub(crate) enum Limit {
@@ -43,17 +42,10 @@ pub(crate) struct WorkVolume {
     pub(crate) unreturned: usize,
     /// Past that limit, how long after a hung call an owner starts any other.
     pub(crate) spacing: Duration,
-    /// Longer than Git may run before it is killed.
-    pub(crate) outlived: Duration,
     /// How many callers are waiting on a call, by owner.
     waiting: watch::Sender<BTreeMap<String, usize>>,
-    abandoned: Arc<Abandoned>,
-}
-
-/// Calls no caller waits for any more, and the pinned roots they depend on.
-struct Abandoned {
-    roots: Vec<StorageDirectory>,
-    owners: Mutex<BTreeMap<String, Hung>>,
+    /// Calls no caller waits for any more, by owner.
+    abandoned: Mutex<BTreeMap<String, Hung>>,
 }
 
 #[derive(Default)]
@@ -62,47 +54,6 @@ struct Hung {
     calls: Vec<Arc<Custody>>,
     /// When a call was last abandoned.
     latest: Option<Instant>,
-}
-
-impl Abandoned {
-    fn owners(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Hung>> {
-        self.owners.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Whether this owner may start another call beside its hung ones. Past the
-    /// limit each new hung call makes the owner wait, so threads grow slowly and
-    /// progress never stops. Calls which return cost nothing.
-    fn has_room(&self, owner: &str, limit: usize, spacing: Duration) -> bool {
-        let mut owners = self.owners();
-        let Some(hung) = owners.get_mut(owner) else {
-            return true;
-        };
-        // A call which has returned no longer shares its custody.
-        hung.calls.retain(|custody| Arc::strong_count(custody) > 1);
-        hung.calls.len() < limit || hung.latest.is_none_or(|at| at.elapsed() >= spacing)
-    }
-
-    /// Whether an earlier mutation of this owner could still take effect. This
-    /// reads the volume, so it runs on the new call's thread.
-    fn mutating(&self, owner: &str, outlived: Duration) -> bool {
-        let running: Vec<_> = self.owners().get(owner).map_or_else(Vec::new, |hung| {
-            hung.calls
-                .iter()
-                .filter(|custody| Arc::strong_count(custody) > 1 && custody.mutating())
-                .map(Arc::clone)
-                .collect()
-        });
-        if running.is_empty() {
-            return false;
-        }
-        // Reading the roots records their loss and return even when no other call does.
-        for root in &self.roots {
-            let _ = root.verify();
-        }
-        running
-            .iter()
-            .any(|custody| custody.may_still_apply(outlived))
-    }
 }
 
 /// Held by the awaiting caller. Dropping it unsettled abandons the call.
@@ -116,7 +67,7 @@ impl Drop for Waiting<'_> {
     fn drop(&mut self) {
         if let Some(custody) = self.unsettled.take() {
             custody.abandon();
-            let mut owners = self.volume.abandoned.owners();
+            let mut owners = self.volume.abandoned();
             let hung = owners.entry(self.owner.into()).or_default();
             hung.latest = Some(Instant::now());
             hung.calls.push(custody);
@@ -133,19 +84,36 @@ impl Drop for Waiting<'_> {
 }
 
 impl WorkVolume {
-    pub(crate) fn new(roots: Vec<StorageDirectory>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             check: Duration::from_mins(2),
             change: Duration::from_mins(12),
             unreturned: 16,
             spacing: Duration::from_mins(5),
-            outlived: Duration::from_mins(11),
             waiting: watch::Sender::default(),
-            abandoned: Arc::new(Abandoned {
-                roots,
-                owners: Mutex::default(),
-            }),
+            abandoned: Mutex::default(),
         }
+    }
+
+    fn abandoned(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Hung>> {
+        self.abandoned
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether earlier calls keep this owner from starting another. A running
+    /// mutation always does. Hung reads only slow it: past the limit each new
+    /// one makes the owner wait, and calls which return cost nothing.
+    fn held(&self, owner: &str) -> bool {
+        let mut owners = self.abandoned();
+        let Some(hung) = owners.get_mut(owner) else {
+            return false;
+        };
+        // A call which has returned no longer shares its custody.
+        hung.calls.retain(|custody| Arc::strong_count(custody) > 1);
+        hung.calls.iter().any(|custody| custody.mutating())
+            || (hung.calls.len() >= self.unreturned
+                && hung.latest.is_some_and(|at| at.elapsed() < self.spacing))
     }
 
     /// Run one work-volume call for an owner: a task, a repository or a kind of
@@ -158,24 +126,18 @@ impl WorkVolume {
         job: impl FnOnce(Arc<Custody>) -> T + Send + 'static,
     ) -> Pin<Box<impl Future<Output = Result<T, StorageError>>>> {
         Box::pin(async move {
-            if !self
-                .abandoned
-                .has_room(owner, self.unreturned, self.spacing)
-            {
+            if self.held(owner) {
                 return Err(StorageError::VolumeUnavailable);
             }
             let _step = Step::enter(step);
-            let custody = Arc::new(Custody::over(self.abandoned.roots.clone()));
+            let custody = Arc::new(Custody::default());
             let running = Arc::clone(&custody);
-            let (abandoned, name) = (Arc::clone(&self.abandoned), owner.to_owned());
-            let outlived = self.outlived;
             let (answer, answered) = oneshot::channel();
             // A hung call keeps its thread, so it must not take one from a shared pool.
             std::thread::Builder::new()
                 .name("nucleus-volume".into())
                 .spawn(move || {
-                    let done =
-                        (!abandoned.mutating(&name, outlived)).then(|| job(Arc::clone(&running)));
+                    let done = job(Arc::clone(&running));
                     drop(running);
                     let _ = answer.send(done);
                 })?;
@@ -195,28 +157,8 @@ impl WorkVolume {
                 return Err(StorageError::VolumeUnavailable);
             };
             waiting.unsettled = None;
-            done.map_err(|_| std::io::Error::other("a work volume call panicked"))?
-                .ok_or(StorageError::VolumeUnavailable)
+            done.map_err(|_| std::io::Error::other("a work volume call panicked").into())
         })
-    }
-
-    /// Read the pinned roots, which records an outage and the return ending it.
-    async fn probe(&self) {
-        let roots = self.abandoned.roots.clone();
-        let read = move |_| {
-            for root in &roots {
-                let _ = root.verify();
-            }
-        };
-        // A probe which hangs is abandoned and bounded like any other read.
-        let _ = self
-            .run(
-                "work volume",
-                "checking the work volume",
-                Limit::Check,
-                read,
-            )
-            .await;
     }
 
     /// Resolve while a caller is waiting on a work-volume call for this owner.
@@ -266,14 +208,6 @@ pub(crate) async fn watched<F: Future>(task: &str, work: F) -> F::Output {
 }
 
 impl Service {
-    /// Notice an outage even while the only call using the volume is a stuck one.
-    pub(crate) async fn watch_volume(&self) {
-        loop {
-            self.volume.probe().await;
-            time::sleep(PROBE).await;
-        }
-    }
-
     /// Run a checkout operation as a bounded work-volume call.
     pub(crate) async fn checkout_job<T: Send + 'static>(
         &self,
@@ -316,7 +250,7 @@ impl Service {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::mpsc};
+    use std::sync::mpsc;
 
     use nucleus_forge::GitHub;
 
@@ -331,14 +265,6 @@ mod tests {
             .run(owner, "reading", Limit::Change, |_| ())
             .await
             .is_ok()
-    }
-
-    /// Let the periodic probe alone see a root go away, and put it back.
-    async fn lose_and_restore(volume: &WorkVolume, root: &Path) {
-        let away = root.with_extension("away");
-        std::fs::rename(root, &away).unwrap();
-        volume.probe().await;
-        std::fs::rename(&away, root).unwrap();
     }
 
     #[tokio::test]
@@ -360,11 +286,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_stuck_mutation_holds_its_owner_until_the_volume_has_gone_and_returned() {
+    async fn a_stuck_mutation_holds_its_owner_until_it_ends_whatever_the_roots_do() {
         let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
         service.volume.check = Duration::from_millis(500);
-        service.volume.outlived = Duration::from_hours(1);
-        let root = service.storage.work().path().to_owned();
         let (mutation, hung) = mpsc::channel::<()>();
         let (outcome, admitted) = mpsc::channel();
         let lost = service
@@ -379,41 +303,31 @@ mod tests {
         assert!(!quick(&service.volume, OWNER).await);
         assert!(quick(&service.volume, "another").await);
 
-        // A return is not enough while its Git process could still be alive.
-        lose_and_restore(&service.volume, &root).await;
-        assert!(!quick(&service.volume, OWNER).await);
-        service.volume.outlived = Duration::ZERO;
-        assert!(quick(&service.volume, OWNER).await);
+        // The work root and the unrelated scratch root each go and come back,
+        // first unseen and then read while away.
+        for root in [service.storage.work(), service.storage.scratch()] {
+            for seen in [false, true] {
+                let away = root.path().with_extension("away");
+                std::fs::rename(root.path(), &away).unwrap();
+                if seen {
+                    assert!(root.verify().is_err());
+                }
+                std::fs::rename(&away, root.path()).unwrap();
+                root.verify().unwrap();
+                assert!(!quick(&service.volume, OWNER).await);
+            }
+        }
 
+        // The old mutation resumes and ends. Only then may the owner proceed.
         drop(mutation);
         assert!(!admitted.recv_timeout(SOON).unwrap(), "no further mutation");
-    }
-
-    #[tokio::test]
-    async fn a_stuck_mutation_returning_releases_its_owner_without_an_outage() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.volume.check = Duration::from_millis(500);
-        service.volume.outlived = Duration::ZERO;
-        let (mutation, hung) = mpsc::channel::<()>();
-        let lost = service
-            .volume
-            .run(OWNER, "writing", Limit::Check, move |custody| {
-                let _step = custody.mutate().expect("admitted while awaited");
-                let _ = hung.recv();
-            });
-        assert!(lost.await.is_err());
-        assert!(
-            !quick(&service.volume, OWNER).await,
-            "the volume never left"
-        );
-        drop(mutation);
         time::timeout(SOON, async {
             while !quick(&service.volume, OWNER).await {
                 time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("the owner resumes once the mutation returns");
+        .expect("the owner resumes once the mutation ends");
     }
 
     #[tokio::test]

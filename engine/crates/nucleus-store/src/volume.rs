@@ -120,8 +120,6 @@ struct Anchor {
     device: u64,
     inode: u64,
     volume_id: Option<String>,
-    gone: bool,
-    returns: u64,
 }
 
 impl Anchor {
@@ -132,16 +130,7 @@ impl Anchor {
             device: found.dev(),
             inode: found.ino(),
             volume_id,
-            gone: false,
-            returns: 0,
         })
-    }
-
-    /// Note whether the directory is there, counting each time it comes back.
-    fn record(anchor: &Mutex<Self>, gone: bool) {
-        let mut held = anchor.lock().unwrap_or_else(PoisonError::into_inner);
-        held.returns += u64::from(held.gone && !gone);
-        held.gone = gone;
     }
 
     fn hold(path: &Path, directory: OwnedFd) -> Result<Arc<Mutex<Self>>, StorageError> {
@@ -172,11 +161,8 @@ impl Anchor {
             {
                 return Err(StorageError::VolumeUnavailable);
             }
-            let mut adopted = Self::new(current.try_clone()?, Some(expected))?;
-            let mut held = anchor.lock().unwrap_or_else(PoisonError::into_inner);
-            // A remount is a return even when nothing saw the volume missing.
-            adopted.returns = held.returns + 1;
-            *held = adopted;
+            let adopted = Self::new(current.try_clone()?, Some(expected))?;
+            *anchor.lock().unwrap_or_else(PoisonError::into_inner) = adopted;
         }
         Ok(current.into())
     }
@@ -271,40 +257,15 @@ impl StorageDirectory {
     }
 
     fn walk(&self, path: &Path, create: bool) -> Result<(), StorageError> {
+        let root = self.open_root()?;
         // Checked before anything is created, so a substitute stays untouched.
         if let Some(pin) = &self.pin {
-            match self.find_pinned(pin) {
-                Ok(()) => Anchor::record(pin, false),
-                Err(error @ (StorageError::VolumeUnavailable | StorageError::MissingVolume)) => {
-                    Anchor::record(pin, true);
-                    return Err(error);
-                }
-                Err(error) => return Err(error),
-            }
+            let found = self
+                .walk_from(root.try_clone()?, &self.path, false)
+                .map_err(|_| StorageError::VolumeUnavailable)?;
+            Anchor::admit(pin, &self.path, found)?;
         }
-        self.walk_from(self.open_root()?, path, create).map(drop)
-    }
-
-    fn find_pinned(&self, pin: &Mutex<Anchor>) -> Result<(), StorageError> {
-        let found = self
-            .walk_from(self.open_root()?, &self.path, false)
-            .map_err(|error| match error {
-                StorageError::ConfinedDirectory(
-                    rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR,
-                )
-                | StorageError::OutsideVolume => StorageError::VolumeUnavailable,
-                error => error,
-            })?;
-        Anchor::admit(pin, &self.path, found).map(drop)
-    }
-
-    /// How often this pinned directory has come back after being found missing,
-    /// substituted or remounted. A directory which is not pinned never counts.
-    #[must_use]
-    pub fn returns(&self) -> u64 {
-        self.pin.as_ref().map_or(0, |pin| {
-            pin.lock().unwrap_or_else(PoisonError::into_inner).returns
-        })
+        self.walk_from(root, path, create).map(drop)
     }
 
     fn open_root(&self) -> Result<OwnedFd, StorageError> {
@@ -532,18 +493,6 @@ mod tests {
 
         std::fs::remove_dir(&path).unwrap();
         std::fs::rename(&away, &path).unwrap();
-        assert_eq!(directory.returns(), 0);
         directory.verify().unwrap();
-        directory.verify().unwrap();
-        assert_eq!(directory.returns(), 1);
-
-        // A remount counts even if no check ran while the volume was away.
-        #[cfg(target_os = "macos")]
-        {
-            let pin = directory.pin.as_ref().unwrap();
-            pin.lock().unwrap().device += 1;
-            directory.verify().unwrap();
-            assert_eq!(directory.returns(), 2);
-        }
     }
 }

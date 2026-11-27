@@ -10,7 +10,7 @@ use std::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use longhorn_git_workspace::{Git, GitFailure, GitFailureCode, GitPolicy, WorktreeIdentity};
@@ -135,51 +135,29 @@ pub enum Retirement {
 /// Shared by a blocking call and the caller awaiting it. A caller which stops
 /// waiting refuses every later mutation and can tell whether one is running.
 #[derive(Debug, Default)]
-pub struct Custody {
-    claim: Mutex<Claim>,
-    roots: Vec<StorageDirectory>,
-}
+pub struct Custody(Mutex<Claim>);
 
 #[derive(Debug, Default)]
 struct Claim {
     abandoned: bool,
-    running: Option<Running>,
+    mutating: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Running {
-    since: Instant,
-    epoch: u64,
-}
-
-/// The call's one admitted mutation, running until this is dropped.
+/// One admitted mutation, running until this is dropped.
 #[derive(Debug)]
 pub struct Mutation<'a>(&'a Custody);
 
 impl Custody {
-    /// Custody for a call which depends on these pinned roots.
-    #[must_use]
-    pub fn over(roots: Vec<StorageDirectory>) -> Self {
-        Self {
-            claim: Mutex::default(),
-            roots,
-        }
-    }
-
-    /// Admit the call's next mutation. A call runs one at a time.
+    /// Admit one mutation.
     ///
     /// # Errors
     /// Refuses once the caller has stopped waiting.
     pub fn mutate(&self) -> Result<Mutation<'_>, StorageError> {
-        let epoch = self.epoch();
         let mut claim = self.claim();
         if claim.abandoned {
             return Err(StorageError::VolumeUnavailable);
         }
-        claim.running = Some(Running {
-            since: Instant::now(),
-            epoch,
-        });
+        claim.mutating += 1;
         Ok(Mutation(self))
     }
 
@@ -188,36 +166,21 @@ impl Custody {
         self.claim().abandoned = true;
     }
 
-    /// Whether an admitted mutation is still running.
+    /// Whether an admitted mutation is still running. Its end is the only proof
+    /// that it can no longer take effect.
     #[must_use]
     pub fn mutating(&self) -> bool {
-        self.claim().running.is_some()
-    }
-
-    /// Whether a running mutation could still take effect. It no longer can once
-    /// the volume it started on has gone and returned, and it is older than
-    /// `outlived`, within which any Git process it started has been killed.
-    #[must_use]
-    pub fn may_still_apply(&self, outlived: Duration) -> bool {
-        let epoch = self.epoch();
-        self.claim()
-            .running
-            .is_some_and(|running| running.epoch == epoch || running.since.elapsed() < outlived)
-    }
-
-    // Changes whenever a root comes back after an outage or a remount.
-    fn epoch(&self) -> u64 {
-        self.roots.iter().map(StorageDirectory::returns).sum()
+        self.claim().mutating > 0
     }
 
     fn claim(&self) -> std::sync::MutexGuard<'_, Claim> {
-        self.claim.lock().unwrap_or_else(PoisonError::into_inner)
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 impl Drop for Mutation<'_> {
     fn drop(&mut self) {
-        self.0.claim().running = None;
+        self.0.claim().mutating -= 1;
     }
 }
 

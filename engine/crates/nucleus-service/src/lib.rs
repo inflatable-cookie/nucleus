@@ -464,10 +464,9 @@ impl Service {
             host.use_held_shell();
         }
         let github_accounts = Arc::new(github_accounts::GitHubAccounts::new(settings.clone()));
-        let roots = vec![storage.work().clone(), storage.scratch().clone()];
         Ok(Self {
             storage,
-            volume: volume::WorkVolume::new(roots),
+            volume: volume::WorkVolume::new(),
             git,
             settings: settings.clone(),
             registry_provider,
@@ -815,7 +814,6 @@ impl Service {
             Box::pin(self.watch_enrollments()),
             Box::pin(self.watch_housekeeping()),
             Box::pin(self.watch_trash()),
-            Box::pin(self.watch_volume()),
             Box::pin(self.watch_tells()),
             Box::pin(self.watch_inbox()),
             Box::pin(self.watch_theme())

@@ -377,7 +377,7 @@ async fn reads_which_never_return_do_not_hold_back_their_task() {
 }
 
 #[tokio::test]
-async fn a_stuck_allocation_resumes_after_the_volume_has_gone_and_returned() {
+async fn a_stuck_allocation_holds_its_task_until_it_ends_and_then_resumes() {
     let Outage {
         home,
         mut service,
@@ -389,27 +389,25 @@ async fn a_stuck_allocation_resumes_after_the_volume_has_gone_and_returned() {
     hung.0.only.set("add").unwrap();
     hung.0.holds.store(1, Ordering::SeqCst);
     service.volume.change = ANSWER;
-    // Stands for the longest time Git may run before it is killed.
-    service.volume.outlived = Duration::ZERO;
     let service = Arc::new(service);
     let api = api(&service);
     let root = service.storage.work().path().to_owned();
 
-    // The worktree add outlasts its caller, and holds the task while the volume stays.
-    for _ in 0..2 {
-        pass_until(&service, waits_for_volume).await;
-        assert_volume_wait(&service).await;
-        reads_answer(&api).await;
-    }
-    assert_eq!(hung.0.entered.load(Ordering::SeqCst), 1);
-
+    // The worktree add outlasts its caller.
+    pass_until(&service, waits_for_volume).await;
+    assert_volume_wait(&service).await;
+    // The root goes and returns before anything reads it, with the add unfinished.
     let away = home.path().join("away");
     std::fs::rename(&root, &away).unwrap();
-    pass_until(&service, waits_for_volume).await;
     std::fs::rename(&away, &root).unwrap();
+    pass_until(&service, waits_for_volume).await;
+    reads_answer(&api).await;
+    assert_eq!(hung.0.entered.load(Ordering::SeqCst), 1);
+
+    // The old add resumes and ends, and the pass carries on by itself.
+    drop(hung);
     pass_until(&service, launches_review).await;
     let checkout = nucleus_work::checkout_path(&root, REPOSITORY, "reviewer");
     assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), head.as_str());
-    drop(hung);
     forge.abort();
 }

@@ -135,13 +135,12 @@ the state lock and under a deadline. API reads and run reports answer while such
 a call waits, and the pass rechecks the task row before its next send. A call
 past its deadline can start no further mutation, including a fetch. A hung read
 never holds back later calls; once sixteen of a task's calls have not returned,
-each further hung call delays that task's next ones by five minutes. A mutation already started holds back its
-task until it returns, or until the volume has gone and returned or been
-remounted and the mutation is older than eleven minutes, longer than Git may
-run. The engine reads its roots every thirty seconds to notice this. A
-published-base fetch holds back its whole repository the same way. A mutation
-stuck while the volume never reads as gone keeps holding. A quarantine
-stopped after its move stays pending for the owner to check.
+each further hung call delays that task's next ones by five minutes. A mutation
+already started holds back its task until that mutation ends. Neither elapsed
+time nor a returned volume releases it, because neither proves it can no longer
+take effect. Git's own bounds end a Git mutation. A published-base fetch holds
+back its whole repository the same way. A quarantine stopped after its move
+stays pending for the owner to check.
 
 A task whose work volume or layout, including its registered checkout, cannot be
 verified waits with that reason and retries with a delay that doubles to one
