@@ -8,6 +8,7 @@ use std::{
     env,
     error::Error,
     fs::File,
+    future::Future,
     io::{self, Read},
     net::SocketAddr,
     os::fd::AsFd,
@@ -43,7 +44,6 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const MAX_INPUT: u64 = 64 * 1024;
 const REPORT_RETRY_DELAY: Duration = Duration::from_millis(500);
 const CONTROL_KEY: &str = "NUCLEUS_ENGINE_CONTROL_KEY";
-const FIXTURE_ORIGIN_KEY: &str = "NUCLEUS_ENGINE_FIXTURE_ORIGIN_KEY";
 const T3_CALLER_KEY: &str = "NUCLEUS_ENGINE_T3_CALLER_KEY";
 
 #[derive(Parser)]
@@ -80,12 +80,6 @@ enum Action {
         t3: Option<String>,
         #[arg(long)]
         actor: String,
-        /// Bind the controller to the authenticated T3 planner's thread ID.
-        #[arg(long)]
-        planner: bool,
-        /// Give the fixture origin thread its own planner credential.
-        #[arg(long)]
-        fixture_origin_thread: Option<String>,
         /// Directory containing the built standalone board.
         #[arg(long)]
         board_assets: Option<PathBuf>,
@@ -302,15 +296,8 @@ async fn main() -> Result<()> {
             acp_provider,
             t3,
             actor,
-            planner,
-            fixture_origin_thread,
             board_assets,
         } => {
-            let authority = if planner {
-                Authority::Planner { actor }
-            } else {
-                Authority::Operator { actor }
-            };
             std::panic::set_hook(Box::new(|info| {
                 serve_log::line(format_args!(
                     "{}",
@@ -322,8 +309,7 @@ async fn main() -> Result<()> {
                 home.as_deref(),
                 acp_provider,
                 t3.as_deref(),
-                authority,
-                fixture_origin_thread,
+                actor,
                 board_assets.as_deref(),
             )
             .await
@@ -414,8 +400,7 @@ async fn serve(
     home: Option<&Path>,
     provider: Option<String>,
     host: Option<&str>,
-    authority: Authority,
-    fixture_origin_thread: Option<String>,
+    actor: String,
     board_assets: Option<&Path>,
 ) -> Result<()> {
     let started = Instant::now();
@@ -428,36 +413,20 @@ async fn serve(
     serve_log::start(settings.home())?;
     let result = async {
         let provider = provider.ok_or("supply the T3 ACP provider")?;
-        let actor = match &authority {
-            Authority::Operator { actor } | Authority::Planner { actor } => actor,
-        };
         if actor.trim().is_empty() {
             return Err("supply the controller identity".into());
         }
         let host = configured_host(&settings, host)?;
         let forge = GitHub::new(&secret("NUCLEUS_ENGINE_GITHUB_TOKEN")?)?;
         let credential = control_key(CONTROL_KEY)?;
-        if !matches!(authority, Authority::Operator { .. }) || fixture_origin_thread.is_some() {
-            return Err("use the T3 caller credential with the Projects registry".into());
-        }
         let t3_caller_key = control_key(T3_CALLER_KEY)?;
         if t3_caller_key == credential {
             return Err("supply a distinct T3 caller credential".into());
         }
-        let mut controllers = vec![Controller {
+        let controllers = vec![Controller {
             credential,
-            authority,
+            authority: Authority::Operator { actor },
         }];
-        if let Some(actor) = fixture_origin_thread {
-            let origin = control_key(FIXTURE_ORIGIN_KEY)?;
-            if origin == credential || actor.trim().is_empty() {
-                return Err("supply a distinct key and identity for the fixture origin".into());
-            }
-            controllers.push(Controller {
-                credential: origin,
-                authority: Authority::Planner { actor },
-            });
-        }
         let command = env::current_exe()?.canonicalize()?;
         let service = Arc::new(
             Service::open_projects(profile, provider, host, forge, endpoint, command)?
@@ -473,9 +442,18 @@ async fn serve(
             None => router_with_t3_callers(Arc::clone(&service), controllers, Some(t3_caller_key)),
         };
         let tcp = TcpListener::bind(endpoint).await?;
-        serve_http(tcp, api, service, signals, started).await
+        let watch = Arc::clone(&service);
+        let watcher = tokio::spawn(async move { watch.watch_host().await });
+        let result = serve_http(tcp, api, schedule(service), signals, started).await;
+        watcher.abort();
+        let _ = watcher.await;
+        result
     }
     .await;
+    finish_serve(started, result)
+}
+
+fn finish_serve(started: Instant, result: Result<()>) -> Result<()> {
     if let Err(error) = &result {
         serve_log::line(format_args!(
             "Nucleus engine exited with an error after {:.3}s: {}",
@@ -517,36 +495,19 @@ impl ShutdownSignals {
 async fn serve_http(
     tcp: TcpListener,
     api: axum::Router,
-    service: Arc<Service>,
+    scheduler: impl Future<Output = ()> + Send + 'static,
     mut signals: ShutdownSignals,
     started: Instant,
 ) -> Result<()> {
     let address = tcp.local_addr()?;
-    let watch = Arc::clone(&service);
-    let watcher = tokio::spawn(async move {
-        watch.watch_host().await;
-    });
-    let cycle = tokio::spawn(async move {
-        loop {
-            match service.pass().await {
-                Ok(outcomes) => {
-                    for outcome in outcomes {
-                        if let Err(error) = outcome.result
-                            && !error.is_held_call()
-                        {
-                            serve_log::line(format_args!("{}: {error}", outcome.task));
-                        }
-                    }
-                }
-                Err(error) => {
-                    serve_log::line(format_args!("{error}"));
-                    tokio::time::sleep(Duration::from_secs(3)).await;
-                }
-            }
-        }
-    });
+    let mut cycle = tokio::spawn(scheduler);
     serve_log::listening(address);
     let result = tokio::select! {
+        biased;
+        stopped = &mut cycle => {
+            stopped.map_err(|error| format!("scheduler stopped: {error}"))?;
+            return Err("scheduler stopped unexpectedly".into());
+        },
         result = axum::serve(tcp, api) => result,
         signal = signals.next() => {
             serve_log::line(format_args!(
@@ -556,10 +517,29 @@ async fn serve_http(
             Ok(())
         },
     };
-    watcher.abort();
     cycle.abort();
-    let _ = tokio::join!(watcher, cycle);
+    let _ = cycle.await;
     Ok(result?)
+}
+
+async fn schedule(service: Arc<Service>) {
+    loop {
+        match service.pass().await {
+            Ok(outcomes) => {
+                for outcome in outcomes {
+                    if let Err(error) = outcome.result
+                        && !error.is_held_call()
+                    {
+                        serve_log::line(format_args!("{}: {error}", outcome.task));
+                    }
+                }
+            }
+            Err(error) => {
+                serve_log::line(format_args!("{error}"));
+                time::sleep(Duration::from_secs(3)).await;
+            }
+        }
+    }
 }
 
 async fn report(path: &Path) -> Result<()> {
@@ -908,7 +888,54 @@ fn read_with_limit(source: impl Read, limit: u64) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_BRIEF_BYTES, read_brief};
+    use super::{
+        Instant, MAX_BRIEF_BYTES, ShutdownSignals, TcpListener, finish_serve, read_brief,
+        serve_http, serve_log,
+    };
+
+    #[tokio::test]
+    async fn a_scheduler_panic_exits_the_process_and_records_the_cause() {
+        const CHILD_HOME: &str = "NUCLEUS_TEST_SCHEDULER_PANIC_HOME";
+        if let Some(home) = std::env::var_os(CHILD_HOME) {
+            let started = Instant::now();
+            serve_log::start(std::path::Path::new(&home)).unwrap();
+            let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let result = serve_http(
+                tcp,
+                axum::Router::new(),
+                async { panic!("fixture scheduler panic") },
+                ShutdownSignals::new().unwrap(),
+                started,
+            )
+            .await;
+            finish_serve(started, result).unwrap();
+            panic!("serve returned after losing its scheduler");
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tokio::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::a_scheduler_panic_exits_the_process_and_records_the_cause",
+                ])
+                .env(CHILD_HOME, home.path())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("the process exits after its scheduler panics")
+        .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let log = String::from_utf8_lossy(&output.stderr);
+        assert!(log.contains("scheduler stopped"), "{log}");
+        assert!(log.contains("fixture scheduler panic"), "{log}");
+        assert_eq!(
+            std::fs::read(home.path().join("serve.last-run")).unwrap()[0],
+            b'F'
+        );
+    }
 
     #[test]
     fn brief_stdin_preserves_the_limit_and_counts_the_entire_oversized_input() {
