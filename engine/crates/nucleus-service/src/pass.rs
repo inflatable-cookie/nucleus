@@ -3338,8 +3338,21 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&draft).unwrap(), "keep this");
         std::fs::remove_file(&draft).unwrap();
 
+        crate::tests::create_fixture_commit(checkout.path(), "Local closeout commit");
+        assert!(matches!(
+            service.archive_done(&row).await,
+            Err(ServiceError::ArchiveEvidence(_))
+        ));
+        assert!(checkout.path().exists());
+        let Workspace::Clean(published) = checkout.observe().unwrap() else {
+            panic!("fixture checkout must be clean");
+        };
+        let base = checkout.path().to_owned();
+        let (forge, _published_server) = publish_checkout_forge(published).await;
+        service.forge = forge;
+
         assert_eq!(service.archive_done(&row).await.unwrap(), Action::Nothing);
-        assert!(!checkout.path().exists());
+        assert!(!base.exists());
         assert!(service.host.host_calls().is_empty());
     }
 

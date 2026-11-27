@@ -1468,6 +1468,51 @@ async fn parent_reentry_uses_the_owned_ended_turn_even_when_another_turn_is_late
 }
 
 #[tokio::test]
+async fn parent_unarchive_rechecks_the_quiet_shell_before_sending() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let archived = parent_snapshot(&binding, "completed", true);
+    let mut row = shell_row(&archived);
+    let (host, native) = server(vec![("orchestration.dispatchCommand", Response::Success)]).await;
+    hold_shell(&host, &archived);
+    let pass = quiet_pass(&host);
+    let prepare = || {
+        Box::pin(host.prepare_parent(
+            &binding,
+            "fixture-acp",
+            "Fixture",
+            "Resume the task",
+            None,
+            pass.profile_catalog(),
+        ))
+    };
+    let crate::ParentStep::Write(stale) = prepare().await.unwrap() else {
+        panic!("the quiet archived parent should unarchive");
+    };
+    row["pendingBackgroundTasks"] = json!([{"kind":"command","taskId":"late-work"}]);
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
+    assert!(matches!(
+        host.write_parent(stale).await,
+        Err(crate::ParentSendError::NotSent(
+            HostError::ParentPreflight { .. }
+        ))
+    ));
+    assert!(matches!(prepare().await.unwrap(), crate::ParentStep::Wait));
+    row["pendingBackgroundTasks"] = json!([]);
+    host.rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
+    let crate::ParentStep::Write(write) = prepare().await.unwrap() else {
+        panic!("background work has settled");
+    };
+    host.write_parent(write).await.unwrap();
+    let requests = native.await.unwrap();
+    let payload: Value = serde_json::from_str(requests[0].payload.get()).unwrap();
+    assert_eq!(payload["type"], "thread.unarchive");
+    assert_eq!(payload["threadId"], row["id"]);
+}
+
+#[tokio::test]
 async fn bounded_parent_refresh_keeps_the_held_custody_fence() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
