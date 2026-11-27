@@ -226,16 +226,24 @@ def count_commit(revision):
 
 
 def main():
-    args = argparse.ArgumentParser(description=__doc__)
-    args.add_argument("revisions", nargs="+", metavar="COMMIT")
-    revisions = args.parse_args().revisions
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ceiling", type=int, metavar="LINES")
+    parser.add_argument("revisions", nargs="*", metavar="COMMIT", default=["HEAD"])
+    args = parser.parse_args()
+    revisions = args.revisions
     try:
         counts = [count_commit(revision) for revision in revisions]
     except (subprocess.CalledProcessError, ValueError) as error:
-        args.exit(1, f"{error}\n")
+        parser.exit(1, f"{error}\n")
     for index, (revision, (commit, count)) in enumerate(zip(revisions, counts)):
         delta = "" if index == 0 else f"  ({count - counts[0][1]:+,} vs {revisions[0]})"
-        print(f"{revision} {commit[:12]}  {count:,}{delta}")
+        budget = ""
+        if args.ceiling is not None:
+            ceiling = args.ceiling
+            budget = f" / {ceiling:,} ({ceiling - count:+,} remaining)"
+        print(f"{revision} {commit[:12]}  {count:,}{budget}{delta}")
+    if args.ceiling is not None and any(count > args.ceiling for _, count in counts):
+        parser.exit(1, f"production line count exceeds the {args.ceiling:,}-line ceiling\n")
 
 
 if __name__ == "__main__":
