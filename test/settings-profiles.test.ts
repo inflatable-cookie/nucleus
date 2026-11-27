@@ -1794,3 +1794,86 @@ test("nucleus#998: Subscriptions ending in group rows is the last section, with 
     ui.update(h("View", null));
   }
 });
+
+/** A profile screen whose board read is `snapshot`: a promise while it loads, or a board that can or cannot edit settings. */
+function liveBoardTree(snapshot: Promise<unknown>) {
+  return h(QueryClientProvider, {
+    client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+    children: h(PluginRpcProvider, {
+      invoke: async (method: string) => {
+        if (method === "rust.profile-usage") return profileUsage;
+        if (method === "queue.ui-snapshot") return snapshot;
+        if (method === "backup.list") return { snapshots: [], localError: null };
+        if (method === "repositories") return [];
+        if (method === "profile.list") return { profiles: [imported()] };
+        if (method === "profile.vocabulary") return catalog;
+        return {};
+      },
+      children: h(settings.QueueSettingsScreen as never, {
+        theme: { colors: c },
+        host: { id: "host", label: "Host" },
+        layout: { compact: false, platform: "ios" as const },
+      }),
+    }),
+  });
+}
+
+test("the Edit control and the dispatch row wait for the live board: no Edit while settings state loads, then Edit opens the editor", async () => {
+  await load();
+  let resolveBoard: ((value: ReturnType<typeof board>) => void) | undefined;
+  const pending = new Promise<ReturnType<typeof board>>((resolve) => {
+    resolveBoard = resolve;
+  });
+  const ui = mount(liveBoardTree(pending));
+  try {
+    await settle(() => ui.text().includes("Profiles"));
+    ui.press("Profiles");
+    await settle(() => ui.text().includes("Imported Sol"));
+    assert.equal(
+      ui.query("Edit Imported Sol"),
+      undefined,
+      "no Edit control while settings state loads",
+    );
+    assert.equal(
+      ui.query("Profile dispatch row"),
+      undefined,
+      "no dispatch row while settings state loads",
+    );
+    resolveBoard!({
+      ...board(),
+      pool: [
+        { profileId: "imported", group: "anthropic", weight: "most", enabled: true },
+      ],
+    });
+    await settle(() => Boolean(ui.query("Edit Imported Sol")));
+    ui.press("Edit Imported Sol");
+    await settle(() => Boolean(ui.query("Profile name row")));
+    await settle(() => Boolean(ui.query("Profile dispatch row")));
+    assert.equal(
+      ui.get("Weight slider, Most").props.accessibilityValue.now,
+      4,
+      "the stored weight shows once the board arrives",
+    );
+  } finally {
+    ui.update(h("View", null));
+  }
+});
+
+test("a board that cannot edit settings shows no Edit control on the profile rows", async () => {
+  await load();
+  const ui = mount(
+    liveBoardTree(Promise.resolve({ ...board(), canEditSettings: false })),
+  );
+  try {
+    await settle(() => ui.text().includes("Profiles"));
+    ui.press("Profiles");
+    await settle(() => ui.text().includes("Imported Sol"));
+    assert.equal(
+      ui.query("Edit Imported Sol"),
+      undefined,
+      "a read-only board offers no Edit control",
+    );
+  } finally {
+    ui.update(h("View", null));
+  }
+});

@@ -31,3 +31,169 @@ const escapeRegExp = (value: string) =>
  * nucleus#1546: the Planning menu entry counts the open lanes in scope through
  * the board snapshot contract in wide, medium and narrow layouts.
  */
+
+test("1546 the Planning menu entry counts the open lanes in scope", async () => {
+  const fixture = planningFixture();
+  // One lane two projects list: it counts once, whatever selects both.
+  fixture.addLane({
+    key: "shared",
+    title: "Shared lane",
+    aim: "A lane two selected projects list.",
+    repositories: [
+      { origin: "fixture/roadmap", path: "/fixture/roadmap" },
+      { origin: "fixture/idle", path: "/fixture/idle" },
+    ],
+  });
+  const { MainSurface } = await import("../client/queue");
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const ui = mount(
+    h(QueryClientProvider, {
+      client,
+      children: h(PluginRpcProvider, {
+        invoke: fixture.invoke,
+        children: h(MainSurface as never, {
+          theme: { colors: c },
+          layout: { compact: false, platform: "ios" as const },
+          navigation: {},
+        }),
+      }),
+    }),
+  );
+  const { roadmap, idle, dormant } = fixture.projectNames;
+  const waitFor = async (label: string | RegExp) => {
+    for (let i = 0; i < 400 && !ui.query(label); i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    return ui.get(label);
+  };
+  // The board measures its panel on its root view; firing a width switches layouts.
+  const setWidth = (width: number) => {
+    const panel = ui
+      .ofType("View")
+      .find(
+        (node) =>
+          typeof node.props.onLayout === "function" &&
+          node.props.style?.backgroundColor === dark.surface0,
+      );
+    assert.ok(panel, "the board measures its panel");
+    panel.props.onLayout({ nativeEvent: { layout: { width, height: 800 } } });
+  };
+  // A menu entry's dimming lives on its pressable frame.
+  const opacityOf = (label: string | RegExp) =>
+    ui.get(label).props.style.opacity;
+  // The project selector's trigger and one project row. A Shift-press leaves
+  // the popover open for the next pick, so the trigger is only pressed when
+  // the rows are not already showing.
+  const selectProject = async (name: string, additive?: boolean) => {
+    const row = new RegExp(`^Project ${escapeRegExp(name)},`);
+    if (!ui.query(row)) {
+      ui.press(/^Projects, /);
+      await waitFor(row);
+    }
+    ui.press(row, additive ? { nativeEvent: { shiftKey: true } } : undefined);
+  };
+  try {
+    // All projects: the six active lanes — reliability, host, activities,
+    // containers, benchmark and the shared lane counted once. The done lanes
+    // (board-ui, spike) never count.
+    await waitFor("Planning, 6 open lanes");
+    assert.equal(
+      opacityOf("Planning, 6 open lanes"),
+      1,
+      "a non-zero Planning count never dims",
+    );
+    // The count uses the same resting title tint as other menu text.
+    const entry = ui.get("Planning, 6 open lanes");
+    const count = (
+      entry.children as Array<{ type?: string; children?: unknown[] } | string>
+    ).find(
+      (child) =>
+        typeof child !== "string" &&
+        child.type === "Text" &&
+        (child.children ?? []).join("") === "6",
+    ) as { props: { style: { color: string } } };
+    assert.ok(count, "Planning draws its count as text");
+    assert.equal(
+      count.props.style.color,
+      cardTitleColor(c, false),
+      "the count reads in the shared card title tint",
+    );
+    // The entry opens Planning like every other entry opens its view.
+    ui.press(/^Planning, \d+ open lanes$/);
+    await waitFor(/^Plan for /);
+
+    // The count follows the project selection.
+    await selectProject(roadmap);
+    await waitFor("Planning, 5 open lanes");
+    // Two selected projects still count their shared lane once.
+    await selectProject(idle, true);
+    await waitFor("Planning, 6 open lanes");
+    // Idle alone lists only its own lanes.
+    await selectProject(idle);
+    await waitFor("Planning, 2 open lanes");
+    // Dormant lists none: the zero entry dims but stays selectable. The view
+    // is still on Planning from above, and the selected entry never dims, so
+    // step onto Needs you first.
+    await selectProject(dormant);
+    await waitFor("Planning, 0 open lanes");
+    ui.press(/^Needs you, \d+$/);
+    await waitFor("Needs you list");
+    assert.equal(
+      opacityOf("Planning, 0 open lanes"),
+      0.55,
+      "a zero Planning count dims like every other entry",
+    );
+    ui.press(/^Planning, \d+ open lanes$/);
+    assert.equal(
+      opacityOf("Planning, 0 open lanes"),
+      1,
+      "the selected entry keeps its selected styling",
+    );
+    // Clearing the selection restores all projects and their open lanes.
+    ui.press(/^Projects, /);
+    await waitFor("Clear project selection");
+    ui.press("Clear project selection");
+    await waitFor("Planning, 6 open lanes");
+
+    // Medium width keeps the same menu inline.
+    setWidth(900);
+    assert.ok(
+      ui.query("Planning, 6 open lanes"),
+      "the medium layout keeps the Planning count",
+    );
+    // The narrow drawer carries the same entry behind the menu button.
+    setWidth(400);
+    assert.equal(
+      ui.query("Nucleus navigation"),
+      undefined,
+      "the drawer starts closed",
+    );
+    ui.press("Open the board menu");
+    ui.get("Board menu");
+    assert.ok(
+      ui.query("Planning, 6 open lanes"),
+      "the narrow drawer carries the Planning count",
+    );
+    ui.press(/^Planning, \d+ open lanes$/);
+    assert.equal(
+      ui.query("Board menu"),
+      undefined,
+      "picking the entry closes the drawer",
+    );
+    // Narrow drills into the roadmap in place: project rows first, then the plan.
+    for (
+      let i = 0;
+      i < 400 && ui.all(/^Plan for |^Project row /).length === 0;
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(
+      ui.all(/^Plan for |^Project row /).length > 0,
+      "the Planning view opens from the drawer",
+    );
+  } finally {
+    ui.update(h("View", null));
+    client.clear();
+  }
+});
