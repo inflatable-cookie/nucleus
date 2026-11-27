@@ -331,8 +331,12 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
     settings: () => board.read(boardSettings, "/settings"),
     domain: <T>(schema: z.ZodType<T>, domain: SettingsDomain) =>
       board.read(schema, `/settings/${domain}`),
-    threadTitles: (ids: readonly string[]) =>
-      board.read(z.record(z.string(), z.string()), `/thread-titles?${ids.map((id) => `ids=${encodeURIComponent(id)}`).join("&")}`),
+    threadTitles: (ids: readonly string[]) => {
+      const query = ids.map((id) => `ids=${encodeURIComponent(id)}`).join("&");
+      return board
+        .read(z.record(z.string(), z.string()), `/thread-titles?${query}`)
+        .catch((): Record<string, string> => ({}));
+    },
     saveDomain: <T>(
       schema: z.ZodType<T>,
       domain: SettingsDomain,
