@@ -3,7 +3,6 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import type {
   LaneView,
   LeadListFacts,
-  PlanningTriage,
   Project,
   ProjectPlan,
 } from "../shared/contracts";
@@ -49,7 +48,6 @@ import {
 } from "./design";
 import { ProjectBadgeMark } from "./board/cards";
 import { Icon } from "./shell";
-import { ProjectTriage } from "./planning-triage";
 
 /**
  * Spec 026 Planning read view (nucleus#1531, Tom 2026-11-22: "it's quite impenetrable as a
@@ -769,7 +767,6 @@ export type RoadmapSection = {
   latest?: ProjectPlan;
   /** The latest save's own membership, as stored; `latest` is the live projection. */
   saved?: ProjectPlan;
-  triage?: PlanningTriage;
   error?: string;
 };
 
@@ -1171,14 +1168,7 @@ export function ProjectRoadmapView({
             )}
           </View>
         )}
-        {section.triage && (
-          <ProjectTriage
-            project={name}
-            triage={section.triage}
-            onOpenTask={onOpenTask}
-            c={c}
-          />
-        )}
+
       </CappedScroll>
     </View>
   );

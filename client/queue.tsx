@@ -92,21 +92,9 @@ export function registerSettingsOpener(
   settingsOpener = open;
 }
 
-/** Old filters hold allocated slugs. Bind them once, using the full registry's
- * ownership check. A later registration cannot claim an unresolved slug. */
-function useSavedScope(projects: api.Project[] | undefined, rust: boolean) {
+function useSavedScope(rust: boolean) {
   const [stored, save] = useProjectScope();
-  const bindings = useMemo(() => {
-    if (!rust || !projects) return stored.projects;
-    return stored.projects.map(key => {
-      if (key.includes(":")) return key;
-      const owner = projects.find(project => project.legacyScopeKey === key);
-      return owner ? "rust:" + owner.key : "unresolved:" + key;
-    });
-  }, [rust, projects, stored]);
-  useEffect(() => {
-    if (bindings.some((key, index) => key !== stored.projects[index])) save({ projects: bindings });
-  }, [bindings, stored, save]);
+  const bindings = stored.projects;
   const surfaceScope = useMemo(() => rust
     ? { projects: bindings.filter(key => key.startsWith("rust:")).map(key => key.slice(5)) }
     : stored, [bindings, rust, stored]);
@@ -161,7 +149,7 @@ export function MainSurface({
   const { stateQuery, state } = useBoardState();
   const features = useEngineFeatures();
   const { surfaceScope, saveSurfaceScope, unresolvedScope } =
-    useSavedScope(state?.projects, features.engine === "rust" && !workspaceBoard);
+    useSavedScope(features.engine === "rust" && !workspaceBoard);
   const [panelScope, setPanelScope] = usePanelScope(workspaceBoard?.key ?? null);
   const scope = workspaceBoard ? (panelScope ?? { projects: [workspaceBoard.key] }) : surfaceScope;
   const setScope = workspaceBoard ? setPanelScope : saveSurfaceScope;
@@ -395,12 +383,6 @@ export function MainSurface({
     setView(next);
     setMenuOpen(false);
   };
-  /** The drained-lane card's press opens its lane in Planning (nucleus#1511). */
-  const openLaneInPlanning = (key: string, project?: string) => {
-    openView("planning");
-    selectPlanningLane(key, project);
-  };
-
   const laneName = (key: string) =>
     lanes.find((lane) => lane.key === key)?.title ?? key;
   /** A project's T3 badge, from its first repository with one. */
@@ -609,7 +591,7 @@ export function MainSurface({
   if (unresolvedScope) return (
     <PopoverHost>
       <BoardNotice c={c} text={state
-        ? "The saved project filter has no unique match. Choose its project again or clear the selection."
+        ? "The saved project filter uses an older format. Choose a project or clear the selection."
         : stateQuery.error ? readErrorText("Board state", stateQuery.error) : "Reading the saved project filter…"} />
       {state && filter}
     </PopoverHost>
@@ -703,7 +685,6 @@ export function MainSurface({
                   return {
                     project,
                     latest,
-                    triage: latest?.triage,
                     saved: latest
                       ? { ...latest, entries: latest.savedEntries }
                       : undefined,
@@ -897,11 +878,9 @@ export function MainSurface({
                     onSelectDecision={selectDecision}
                     onSelectLead={selectLead}
                     onSelectPapercut={selectPapercut}
-                    onOpenLane={openLaneInPlanning}
                     busy={busy}
                     act={act}
                     pipeline={pipeline}
-                    plans={planQuery.data ?? []}
                   />
                 </View>
                 {wide && detailPane}

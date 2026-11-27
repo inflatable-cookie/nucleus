@@ -58,15 +58,6 @@ impl SettingsValue for Profiles {
     const FILE: &'static str = "profiles.json";
     const CLASS: StorageClass = StorageClass::UserConfig;
 
-    fn discard_retired_fields(value: &mut Value) {
-        if let Some(profiles) = value.get_mut("profiles").and_then(Value::as_array_mut) {
-            for profile in profiles.iter_mut().filter_map(Value::as_object_mut) {
-                profile.remove("roles");
-                profile.remove("scopes");
-            }
-        }
-    }
-
     fn validate(&self) -> Result<(), DomainIssue> {
         let mut ids = std::collections::BTreeSet::new();
         for profile in &self.profiles {
@@ -102,7 +93,6 @@ impl SettingsValue for Profiles {
 pub struct DispatchSettings {
     pub usage: UsageLevel,
     pub usage_until_ms: Option<u64>,
-    #[serde(alias = "slots")]
     pub global_slots: u32,
     #[serde(default = "default_project_slots")]
     pub project_default_slots: u32,
@@ -195,24 +185,6 @@ impl SettingsValue for DispatchSettings {
     const FILE: &'static str = "dispatch.json";
     const CLASS: StorageClass = StorageClass::UserConfig;
 
-    fn discard_retired_fields(value: &mut Value) {
-        if let Some(fields) = value.as_object_mut() {
-            for key in [
-                "maxLoad",
-                "max_load",
-                "allowanceMinutes",
-                "allowance_minutes",
-                "hostConcurrency",
-                "host_concurrency",
-                "legacyLimitsImported",
-                "providerLimitCooldownSeconds",
-                "provider_limit_cooldown_seconds",
-            ] {
-                fields.remove(key);
-            }
-        }
-    }
-
     fn validate(&self) -> Result<(), DomainIssue> {
         check(self.global_slots > 0, "dispatch", "use positive slots")?;
         check(
@@ -243,62 +215,32 @@ impl SettingsValue for DispatchSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RepositorySettings {
     /// Canonical GitHub repository identity, such as `owner/repo`.
     pub origin: String,
     pub path: PathBuf,
     pub base: String,
     /// T3 project registered at this repository's exact checkout root.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_project: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_project_title: Option<String>,
     /// Exact T3 callers enrolled for this route.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub planner_threads: Vec<String>,
 }
 
-impl<'de> Deserialize<'de> for RepositorySettings {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        struct SavedRepository {
-            origin: String,
-            path: PathBuf,
-            base: String,
-            #[serde(default)]
-            host_project: Option<String>,
-            #[serde(default)]
-            host_project_title: Option<String>,
-            #[serde(default)]
-            planner_threads: Vec<String>,
-            #[serde(default, rename = "requiredChecks")]
-            _retired_required_checks: Option<serde::de::IgnoredAny>,
-            // The hung-tool limit is retired. A stored value loads and the next save drops it.
-            #[serde(default, rename = "hungToolMinutes")]
-            _retired_hung_tool_minutes: Option<serde::de::IgnoredAny>,
-        }
-        let saved = SavedRepository::deserialize(deserializer)?;
-        Ok(Self {
-            origin: saved.origin,
-            path: saved.path,
-            base: saved.base,
-            host_project: saved.host_project,
-            host_project_title: saved.host_project_title,
-            planner_threads: saved.planner_threads,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProjectSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planner_claim: Option<PlannerClaim>,
     pub name: String,
+    #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
     pub repositories: Vec<RepositorySettings>,
 }
 
@@ -310,31 +252,6 @@ pub struct PlannerClaim {
     pub occurrence: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaced: Option<String>,
-}
-
-impl<'de> Deserialize<'de> for ProjectSettings {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct SavedProject {
-            #[serde(default, rename = "plannerClaim")]
-            planner_claim: Option<PlannerClaim>,
-            name: String,
-            #[serde(default, rename = "slots")]
-            _retired_slots: Option<serde::de::IgnoredAny>,
-            #[serde(default)]
-            archived: bool,
-            #[serde(default)]
-            repositories: Vec<RepositorySettings>,
-        }
-        let saved = SavedProject::deserialize(deserializer)?;
-        Ok(Self {
-            planner_claim: saved.planner_claim,
-            name: saved.name,
-            archived: saved.archived,
-            repositories: saved.repositories,
-        })
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -567,34 +484,14 @@ mod dispatch_mode_tests {
     #[test]
     fn a_saved_domain_without_a_mode_reads_as_running() {
         let saved: DispatchSettings = serde_json::from_value(serde_json::json!({
-            "usage": "normal", "usageUntilMs": null, "slots": 2
+            "usage": "normal", "usageUntilMs": null, "globalSlots": 2
         }))
         .expect("dispatch settings");
         assert_eq!(saved.mode, DispatchMode::Running);
         let stopped: DispatchSettings = serde_json::from_value(serde_json::json!({
-            "usage": "normal", "usageUntilMs": null, "slots": 2, "mode": "stopped"
+            "usage": "normal", "usageUntilMs": null, "globalSlots": 2, "mode": "stopped"
         }))
         .expect("dispatch settings");
         assert_eq!(stopped.mode, DispatchMode::Stopped);
-    }
-}
-
-#[cfg(test)]
-mod retired_repository_tests {
-    use super::Projects;
-
-    #[test]
-    fn a_saved_repository_drops_the_retired_hung_tool_limit() {
-        let saved: Projects = serde_json::from_value(serde_json::json!({
-            "projects": {"alpha": {"name": "Alpha", "repositories": [{
-                "origin": "example/alpha", "path": "/work/alpha", "base": "main",
-                "hungToolMinutes": 30
-            }]}}
-        }))
-        .expect("a retired hung-tool limit still loads");
-        let saved = serde_json::to_value(saved).expect("current projects");
-        let repository = &saved["projects"]["alpha"]["repositories"][0];
-        assert_eq!(repository["origin"], "example/alpha");
-        assert!(repository.get("hungToolMinutes").is_none());
     }
 }

@@ -118,26 +118,21 @@ async fn worker_launches_exclude_disabled_and_unavailable_profiles() {
     forge_server.abort();
 }
 
-fn read_legacy_profile_fixture(service: &Service) -> Arc<Profiles> {
-    let config = service.settings.home().join("config");
-    std::fs::create_dir_all(&config).unwrap();
-    std::fs::write(config.join("profiles.json"), json!({
-        "domain": "nucleus.engine.profiles", "schemaVersion": 1,
-        "value": {"profiles": [
-            {"name":"Sol heavyweight","roles":["reviewer"],"scopes":["mechanical"],
-             "selection":{"id":"sol","provider":"codex","model":"first","capability":"heavyweight"}},
-            {"name":"Sol alternate","selection":{"id":"sol-alternate","provider":"codex","model":"first","capability":"heavyweight"}},
-            {"name":"Sonnet heavyweight","roles":["worker"],"scopes":["complex"],
-             "selection":{"id":"sonnet","provider":"claude","model":"other","capability":"heavyweight"}},
-            {"name":"Astra frontier","roles":["coordinator"],
-             "selection":{"id":"astra","provider":"codex","model":"second","capability":"frontier"}}
-        ]}
-    }).to_string()).unwrap();
-    Arc::new(service.settings.read::<Profiles>().unwrap().value)
+fn configured_profiles() -> Arc<Profiles> {
+    Arc::new(serde_json::from_value::<Profiles>(json!({"profiles": [
+        {"name":"Sol heavyweight",
+         "selection":{"id":"sol","provider":"codex","model":"first","capability":"heavyweight"}},
+        {"name":"Sol alternate",
+         "selection":{"id":"sol-alternate","provider":"codex","model":"first","capability":"heavyweight"}},
+        {"name":"Sonnet heavyweight",
+         "selection":{"id":"sonnet","provider":"claude","model":"other","capability":"heavyweight"}},
+        {"name":"Astra frontier",
+         "selection":{"id":"astra","provider":"codex","model":"second","capability":"frontier"}}
+    ]})).unwrap())
 }
 
 #[tokio::test]
-async fn legacy_profile_membership_does_not_gate_work_review_or_groups() {
+async fn configured_profiles_participate_in_work_review_and_groups() {
     let (forge, forge_server) = serve_forge(Router::new()).await;
     let (_home, mut service) = fixture(forge);
     let (host, native_server) = crate::tests::native_fixture(|request| {
@@ -149,7 +144,7 @@ async fn legacy_profile_membership_does_not_gate_work_review_or_groups() {
     })
     .await;
     service.host = host;
-    let profiles = read_legacy_profile_fixture(&service);
+    let profiles = configured_profiles();
     service.state.lock().await.settings.profiles = Some(Arc::clone(&profiles));
     let host = service.host.fixture_pass();
     let mut observation = Observation {
