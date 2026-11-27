@@ -1015,9 +1015,8 @@ impl T3 {
             return Err(HostError::Binding);
         }
         let latest = row["latestRunId"].as_str();
-        if prior
-            .and_then(parent_hold_provider)
-            .is_some_and(|frozen| frozen != provider)
+        if let Some(frozen) = prior.and_then(parent_hold_provider)
+            && frozen != provider
         {
             return Err(HostError::Binding);
         }
