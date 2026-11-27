@@ -1163,8 +1163,10 @@ four for report-only tasks. Each segment shows its step and recorded progress
 on hover. The strip's accessible name summarizes the steps, and task detail
 shows the labels, recorded durations and review round.
 
-List, detail, `next` and native task titles share the label. A blocking hold
-supplies the label. A hold that lets the
+List, detail, `next` and native task titles share the label. Outside the queue,
+a waiting task names its hold, first blocking prerequisite (with a count of others),
+capacity wait, paused subscription group, or starting state. A running role keeps
+the phase label. A blocking hold supplies the label. A hold that lets the
 current turn finish adds an asterisk when the phase is shown. The engine
 records a label change with the task update or scheduler wait that caused it.
 Unrelated updates and repeated observations leave the entry time intact. Reads

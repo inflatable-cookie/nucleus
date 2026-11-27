@@ -65,10 +65,10 @@ fn board_wait_detail(detail: &crate::WaitDetail) -> Option<&str> {
         crate::WaitDetail::BeforeSend(message) => *message,
         crate::WaitDetail::ConfirmingDelivery(message)
         | crate::WaitDetail::Observation(message) => Some(*message),
-        crate::WaitDetail::Blocked(message) | crate::WaitDetail::SlotCap(message) => {
-            Some(message.as_str())
-        }
-        crate::WaitDetail::OperatorSnoozed { .. } | crate::WaitDetail::Archive(_) => None,
+        crate::WaitDetail::Blocked(message)
+        | crate::WaitDetail::SlotCap(message)
+        | crate::WaitDetail::OperatorSnoozed { message, .. } => Some(message.as_str()),
+        crate::WaitDetail::Archive(_) | crate::WaitDetail::Prerequisites(_) => None,
     }
 }
 
@@ -1376,6 +1376,7 @@ impl Summary {
 struct CardInputs {
     observed_wait: Option<crate::TaskWait>,
     dependencies_block: bool,
+    state_label: String,
     attention: crate::attention::TaskAttention,
 }
 
@@ -1385,8 +1386,18 @@ impl CardInputs {
         state: &EngineState,
         dependencies_block: bool,
     ) -> Result<Self, ServiceError> {
+        let task = &row.task;
+        let observed_wait = state.waits.get(&task.identity().id).cloned();
+        let reason = observed_wait.as_ref().and_then(|wait| wait.reason);
+        let wait = if dependencies_block && task.run().is_none() {
+            Some(WaitReason::Prerequisite)
+        } else {
+            reason.filter(|wait| *wait != WaitReason::Prerequisite || dependencies_block)
+        };
+        let detail = observed_wait.as_ref().and_then(|wait| wait.detail.as_ref());
         Ok(Self {
-            observed_wait: state.waits.get(&row.task.identity().id).cloned(),
+            state_label: state.display_state_label(task, wait, detail)?,
+            observed_wait,
             dependencies_block,
             attention: state.task_attention_with_dependencies(row, || Ok(dependencies_block))?,
         })
@@ -1448,21 +1459,7 @@ impl Card {
         let state_since_ms = times
             .since
             .filter(|_| fixed.is_some() || observed.is_some_and(|wait| wait.timed));
-        let state_label = match fixed {
-            Some(label) => label,
-            None => crate::titles::task_state_label(
-                task,
-                observed.map_or_else(
-                    || {
-                        (inputs.dependencies_block
-                            && crate::dependencies::checks_prerequisites(task))
-                        .then_some(WaitReason::Prerequisite)
-                    },
-                    |wait| wait.reason,
-                ),
-                detail,
-            ),
-        };
+        let state_label = inputs.state_label.clone();
         let archive_detail = match detail {
             Some(crate::WaitDetail::Archive(message)) if task.phase().is_terminal() => {
                 Some(message.as_str())
@@ -1484,8 +1481,14 @@ impl Card {
         let merge_hold = task
             .merge_hold()
             .filter(|_| wait == Some(WaitReason::MergeHold));
+        let prerequisite_detail = if wait == Some(WaitReason::Prerequisite) {
+            state.prerequisite_detail(task)?
+        } else {
+            None
+        };
         let wait_detail = archive_detail
             .or(merge_hold.map(|hold| hold.reason.as_str()))
+            .or(prerequisite_detail.as_deref())
             .or_else(|| {
                 if wait != reason
                     || task.hold().is_some()

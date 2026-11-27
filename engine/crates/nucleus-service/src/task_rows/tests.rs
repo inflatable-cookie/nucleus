@@ -1150,14 +1150,14 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
         service.lookup(&state, ID).unwrap()
     };
     let board = fixture.board_task().await;
-    assert_eq!(board["stateLabel"], "Working · T3");
+    assert_eq!(board["stateLabel"], "Starting");
     assert!(board["waitDetail"].is_null());
     assert!(
         board["lifecycle"]["steps"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|step| step["note"] == "Working · T3")
+            .any(|step| step["note"] == "Starting")
     );
     let ready = Observed::Known(Host::Current {
         instance: launch.instance.clone(),
@@ -1174,7 +1174,7 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
         .unwrap();
     assert_eq!(
         crate::titles::task_state_label(&sent.task, Some(WaitReason::Starting), None),
-        "Working · starting"
+        "Working"
     );
     service.observe_role_state(&sent, &ready).await.unwrap();
     fixture.sync().await;
@@ -1259,7 +1259,7 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
         .await
         .unwrap();
     let card = fixture.board_task().await;
-    assert_eq!(card["stateLabel"], "Reviewing · capacity");
+    assert_eq!(card["stateLabel"], "Waiting for a slot");
     assert_eq!(card["attention"], "waiting");
     fixture
         .native
@@ -2392,7 +2392,7 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
         let mut state = service.state.lock().await;
         service.desire_phase_title(&mut state, &row.task, row.number);
         let title = state.store.pending_title(&fixture.thread).unwrap().unwrap();
-        assert!(title.desired.starts_with("Waiting:"));
+        assert!(title.desired.starts_with("Reviewing:"));
         assert!(!service.desire_title(&mut state, &row.task, row.number));
         assert!(!state.title_candidates.contains_key(&fixture.thread));
         assert_eq!(service.working_row_count(&state).unwrap(), 1);
@@ -2403,18 +2403,10 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
     }
     fixture.child("reviewer", true);
     fixture.sync().await;
-    fixture
-        .service
-        .state
-        .lock()
-        .await
-        .title_candidates
-        .get_mut(&fixture.thread)
-        .unwrap()
-        .ready = tokio::time::Instant::now();
     fixture.sync().await;
     {
         let state = fixture.service.state.lock().await;
+        assert!(!state.title_candidates.contains_key(&fixture.thread));
         assert!(
             state
                 .store
@@ -2468,7 +2460,7 @@ async fn a_handover_publishes_permission_and_planner_titles_immediately() {
     let pending_title =
         |state: &crate::State| state.store.pending_title(&fixture.thread).unwrap().unwrap();
     service.desire_title(&mut state, &task, row.number);
-    assert!(pending_title(&state).desired.starts_with("Waiting:"));
+    assert!(pending_title(&state).desired.starts_with("Reviewing:"));
 
     state.set_wait(ID, Some(WaitReason::Permission));
     service.desire_title(&mut state, &task, row.number);

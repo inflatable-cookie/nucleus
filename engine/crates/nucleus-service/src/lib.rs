@@ -297,6 +297,7 @@ enum WaitDetail {
     /// A capacity wait on a task weight cap; the text is its whole label.
     SlotCap(String),
     Archive(String),
+    Prerequisites(Vec<String>),
     OperatorSnoozed {
         version: i64,
         thread: String,
