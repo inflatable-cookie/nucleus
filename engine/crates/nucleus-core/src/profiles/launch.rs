@@ -3,13 +3,13 @@ use std::{fmt, num::NonZeroU64};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BriefPolicy, BriefPolicyError, Candidate, Capability, Complexity, Profile, UsageLevel,
-    request_only, requested_bracket, reviewer_bracket, rotation_order, tier_order, worker_climb,
-    worker_start,
+    BriefPolicy, BriefPolicyError, Candidate, Capability, Complexity, Profile, ProfileRequest,
+    UsageLevel, request_only, requested_bracket, reviewer_bracket, rotation_order, tier_order,
+    worker_climb, worker_start,
 };
 use crate::{
-    Action, Brief, Forge, Launch, Observation, Observed, Phase, PullRequest, Review, Role, Task,
-    Verdict, decide,
+    Action, Brief, Entry, Forge, Launch, Observation, Observed, Phase, PullRequest, Review, Role,
+    Task, Verdict, decide,
 };
 
 /// Authoritative inputs supplied by the scheduler for this role's next run.
@@ -48,6 +48,7 @@ pub struct ProfileLaunch {
     pub(crate) pr: Option<PullRequest>,
     pub(crate) findings: Option<String>,
     pub(crate) request_reason: Option<String>,
+    shared_model: Option<String>,
     step_up_from: Option<Capability>,
     critical_fallback_worker: Option<String>,
 }
@@ -107,10 +108,16 @@ impl ProfileLaunch {
         self.step_up_from
     }
 
-    /// The worker profile for which this new independent reviewer fell short.
+    /// The worker profile for which this new reviewer fell short.
     #[must_use]
     pub fn critical_fallback_worker(&self) -> Option<&str> {
         self.critical_fallback_worker.as_deref()
+    }
+
+    /// The notice for this launch when it uses a model shared with the other role.
+    #[must_use]
+    pub fn shared_model(&self) -> Option<&str> {
+        self.shared_model.as_deref()
     }
 }
 
@@ -234,58 +241,53 @@ fn select_launch(
     let complexity = brief.complexity.unwrap_or_default();
     let reselect = reselection_target(task, role, &brief, policy.usage);
     let demand = demand(task, observation, role, &brief, policy.usage, reselect);
-    let exclusions = excluded_models(task, role, policy.author_models)?;
+    let other_models = other_role_models(task, role, policy.author_models)?;
+    let overlaps = |profile: &Profile| {
+        model_key(&profile.model).is_some_and(|model| other_models.contains(&model))
+    };
     let eligible = policy.candidates.iter().copied().filter(|candidate| {
-        let model = model_key(&candidate.profile.model);
-        (role != Role::Reviewer || model.is_some())
-            && !model.is_some_and(|model| exclusions.contains(&model))
+        role != Role::Reviewer || model_key(&candidate.profile.model).is_some()
     });
-    let requested = request.and_then(|request| {
-        eligible.clone().find(|candidate| {
-            candidate.profile.id == request.profile_id
-                && (role != Role::Reviewer || candidate.profile.capability <= demand.ceiling)
-                && candidate.usable(request.thinking_option_id)
-        })
-    });
+    let requested = eligible_request(eligible.clone(), request, role, demand.ceiling)?.zip(request);
     let binding = task.threads().bound_profile(role);
-    let retained = binding.map(|bound| &bound.selected);
-    let required = request.filter(|request| request.required);
-    let instructed = if required.is_none() && reselect.is_none() {
+    let required = request.is_some_and(|request| request.required);
+    let instructed = if !required && reselect.is_none() {
         instructed_worker(task, role, policy)?
     } else {
         None
     };
-    let (profile, reason, climbed, step_up_from) = if let Some(retained) = instructed {
-        (retained, None, false, None)
-    } else if let Some(candidate) = requested {
-        let mut profile = candidate.profile.clone();
-        let reason = request.map(|request| {
+    let choose = |allow_shared| {
+        let allowed = |profile: &Profile| allow_shared || !overlaps(profile);
+        if let Some((candidate, request)) =
+            requested.filter(|(candidate, _)| allowed(candidate.profile))
+        {
+            let mut profile = candidate.profile.clone();
             profile.effort = request.thinking_option_id.or(profile.effort);
-            request.reason.clone()
-        });
-        (profile, reason, false, None)
-    } else {
-        if let Some(request) = required {
-            return Err(ProfileLaunchError::RequiredProfileUnavailable {
-                role,
-                id: request.profile_id.clone(),
-            });
+            return Some((profile, Some(request.reason.clone()), false, None));
         }
         let (best, step_up_from) = automatic_profile(
-            eligible,
+            eligible.clone(),
             &previous,
             binding.filter(|_| reselect.is_none()),
             &demand,
             sample,
-        )
+            allowed,
+        )?;
+        let climbed = demand.climb == Some(best.profile.capability);
+        Some((best.profile.clone(), None, climbed, step_up_from))
+    };
+    let continuing_author = instructed.is_some();
+    let (profile, reason, climbed, step_up_from) = instructed
+        .map(|profile| (profile, None, false, None))
+        .or_else(|| choose(required))
+        .or_else(|| choose(true))
         .ok_or(ProfileLaunchError::NoEligibleProfile {
             role,
             demand: demand.target,
         })?;
-        let climbed = demand.climb == Some(best.profile.capability);
-        (best.profile.clone(), None, climbed, step_up_from)
-    };
-    let via = match (&previous, retained) {
+    let shared_model = overlaps(&profile)
+        .then(|| shared_model_notice(task, role, &profile.model, required, continuing_author));
+    let via = match (&previous, task.threads().profile(role)) {
         _ if task.threads().missing_report_from().is_some() => Launch::Create,
         _ if reselect.is_some() && reason.is_none() => Launch::Create,
         (Launch::Continue { .. }, Some(retained)) if retained.same_binding(&profile) => {
@@ -318,9 +320,57 @@ fn select_launch(
         pr: task.pull_request().cloned(),
         findings: applied_changes(task, observation).map(str::to_owned),
         request_reason: reason,
+        shared_model,
         step_up_from,
         critical_fallback_worker,
     }))
+}
+
+fn eligible_request<'a>(
+    mut candidates: impl Iterator<Item = Candidate<'a>>,
+    request: Option<&ProfileRequest>,
+    role: Role,
+    ceiling: Capability,
+) -> Result<Option<Candidate<'a>>, ProfileLaunchError> {
+    let Some(request) = request else {
+        return Ok(None);
+    };
+    let candidate = candidates.find(|candidate| {
+        candidate.profile.id == request.profile_id
+            && (role != Role::Reviewer || candidate.profile.capability <= ceiling)
+            && candidate.usable(request.thinking_option_id)
+    });
+    if candidate.is_none() && request.required {
+        return Err(ProfileLaunchError::RequiredProfileUnavailable {
+            role,
+            id: request.profile_id.clone(),
+        });
+    }
+    Ok(candidate)
+}
+
+fn shared_model_notice(
+    task: &Task,
+    role: Role,
+    model: &str,
+    required: bool,
+    continuation: bool,
+) -> String {
+    let (subject, other, label) = match role {
+        Role::Worker => ("Worker", "reviewer", "worker"),
+        Role::Reviewer if task.identity().entry == Entry::ReviewEntry => {
+            ("Review", "author", "reviewer")
+        }
+        Role::Reviewer => ("Review", "worker", "reviewer"),
+    };
+    let cause = if required {
+        format!("required {label} profile")
+    } else if continuation {
+        "retained worker assigned to continue".into()
+    } else {
+        format!("no other usable {label}")
+    };
+    format!("{subject} shares {model} with the {other}: {cause}")
 }
 
 fn critical_fallback(task: &Task, selected: &Profile) -> Option<String> {
@@ -401,8 +451,7 @@ fn demand(
             usage,
             complexity,
             target: reviewer_bracket(usage, actual, brief.critical),
-            // Criticality prefers a peer for fresh review. An independent
-            // retained fallback can continue if it meets the ordinary bracket.
+            // A retained fallback can continue if it meets the ordinary bracket.
             retained_floor: reviewer_bracket(usage, actual, false),
             ceiling: actual,
             climb: None,
@@ -466,6 +515,7 @@ fn automatic_profile<'a>(
     binding: Option<&BoundProfile>,
     demand: &Demand,
     sample: Option<u64>,
+    allowed: impl Fn(&Profile) -> bool,
 ) -> Option<(Candidate<'a>, Option<Capability>)> {
     // Lowering complexity can tighten the automatic bounds. Keep an eligible
     // worker on the same binding without widening the pool for replacements.
@@ -476,7 +526,8 @@ fn automatic_profile<'a>(
             .complexity
             .filter(|&before| before > demand.complexity)
         && let Some(candidate) = candidates.clone().find(|candidate| {
-            bound.selected.same_binding(candidate.profile)
+            allowed(candidate.profile)
+                && bound.selected.same_binding(candidate.profile)
                 && candidate.usable(None)
                 && !request_only(
                     candidate.profile.capability,
@@ -504,7 +555,7 @@ fn automatic_profile<'a>(
     if let Some(best) = retain_or_rotate(
         ordinary
             .clone()
-            .filter(|candidate| candidate.group_available),
+            .filter(|candidate| candidate.group_available && allowed(candidate.profile)),
         launch,
         retained,
         demand,
@@ -512,11 +563,19 @@ fn automatic_profile<'a>(
     ) {
         return Some((best, None));
     }
-    // No ordinary profile is available. An otherwise eligible profile proves
-    // the ordinary selection is blocked by a pause (Spec 070 ruling 51).
-    ordinary.next()?;
+    // A pause can make higher profiles usable even if the paused ordinary
+    // profiles all share a model. An available ordinary fallback alone
+    // cannot justify stepping up when the preferred pool has no paused peer.
+    if !ordinary.clone().any(|candidate| allowed(candidate.profile))
+        && (ordinary.clone().any(|candidate| candidate.group_available)
+            || ordinary.next().is_none())
+    {
+        return None;
+    }
     let higher = candidates.filter(|candidate| {
-        candidate.group_available && candidate.profile.capability > demand.ceiling
+        candidate.group_available
+            && candidate.profile.capability > demand.ceiling
+            && allowed(candidate.profile)
     });
     let next = higher
         .clone()
@@ -562,35 +621,43 @@ fn retain_or_rotate<'a>(
     })
 }
 
-fn excluded_models(
+fn other_role_models(
     task: &Task,
     role: Role,
     authors: &[&str],
 ) -> Result<Vec<String>, ProfileLaunchError> {
+    let threads = task.threads();
+    if task.identity().entry == Entry::ReviewEntry
+        && (authors.is_empty() || authors.iter().any(|model| model_key(model).is_none()))
+    {
+        return Err(ProfileLaunchError::OpaqueAuthor);
+    }
     match role {
-        Role::Worker => Ok(task
-            .threads()
+        Role::Worker => Ok(threads
             .profile(Role::Reviewer)
             .and_then(|profile| model_key(&profile.model))
             .into_iter()
             .collect()),
         Role::Reviewer => {
-            let retained_worker = task.threads().profile(Role::Worker);
-            let retained_model = retained_worker.map(|profile| profile.model.as_str());
-            if task.threads().get(Role::Worker).is_some() && retained_model.is_none() {
+            let retained = threads
+                .profile(Role::Worker)
+                .map(|profile| profile.model.as_str());
+            if threads.get(Role::Worker).is_some() && retained.is_none() {
                 return Err(ProfileLaunchError::OpaqueAuthor);
             }
-            authors
+            let mut models = authors
                 .iter()
                 .copied()
-                .chain(retained_model)
+                .chain(retained)
                 .map(|model| model_key(model).ok_or(ProfileLaunchError::OpaqueAuthor))
-                .collect()
+                .collect::<Result<Vec<_>, _>>()?;
+            models.extend(threads.earlier_worker_models.iter().cloned());
+            Ok(models)
         }
     }
 }
 
-fn model_key(model: &str) -> Option<String> {
+pub(crate) fn model_key(model: &str) -> Option<String> {
     let model = model.rsplit('/').next()?.trim().to_ascii_lowercase();
     (!matches!(model.as_str(), "" | "default" | "unknown")).then_some(model)
 }

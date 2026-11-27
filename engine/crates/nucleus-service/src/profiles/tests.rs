@@ -871,9 +871,9 @@ async fn retained_role_endpoints(
     let (forge, forge_server) = serve_forge(router).await;
     service.forge = forge;
     let root = service.fixture().checkout.clone();
+    let runs = Arc::new(Mutex::new(NativeRuns::default()));
     let (host, native_server) = native_fixture_with_traffic(move |request| {
-        if request["tag"] == "orchestration.subscribeThread" {
-            assert_eq!(request["payload"]["threadId"], thread);
+        if request["tag"] == "orchestration.subscribeThread" && request["payload"]["threadId"] == thread {
             return json!({"_tag":"Chunk","requestId":request["id"],"values":[
                 {"kind":"snapshot","snapshotSequence":1,"projection":{
                     "thread":{"id":thread,"projectId":"local-fixture","worktreePath":owned,"branch":branch,"parentThreadId":parent},
@@ -881,10 +881,126 @@ async fn retained_role_endpoints(
                 }},{"kind":"synchronized"}
             ]});
         }
-        native_response(request, &root, &mut NativeRuns::default())
+        native_response(request, &root, &mut runs.lock().unwrap())
     }, None).await;
     service.host = host;
     (native_server, forge_server)
+}
+
+#[tokio::test]
+async fn retained_roles_launch_on_a_shared_model_and_leave_a_single_reservation_notice() {
+    let profiles = configured_profiles();
+    let [author, shared, reviewer, _] = profiles.profiles.as_slice() else {
+        panic!("expected fixture profiles");
+    };
+    let authority = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    for (role, thread, author, reviewer, expected) in [
+        (
+            Role::Worker,
+            "thread:worker",
+            &reviewer.selection,
+            &shared.selection,
+            "Worker shares first with the reviewer: required worker profile",
+        ),
+        (
+            Role::Reviewer,
+            "thread:reviewer",
+            &author.selection,
+            &reviewer.selection,
+            "Review shares first with the worker: no other usable reviewer",
+        ),
+    ] {
+        let (_home, mut service) = fixture(nucleus_forge::GitHub::new("fixture").unwrap());
+        let id = "shared-model-resume";
+        let (task, binding) = retained_role_task(
+            &service,
+            id,
+            author,
+            reviewer,
+            role,
+            "---\nqueue: {complexity: very_high}\n---\nFix the typo.",
+        );
+        let (native_server, forge_server) =
+            retained_role_endpoints(&mut service, task.pull_request(), binding, thread).await;
+        {
+            let mut state = service.state.lock().await;
+            state.settings.profiles = Some(Arc::new(Profiles {
+                profiles: vec![shared.clone()],
+                ..profiles.as_ref().clone()
+            }));
+            state.store.create(&task, &crate::event("fixture")).unwrap();
+        }
+        let service = Arc::new(service);
+        if role == Role::Worker {
+            service.command(id, &authority, Command::Amend(
+                "---\nqueue: {complexity: very_high, profileRequests: {worker: {profileId: sol-alternate, reason: fixture, required: true}}}\n---\nFix the typo.".into()
+            )).await.unwrap();
+        }
+        let row = service.task(id).await.unwrap();
+        service
+            .schedule_result(
+                &row,
+                &Ok(Action::Wait(WaitReason::Capacity)),
+                Priority::Wake,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            read_next(&service, id, &authority).await["wait"],
+            "capacity"
+        );
+
+        wake(&service, &[id]).await;
+        assert_eq!(
+            pass(&service).await[0].result.as_ref().unwrap(),
+            &Action::Launch {
+                role,
+                via: Launch::Create
+            }
+        );
+        let stored = service.task(id).await.unwrap();
+        let launch = stored.task.run().unwrap().launch();
+        assert_eq!(launch.profile(), Some(&shared.selection));
+        let next = read_next(&service, id, &authority).await;
+        assert_ne!(next["wait"], "capacity");
+        assert!(next["question"].is_null());
+        assert_eq!(next["sharedModel"], expected);
+        assert_eq!(
+            read_task_api(&service, &format!("/v1/tasks/{id}"), &authority).await["sharedModel"],
+            expected
+        );
+        if role == Role::Reviewer {
+            let wire: Value = serde_json::from_str(&launch.input).unwrap();
+            let prompt = wire["payload"]["initialMessage"]["text"].as_str().unwrap();
+            assert_eq!(prompt.lines().filter(|line| *line == expected).count(), 1);
+        }
+        // Subsequent scheduler passes would surface a selection error to the serve log.
+        for _ in 0..3 {
+            wake(&service, &[id]).await;
+            pass(&service).await;
+        }
+        let running = service.task(id).await.unwrap();
+        assert!(running.task.run().unwrap().last_send_at_ms().is_some());
+        assert_shared_reservation(&service, id, &launch.instance, expected).await;
+        native_server.abort();
+        forge_server.abort();
+    }
+}
+
+async fn assert_shared_reservation(service: &Service, id: &str, instance: &str, expected: &str) {
+    let state = service.state.lock().await;
+    let history = state.store.history(id, None, 30).unwrap();
+    let mut reservations = history
+        .iter()
+        .filter(|event| event.content.kind == "run_reserved");
+    let detail: Value = serde_json::from_str(&reservations.next().unwrap().content.detail).unwrap();
+    assert_eq!(
+        detail["sharedModel"],
+        json!({"runInstance": instance, "message": expected})
+    );
+    assert!(reservations.next().is_none());
 }
 
 #[tokio::test]
@@ -1085,6 +1201,10 @@ async fn complexity_amendments_route_a_stored_worker_and_explain_reselection_in_
 }
 
 async fn read_next(service: &Arc<Service>, id: &str, authority: &Authority) -> Value {
+    read_task_api(service, &format!("/v1/tasks/{id}/next"), authority).await
+}
+
+async fn read_task_api(service: &Arc<Service>, path: &str, authority: &Authority) -> Value {
     let key = [13; 32];
     let api = crate::web::router(
         Arc::clone(service),
@@ -1095,7 +1215,7 @@ async fn read_next(service: &Arc<Service>, id: &str, authority: &Authority) -> V
     );
     let response = api
         .oneshot(
-            axum::http::Request::get(format!("/v1/tasks/{id}/next"))
+            axum::http::Request::get(path)
                 .header("host", "127.0.0.1:9")
                 .header("authorization", format!("Bearer {}", hex::encode(key)))
                 .body(axum::body::Body::empty())

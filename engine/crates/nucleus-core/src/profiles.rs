@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 
 pub use brief::{BriefPolicy, BriefPolicyError, ProfileRequest};
-pub(crate) use launch::{BoundProfile, applied_changes};
+pub(crate) use launch::{BoundProfile, applied_changes, model_key};
 pub use launch::{
     LaunchPolicy, ProfileLaunch, ProfileLaunchError, decide_profile_launch, decide_weighted_launch,
     pending_complexity_reselection,

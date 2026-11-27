@@ -1,9 +1,9 @@
-use std::{fmt, num::NonZeroU64, path::PathBuf};
+use std::{collections::BTreeSet, fmt, num::NonZeroU64, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::profiles::{BoundProfile, Profile};
+use crate::profiles::{BoundProfile, Profile, model_key};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -612,10 +612,13 @@ pub struct Threads {
     pub(crate) worker: Option<String>,
     pub(crate) reviewer: Option<String>,
     pub(crate) launch_sequence: u64,
+    // Keep profile payloads out of task snapshots held across scheduler awaits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) worker_profile: Option<BoundProfile>,
+    pub(crate) worker_profile: Option<Box<BoundProfile>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    reviewer_profile: Option<BoundProfile>,
+    reviewer_profile: Option<Box<BoundProfile>>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) earlier_worker_models: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) complexity_raised_at: Option<NonZeroU64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -644,8 +647,8 @@ impl Threads {
 
     pub(crate) fn bound_profile(&self, role: Role) -> Option<&BoundProfile> {
         match role {
-            Role::Worker => self.worker_profile.as_ref(),
-            Role::Reviewer => self.reviewer_profile.as_ref(),
+            Role::Worker => self.worker_profile.as_deref(),
+            Role::Reviewer => self.reviewer_profile.as_deref(),
         }
     }
 
@@ -661,7 +664,14 @@ impl Threads {
             Role::Reviewer => (&mut self.reviewer, &mut self.reviewer_profile),
         };
         if thread.as_ref() != Some(&launch.thread) || launch.profile.is_some() {
-            profile.clone_from(&launch.profile);
+            if launch.role == Role::Worker
+                && let Some(model) = profile
+                    .as_ref()
+                    .and_then(|bound| model_key(&bound.selected.model))
+            {
+                self.earlier_worker_models.insert(model);
+            }
+            *profile = launch.profile.clone().map(Box::new);
         }
         *thread = Some(launch.thread.clone());
     }

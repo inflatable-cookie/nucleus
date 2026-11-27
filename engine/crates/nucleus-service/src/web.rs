@@ -853,6 +853,10 @@ async fn detail(
             .store
             .critical_review_fallbacks(&id)
             .map_err(ServiceError::from)?,
+        shared_model: state
+            .store
+            .last_shared_model(&id)
+            .map_err(ServiceError::from)?,
         allowance: state.allowance_view(task).map_err(ServiceError::from)?,
         run,
     }))
@@ -928,12 +932,13 @@ async fn next(
         Authority::Planner { actor } => Some(actor.as_str()),
         Authority::Operator { .. } => None,
     });
-    let (count, watching) = state
-        .store
+    let store = &state.store;
+    let (count, watching) = store
         .watcher_summary(&id, caller_thread)
         .map_err(ServiceError::from)?;
     Ok(Json(NextView {
         last_provider_limit: task.threads().last_provider_limit.clone(),
+        shared_model: store.last_shared_model(&id).map_err(ServiceError::from)?,
         profile_reselections: crate::profiles::profile_reselections(task, &state),
         version: row.version,
         phase: summary.card.phase,
@@ -950,8 +955,7 @@ async fn next(
             .filter(|_| commands.iter().any(|command| command.name == "answer"))
             .map(Question::answer_form),
         question: summary.card.question,
-        critical_review_fallbacks: state
-            .store
+        critical_review_fallbacks: store
             .critical_review_fallbacks(&id)
             .map_err(ServiceError::from)?,
         allowance: state.allowance_view(task).map_err(ServiceError::from)?,
@@ -1546,6 +1550,8 @@ impl Card {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Detail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shared_model: Option<String>,
     #[serde(flatten)]
     summary: Summary,
     created_at_ms: Option<u64>,
@@ -1596,6 +1602,8 @@ impl From<&ReportTask> for ReportView {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NextView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shared_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_provider_limit: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
