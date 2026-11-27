@@ -22,7 +22,7 @@ mod volume;
 
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use nucleus_core::{Identity, Phase, QueuePriority, Role, Task, profiles::RotationCounts};
+use nucleus_core::{Head, Identity, Phase, QueuePriority, Role, Task, profiles::RotationCounts};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, named_params,
     params,
@@ -1237,6 +1237,26 @@ impl Store {
         )?;
         let rows = query.query_map([id], event_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The latest merge commit recorded from an observed merge of this task.
+    ///
+    /// # Errors
+    /// Returns an error if history cannot be read or holds an invalid commit.
+    pub fn merge_commit(&self, id: &str) -> Result<Option<Head>, StoreError> {
+        let commit: Option<String> = self
+            .connection
+            .prepare_cached(
+                "SELECT json_extract(detail, '$.mergeCommit') FROM events
+                 WHERE task_id = ?1
+                   AND json_type(CASE WHEN json_valid(detail) THEN detail END, '$.mergeCommit') = 'text'
+                 ORDER BY sequence DESC LIMIT 1",
+            )?
+            .query_row([id], |row| row.get::<_, String>(0))
+            .optional()?;
+        Ok(commit
+            .map(|commit| serde_json::from_value(Value::String(commit)))
+            .transpose()?)
     }
 }
 
