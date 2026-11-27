@@ -7,13 +7,11 @@ use std::{
 
 use crate::{ControllerScope, Service, ServiceError, State, pass::DispatchTarget};
 use nucleus_core::{
-    Authority, Phase, RunState, WaitReason,
+    Authority, Phase, Task, WaitReason,
     acp::{Binding, InboxBinding, session_id},
 };
-use nucleus_hosts::{
-    ActiveChild, FrozenParentWrite, HostError, ParentSendError, ParentWrite, T3_RETRY_DELAY,
-};
-use nucleus_store::{AcpSession, ParentDelivery, ParentResult, StoreError, TaskRow};
+use nucleus_hosts::{FrozenParentWrite, HostError, ParentSendError, ParentWrite, T3_RETRY_DELAY};
+use nucleus_store::{AcpSession, DispatchMode, ParentDelivery, ParentResult, StoreError, TaskRow};
 use rustix::fs::{Mode, OFlags, open};
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -55,7 +53,7 @@ pub(super) fn parent_due(record: &ParentDelivery) -> Result<(), ServiceError> {
     Ok(())
 }
 
-fn parent_delivery_retry(source: HostError, due_ms: i64) -> ServiceError {
+pub(super) fn parent_delivery_retry(source: HostError, due_ms: i64) -> ServiceError {
     let remaining = due_ms.saturating_sub(ms(crate::now_ms())).max(0);
     let until =
         tokio::time::Instant::now() + std::time::Duration::from_millis(remaining.unsigned_abs());
@@ -66,7 +64,7 @@ fn parent_delivery_retry(source: HostError, due_ms: i64) -> ServiceError {
     ServiceError::ParentRetry { source, until }
 }
 
-fn ms(timestamp: u64) -> i64 {
+pub(super) fn ms(timestamp: u64) -> i64 {
     i64::try_from(timestamp).unwrap_or(i64::MAX)
 }
 
@@ -75,60 +73,48 @@ fn retry_ms() -> i64 {
         .saturating_add(u64::try_from(T3_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX)))
 }
 
-fn delivery_prompt(
+pub(super) const PARENT_START_TIMEOUT_MS: u64 = 30_000;
+
+pub(super) fn frozen_parent(
     record: &ParentDelivery,
-    active_roles: &[&str],
-) -> Result<Option<String>, StoreError> {
-    if let Some(wire) = &record.wire {
-        let frozen: FrozenParentWrite = serde_json::from_str(wire)?;
-        if frozen
-            .child_thread()
-            .is_some_and(|thread| !active_roles.contains(&thread))
-        {
-            return Ok(None);
-        }
-        Ok(frozen.prompt().map(str::to_owned))
-    } else {
-        Ok(Some(record.legacy_prompt.clone().unwrap_or_else(|| {
-            nucleus_core::acp::legacy_parent_hold_prompt(&record.command)
-        })))
-    }
+) -> Result<Option<FrozenParentWrite>, StoreError> {
+    Ok(record
+        .wire
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()?)
 }
 
-fn parent_delivery_for_acp(
-    state: &State,
+pub(super) fn wants_parent_hold(
     row: &TaskRow,
-    parent: &str,
-) -> Result<Option<ParentDelivery>, StoreError> {
-    // The latest hold still owns the parent when a reservation advances the task version.
-    let reservation = row
-        .task
-        .run()
-        .filter(|run| run.last_send_at_ms().is_none())
-        .map(|_| format!("{parent}-"));
-    Ok(state
-        .store
-        .parent_deliveries(&row.task.identity().id, row.version, reservation.as_deref())?
-        .into_iter()
-        .find(|delivery| !delivery.refresh && !delivery.command.is_empty()))
-}
-
-fn run_keeps_turn(state: &State, row: &TaskRow) -> bool {
+    dispatch: DispatchMode,
+    preparing_launch: bool,
+    active_role: bool,
+    now: u64,
+) -> bool {
     let task = &row.task;
-    let Some(run) = task.run() else {
-        return false;
-    };
-    match state.role_observation(task) {
-        Some(RunState::Running) => true,
-        None
-        | Some(RunState::ReadyToSend | RunState::Starting | RunState::IdleWithoutTerminalRun) => {
-            !run.revoked() && run_hold_deadline(row).is_some_and(|until| until > crate::now_ms())
-        }
-        _ => false,
-    }
+    !task.phase().is_terminal()
+        && task.hold().is_none()
+        && task.operator_decline().is_none()
+        && dispatch != DispatchMode::Stopped
+        && (active_role
+            || preparing_launch
+            || task.run().is_some_and(|run| {
+                !run.revoked()
+                    && run.report().is_none()
+                    && run.report_reminder_for().is_none()
+                    && (run.last_send_at_ms().is_none()
+                        || run_hold_deadline(row).is_some_and(|deadline| now < deadline))
+            }))
 }
 
 impl Service {
+    pub(super) fn active_parent_role(&self, task: &Task, checkout: &Path) -> bool {
+        crate::task_rows::visibility_roles(task)
+            .into_iter()
+            .any(|thread| self.host.parent_role_active(thread, checkout))
+    }
+
     pub(super) fn acp_turn_view(
         &self,
         state: &State,
@@ -136,129 +122,65 @@ impl Service {
     ) -> Result<(Option<String>, bool), ServiceError> {
         let task = &row.task;
         let id = &task.identity().id;
-        let wait = state.wait_reason(id);
         let checkout = nucleus_work::checkout_path(
             self.storage.work().path(),
             &task.identity().repository,
             id,
         );
-        let parent = nucleus_hosts::parent_thread(&checkout);
-        let (_, _, handover) = self.role_window(&parent, task);
-        let mut roles = crate::task_rows::visibility_roles(task);
-        roles.retain(|thread| self.host.bound_child_active(thread, &checkout));
-        let active_in_shell = !roles.is_empty();
-        // Carry an existing authenticated turn through the handover. The initial
-        // prompt still requires its exact recorded delivery.
-        let carry_row = !task.phase().is_terminal() && (active_in_shell || handover.is_some());
-        let active_child = active_in_shell || run_keeps_turn(state, row);
-        if task.phase().is_terminal()
-            || (!active_child
-                && matches!(
+        let delivery = state.store.current_parent_hold(id)?;
+        let frozen = delivery.as_ref().map(frozen_parent).transpose()?.flatten();
+        // Delegation needs a live run and node before its role reservation can be frozen.
+        let preparing = delivery.as_ref().is_some_and(|record| {
+            record.version == row.version
+                && task.run().is_none()
+                && matches!(task.phase(), Phase::Working | Phase::Reviewing)
+                && frozen
+                    .as_ref()
+                    .and_then(FrozenParentWrite::checkpoint)
+                    .map_or_else(
+                        || state.wait_reason(id) == Some(WaitReason::Starting),
+                        |checkpoint| checkpoint.preparing_launch,
+                    )
+                && state.dispatch_mode().allows_launch(task.first_launch())
+        });
+        let active_role = self.active_parent_role(task, &checkout);
+        // Keep an attached turn through shell startup. New writes still require
+        // the synchronized shell, and a stored prompt keeps its exact identity.
+        let restoring = state.registry_mode
+            && !self.host.projects_synchronized()
+            && !crate::task_rows::visibility_roles(task).is_empty();
+        let wanted = wants_parent_hold(
+            row,
+            state.dispatch_mode(),
+            preparing,
+            active_role || restoring,
+            crate::now_ms(),
+        );
+        if !wanted {
+            return Ok((None, false));
+        }
+        let prompt = delivery.map(|record| {
+            frozen
+                .as_ref()
+                .and_then(FrozenParentWrite::prompt)
+                .map_or_else(
+                    || {
+                        record.legacy_prompt.unwrap_or_else(|| {
+                            nucleus_core::acp::legacy_parent_hold_prompt(&record.command)
+                        })
+                    },
+                    str::to_owned,
+                )
+        });
+        // The compatibility carry applies to an attached turn without a stored
+        // prompt. A pre-wire refusal alone cannot keep that turn open.
+        let carry = prompt.is_none()
+            && (active_role
+                || !matches!(
                     state.wait_detail(id),
                     Some(crate::WaitDetail::BeforeSend(_))
-                ))
-            || (!active_in_shell && crate::attention::waiting_for_person(task, wait))
-            || task.hold().is_some()
-            || task.operator_decline().is_some()
-            || state
-                .settings
-                .dispatch
-                .as_ref()
-                .is_some_and(|dispatch| dispatch.mode == nucleus_store::DispatchMode::Stopped)
-            || (!active_in_shell && wait == Some(WaitReason::HostObservationBlocked))
-        {
-            return Ok((None, carry_row));
-        }
-        if state.registry_mode && !self.host.projects_synchronized() {
-            // The first refresh after restart can precede the T3 shell snapshot.
-            // Carry a turn that already matched its prompt until custody is known.
-            return Ok((None, true));
-        }
-        if !active_child
-            && (task.run().is_some()
-                || !matches!(wait, Some(WaitReason::Starting | WaitReason::HostUnknown)))
-        {
-            return Ok((None, carry_row));
-        }
-        let mut delivery = parent_delivery_for_acp(state, row, &parent)?;
-        if active_in_shell
-            && delivery.is_none()
-            && let Some((_, instance)) =
-                crate::presentation::retained_launch(&state.store, id, &roles)?
-        {
-            let prefix = ActiveChild::command_prefix(&checkout, &instance);
-            delivery = state
-                .store
-                .parent_deliveries(id, row.version, Some(&prefix))?
-                .into_iter()
-                .find(|delivery| delivery.command.starts_with(&prefix));
-        }
-        let reentry = delivery
-            .as_ref()
-            .is_some_and(|delivery| nucleus_hosts::is_parent_reentry(&delivery.command));
-        // A retained role can still own background work after its run settles
-        // or reports. Both sides use the bound shell activity for this hold.
-        if (reentry && !active_in_shell)
-            || (!reentry
-                && (task.run().is_some_and(|run| run.report().is_some())
-                    || matches!(
-                        state.role_observation(task),
-                        Some(RunState::Ended | RunState::UsageLimited)
-                    )))
-        {
-            return Ok((None, carry_row));
-        }
-        let prompt = delivery
-            .map(|delivery| delivery_prompt(&delivery, &roles))
-            .transpose()?
-            .flatten();
-        // Older ACP clients also use child activity to carry an already authenticated turn.
-        let carry = prompt.is_none() && (carry_row || active_child && task.run().is_some());
+                ));
         Ok((prompt, carry))
-    }
-
-    async fn reentry_due(
-        &self,
-        row: &TaskRow,
-        write: &ParentWrite,
-        existing: Option<&ParentDelivery>,
-    ) -> Result<bool, ServiceError> {
-        let Some(ended) = write.ended_hold() else {
-            return Ok(true);
-        };
-        if let Some(record) = existing.filter(|record| record.result == ParentResult::Pending) {
-            self.finish_parent_delivery(row, record, ParentResult::Accepted, 0)
-                .await?;
-        }
-        if ended.breaker {
-            let mut state = self.state.lock().await;
-            let id = &row.task.identity().id;
-            if self.lookup(&state, id)?.version != row.version {
-                return Err(StoreError::StaleTask.into());
-            }
-            let stopped = state
-                .parent_hold_breakers
-                .entry(id.clone())
-                .or_insert_with(|| {
-                    crate::ParentHoldBreaker::new(write, &ended.command, &ended.evidence)
-                });
-            if stopped.command != ended.command {
-                *stopped = crate::ParentHoldBreaker::new(write, &ended.command, &ended.evidence);
-            }
-            if stopped.evidence == ended.evidence {
-                return Err(ServiceError::ParentHoldLoop);
-            }
-        }
-        let remaining = ended
-            .retry_at_ms
-            .unwrap_or_default()
-            .saturating_sub(crate::now_ms());
-        if remaining != 0 {
-            return Err(ServiceError::ParentHoldBackoff {
-                until: tokio::time::Instant::now() + std::time::Duration::from_millis(remaining),
-            });
-        }
-        Ok(!ended.unchanged)
     }
 
     pub(super) async fn deliver_parent(
@@ -270,9 +192,10 @@ impl Service {
     ) -> Result<bool, ServiceError> {
         let existing = prior
             .filter(|record| record.command == write.command_id().unwrap_or_default() || refresh);
-        if !self.reentry_due(row, &write, existing.as_ref()).await? {
-            return Ok(false);
-        }
+        let preparing = write
+            .freeze()
+            .checkpoint()
+            .is_some_and(|value| value.preparing_launch);
         if let Some(record) = &existing {
             if record.result == ParentResult::Accepted {
                 return Ok(false);
@@ -288,7 +211,7 @@ impl Service {
                         nucleus_core::acp::legacy_parent_hold_prompt(&record.command)
                     }
                 });
-                write.use_legacy_intent(&record.command, &prompt);
+                write.use_legacy_intent(&record.command, &prompt)?;
             }
         }
         let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
@@ -312,35 +235,38 @@ impl Service {
         } else {
             None
         };
-        let id = &row.task.identity().id;
-        let result = self.write_parent_with_snooze(id, &command, write).await?;
+        let result = self
+            .write_parent_with_snooze(row, &command, write, refresh, preparing)
+            .await?;
         match (result, attempt) {
             (Ok(()), record) => {
                 if let Some((record, _)) = record {
-                    self.finish_parent_delivery(row, &record, ParentResult::Accepted, 0)
-                        .await?;
+                    let start_deadline = if refresh {
+                        0
+                    } else {
+                        ms(crate::now_ms().saturating_add(PARENT_START_TIMEOUT_MS))
+                    };
+                    self.finish_parent_delivery(
+                        row,
+                        &record,
+                        ParentResult::Accepted,
+                        start_deadline,
+                    )
+                    .await?;
                 }
                 Ok(true)
             }
-            (Err(ParentSendError::Rejected), Some((record, mut frozen))) => {
-                let command = frozen
-                    .replace_rejected_command()
-                    .ok_or(ServiceError::Input)?;
-                let wire = serde_json::to_string(&frozen).map_err(StoreError::from)?;
-                let due = retry_ms();
-                let state = self.state.lock().await;
-                state
-                    .store
-                    .finish_parent_snooze(id, &record.command, None)?;
-                state.store.retry_parent_delivery(
-                    id,
-                    row.version,
+            (
+                Err(error @ (ParentSendError::Rejected | ParentSendError::InitialMessageRejected)),
+                Some((record, mut frozen)),
+            ) => {
+                self.retry_rejected_parent(
+                    row,
                     &record,
-                    &command,
-                    &wire,
-                    due,
-                )?;
-                Err(parent_delivery_retry(HostError::ParentHoldRejected, due))
+                    &mut frozen,
+                    matches!(error, ParentSendError::InitialMessageRejected),
+                )
+                .await
             }
             (
                 Err(ParentSendError::Unknown(error) | ParentSendError::NotSent(error)),
@@ -348,21 +274,72 @@ impl Service {
             ) => Err(parent_delivery_retry(error, record.due_ms)),
             (Err(ParentSendError::Unknown(error)), None) => Err(error.into()),
             (Err(ParentSendError::NotSent(error)), None) => Err(self.parent_not_sent(error)),
-            (Err(ParentSendError::Rejected), None) => Err(HostError::ParentHoldRejected.into()),
+            (Err(ParentSendError::Rejected | ParentSendError::InitialMessageRejected), None) => {
+                Err(HostError::ParentHoldRejected.into())
+            }
         }
+    }
+
+    async fn retry_rejected_parent(
+        &self,
+        row: &TaskRow,
+        record: &ParentDelivery,
+        frozen: &mut FrozenParentWrite,
+        initial_message: bool,
+    ) -> Result<bool, ServiceError> {
+        let id = &row.task.identity().id;
+        let command = frozen
+            .replace_rejected_command(initial_message)
+            .ok_or(ServiceError::Input)?;
+        let wire = serde_json::to_string(frozen).map_err(StoreError::from)?;
+        let due = retry_ms();
+        let state = self.state.lock().await;
+        state
+            .store
+            .finish_parent_snooze(id, &record.command, None)?;
+        state
+            .store
+            .retry_parent_delivery(id, row.version, record, &command, &wire, due)?;
+        Err(parent_delivery_retry(HostError::ParentHoldRejected, due))
     }
 
     async fn write_parent_with_snooze(
         &self,
-        id: &str,
+        row: &TaskRow,
         command: &str,
         write: ParentWrite,
+        refresh: bool,
+        preparing: bool,
     ) -> Result<Result<(), ParentSendError>, ServiceError> {
+        let id = &row.task.identity().id;
+        let starts_turn = write.starts_turn();
+        let checkout = PathBuf::from(&write.binding().worktree_path);
         let mut store_error = None;
         let result = self
             .host
-            .write_parent(write, |intent| {
+            .write_parent(write, |snooze| {
+                if refresh && snooze.is_none() {
+                    return Ok(());
+                }
                 let state = self.state.try_lock().map_err(|_| HostError::Uncertain)?;
+                let dispatch = state.dispatch_mode();
+                if !refresh
+                    && (!self.lookup(&state, id).is_ok_and(|fresh| fresh == *row)
+                        || dispatch == DispatchMode::Stopped
+                        || starts_turn
+                            && !wants_parent_hold(
+                                row,
+                                dispatch,
+                                preparing && dispatch.allows_launch(row.task.first_launch()),
+                                self.active_parent_role(&row.task, &checkout),
+                                crate::now_ms(),
+                            ))
+                {
+                    return Err(HostError::Uncertain);
+                }
+                let Some(intent) = snooze else {
+                    return Ok(());
+                };
                 state
                     .store
                     .record_parent_snooze(
@@ -478,7 +455,7 @@ impl Service {
             state.acp_refresh_requests.remove(id) == Some(row.version)
                 || state
                     .store
-                    .parent_deliveries(id, row.version, None)?
+                    .parent_deliveries(id, row.version)?
                     .iter()
                     .any(|value| value.refresh && value.result == ParentResult::Pending)
         };
@@ -508,7 +485,7 @@ impl Service {
             .lock()
             .await
             .store
-            .parent_deliveries(id, row.version, None)?
+            .parent_deliveries(id, row.version)?
             .into_iter()
             .find(|value| value.refresh);
         if let Some(record) = &prior {

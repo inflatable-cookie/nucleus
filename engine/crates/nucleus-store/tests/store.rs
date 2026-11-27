@@ -217,7 +217,7 @@ fn a_parent_retry_keeps_the_first_recorded_prompt() {
 
     revert_parent_schema(&storage);
     let store = Store::open(&storage).unwrap();
-    let records = store.parent_deliveries("fixture", 1, None).unwrap();
+    let records = store.parent_deliveries("fixture", 1).unwrap();
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].command, "new-hold");
     assert_eq!(
@@ -260,7 +260,7 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
     let store = Store::open(&storage).unwrap();
     for (id, version) in versions {
         use nucleus_store::ParentResult::Pending;
-        let records = store.parent_deliveries(id, version, None).unwrap();
+        let records = store.parent_deliveries(id, version).unwrap();
         let unsettled: Vec<_> = records
             .iter()
             .filter(|record| record.result == Pending)
@@ -1688,7 +1688,7 @@ fn version_eleven_decodes_delivery_history_once() {
         ("preflight", None),
     ] {
         let version = row(&store, id).version;
-        let deliveries = store.parent_deliveries(id, version, None).unwrap();
+        let deliveries = store.parent_deliveries(id, version).unwrap();
         assert_eq!(deliveries.first().map(|delivery| delivery.result), result);
         if let Some(first) = deliveries
             .first()
@@ -1701,7 +1701,7 @@ fn version_eleven_decodes_delivery_history_once() {
     let reopened = Store::open(&storage).unwrap();
     assert_eq!(
         reopened
-            .parent_deliveries("live", row(&reopened, "live").version, None)
+            .parent_deliveries("live", row(&reopened, "live").version)
             .unwrap()
             .len(),
         1

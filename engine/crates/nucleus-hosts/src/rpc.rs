@@ -194,16 +194,6 @@ impl ThreadHint {
         self.running && !self.closed
     }
 
-    /// Positive activity in a role's held shell row, including native background work.
-    #[must_use]
-    pub fn positive_role_activity(&self) -> bool {
-        !self.closed
-            && self.change.as_ref().is_some_and(|change| {
-                (matches!(change[1].as_str(), Some("running" | "waiting")) && change[2].is_string())
-                    || change[8].as_u64().is_some_and(|count| count > 0)
-            })
-    }
-
     /// The native horizon in a held thread update.
     #[must_use]
     pub fn snoozed_until(&self) -> Option<u64> {
