@@ -16,7 +16,7 @@ use crate::{
     message_id,
     projection::Projection,
     rpc::{Read, Reply, Rpc, ShellRevision, ThreadFence, closed_row},
-    task_row::{DeliverySnooze, SnoozeUpdate},
+    task_row::{DeliverySnooze, SnoozeUpdate, timestamp_ms},
     thread_snapshots::{ShellCustody, ThreadRead, ThreadSnapshots, belongs_to, row_activity},
 };
 
