@@ -313,32 +313,7 @@ impl Service {
             None
         };
         let id = &row.task.identity().id;
-        let mut store_error = None;
-        let result = self
-            .host
-            .write_parent(write, |intent| {
-                let state = self.state.try_lock().ok_or(HostError::Uncertain)?;
-                state
-                    .store
-                    .record_parent_snooze(
-                        id,
-                        &command,
-                        &intent.thread,
-                        &intent,
-                        intent.until_ms,
-                        crate::now_ms(),
-                    )
-                    .map_err(|error| {
-                        store_error = Some(error);
-                        HostError::Uncertain
-                    })?;
-                self.title_wake.notify_one();
-                Ok(())
-            })
-            .await;
-        if let Some(error) = store_error {
-            return Err(error.into());
-        }
+        let result = self.write_parent_with_snooze(id, &command, write).await?;
         match (result, attempt) {
             (Ok(()), record) => {
                 if let Some((record, _)) = record {
@@ -375,6 +350,41 @@ impl Service {
             (Err(ParentSendError::NotSent(error)), None) => Err(self.parent_not_sent(error)),
             (Err(ParentSendError::Rejected), None) => Err(HostError::ParentHoldRejected.into()),
         }
+    }
+
+    async fn write_parent_with_snooze(
+        &self,
+        id: &str,
+        command: &str,
+        write: ParentWrite,
+    ) -> Result<Result<(), ParentSendError>, ServiceError> {
+        let mut store_error = None;
+        let result = self
+            .host
+            .write_parent(write, |intent| {
+                let state = self.state.try_lock().map_err(|_| HostError::Uncertain)?;
+                state
+                    .store
+                    .record_parent_snooze(
+                        id,
+                        command,
+                        &intent.thread,
+                        &intent,
+                        intent.until_ms,
+                        crate::now_ms(),
+                    )
+                    .map_err(|error| {
+                        store_error = Some(error);
+                        HostError::Uncertain
+                    })?;
+                self.title_wake.notify_one();
+                Ok(())
+            })
+            .await;
+        if let Some(error) = store_error {
+            return Err(error.into());
+        }
+        Ok(result)
     }
 
     async fn begin_parent_delivery(

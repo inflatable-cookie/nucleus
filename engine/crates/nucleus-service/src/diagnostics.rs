@@ -57,13 +57,6 @@ impl StateMutex {
         Self(Mutex::new(state))
     }
 
-    pub(super) fn try_lock(&self) -> Option<StateGuard<'_>> {
-        self.0
-            .try_lock()
-            .ok()
-            .map(|guard| StateGuard::new(guard, None))
-    }
-
     #[track_caller]
     pub(super) fn lock(&self) -> impl Future<Output = StateGuard<'_>> {
         self.acquire(

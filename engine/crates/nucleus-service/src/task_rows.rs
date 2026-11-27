@@ -244,7 +244,7 @@ impl Service {
                 let attempt = match self
                     .host
                     .restore_parent_snooze(&intent, record.attempt, || {
-                        self.state.try_lock().is_some_and(|state| {
+                        self.state.try_lock().is_ok_and(|state| {
                             state
                                 .store
                                 .parent_snooze_is_due(&record, now)
