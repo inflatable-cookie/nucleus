@@ -34,6 +34,21 @@ check = [{ task = "check:types" }, { task = "check:publication" }]
 "engine:fmt" = "cargo fmt --manifest-path engine/Cargo.toml --all -- --check"
 "engine:board-build" = "node scripts/build-web.mjs {args}"
 "engine:deny" = "oxide exec --manifest-path engine/Cargo.toml -- node scripts/check-engine-dependencies.mjs {args}"
+"engine:machete" = "cargo machete engine {args}"
+"engine:lines" = '''set -eu
+scratch="${NUCLEUS_SCRATCH_ROOT:?set NUCLEUS_SCRATCH_ROOT to the run scratch directory}"
+python=""
+for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
+    python="$candidate"
+    break
+  fi
+done
+test -n "$python" || { echo "engine:lines requires Python 3.10 or newer" >&2; exit 1; }
+venv="$(mktemp -d "$scratch/engine-lines.XXXXXX")"
+"$python" -m venv "$venv"
+"$venv/bin/python" -m pip install --disable-pip-version-check tree-sitter==0.25.2 tree-sitter-rust==0.24.2
+"$venv/bin/python" scripts/count-engine-rust.py --ceiling 50000 {args}'''
 "engine:check" = "oxide check --manifest-path engine/Cargo.toml {args}"
 "engine:clippy" = "oxide clippy --manifest-path engine/Cargo.toml --all-targets --all-features {args} -- -D warnings"
 "engine:nextest" = "oxide exec --manifest-path engine/Cargo.toml -- cargo nextest run --manifest-path engine/Cargo.toml {args}"

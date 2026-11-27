@@ -11,7 +11,7 @@ COUNTER = Path(__file__).with_name("count-engine-rust.py").resolve()
 
 
 class RustLineCountTest(unittest.TestCase):
-    def test_counts_commits_with_their_own_source_inventory(self):
+    def test_explicit_revisions_default_head_and_ceiling(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
 
@@ -97,6 +97,28 @@ enum Choice {
                 f"{base} {base[:12]}  15",
                 f"{head} {head[:12]}  16  (+1 vs {base})",
             ])
+
+            default = subprocess.run(
+                [sys.executable, str(COUNTER)], cwd=repo, capture_output=True,
+                text=True, check=True,
+            )
+            self.assertEqual(default.stdout.strip(), f"HEAD {head[:12]}  16")
+
+            at_ceiling = subprocess.run(
+                [sys.executable, str(COUNTER), "--ceiling", "16"], cwd=repo,
+                capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(
+                at_ceiling.stdout.strip(),
+                f"HEAD {head[:12]}  16 / 16 (+0 remaining)",
+            )
+
+            over_ceiling = subprocess.run(
+                [sys.executable, str(COUNTER), "--ceiling", "15", "HEAD"],
+                cwd=repo, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(over_ceiling.returncode, 1)
+            self.assertIn("production line count exceeds the 15-line ceiling", over_ceiling.stderr)
 
 
 if __name__ == "__main__":
