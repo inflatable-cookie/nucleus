@@ -606,6 +606,7 @@ const fn current_tone(phase: Phase, wait: Option<WaitReason>) -> StepTone {
             _,
             Some(
                 WaitReason::Hold
+                | WaitReason::MergeHold
                 | WaitReason::Question
                 | WaitReason::OperatorDeclined
                 | WaitReason::Permission

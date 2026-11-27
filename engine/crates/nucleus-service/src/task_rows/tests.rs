@@ -81,7 +81,7 @@ impl Fixture {
     async fn new(task: &Task) -> Self {
         let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
         let binding = {
-            let work = service.worktrees().unwrap();
+            let work = service.worktrees();
             let checkout = work
                 .checkout(&service.fixture().checkout, &task.identity().repository, ID)
                 .unwrap();
@@ -366,6 +366,7 @@ impl Fixture {
                     command,
                     released: false,
                     replay_launch: false,
+                    recorded_failure: false,
                 }),
                 std::future::pending(),
             )
@@ -657,6 +658,7 @@ async fn late_operator_snooze_resumes_the_same_parent_intent_on_shell_wake() {
                 command: &command,
                 released: false,
                 replay_launch: false,
+                recorded_failure: false,
             }),
             std::future::pending(),
         )

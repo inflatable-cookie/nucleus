@@ -1,4 +1,3 @@
-import { useEngineFeatures } from "./engine-features";
 import React, { useEffect, useState } from "react";
 import { useTick } from "./use-tick";
 import { ScrollView, Text, View } from "react-native";
@@ -41,7 +40,6 @@ import {
 import {
   USAGE_ROLE_TABS,
   catalogAge,
-  defaultPoolEntry,
   modelWords,
   profileRowStatus,
   usageWindow,
@@ -106,11 +104,9 @@ export function ProfilesPanel({
   ) => Promise<unknown>;
 }) {
   const queryClient = useQueryClient();
-  const { coordinatorRole, engine } = useEngineFeatures();
-  const pairedCatalog = engine === "rust";
-  const canEdit = !pairedCatalog || state?.canEditSettings === true;
+  const canEdit = state?.canEditSettings === true;
   // A recorded reset time can pass while the engine is otherwise quiet.
-  useTick(pairedCatalog && state?.availability.some(({ retryAt }) =>
+  useTick(state?.availability.some(({ retryAt }) =>
     retryAt !== null && Date.parse(retryAt) > Date.now()) ? 30_000 : null);
   const fetchCompatibility = useRpc(api.readProfileCompatibility);
   // The form's choices: every registered host's catalog in canonical values (task 1158).
@@ -118,15 +114,8 @@ export function ProfilesPanel({
     fetchCatalog = useRpc(api.readProfileVocabulary);
   const createProfile = useRpc(api.createNucleusProfile),
     removeProfile = useRpc(api.removeNucleusProfile);
-  const directories = pairedCatalog
-    ? []
-    : [
-        ...new Set(
-          repositories
-            .map((row) => row.repository.path)
-            .filter((path) => path.length > 0),
-        ),
-      ];
+  // The catalogue is host-wide on the Rust engine, so no per-repository directories.
+  const directories: string[] = [];
   const [lastUsed, setLastUsed] = useState<Record<string, string>>({});
   const [editor, setEditor] = useState<string | "new" | null>(null);
   // nucleus#1502: which recent-assignment view the usage strips show.
@@ -251,16 +240,9 @@ export function ProfilesPanel({
           );
       const failed = reads.find((read) => read.status === "rejected");
       if (failed) setRefreshError(failureText(failed.reason));
-      else if (pairedCatalog)
-        setRefreshStatus("Providers and models refreshed.");
-      if (pairedCatalog) {
-        await queryClient.invalidateQueries({
-          queryKey: ["nucleus", "profiles", "compatibility"],
-        });
-        return;
-      }
+      else setRefreshStatus("Providers and models refreshed.");
       await queryClient.invalidateQueries({
-        queryKey: ["nucleus", "profile-vocabularies"],
+        queryKey: ["nucleus", "profiles", "compatibility"],
       });
     } finally {
       setRefreshing(false);
@@ -322,8 +304,6 @@ export function ProfilesPanel({
       await removeProfile({ id });
       setCreated((current) => (current?.id === id ? null : current));
       if (editor === id) setEditor(null);
-      if (!pairedCatalog && state?.pool.some((entry) => entry.profileId === id))
-        await savePoolList(removePoolEntry(state.pool, id));
       await refreshProfiles();
     } catch (error) {
       setActionStatus(`Not saved: ${failureText(error)}`);
@@ -331,9 +311,7 @@ export function ProfilesPanel({
       setRemoving(null);
     }
   }
-  const stale = state && !pairedCatalog
-    ? stalePoolEntries(state.pool, state.connected ? state.profiles : [])
-    : [];
+  const stale: ReturnType<typeof stalePoolEntries> = [];
   const groups = state
     ? [...new Set(state.effectiveProfileGroups
       ? Object.values(state.effectiveProfileGroups)
@@ -363,9 +341,7 @@ export function ProfilesPanel({
           }}
         >
           Refresh failed: {refreshError}.
-          {pairedCatalog
-            ? age && " Showing the last catalog."
-            : " The stored providers and models stay."}
+          {age && " Showing the last catalog."}
         </Text>
       )}
       {!refreshError && !refreshing && catalogNotice && (
@@ -430,12 +406,8 @@ export function ProfilesPanel({
             <TabRow
               c={c}
               label="Usage view"
-              // Rust engine (Spec 070 ruling 1): the coordinator role is retired.
-              tabs={
-                coordinatorRole
-                  ? USAGE_ROLE_TABS
-                  : USAGE_ROLE_TABS.filter((tab) => tab.id !== "coordinator")
-              }
+              // Spec 070 ruling 1: the coordinator role is retired.
+              tabs={USAGE_ROLE_TABS.filter((tab) => tab.id !== "coordinator")}
               value={usageRole}
               onChange={setUsageRole}
               nowrap
@@ -631,7 +603,6 @@ function Availability({
   canEdit: boolean;
   save: (v: UiQueueState["availability"][number]) => Promise<unknown>;
 }) {
-  const rust = useEngineFeatures().engine === "rust";
   const current = state.availability.find((a) => a.group === group);
   const [editing, setEditing] = useState(false),
     [reason, setReason] = useState(current?.reason ?? ""),
@@ -663,7 +634,7 @@ function Availability({
                 : "Unavailable"
               : "Available"}
           </Text>
-          {canEdit && paused && (!rust || !current?.retryAt || current.resetUnknown) && (
+          {canEdit && paused && (!current?.retryAt || current.resetUnknown) && (
             <Button
               small
               c={c}

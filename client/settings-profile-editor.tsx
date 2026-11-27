@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRpc } from "./shell";
-import { useEngineFeatures } from "./engine-features";
 import * as api from "../shared/contracts";
 import {
   ActionButton,
@@ -61,7 +60,6 @@ import {
   HOST_DEFAULT,
   PAIRED_MIN_WIDTH,
   USAGE_ROLE_TABS,
-  defaultPoolEntry,
   emptyProfileDraft,
   featureFingerprint,
   hostCompatibilityNote,
@@ -237,9 +235,8 @@ export function ProfileRow({
   onRemove: () => Promise<void>;
   onChooseDirectory: (cwd: string) => void;
 }) {
-  const rust = useEngineFeatures().engine === "rust";
   const storedEntry = state?.pool.find((entry) => entry.profileId === profile.id);
-  const original = storedEntry ?? (rust ? null : defaultPoolEntry(profile));
+  const original = storedEntry ?? null;
   const [entry, setEntry] = useState(original),
     [saveStatus, setSaveStatus] = useState("");
   const mounted = useRef(true),
@@ -355,7 +352,7 @@ export function ProfileRow({
               c={c}
               text={entry.enabled ? "On" : "Off"}
               selected={entry.enabled}
-              disabled={!canEdit || busy || !state || (rust && !storedEntry)}
+              disabled={!canEdit || busy || !state || !storedEntry}
               label={canEdit
                 ? `${entry.enabled ? "Disable" : "Enable"} ${profile.name}`
                 : `${profile.name}: ${entry.enabled ? "On" : "Off"}`}

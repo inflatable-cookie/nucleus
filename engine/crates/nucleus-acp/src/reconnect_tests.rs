@@ -114,11 +114,7 @@ async fn run_reconnect(inbox_session: bool) {
         let view = Mutex::new(Presentation::default());
         let future = async {
             if inbox_session {
-                let (answers, receive) = mpsc::unbounded_channel();
-                let replies = inbox::Replies {
-                    cards: Mutex::default(),
-                    answers,
-                };
+                let (replies, receive) = inbox::Replies::channel();
                 inbox::follow(&client, &output, "fixture", &replies, receive, None)
                     .await
                     .unwrap();
@@ -189,6 +185,8 @@ async fn run_reconnect(inbox_session: bool) {
     .unwrap();
     turn.abort();
     server_task.abort();
+    assert!(turn.await.unwrap_err().is_cancelled());
+    assert!(server_task.await.unwrap_err().is_cancelled());
 }
 
 #[tokio::test]

@@ -9,10 +9,10 @@ use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Identity, Role};
 use nucleus_forge::Branches;
 use nucleus_hosts::{Binding, HostError, RoleProfile};
-use nucleus_store::RepositorySettings;
-use nucleus_work::Checkout;
+use nucleus_store::{RepositorySettings, StorageError};
+use nucleus_work::{Checkout, WorkError};
 
-use crate::{Service, ServiceError, State};
+use crate::{Service, ServiceError, State, volume::Limit};
 
 const FIXTURE_REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 
@@ -165,18 +165,44 @@ impl Service {
         let checkout = route.checkout.clone();
         let base = identity.base.clone();
         let git = self.git.clone();
-        tokio::task::spawn_blocking(move || verify_repository(&repository, &checkout, &base, &git))
+        let (work, scratch) = (self.storage.work().clone(), self.storage.scratch().clone());
+        let verify = move |_| {
+            verify_repository(&repository, &checkout, &base, &git).or_else(|refused| {
+                // A refusal with the volume or checkout unavailable says nothing
+                // about the project.
+                work.verify().map_err(WorkError::from)?;
+                scratch.verify().map_err(WorkError::from)?;
+                if !checkout.is_dir() {
+                    return Err(WorkError::from(StorageError::VolumeUnavailable).into());
+                }
+                Err(refused)
+            })
+        };
+        self.volume
+            .run(
+                &identity.id,
+                "verifying the project checkout",
+                Limit::Check,
+                verify,
+            )
             .await
-            .map_err(|_| ServiceError::Project)?
+            .map_err(WorkError::from)?
     }
 
     pub(super) async fn verify_linked_checkout(
         &self,
+        owner: &str,
         project: PathBuf,
         checkout: PathBuf,
     ) -> Result<bool, HostError> {
         let git = self.git.clone();
-        tokio::task::spawn_blocking(move || linked_checkout(&project, &checkout, &git))
+        self.volume
+            .run(
+                owner,
+                "verifying a linked checkout",
+                Limit::Check,
+                move |_| linked_checkout(&project, &checkout, &git),
+            )
             .await
             .map_err(|_| HostError::Uncertain)?
     }
@@ -385,6 +411,10 @@ pub(crate) mod git_gate {
     #[derive(Default)]
     pub struct Gate {
         pub entered: AtomicUsize,
+        /// Hold only this many calls. Zero holds every call until release.
+        pub holds: AtomicUsize,
+        /// Count and hold only Git commands with this argument.
+        pub only: OnceLock<&'static str>,
         released: Mutex<bool>,
         ready: Condvar,
     }
@@ -407,10 +437,18 @@ pub(crate) mod git_gate {
         gate
     }
 
-    pub fn enter(path: &PathBuf) {
+    pub fn enter(path: &PathBuf, command: &std::process::Command) {
         let gate = gates().lock().unwrap().get(path).cloned();
-        if let Some(gate) = gate {
-            gate.entered.fetch_add(1, Ordering::SeqCst);
+        if let Some(gate) = gate.filter(|gate| {
+            gate.only
+                .get()
+                .is_none_or(|only| command.get_args().any(|argument| argument == *only))
+        }) {
+            let earlier = gate.entered.fetch_add(1, Ordering::SeqCst);
+            let holds = gate.holds.load(Ordering::SeqCst);
+            if holds != 0 && earlier >= holds {
+                return;
+            }
             let released = gate.released.lock().unwrap();
             drop(
                 gate.ready
@@ -424,7 +462,7 @@ pub(crate) mod git_gate {
 impl GitPolicy for LocalGit {
     fn isolate(&self, command: &mut Command) {
         #[cfg(test)]
-        git_gate::enter(&self.0);
+        git_gate::enter(&self.0, command);
         command
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
@@ -563,7 +601,7 @@ mod tests {
             "Add a synthetic greeting.".into(),
             None,
         );
-        let worktrees = service.worktrees().expect("worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,

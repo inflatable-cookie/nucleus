@@ -718,7 +718,7 @@ impl GitHub {
         let request = self
             .client
             .put(url)
-            .json(&json!({ "sha": head, "merge_method": "squash" }));
+            .json(&json!({ "sha": head, "merge_method": "merge" }));
         let write = classify_write(self.write(request).await);
         if let MergeWrite::Deferred { until } = write {
             return Ok(MergeAttempt {

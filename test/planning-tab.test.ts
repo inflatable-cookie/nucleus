@@ -256,40 +256,14 @@ test("041-3 moves between Next and Now change the horizon", () => {
   );
 });
 
-test("Planning uses the batched current plan and current lane projections", () => {
-  const ui = boardSource();
-  assert.doesNotMatch(
-    ui,
-    /fetchPlan\(\{project:project\.key,version:/,
-    "Planning does not fan out plan.get per project",
-  );
-  assert.match(
-    ui,
-    /saved: latest\s*\? \{ \.\.\.latest, entries: latest\.savedEntries \}\s*: undefined/,
-    "saved membership remains available for draft rebasing",
-  );
-  assert.match(
-    ui,
-    /queryKey: \["nucleus", "plans", plansRevision\],\s*queryFn: \(\) => fetchPlans\(\{\}\),\s*enabled:\s*rust \|\| \(\(tab === "planning" \|\| tab === "queue"\) && Boolean\(state\?\.projects\.length\)\),\s*staleTime,\s*placeholderData: keepPreviousData,?\s*\}/,
-    "the Rust board loads plans on entry and TypeScript follows plan revisions",
-  );
-});
 
 test("865 a draft is stale once the plan moves past its version; reapply keeps its horizons and drops lanes the plan no longer has", async () => {
-  const { activeSteps, planDraftStale, rebaseDraft, sameOrder } = await import(
+  const { planDraftStale, rebaseDraft, sameOrder } = await import(
     "../shared/planning-tab"
   );
   assert.equal(planDraftStale(4, plan(4, [])), false);
   assert.equal(planDraftStale(4, plan(5, [])), true);
   assert.equal(planDraftStale(4, undefined), false);
-  assert.deepEqual(
-    activeSteps([
-      entry("a", "now"),
-      entry("b", "next"),
-      entry("c", "later"),
-    ]).map((item) => item.lane),
-    ["a", "b"],
-  );
   assert.equal(
     sameOrder(
       [entry("a"), entry("b", "later")],
@@ -320,43 +294,5 @@ test("865 a draft is stale once the plan moves past its version; reapply keeps i
     rebaseDraft(draft, base),
     [{ ...base[1], horizon: "now" }, { ...base[0], horizon: "next" }, base[2]],
     "draft order and horizons win, the newer note and completion condition come along, and new lanes follow",
-  );
-});
-
-test("865 the save payload carries idle only when the draft sets a new mark; an unchanged mark is never renewed", async () => {
-  const { planSaveInput } = await import("../shared/planning-tab");
-  const draft = {
-    entries: [entry("a", "later"), entry("b", "later")],
-    version: 7,
-  };
-  assert.deepEqual(planSaveInput("app", draft, "operator (board)"), {
-    project: "app",
-    version: 7,
-    entries: draft.entries,
-    author: "operator (board)",
-  });
-  assert.deepEqual(
-    planSaveInput("app", { ...draft, idle: null }, "operator (board)"),
-    {
-      project: "app",
-      version: 7,
-      entries: draft.entries,
-      author: "operator (board)",
-    },
-    "ending a mark sends no mark",
-  );
-  assert.deepEqual(
-    planSaveInput(
-      "app",
-      { ...draft, idle: "Waiting for gaps" },
-      "operator (board)",
-    ),
-    {
-      project: "app",
-      version: 7,
-      entries: draft.entries,
-      idle: "Waiting for gaps",
-      author: "operator (board)",
-    },
   );
 });

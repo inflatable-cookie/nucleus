@@ -1,1 +1,1 @@
-export { AddRepository, MoveIntoPanel, MoveRepositoryConfirm, RepositoryBlock } from "./management";
+export { AddRepository, MoveRepositoryConfirm, RepositoryBlock } from "./management";

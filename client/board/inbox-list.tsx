@@ -21,14 +21,12 @@ import {
   inboxSections,
   triageCards,
   rustTriageStates,
-  triageStates,
   type TriageFilter,
   type InboxView,
 } from "../../shared/inbox-board";
 import { openScopeLanes } from "../../shared/project-scope";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { useRpc } from "../shell";
-import { useEngineFeatures } from "../engine-features";
 import {
   Button,
   DropdownSelect,
@@ -54,7 +52,7 @@ import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale } from "../design";
 import type { BoardView } from "./inbox-menu";
 import { RustTaskProgress } from "../task/rust-progress";
-import { rustCardAgeAt, rustQuestionText, rustTaskLabel, rustWaitDetail, type RustCommand, type RustTask } from "../web/rust-board";
+import { compareRustTasks, compareRustTasksForColumn, rustCardAgeAt, rustQuestionText, rustTaskColumn, rustTaskLabel, rustWaitDetail, type RustBoardView, type RustCommand, type RustTask } from "../web/rust-board";
 
 type Project = UiQueueState["projects"][number];
 
@@ -325,6 +323,21 @@ export type InboxListProps = {
   pipeline: PipelineState;
 };
 
+function rustBoardColumn(view: InboxListProps["view"]): RustBoardView | undefined {
+  switch (view) {
+    case "needs":
+    case "queue":
+    case "working":
+    case "review":
+    case "closing":
+    case "merging":
+    case "history":
+      return view;
+    default:
+      return undefined;
+  }
+}
+
 const viewTitles: Record<Exclude<BoardView, "planning">, string> = {
   needs: "Needs you",
   leads: "Leads",
@@ -387,10 +400,9 @@ export function InboxList({
     leads: "All", papercuts: "All",
   });
   const triageView = view === "leads" || view === "papercuts" ? view : null;
-  const rustEngine = useEngineFeatures().engine === "rust";
-  const stateOptions = rustEngine ? rustTriageStates : triageStates;
-  // Closed (Rust only): promoted and dropped items, read apart from the board's cards.
-  const closedFilter = rustEngine && triageView !== null && triageFilters[triageView] === "Closed";
+  const stateOptions = rustTriageStates;
+  // Closed: promoted and dropped items, read apart from the board's cards.
+  const closedFilter = triageView !== null && triageFilters[triageView] === "Closed";
   const readClosed = useRpc(api.itemClosed);
   const closedKind = view === "papercuts" ? "papercut" : "lead";
   const closedQuery = useQuery({
@@ -751,7 +763,7 @@ export function InboxList({
         contentContainerStyle={{ paddingVertical: space.xs }}
       >
         <BoardCardVariantContext.Provider value="row">
-          {rust && <RustListRows key={view} view={view} rust={rust} c={c} />}
+          {rust && <RustListRows key={view} view={view} column={rustBoardColumn(view)} rust={rust} c={c} />}
           {closedFilter && (
             // Closed has no board cards (triageCards returns none), so these rows are the list.
             <View style={{ gap: space.xxs }}>
@@ -880,16 +892,21 @@ export function InboxList({
 
 const rustPageSize = 25;
 
-export function RustListRows({ c, rust, view }: {
+export function RustListRows({ c, rust, view, column }: {
   c: Colors;
   rust: NonNullable<InboxListProps["rust"]>;
   view: InboxListProps["view"];
+  /** The Inbox passes one grouped board column; lane lists omit it and mix columns. */
+  column?: RustBoardView;
 }) {
   const [limit, setLimit] = useState(rustPageSize);
-  const tasks = rust.tasks ?? [];
+  const tasks = [...(rust.tasks ?? [])].sort(column
+    ? (a, b) => compareRustTasksForColumn(a, b, column)
+    : compareRustTasks);
   const remaining = tasks.length - limit;
+  const ageAt = (task: RustTask) => rustCardAgeAt(task, column ?? rustTaskColumn(task));
   // Ages read the clock, as TypeScript cards do; a list without one does not tick.
-  useTick(tasks.some((task) => rustCardAgeAt(task) !== null) ? 30_000 : null);
+  useTick(tasks.some((task) => ageAt(task) !== null) ? 30_000 : null);
   return <>
     {tasks.slice(0, limit).map((task) => {
       // The task number alone, as on TypeScript cards; the project shows beside it.
@@ -897,7 +914,7 @@ export function RustListRows({ c, rust, view }: {
       const question = view === "needs" ? task.question : null;
       const title = question ? rustQuestionText(question) : task.title || reference;
       const detail = task.hold?.reason ?? rustWaitDetail(task);
-      const ageAt = rustCardAgeAt(task);
+      const cardAgeAt = ageAt(task);
       const project = rust.project(task);
       const canPrioritize = task.phase === "queued" || task.wait === "capacity";
       const promoted = task.queuePriority === "promoted";
@@ -908,7 +925,7 @@ export function RustListRows({ c, rust, view }: {
           tone: task.phase === "done" ? "success" : task.hold || task.attention === "attention" ? "warning" : "muted",
           state: task.stateLabel, detail: question ? null : detail,
         }}
-        age={ageAt === null ? null : relativeAge(ageAt)}
+        age={cardAgeAt === null ? null : relativeAge(cardAgeAt)}
         flags={canPrioritize && promoted ? <Badge label="Promoted" tone="accent" c={c} a11y="Promoted" /> : undefined}
         actions={canPrioritize && rust.onCommand ? (
           <View style={{ ...row, gap: space.xs }}>

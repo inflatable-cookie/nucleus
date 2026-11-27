@@ -18,17 +18,14 @@ import {
 import { lanePlaces, laneProjects } from "../../shared/lane-finder";
 import { useRpc } from "../shell";
 import type { RustTask } from "../web/rust-board";
-import { useEngineFeatures } from "../engine-features";
-import { domainRevision, useBoardState } from "../board-state";
 import { useRetainedRead } from "../retained-read";
-import { readDecisions, clearDecisionRead } from "../decision-read";
+import { clearDecisionRead } from "../decision-read";
 import { errorText } from "../error-text";
 import { usePlanningLane } from "../project-scope-controls";
 import type { RecordNoticeValue } from "../task/parts";
 
 /** The board's tabs. #866 folded Lanes into Planning; PR #403 removed QA runs. */
 export type BoardTab = "queue" | "planning";
-type BoardStateQuery = ReturnType<typeof useBoardState>["stateQuery"];
 
 /** The open task's detail and next reads, polled while it is selected. */
 export function useTaskDetail(selected: string | null) {
@@ -52,21 +49,10 @@ export function useTaskDetail(selected: string | null) {
 }
 
 /**
- * The paired board reads its menu counts on entry and refreshes the collections
- * on engine events. The TypeScript pipeline keeps its shared revisioned reads.
+ * The board's record reads (leads, decisions and plans). The Rust engine pushes
+ * board changes, so each read loads once and stays until it is invalidated.
  */
-export function useRecordQueries({
-  stateQuery,
-  state,
-  tab,
-  scopeOpen,
-}: {
-  stateQuery: BoardStateQuery;
-  state: UiQueueState | undefined;
-  tab: BoardTab;
-  scopeOpen: boolean;
-}) {
-  const rust = useEngineFeatures().engine === "rust";
+export function useRecordQueries() {
   const fetchLeadBoard = useRpc(api.leadBoard);
   const fetchDecisions = useRpc(api.decisionList);
   const fetchPlans = useRpc(api.plans);
@@ -76,14 +62,12 @@ export function useRecordQueries({
   // Task 1030: each planning list keys on its own domain revision, so a run, event or
   // telemetry write never refetches it, and keeps its last result on screen while a new
   // revision loads or a refresh fails (useRetainedRead).
-  const leadsRevision = rust ? undefined : domainRevision(stateQuery.data, "leads"),
-    decisionsRevision = rust ? undefined : domainRevision(stateQuery.data, "decisions"),
-    plansRevision = rust ? undefined : domainRevision(stateQuery.data, "plans");
-  const staleTime = rust ? Infinity : 300_000;
+  // The Rust engine pushes board changes, so the lists are read once and kept until invalidated.
+  const staleTime = Infinity;
   const leadsFetch = useQuery({
-    queryKey: ["nucleus", "leads", leadsRevision],
+    queryKey: ["nucleus", "leads"],
     queryFn: () => fetchLeadBoard({}),
-    enabled: rust || scopeOpen || tab === "planning" || tab === "queue",
+    enabled: true,
     staleTime,
     placeholderData: keepPreviousData,
   });
@@ -93,19 +77,16 @@ export function useRecordQueries({
     refetch: leadsFetch.refetch,
   };
   const decisionsFetch = useQuery({
-    queryKey: ["nucleus", "decisions", decisionsRevision],
-    queryFn: () => rust
-      ? fetchDecisions({ status: "open" })
-      : readDecisions(decisionsRevision, () => fetchDecisions({ status: "open" })),
+    queryKey: ["nucleus", "decisions"],
+    queryFn: () => fetchDecisions({ status: "open" }),
     staleTime,
     placeholderData: keepPreviousData,
   });
   const decisionsQuery = useRetainedRead(decisionsFetch);
   const planFetch = useQuery({
-    queryKey: ["nucleus", "plans", plansRevision],
+    queryKey: ["nucleus", "plans"],
     queryFn: () => fetchPlans({}),
-    enabled:
-      rust || ((tab === "planning" || tab === "queue") && Boolean(state?.projects.length)),
+    enabled: true,
     staleTime,
     placeholderData: keepPreviousData,
   });
@@ -155,14 +136,12 @@ export function usePlanningData({
   rustTasks?: RustTask[];
   onLeaveLane: () => void;
 }) {
-  const rust = useEngineFeatures().engine === "rust";
   const fetchLaneDocument = useRpc(api.laneDocumentGet);
   const fetchLaneTaskPage = useRpc(api.laneTaskPage);
   const { planQuery, boardLeads } = records;
   const { lanes, members, taskCounts } = useMemo(() => {
     const members = new Map<api.LaneView, RustTask[]>();
     const taskCounts = new Map<string, { live: number; attention: number }>();
-    if (!rust) return { lanes: state?.lanes ?? [], members, taskCounts };
     const lanes = (planQuery.data ?? []).flatMap(plan => {
       const project = state?.projects.find(candidate => candidate.key === plan.project);
       const byLane = new Map<string, RustTask[]>();
@@ -206,7 +185,7 @@ export function usePlanningData({
       });
     });
     return { lanes, members, taskCounts };
-  }, [rust, planQuery.data, state?.lanes, state?.projects, rustTasks]);
+  }, [planQuery.data, state?.lanes, state?.projects, rustTasks]);
   const [laneTaskOffset, setLaneTaskOffset] = useState(0);
   // A lane opened from Planning keeps the project context it was found in (#866): the
   // search reaches past the chosen project, so the open lane stays in scope.
@@ -254,8 +233,8 @@ export function usePlanningData({
     queryKey: ["nucleus", "lane-document", planningLaneProject, planningLane],
     queryFn: planningLaneRef ? () => fetchLaneDocument(planningLaneRef) : skipToken,
     enabled: tab === "planning" && Boolean(planningLaneRef),
-    refetchInterval: rust ? false : 4000,
-    staleTime: rust ? Infinity : 0,
+    refetchInterval: false,
+    staleTime: Infinity,
   });
   useEffect(() => setLaneTaskOffset(0), [planningLaneProject, planningLane]);
   const laneTasksQuery = useQuery({
@@ -266,9 +245,10 @@ export function usePlanningData({
         offset: laneTaskOffset,
         limit: 25,
       }),
-    enabled: !rust && tab === "planning" && Boolean(planningLane),
-    refetchInterval: rust ? false : 4000,
-    staleTime: rust ? Infinity : 0,
+    // The Rust engine serves lane tasks from its own task list; this TypeScript page is never read.
+    enabled: false,
+    refetchInterval: false,
+    staleTime: Infinity,
   });
   // The open lane's leads and papercuts come from every project that lists the lane, whatever the
   // chooser shows, so the lane screen's counts are the lane's own (#867). A lane no project lists falls

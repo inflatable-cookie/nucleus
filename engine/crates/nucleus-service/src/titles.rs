@@ -81,6 +81,15 @@ pub(super) fn task_state_label(
     if let Some(label) = task_label_from_facts(task) {
         return label;
     }
+    if wait == Some(WaitReason::MergeHold)
+        && let Some(hold) = task.merge_hold()
+    {
+        return match hold.by {
+            Some(HoldBy::Operator) => "Merge held by operator",
+            _ => "Merge held by planner",
+        }
+        .into();
+    }
     if matches!(detail, Some(WaitDetail::OperatorSnoozed { .. })) {
         return phase_with_delay(task, None);
     }
@@ -184,7 +193,7 @@ fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
         Some(WaitReason::AssignmentTooLarge) => "size",
         Some(WaitReason::Stopping) => "stopping",
         Some(WaitReason::OperatorDeclined) => "declined",
-        Some(WaitReason::Running | WaitReason::Hold) | None => return None,
+        Some(WaitReason::Running | WaitReason::Hold | WaitReason::MergeHold) | None => return None,
     })
 }
 
@@ -329,7 +338,7 @@ impl Service {
             }
             Ok(false) => false,
             Err(error) => {
-                eprintln!("{id}: {error}");
+                service_log!("{id}: {error}");
                 false
             }
         }
@@ -423,7 +432,7 @@ impl Service {
                         self.desire_title(&mut state, &row.task, row.number);
                     }
                 }
-                Err(error) => eprintln!("{error}"),
+                Err(error) => service_log!("{error}"),
             }
         }
         loop {
@@ -438,7 +447,7 @@ impl Service {
                         Some(Duration::from_millis(receipt.retry_at.abs_diff(now)))
                     } else {
                         if let Err(error) = self.apply_title(provider, &receipt, now).await {
-                            eprintln!("{}: {error}", receipt.thread);
+                            service_log!("{}: {error}", receipt.thread);
                         }
                         // The next due candidate can run before this title retries.
                         continue;
@@ -446,14 +455,14 @@ impl Service {
                 }
                 Ok(None) => None,
                 Err(error) => {
-                    eprintln!("{error}");
+                    service_log!("{error}");
                     Some(Duration::from_secs(5))
                 }
             };
             let row_wait = match self.reconcile_task_rows(provider, &threads).await {
                 Ok(wait) => wait,
                 Err(error) => {
-                    eprintln!("{error}");
+                    service_log!("{error}");
                     Some(Duration::from_secs(15))
                 }
             };
@@ -541,9 +550,13 @@ impl Service {
     ) -> Result<Option<TitleTarget>, ServiceError> {
         let identity = task.identity();
         let route = self.resolve_project(state, identity)?;
-        let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, &identity.id)?;
-        let binding = route.binding(&checkout)?;
+        // The state lock is held here, so this touches no checkout.
+        let path = nucleus_work::checkout_path(
+            self.storage.work().path(),
+            &identity.repository,
+            &identity.id,
+        );
+        let binding = route.thread_binding(&path, &format!("ns-{}", identity.id))?;
         Ok(route
             .checkout
             .to_str()
@@ -670,8 +683,8 @@ impl Service {
         }
         let identity = row.task.identity();
         let route = self.project_for(identity).await?;
-        let worktrees = self.worktrees()?;
-        let checkout = worktrees.checkout(&route.checkout, &identity.repository, task_id)?;
+        let worktrees = self.worktrees();
+        let checkout = worktrees.registered(&route.checkout, &identity.repository, task_id)?;
         let binding = route.binding(&checkout)?;
         let Some(target) = route
             .checkout
@@ -840,7 +853,9 @@ mod tests {
                 assert_eq!(
                     held_label(&Hold {
                         by,
-                        reason: reason.into()
+                        reason: reason.into(),
+                        actor: None,
+                        since_ms: None,
                     })
                     .split_whitespace()
                     .count(),
@@ -1217,7 +1232,7 @@ mod tests {
         );
         assert!(subject.ask_allowance(1, 1));
         let id = &subject.identity().id;
-        let worktrees = service.worktrees().expect("fixture worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,
@@ -1367,7 +1382,7 @@ mod tests {
             None,
         );
         let id = subject.identity().id.clone();
-        let worktrees = service.worktrees().expect("fixture worktrees");
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(
                 &service.fixture().checkout,

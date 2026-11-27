@@ -68,6 +68,7 @@ function uiState(pool: PoolEntry[]): UiQueueState {
   return {
     revision: 1,
     connected: true,
+    canEditSettings: true,
     hostId: "host",
     paused: false,
     error: "",
@@ -76,7 +77,6 @@ function uiState(pool: PoolEntry[]): UiQueueState {
     unsettled: 0,
     globalLimit: 32,
     projectLimit: 5,
-    papercutProjectLimit: 2,
     tasks: [],
     profiles: [],
     pool,

@@ -1,0 +1,937 @@
+[
+  {
+    "attention": "attention",
+    "dependencyEdits": {
+      "setDependencies": true,
+      "setPrerequisiteWait": false
+    },
+    "dependencyStatus": {
+      "blocking": false,
+      "dependencies": [],
+      "prerequisiteWait": null
+    },
+    "hold": null,
+    "identity": {
+      "base": "main",
+      "entry": "brief",
+      "id": "captured-needs",
+      "origin_thread": null,
+      "reference": "example#1",
+      "repository": "example/board-fixture"
+    },
+    "latestEventAtMs": 1795742391416,
+    "lifecycle": {
+      "admittedAtMs": 1795742391416,
+      "finishedAtMs": null,
+      "reviewRound": null,
+      "reviewer": null,
+      "steps": [
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": 1795742391416,
+          "key": "queued",
+          "label": "Queued",
+          "leftAtMs": null,
+          "note": "Queued \u00b7 permission",
+          "roundLabel": null,
+          "state": "current",
+          "tone": "warning",
+          "visits": [
+            {
+              "enteredAtMs": 1795742391416,
+              "leftAtMs": null
+            }
+          ]
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "working",
+          "label": "Working",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "review",
+          "label": "Review",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "merge",
+          "label": "Merge",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "close",
+          "label": "Close",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        }
+      ],
+      "worker": null
+    },
+    "nextCheckAt": null,
+    "number": 1,
+    "phase": "queued",
+    "question": null,
+    "queuePriority": "normal",
+    "reference": "example#1",
+    "stateLabel": "Queued \u00b7 permission",
+    "stateSinceMs": null,
+    "title": "Needs task",
+    "version": 1,
+    "wait": "permission",
+    "waitDetail": null
+  },
+  {
+    "attention": "waiting",
+    "dependencyEdits": {
+      "setDependencies": true,
+      "setPrerequisiteWait": false
+    },
+    "dependencyStatus": {
+      "blocking": false,
+      "dependencies": [],
+      "prerequisiteWait": null
+    },
+    "hold": null,
+    "identity": {
+      "base": "main",
+      "entry": "brief",
+      "id": "captured-queue",
+      "origin_thread": null,
+      "reference": "example#2",
+      "repository": "example/board-fixture"
+    },
+    "latestEventAtMs": 1795742391418,
+    "lifecycle": {
+      "admittedAtMs": 1795742391418,
+      "finishedAtMs": null,
+      "reviewRound": null,
+      "reviewer": null,
+      "steps": [
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": 1795742391418,
+          "key": "queued",
+          "label": "Queued",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "current",
+          "tone": "accent",
+          "visits": [
+            {
+              "enteredAtMs": 1795742391418,
+              "leftAtMs": null
+            }
+          ]
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "working",
+          "label": "Working",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "review",
+          "label": "Review",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "merge",
+          "label": "Merge",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "close",
+          "label": "Close",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        }
+      ],
+      "worker": null
+    },
+    "nextCheckAt": null,
+    "number": 2,
+    "phase": "queued",
+    "question": null,
+    "queuePriority": "normal",
+    "reference": "example#2",
+    "stateLabel": "Queued",
+    "stateSinceMs": null,
+    "title": "Queued task",
+    "version": 1,
+    "wait": null,
+    "waitDetail": null
+  },
+  {
+    "attention": "waiting",
+    "dependencyEdits": {
+      "setDependencies": true,
+      "setPrerequisiteWait": false
+    },
+    "dependencyStatus": {
+      "blocking": false,
+      "dependencies": [],
+      "prerequisiteWait": null
+    },
+    "hold": {
+      "by": "operator",
+      "reason": "Held for fixture"
+    },
+    "identity": {
+      "base": "main",
+      "entry": "brief",
+      "id": "captured-heldQueue",
+      "origin_thread": null,
+      "reference": "example#3",
+      "repository": "example/board-fixture"
+    },
+    "latestEventAtMs": 1795742391420,
+    "lifecycle": {
+      "admittedAtMs": 1795742391419,
+      "finishedAtMs": null,
+      "reviewRound": null,
+      "reviewer": null,
+      "steps": [
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": 1795742391419,
+          "key": "queued",
+          "label": "Queued",
+          "leftAtMs": null,
+          "note": "Queued",
+          "roundLabel": null,
+          "state": "current",
+          "tone": "warning",
+          "visits": [
+            {
+              "enteredAtMs": 1795742391419,
+              "leftAtMs": null
+            }
+          ]
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "working",
+          "label": "Working",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "review",
+          "label": "Review",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "merge",
+          "label": "Merge",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "close",
+          "label": "Close",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        }
+      ],
+      "worker": null
+    },
+    "nextCheckAt": 1795742391434,
+    "number": 3,
+    "phase": "queued",
+    "question": null,
+    "queuePriority": "promoted",
+    "reference": "example#3",
+    "stateLabel": "Queued",
+    "stateSinceMs": 1795742391420,
+    "title": "Held queued task",
+    "version": 2,
+    "wait": "hold",
+    "waitDetail": null
+  },
+  {
+    "attention": "waiting",
+    "dependencyEdits": {
+      "setDependencies": false,
+      "setPrerequisiteWait": true
+    },
+    "dependencyStatus": {
+      "blocking": false,
+      "dependencies": [],
+      "prerequisiteWait": null
+    },
+    "hold": null,
+    "identity": {
+      "base": "main",
+      "entry": "brief",
+      "id": "captured-working",
+      "origin_thread": null,
+      "reference": "example#4",
+      "repository": "example/board-fixture"
+    },
+    "latestEventAtMs": 1795742391422,
+    "lifecycle": {
+      "admittedAtMs": 1795742391422,
+      "finishedAtMs": null,
+      "reviewRound": null,
+      "reviewer": null,
+      "steps": [
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": 1795742391422,
+          "key": "queued",
+          "label": "Queued",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": [
+            {
+              "enteredAtMs": 1795742391422,
+              "leftAtMs": null
+            }
+          ]
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "working",
+          "label": "Working",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "current",
+          "tone": "accent",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "review",
+          "label": "Review",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "merge",
+          "label": "Merge",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "close",
+          "label": "Close",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        }
+      ],
+      "worker": null
+    },
+    "nextCheckAt": null,
+    "number": 4,
+    "phase": "working",
+    "question": null,
+    "queuePriority": "normal",
+    "reference": "example#4",
+    "stateLabel": "Working",
+    "stateSinceMs": null,
+    "title": "Working task",
+    "version": 1,
+    "wait": null,
+    "waitDetail": null
+  },
+  {
+    "attention": "waiting",
+    "dependencyEdits": {
+      "setDependencies": false,
+      "setPrerequisiteWait": true
+    },
+    "dependencyStatus": {
+      "blocking": false,
+      "dependencies": [],
+      "prerequisiteWait": null
+    },
+    "hold": null,
+    "identity": {
+      "base": "main",
+      "entry": "brief",
+      "id": "captured-review",
+      "origin_thread": null,
+      "reference": "example#5",
+      "repository": "example/board-fixture"
+    },
+    "latestEventAtMs": 1795742391423,
+    "lifecycle": {
+      "admittedAtMs": 1795742391423,
+      "finishedAtMs": null,
+      "reviewRound": 1,
+      "reviewer": null,
+      "steps": [
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": 1795742391423,
+          "key": "queued",
+          "label": "Queued",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": [
+            {
+              "enteredAtMs": 1795742391423,
+              "leftAtMs": null
+            }
+          ]
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "working",
+          "label": "Working",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "review",
+          "label": "Review",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": "Round 1",
+          "state": "current",
+          "tone": "accent",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "merge",
+          "label": "Merge",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "close",
+          "label": "Close",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        }
+      ],
+      "worker": {
+        "model": null,
+        "provider": null,
+        "thread": "thread:fixture"
+      }
+    },
+    "nextCheckAt": null,
+    "number": 5,
+    "phase": "reviewing",
+    "question": null,
+    "queuePriority": "normal",
+    "reference": "example#5",
+    "stateLabel": "Reviewing",
+    "stateSinceMs": null,
+    "title": "Review task",
+    "version": 1,
+    "wait": null,
+    "waitDetail": null
+  },
+  {
+    "attention": "waiting",
+    "dependencyEdits": {
+      "setDependencies": false,
+      "setPrerequisiteWait": false
+    },
+    "dependencyStatus": {
+      "blocking": false,
+      "dependencies": [],
+      "prerequisiteWait": null
+    },
+    "hold": null,
+    "identity": {
+      "base": "main",
+      "entry": "brief",
+      "id": "captured-merging",
+      "origin_thread": null,
+      "reference": "example#6",
+      "repository": "example/board-fixture"
+    },
+    "latestEventAtMs": 1795742391425,
+    "lifecycle": {
+      "admittedAtMs": 1795742391425,
+      "finishedAtMs": null,
+      "reviewRound": null,
+      "reviewer": {
+        "model": null,
+        "provider": null,
+        "thread": "thread:fixture"
+      },
+      "steps": [
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": 1795742391425,
+          "key": "queued",
+          "label": "Queued",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": [
+            {
+              "enteredAtMs": 1795742391425,
+              "leftAtMs": null
+            }
+          ]
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "working",
+          "label": "Working",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "review",
+          "label": "Review",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "merge",
+          "label": "Merge",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "current",
+          "tone": "accent",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "close",
+          "label": "Close",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "todo",
+          "tone": "muted",
+          "visits": []
+        }
+      ],
+      "worker": {
+        "model": null,
+        "provider": null,
+        "thread": "thread:fixture"
+      }
+    },
+    "nextCheckAt": null,
+    "number": 6,
+    "phase": "merging",
+    "question": null,
+    "queuePriority": "normal",
+    "reference": "example#6",
+    "stateLabel": "Merging",
+    "stateSinceMs": null,
+    "title": "Merging task",
+    "version": 1,
+    "wait": null,
+    "waitDetail": null
+  },
+  {
+    "attention": "waiting",
+    "dependencyEdits": {
+      "setDependencies": false,
+      "setPrerequisiteWait": false
+    },
+    "dependencyStatus": {
+      "blocking": false,
+      "dependencies": [],
+      "prerequisiteWait": null
+    },
+    "hold": null,
+    "identity": {
+      "base": "main",
+      "entry": "brief",
+      "id": "captured-closing",
+      "origin_thread": null,
+      "reference": "example#7",
+      "repository": "example/board-fixture"
+    },
+    "latestEventAtMs": 1795742391426,
+    "lifecycle": {
+      "admittedAtMs": 1795742391426,
+      "finishedAtMs": null,
+      "reviewRound": null,
+      "reviewer": {
+        "model": null,
+        "provider": null,
+        "thread": "thread:fixture"
+      },
+      "steps": [
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": 1795742391426,
+          "key": "queued",
+          "label": "Queued",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": [
+            {
+              "enteredAtMs": 1795742391426,
+              "leftAtMs": null
+            }
+          ]
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "working",
+          "label": "Working",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "review",
+          "label": "Review",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "merge",
+          "label": "Merge",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "close",
+          "label": "Close",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "current",
+          "tone": "accent",
+          "visits": []
+        }
+      ],
+      "worker": {
+        "model": null,
+        "provider": null,
+        "thread": "thread:fixture"
+      }
+    },
+    "nextCheckAt": null,
+    "number": 7,
+    "phase": "closing",
+    "question": null,
+    "queuePriority": "normal",
+    "reference": "example#7",
+    "stateLabel": "Closing",
+    "stateSinceMs": null,
+    "title": "Closing task",
+    "version": 1,
+    "wait": null,
+    "waitDetail": null
+  },
+  {
+    "attention": "finished",
+    "dependencyEdits": {
+      "setDependencies": false,
+      "setPrerequisiteWait": false
+    },
+    "dependencyStatus": {
+      "blocking": false,
+      "dependencies": [],
+      "prerequisiteWait": null
+    },
+    "hold": null,
+    "identity": {
+      "base": "main",
+      "entry": "brief",
+      "id": "captured-history",
+      "origin_thread": null,
+      "reference": "example#8",
+      "repository": "example/board-fixture"
+    },
+    "latestEventAtMs": 1795742391427,
+    "lifecycle": {
+      "admittedAtMs": 1795742391427,
+      "finishedAtMs": null,
+      "reviewRound": null,
+      "reviewer": {
+        "model": null,
+        "provider": null,
+        "thread": "thread:fixture"
+      },
+      "steps": [
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": 1795742391427,
+          "key": "queued",
+          "label": "Queued",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": [
+            {
+              "enteredAtMs": 1795742391427,
+              "leftAtMs": null
+            }
+          ]
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "working",
+          "label": "Working",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "review",
+          "label": "Review",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "merge",
+          "label": "Merge",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        },
+        {
+          "activeSinceMs": null,
+          "elapsedMs": null,
+          "enteredAtMs": null,
+          "key": "close",
+          "label": "Close",
+          "leftAtMs": null,
+          "note": null,
+          "roundLabel": null,
+          "state": "done",
+          "tone": "success",
+          "visits": []
+        }
+      ],
+      "worker": {
+        "model": null,
+        "provider": null,
+        "thread": "thread:fixture"
+      }
+    },
+    "nextCheckAt": null,
+    "number": 8,
+    "phase": "done",
+    "question": null,
+    "queuePriority": "normal",
+    "reference": "example#8",
+    "stateLabel": "Done",
+    "stateSinceMs": 1795742391427,
+    "title": "History task",
+    "version": 1,
+    "wait": null,
+    "waitDetail": null
+  }
+]

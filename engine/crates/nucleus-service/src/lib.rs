@@ -1,5 +1,11 @@
 //! Service entry points for the isolated Rust task engine.
 
+macro_rules! service_log {
+    ($($arg:tt)*) => {
+        crate::diagnostics::line(format_args!($($arg)*))
+    };
+}
+
 mod acp;
 mod allowance;
 mod attention;
@@ -28,6 +34,7 @@ mod tell;
 mod tests;
 mod ticket;
 mod titles;
+mod volume;
 mod web;
 
 use std::{
@@ -51,10 +58,10 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostCalls, HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
 use nucleus_store::{
-    DispatchMode, EngineStorage, Event, EventDraft, SettingsFile, StorageError, Store, StoreError,
-    TaskRow,
+    DispatchMode, EngineStorage, Event, EventDraft, SettingsFile, StorageDirectory, StorageError,
+    Store, StoreError, TaskRow,
 };
-use nucleus_work::{Checkout, CheckoutObservation, WorkError, Worktrees, checkout_path};
+use nucleus_work::{Checkout, WorkError, Worktrees, checkout_path};
 use schedule::{DueTask, PASS_BATCH, Priority, Schedule};
 use tokio::{
     sync::{Mutex, Notify, OwnedMutexGuard, RwLock, broadcast, mpsc, watch},
@@ -226,6 +233,7 @@ pub enum ServiceError {
 
 pub struct Service {
     storage: EngineStorage,
+    volume: volume::WorkVolume,
     git: project::LocalGit,
     settings: SettingsFile,
     project: Option<Project>,
@@ -317,6 +325,8 @@ struct State {
     planner_notice_waiters: BTreeSet<String>,
     thread_tasks: BTreeMap<String, BTreeMap<String, TrackedThread>>,
     title_candidates: BTreeMap<String, titles::TitleCandidate>,
+    /// The held call last logged for each task, by when that call began.
+    held_calls: BTreeMap<String, std::time::Instant>,
 }
 
 #[derive(Default)]
@@ -359,6 +369,17 @@ pub struct TaskChange {
     pub version: i64,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub detail_only: bool,
+}
+
+impl ServiceError {
+    /// A task held on a write or removal is logged once, not at every retry.
+    #[must_use]
+    pub const fn is_held_call(&self) -> bool {
+        matches!(
+            self,
+            Self::Workspace(WorkError::Storage(StorageError::CallHeld { .. }))
+        )
+    }
 }
 
 pub struct PassOutcome {
@@ -426,8 +447,8 @@ impl Service {
         callback: SocketAddr,
         report_command: PathBuf,
     ) -> Result<Self, ServiceError> {
-        let storage = settings.storage()?;
-        storage.scratch().ensure()?;
+        let mut storage = settings.storage()?;
+        storage.pin_roots()?;
         storage.builds().ensure()?;
         storage.log().ensure()?;
         let git = project::LocalGit(storage.scratch().path().into());
@@ -458,6 +479,7 @@ impl Service {
         let github_accounts = Arc::new(github_accounts::GitHubAccounts::new(settings.clone()));
         Ok(Self {
             storage,
+            volume: volume::WorkVolume::new(),
             git,
             settings: settings.clone(),
             registry_provider,
@@ -496,6 +518,7 @@ impl Service {
                 planner_notice_waiters: BTreeSet::new(),
                 thread_tasks: BTreeMap::new(),
                 title_candidates: BTreeMap::new(),
+                held_calls: BTreeMap::new(),
             }),
             project,
             project_writes: RwLock::new(()),
@@ -601,7 +624,7 @@ impl Service {
         host: &nucleus_hosts::T3Pass<'_>,
     ) -> Result<Vec<PassOutcome>, ServiceError> {
         let _cycle = self.pass_lock.lock().await;
-        let (result, calls) = T3::count_pass_calls(self.run_batch(host)).await;
+        let (result, calls) = Box::pin(T3::count_pass_calls(self.run_batch(host))).await;
         let mut state = self.state.lock().await;
         state.last_pass_calls = calls;
         state.scheduler_error = result.as_ref().err().map(|error| match error {
@@ -677,10 +700,16 @@ impl Service {
         if let Some((first, started)) = first_service {
             first.record(id, row.task.phase(), *priority, started);
         }
-        let result = {
-            let scratch = self.existing_run_scratch(&row.task);
+        let advance = async {
+            let scratch = match self.existing_run_scratch(&row.task).await {
+                // A settled task rereads its roots before any removal, so its
+                // notices need not wait for the volume.
+                Err(_) if row.task.run().is_none() => None,
+                found => found?,
+            };
             Box::pin(self.advance_due_task(&row, &host.for_task(&row.task, scratch))).await
         };
+        let result = volume::watched(id, advance).await;
         let result = if matches!(result, Err(ServiceError::ParentDeliveryHeld)) {
             let text = format!(
                 "Nucleus could not verify an earlier T3 delivery for {} (task {id}). Check its task thread for the earlier turn, then use Next to review the available recovery actions.",
@@ -1013,11 +1042,11 @@ impl Service {
                 let failed = match result {
                     Ok(Ok(())) => false,
                     Ok(Err(error)) => {
-                        eprintln!("scheduled database backup: {error}");
+                        service_log!("scheduled database backup: {error}");
                         true
                     }
                     Err(error) => {
-                        eprintln!("scheduled database backup worker: {error}");
+                        service_log!("scheduled database backup worker: {error}");
                         true
                     }
                 };
@@ -1027,23 +1056,47 @@ impl Service {
             };
             let (pruned, ()) = tokio::join!(self.prune_archived_threads(), backup);
             if let Err(error) = pruned {
-                eprintln!("archived thread housekeeping: {error}");
+                service_log!("archived thread housekeeping: {error}");
             }
         }
     }
 
     async fn watch_trash(&self) {
         loop {
-            let work = self.storage.work().clone();
-            let result =
-                tokio::task::spawn_blocking(move || nucleus_work::prune_trash(&work, now_ms()))
-                    .await;
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => eprintln!("checkout trash housekeeping: {error}"),
-                Err(error) => eprintln!("checkout trash worker: {error}"),
-            }
+            let work = self.storage.work();
+            self.prune("checkout trash", work, nucleus_work::prune_trash)
+                .await;
+            let scratch = self.storage.scratch();
+            self.prune(
+                "checkout quarantine",
+                scratch,
+                nucleus_work::prune_quarantines,
+            )
+            .await;
             self.trash_wake.notified().await;
+        }
+    }
+
+    async fn prune(
+        &self,
+        kind: &'static str,
+        root: &StorageDirectory,
+        job: fn(&StorageDirectory, u64) -> Result<(), WorkError>,
+    ) {
+        let root = root.clone();
+        let result = self
+            .volume
+            .run(kind, "pruning", volume::Limit::Change, move |custody| {
+                // Read first: a read which hangs must not count as a running removal.
+                root.verify()?;
+                let _step = custody.mutate()?;
+                job(&root, now_ms())
+            })
+            .await;
+        match result.map_err(WorkError::from).and_then(|done| done) {
+            // The call logged its own deadline once and is still running.
+            Ok(()) | Err(WorkError::Storage(StorageError::CallHeld { .. })) => {}
+            Err(error) => service_log!("{kind} housekeeping: {error}"),
         }
     }
 
@@ -1160,14 +1213,6 @@ impl Service {
             if housekeeping {
                 self.housekeeping_wake.notify_one();
                 self.trash_wake.notify_one();
-                let scratch = self.storage.scratch().clone();
-                tokio::task::spawn_blocking(move || {
-                    if let Err(error) = nucleus_work::prune_quarantines(&scratch, now_ms()) {
-                        eprintln!("checkout quarantine housekeeping: {error}");
-                    }
-                })
-                .await
-                .ok();
                 continue;
             }
             if let Some(ready) = ready {
@@ -1197,7 +1242,15 @@ impl Service {
             && current.task.phase() == Phase::Done
             && current.task.run().is_none()
             && !matches!(result, Ok(Action::Nothing));
+        let held = held_call(result);
+        if let Some((cause, since)) = held
+            && since.elapsed() >= self.volume.stuck
+            && state.held_calls.insert(id.clone(), since) != Some(since)
+        {
+            service_log!("{id}: {cause}");
+        }
         if !archive_due
+            && held.is_none()
             && !active(&current.task)
             && !state.forge_requested.contains(id)
             && state.acp_refresh_requests.get(id) != Some(&current.version)
@@ -1254,7 +1307,10 @@ impl Service {
         record_incomplete_observation(&mut state, row, result)?;
         let now = Instant::now();
         let checking_workspace = wait == Some(WaitReason::WorkspaceUnknown);
-        if checking_workspace {
+        if volume_unavailable(result) {
+            // A missing volume clears by itself, so it never becomes a blocked checkout.
+            state.schedule.await_volume(id, now, row.task.phase());
+        } else if checking_workspace {
             if state.schedule.recover_workspace(id, now, row.task.phase()) {
                 wait = Some(WaitReason::WorkspaceBlocked);
                 detail = Some(WaitDetail::Blocked(workspace_cause(result)));
@@ -1267,6 +1323,15 @@ impl Service {
             && let Err(error) = result
         {
             detail = Some(WaitDetail::Archive(error.to_string()));
+        }
+        if let Some((cause, _)) = held {
+            // A terminal task shows only its archive cause.
+            let cause = cause.to_string();
+            detail = Some(if row.task.phase().is_terminal() {
+                WaitDetail::Archive(cause)
+            } else {
+                WaitDetail::Blocked(cause)
+            });
         }
         if state.observe_task_allowance(&row.task, wait)? {
             self.publish_detail(id, row.version);
@@ -1675,7 +1740,7 @@ impl Service {
             })
             .flatten();
         let mut observation = state.command_observation(&prior);
-        let task = if let Some(task) = self.prepare_command(
+        let mut task = if let Some(task) = self.prepare_command(
             &mut state,
             &prior.task,
             authority,
@@ -1725,7 +1790,7 @@ impl Service {
             presentation::note_merge(&mut audit, &observation.forge);
         }
         let version = if amendment {
-            self.commit_amendment(&mut state, &prior, &task, audit, scope)?
+            self.commit_amendment(&mut state, &prior, &mut task, audit, scope, authority)?
         } else if explicit_move || prior.task != task {
             self.commit(&mut state, &prior, &task, &audit, None)?
         } else {
@@ -1749,7 +1814,7 @@ impl Service {
         credential: &[u8; 32],
         report: Report,
     ) -> Result<(), ServiceError> {
-        let _fence = self.fence(id).await;
+        let _fence = self.report_fence(id).await;
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let prior = self.lookup(&state, id)?;
@@ -1796,6 +1861,17 @@ impl Service {
         self.task_fence(id).await.lock_owned().await
     }
 
+    /// The task fence, or `None` while its holder waits on the work volume. A run
+    /// callback never waits for that: no host write is in flight then, and the
+    /// holder's next effect rechecks the row.
+    async fn report_fence(&self, id: &str) -> Option<OwnedMutexGuard<()>> {
+        tokio::select! {
+            biased;
+            fence = self.fence(id) => Some(fence),
+            () = self.volume.waiting(id) => None,
+        }
+    }
+
     async fn task_fence(&self, id: &str) -> Arc<Mutex<()>> {
         let mut state = self.state.lock().await;
         Arc::clone(state.fences.entry(id.into()).or_default())
@@ -1810,40 +1886,43 @@ impl Service {
         Ok(fence)
     }
 
-    fn worktrees(&self) -> Result<Worktrees<'_>, ServiceError> {
-        Ok(Worktrees::new(
+    fn worktrees(&self) -> Worktrees<'_> {
+        Worktrees::new(
             &self.storage,
             &self.git,
             Redactor::new([], RedactionRules::common()),
-        )?)
+        )
     }
 
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method path is not general over the checkout's lifetime"
+    )]
     async fn observe_checkout(&self, checkout: &Checkout<'_>) -> Result<Workspace, WorkError> {
-        self.run_checkout_observation(checkout, CheckoutObservation::Standard)
-            .await
+        self.checkout_job(
+            checkout,
+            "observing the task checkout",
+            volume::Limit::Check,
+            |checkout| checkout.observe(),
+        )
+        .await
     }
 
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method path is not general over the checkout's lifetime"
+    )]
     async fn observe_checkout_for_retirement(
         &self,
         checkout: &Checkout<'_>,
     ) -> Result<Workspace, WorkError> {
-        self.run_checkout_observation(checkout, CheckoutObservation::Retirement)
-            .await
-    }
-
-    async fn run_checkout_observation(
-        &self,
-        checkout: &Checkout<'_>,
-        observation: CheckoutObservation,
-    ) -> Result<Workspace, WorkError> {
-        let observe = checkout.observation_job(
-            self.git.clone(),
-            Redactor::new([], RedactionRules::common()),
-            observation,
-        );
-        tokio::task::spawn_blocking(observe)
-            .await
-            .map_err(std::io::Error::other)?
+        self.checkout_job(
+            checkout,
+            "observing the task checkout",
+            volume::Limit::Check,
+            |checkout| checkout.observe_for_retirement(),
+        )
+        .await
     }
 
     async fn save(
@@ -1863,7 +1942,7 @@ impl Service {
         if task.run().is_none()
             && let Some(run) = prior.task.run()
         {
-            ticket::clear(self.storage.scratch(), run);
+            self.clear_ticket(&task.identity().id, run).await;
         }
         Ok(TaskRow {
             task,
@@ -1876,11 +1955,28 @@ impl Service {
         &self,
         state: &mut State,
         prior: &TaskRow,
-        task: &Task,
+        task: &mut Task,
         mut audit: EventDraft,
         scope: &ControllerScope,
+        authority: &Authority,
     ) -> Result<i64, ServiceError> {
-        let Some(ids) = self.amended_dependencies(state, scope, &prior.task, task)? else {
+        use nucleus_core::profiles::BriefPolicy;
+
+        let before = BriefPolicy::parse(&prior.task.brief().text).unwrap_or_default();
+        let after = before.amended(&task.brief().text)?;
+        let reason = after.merge_hold_reason();
+        if before.merge_hold_reason() != reason {
+            task.set_brief_merge_hold(reason, authority, now_ms())?;
+            audit.kind = "brief_merge_hold_changed".into();
+        }
+        let Some(ids) = self.amended_dependencies(
+            state,
+            scope,
+            &prior.task,
+            &before.depends_on,
+            &after.depends_on,
+        )?
+        else {
             return self.commit(state, prior, task, &audit, None);
         };
         audit.detail = serde_json::json!({ "prerequisites": ids }).to_string();
@@ -2213,6 +2309,9 @@ fn task_wait(
         {
             observation(Wait::HostUnknown, "Waiting for delivery confirmation.")
         }
+        Err(ServiceError::Workspace(WorkError::Storage(_))) => {
+            observation(Wait::WorkspaceUnknown, VOLUME_WAIT)
+        }
         Err(ServiceError::Workspace(_)) => (Some(Wait::WorkspaceUnknown), None),
         Err(ServiceError::ReviewPublication(error)) => {
             let (wait, detail) = error.wait();
@@ -2235,6 +2334,22 @@ fn task_wait(
         }
         Ok(Action::Wait(reason)) => (Some(*reason), None),
         _ => (None, None),
+    }
+}
+
+const VOLUME_WAIT: &str = "The work volume or layout cannot be verified. Checking again.";
+
+fn volume_unavailable(result: &Result<Action, ServiceError>) -> bool {
+    matches!(result, Err(ServiceError::Workspace(WorkError::Storage(_))))
+}
+
+/// The write or removal which keeps this task waiting, and when it began.
+fn held_call(result: &Result<Action, ServiceError>) -> Option<(&StorageError, std::time::Instant)> {
+    match result {
+        Err(ServiceError::Workspace(WorkError::Storage(
+            held @ StorageError::CallHeld { since, .. },
+        ))) => Some((held, *since)),
+        _ => None,
     }
 }
 
@@ -2298,7 +2413,7 @@ fn commit_priority(prior: &Task, task: &Task, audit: &EventDraft) -> Priority {
         return Priority::Effect;
     }
     match audit.kind.as_str() {
-        "command" | "reported" => Priority::Wake,
+        "command" | "brief_merge_hold_changed" | "reported" => Priority::Wake,
         "queue_admitted"
         | "run_reserved"
         | "host_send"

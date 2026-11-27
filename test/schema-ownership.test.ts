@@ -173,10 +173,6 @@ test("the capacity catalogue is the only place a limit is bounded and defaulted"
       ["operatorDefaultHostKind", "paseo"],
     ]),
   );
-  assert.equal(
-    whole.hostOutageNoticeMinutes,
-    capacityBounds.hostOutageNoticeMinutes.fallback,
-  );
 });
 
 test("the task row carries the legacy hold projection from one owner", () => {

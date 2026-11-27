@@ -26,6 +26,8 @@ mod briefs;
 mod dependencies;
 #[path = "tests/github_accounts.rs"]
 mod github_accounts;
+#[path = "tests/merge_holds.rs"]
+mod merge_holds;
 #[path = "tests/planning.rs"]
 mod planning;
 #[path = "tests/projects.rs"]
@@ -977,7 +979,7 @@ async fn persistent_workspace_error_parks_and_owner_recheck_observes_one_repair(
     .await;
     let (_home, service) = fixture(forge);
     let head = &service.fixture().start;
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, "unreadable")
         .unwrap();
@@ -2896,7 +2898,7 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
     let (forge, readable, _, reads, server) = serve_merged_forge(&service.fixture().start).await;
     service.forge = forge;
     let draft = {
-        let work = service.worktrees().unwrap();
+        let work = service.worktrees();
         let project = service.fixture();
         let identity = second.task.identity();
         let checkout = work
@@ -3016,7 +3018,7 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
     service.forge = forge;
 
     let checkout_path = {
-        let work = service.worktrees().unwrap();
+        let work = service.worktrees();
         let project = service.fixture();
         let identity = done.task.identity();
         let checkout = work
@@ -3161,7 +3163,7 @@ async fn archive_shell_fixture(
     impl Fn(&T3, Option<&str>) + use<>,
     tokio::task::JoinHandle<()>,
 ) {
-    let worktrees = service.worktrees().expect("worktree scope");
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(
             &service.fixture().checkout,
@@ -4927,4 +4929,33 @@ fn obs_absent_host(head: &nucleus_core::Head) -> Observation {
         }),
         workspace: Observed::Known(nucleus_core::Workspace::Clean(head.clone())),
     }
+}
+
+#[tokio::test]
+async fn acp_server_error_is_logged_with_timestamp() {
+    use tower::ServiceExt as _;
+    let app = Router::new()
+        .route(
+            "/v1/acp/inbox",
+            axum::routing::get(|| async {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error": "fixture-1622-store-error"})),
+                )
+            }),
+        )
+        .layer(axum::middleware::from_fn(super::log_acp_error));
+    let response = app
+        .oneshot(Request::get("/v1/acp/inbox").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let lines = crate::diagnostics::TEST_LINES.lock().unwrap();
+    let line = lines
+        .iter()
+        .find(|line| line.contains("fixture-1622-store-error"))
+        .unwrap();
+    assert!(line.contains("+00:00"));
+    assert!(line.contains("route=/v1/acp/inbox status=503"));
+    assert_eq!(line.lines().count(), 1);
 }

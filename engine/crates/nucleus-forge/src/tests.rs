@@ -233,7 +233,7 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
     let (write_index, merge) = writes[0];
     assert_eq!(
         merge.body,
-        Some(json!({"sha": sha('a'), "merge_method": "squash"}))
+        Some(json!({"sha": sha('a'), "merge_method": "merge"}))
     );
     let before = &requests[..write_index];
     let pr_reads = before

@@ -23,24 +23,17 @@ export const HORIZON_HINTS: Record<PlanHorizon, string> = {
   later: "Planned, not scheduled",
 };
 
-/** The list's three groups: Active, Idle on purpose (the plan's idle mark) and Dormant (the activity rule). */
-export type ProjectGroup = "active" | "idle" | "dormant";
+/** The list's two groups: Active, and Dormant (the activity rule). */
+export type ProjectGroup = "active" | "dormant";
 export const PROJECT_GROUP_TITLES: Record<ProjectGroup, string> = {
   active: "Active",
-  idle: "Idle on purpose",
   dormant: "Dormant",
 };
 
-/**
- * An idle mark is the owner's deliberate answer, so it wins over the activity rule:
- * an idle project is listed as idle however long ago its last work was.
- */
 export function projectGroup(
-  plan: Pick<ProjectPlan, "idle"> | undefined,
   activity: ProjectActivity | undefined,
   nowMs: number,
 ): ProjectGroup {
-  if (plan?.idle) return "idle";
   return projectDormantByActivity(activity, nowMs) ? "dormant" : "active";
 }
 
@@ -221,17 +214,14 @@ export function projectStatus(input: {
 }
 
 /**
- * A project row's one line in words: "2 need you · 3 lanes in progress · 19 tasks live",
- * "Idle · <reason>" or "No recent activity". Each part is returned apart so the row can
- * colour the attention count.
+ * A project row's one line in words: "2 need you · 3 lanes in progress · 19 tasks live"
+ * or "No recent activity". Each part is returned apart so the row can colour the
+ * attention count.
  */
 export function projectStatusParts(
   group: ProjectGroup,
-  plan: Pick<ProjectPlan, "entries" | "idle"> | undefined,
   status: ProjectStatus,
 ): { attention: string | null; rest: string } {
-  if (group === "idle")
-    return { attention: null, rest: `Idle · ${plan?.idle?.reason ?? ""}` };
   if (group === "dormant")
     return { attention: null, rest: "No recent activity" };
   return {
@@ -247,31 +237,26 @@ export function projectStatusParts(
 
 export function projectStatusLine(
   group: ProjectGroup,
-  plan: Pick<ProjectPlan, "entries" | "idle"> | undefined,
   status: ProjectStatus,
 ): string {
-  const parts = projectStatusParts(group, plan, status);
+  const parts = projectStatusParts(group, status);
   return [parts.attention, parts.rest].filter(Boolean).join(" · ");
 }
 
 /**
  * The roadmap's banner. The focus is the first Now lane's aim (Tom, 2026-11-22: "Just go
- * with first lane"); an idle plan shows its reason instead, and a project with no plan
- * and no activity says it is dormant.
+ * with first lane"); a project with no Now lane and no activity says it is dormant.
  */
 export type RoadmapBanner =
   | { kind: "focus"; lane: string; text: string }
-  | { kind: "idle"; reason: string; at: string }
   | { kind: "dormant" }
   | { kind: "none" };
 
 export function roadmapBanner(
-  plan: Pick<ProjectPlan, "entries" | "idle" | "version"> | undefined,
+  plan: Pick<ProjectPlan, "entries"> | undefined,
   lanes: LaneView[],
   group: ProjectGroup,
 ): RoadmapBanner {
-  if (plan?.idle)
-    return { kind: "idle", reason: plan.idle.reason, at: plan.idle.at };
   const first = plan?.entries.find((entry) => entry.horizon === "now");
   if (first) {
     const lane = lanes.find((item) => item.key === first.lane);

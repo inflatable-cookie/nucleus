@@ -79,6 +79,7 @@ pub struct ParentAttempt<'a> {
     pub command: &'a str,
     pub released: bool,
     pub replay_launch: bool,
+    pub recorded_failure: bool,
 }
 
 /// Whether T3 could have delivered the write.
@@ -116,6 +117,7 @@ pub struct ArchiveWrite {
 pub struct ParentWrite {
     wire: FrozenParentWrite,
     idle_at: Option<(String, u64)>,
+    stranded_at: Option<Arc<Value>>,
     delivery: Option<Box<ParentDelivery>>,
     owned_snoozes: Vec<u64>,
     reentry: Option<Box<ActiveChild>>,
@@ -185,6 +187,7 @@ impl ParentWrite {
                 child_thread: None,
             },
             idle_at: None,
+            stranded_at: None,
             delivery: None,
             owned_snoozes: Vec::new(),
             reentry: None,
@@ -700,13 +703,15 @@ impl T3 {
         {
             return Ok(ParentStep::Write(write));
         }
-        let (projection, _) = self.observe_parent(binding, &thread).await?;
+        let (projection, fence) = self.observe_parent(binding, &thread).await?;
         if let Some(projection) = projection {
             projection.require_parent_provider(provider)?;
             let mut replay = None;
             let mut completed_prior = false;
+            let mut stranded = false;
             if let Some((run, node)) = prior_turn
                 .as_ref()
+                .filter(|attempt| !attempt.recorded_failure)
                 .and_then(|attempt| projection.live_parent_run(&message_id(attempt.command)))
             {
                 return Ok(ParentStep::Live(ParentRun {
@@ -716,17 +721,21 @@ impl T3 {
                 }));
             }
             if let Some(attempt) = prior_turn.as_ref()
-                && !(attempt.released && projection.archived_in_shell())
+                && (attempt.recorded_failure
+                    || !(attempt.released && projection.archived_in_shell()))
             {
                 let message = message_id(attempt.command);
-                completed_prior = projection.turn_completed(&message);
-                if projection.turn_failed(&message) {
-                    if projection.parent_unavailable(&message, provider) {
-                        completed_prior = true;
-                    } else {
-                        return Ok(ParentStep::Failed);
-                    }
+                let recoverable = projection.parent_recoverable(&message, provider);
+                if !recoverable && (attempt.recorded_failure || projection.turn_failed(&message)) {
+                    return Ok(ParentStep::Failed);
                 }
+                stranded = parent_hold_provider(attempt.command) == Some(provider)
+                    && fence
+                        .row
+                        .as_ref()
+                        .is_none_or(|row| row["activeRunId"].is_null())
+                    && projection.stranded_parent_queue(&message).is_some();
+                completed_prior = recoverable || stranded || projection.turn_completed(&message);
                 if !completed_prior {
                     if projection.has_delivery(&message) {
                         return Ok(ParentStep::Delivered);
@@ -764,7 +773,10 @@ impl T3 {
                 || format!("{thread}-hold-acp-{sequence}:{provider}"),
                 str::to_owned,
             );
-            let write = parent_hold(binding, &thread, provider, &command, start_line);
+            let mut write = parent_hold(binding, &thread, provider, &command, start_line);
+            if stranded {
+                write.stranded_at = fence.row;
+            }
             return Ok(if completed_prior {
                 ParentStep::AfterDelivery(write)
             } else {
@@ -772,6 +784,12 @@ impl T3 {
             });
         }
 
+        if prior_turn
+            .as_ref()
+            .is_some_and(|attempt| attempt.recorded_failure)
+        {
+            return Ok(ParentStep::Failed);
+        }
         initial_parent(
             binding, provider, &thread, title, start_line, prior_turn, catalogue,
         )
@@ -911,7 +929,10 @@ impl T3 {
             return Ok(None);
         };
         projection.require_parent_provider(provider)?;
-        if projection.has_pending_turn() || latest.is_some_and(|run| !projection.terminal_run(run))
+        let stranded =
+            prior.and_then(|command| projection.stranded_parent_queue(&message_id(command)));
+        if (stranded.is_none() && projection.has_pending_turn())
+            || latest.is_some_and(|run| !projection.terminal_run(run))
         {
             return Ok(None);
         }
@@ -931,6 +952,10 @@ impl T3 {
         let evidence = activity_digest(&child_row);
         let mut ended_hold = None;
         let command = match (prior, ended_owned) {
+            (_, _) if let Some(native) = stranded => format!(
+                "{prefix}-after-{:x}-{evidence}-0:{provider}",
+                Sha256::digest(native)
+            ),
             (Some(prior), _) if !projection.has_delivery(&message_id(prior)) => prior.to_owned(),
             (_, Some((native, command))) => {
                 let timing = (latest == Some(native))
@@ -938,7 +963,8 @@ impl T3 {
                     .flatten();
                 let recorded = hold_evidence(command, &prefix);
                 let count = timing.map_or(0, |_| recorded.map_or(1, |(_, count)| count + 1));
-                let unchanged = recorded.is_some_and(|(prior, _)| prior == evidence);
+                let unchanged = recorded.is_some_and(|(prior, _)| prior == evidence)
+                    && !projection.parent_recoverable(&message_id(command), provider);
                 ended_hold = Some(Box::new(EndedHold {
                     command: command.into(),
                     evidence: evidence.clone(),
@@ -964,6 +990,7 @@ impl T3 {
             (Some(_), None) => return Ok(None),
         };
         let mut write = parent_hold(binding, &thread, provider, &command, prompt);
+        write.stranded_at = stranded.map(|_| row);
         write.wire.child_thread = Some(child.thread.clone());
         write.reentry = Some(Box::new(child.clone()));
         // Uncertain delivery keeps its original command even if the activity
@@ -1123,6 +1150,13 @@ impl T3 {
                         }
                         if let Some(child) = &write.reentry {
                             self.check_reentry(child, write.child_evidence.as_deref(), &row)?;
+                        }
+                        if write
+                            .stranded_at
+                            .as_ref()
+                            .is_some_and(|before| !Arc::ptr_eq(before, &row))
+                        {
+                            return Err(HostError::Uncertain);
                         }
                         crate::task_row::check_delivery_snooze(&row, &write.owned_snoozes)?;
                     }

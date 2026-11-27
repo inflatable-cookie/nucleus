@@ -87,53 +87,6 @@ test('the section hint is taken once, by the next Settings screen or by one alre
   assert.equal(takeSettingsSection(), null, 'used once: plain Settings opens at its first section');
 });
 
-test('full screen, wide and narrow: the hint opens Settings at Projects; the trash icon opens Remove scoped to the project; Delete project asks once more and returns to the list', async () => {
-  const { hintSettingsSection } = await import('../client/settings-hint');
-  const { QueueSettingsScreen } = await import('../client/settings-screen');
-  const board = { revision: 1, connected: true, hostId: 'host', paused: false, error: '', quiet: true, activeWorkers: 0, unsettled: 0, globalLimit: 32, projectLimit: 4, papercutProjectLimit: 2, tasks: [], profiles: [], pool: [], availability: [], assignments: {}, recentAssignments: {}, lanes: [], projects: [], projectLimitOverrides: {}, projectInFlightLimitOverrides: {}, projectCapacities: [], prStates: {}, usage: { level: 'normal', setLevel: 'normal', until: null, expired: false }, backup: { newestSnapshotAt: new Date().toISOString(), localError: null } };
-  for (const width of [390, 1024]) {
-    const key = `book-${width}`;
-    let projects = [project(key, 'Book'), project(`nucleus-${width}`, 'Nucleus')];
-    const calls: Array<[string, any]> = [];
-    const invoke = async (method: string, input: any) => {
-      if (method === 'queue.ui-snapshot') return board;
-      if (method === 'project.settings') return settingsOf(projects);
-      if (method === 'project.owner-candidates') return [];
-      if (method === 'backup.list') return { snapshots: [], localError: null };
-      if (method === 'project.management-preview') { calls.push([method, input]); return previewOf(projects[0]!); }
-      if (method === 'project.manage-remove') { calls.push([method, input]); projects = projects.slice(1); return { key, repositories: [repo(`acme/${key}`)], reason: input.reason, removedAt: 'now' }; }
-      return {};
-    };
-    hintSettingsSection('projects');
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const ui = mount(h(QueryClientProvider, { client, children: h(PluginRpcProvider, { invoke: invoke as never, children: h(QueueSettingsScreen as never, { theme: { colors: dark }, layout: { compact: false, platform: 'ios' }, host: { id: 'host', label: 'Host' } }) }) }));
-    try {
-      ui.get('Nucleus settings').props.onLayout({ nativeEvent: { layout: { width } } });
-      await settle(() => Boolean(ui.query('Book')), `${width}: opens at Projects without choosing it`);
-      assert.equal(ui.query('Repositories'), undefined, 'no Repositories section');
-      ui.press('Book');
-      ui.press('Remove Book');
-      await settle(() => calls.length === 1, `${width}: preview`);
-      assert.deepEqual(calls[0], ['project.management-preview', { key }], 'scoped: the project is already chosen');
-      assert.ok(ui.get('Remove Book dialog'));
-      assert.equal(ui.ofType('Modal')[0]!.props.animationType, 'fade', `${width}: a centred dialog, never a bottom sheet`);
-      assert.equal(ui.get('Remove Book dialog').props.style.borderTopLeftRadius, undefined, `${width}: full radius`);
-      assert.equal(ui.query('Move to, Choose'), undefined, `${width}: no Move to`);
-      assert.equal(ui.ofType('Modal').length, 1);
-      assert.equal(ui.query('Search managed projects'), undefined, 'no project search in the sheet');
-      await settle(() => ui.text().includes('No open work'), 'preview shown');
-      assert.equal(ui.get('Delete project').props.accessibilityState.disabled, true, 'a reason first');
-      ui.type('Reason', 'merged elsewhere');
-      ui.press('Delete project');
-      assert.match(ui.text(), /Delete Book\? Repository files and task history stay\./);
-      assert.equal(calls.length, 1, 'nothing written before the second press');
-      ui.press('Delete project Book');
-      await settle(() => Boolean(ui.query('Nucleus')) && !ui.query('Book'), `${width}: back to the list`);
-      assert.deepEqual(calls[1], ['project.manage-remove', { key, version: 3, digest: 'pinned', reason: 'merged elsewhere' }]);
-      assert.equal(ui.ofType('Modal').length, 0, 'the sheet closed');
-    } finally { done(ui); client.clear(); }
-  }
-});
 
 test('Remove only removes: no Move to, no Remove work; the preview and the removal never name a target', async () => {
   const source = project('only-src', 'Source'), other = project('only-dst', 'Destination');

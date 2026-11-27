@@ -4,7 +4,7 @@ import React from "react";
 import { mount, useNativeStubs, type HostNode } from "./support/render";
 import { rustTaskCard } from "./support/rust-task-card";
 import { observeIntersections } from "./support/intersection";
-import type { RustTask } from "../client/web/rust-board";
+import { groupRustTasks, type RustBoardView, type RustTask } from "../client/web/rust-board";
 
 // nucleus#1608: a card list loads its next page as its end comes near view. These run the
 // real list component on Rust adapter task shapes; the observer is a stand-in that the
@@ -15,7 +15,7 @@ let RustListRows: ListModule["RustListRows"];
 const load = async () => {
   RustListRows ??= (await import("../client/board/inbox-list")).RustListRows;
 };
-const c = {} as never;
+const c = new Proxy({ surface0: "#000000" }, { get: (target, key) => (key in target ? target[key as keyof typeof target] : "#000000") }) as never;
 
 const tasks = (count: number, phase: RustTask["phase"] = "queued"): RustTask[] =>
   Array.from({ length: count }, (_, index) =>
@@ -33,8 +33,8 @@ const rustProps = (list: RustTask[]) => ({
 });
 
 /** The list keyed by its view, as the board mounts it, so a view change starts from page one. */
-const list = (view: string, list: RustTask[]) =>
-  [React.createElement(RustListRows, { key: view, c, view: view as never, rust: rustProps(list) })];
+const list = (view: string, list: RustTask[], column?: RustBoardView) =>
+  [React.createElement(RustListRows, { key: view, c, view: view as never, column, rust: rustProps(list) })];
 
 /** Mounts the list and unmounts it when the test ends, so its age tick stops. */
 function mountList(t: { after(fn: () => void): void }, element: React.ReactElement[]) {
@@ -91,6 +91,37 @@ test("without an observer the list keeps one control for the next page", async (
   tree.press("Show 5 more tasks");
   assert.equal(cards(tree), 30);
   assert.equal(sentinel(tree), undefined);
+});
+
+test("Inbox rows keep the grouped column's order and age", async (t) => {
+  await load();
+  const now = Date.now();
+  const entered = (row: RustTask, key: string, at: number): RustTask => ({
+    ...row,
+    lifecycle: {
+      ...row.lifecycle,
+      steps: row.lifecycle.steps.map((step) => step.key === key ? { ...step, enteredAtMs: at } : step),
+    },
+  });
+  const working = groupRustTasks([
+    entered({ ...rustTaskCard("working-new", "working"), title: "working-new", number: 3 }, "working", now - 60 * 60_000),
+    entered({ ...rustTaskCard("blocked-waiting", "blocked"), title: "blocked-waiting", number: 2, stateSinceMs: now - 50 * 60_000 }, "working", now - 2 * 60 * 60_000),
+    entered({ ...rustTaskCard("working-old", "working"), title: "working-old", number: 1 }, "working", now - 3 * 60 * 60_000),
+  ]).working;
+  const workingTree = mountList(t, list("working", working, "working"));
+  const workingText = workingTree.text();
+  assert.ok(workingText.indexOf("working-old") < workingText.indexOf("blocked-waiting"));
+  assert.ok(workingText.indexOf("blocked-waiting") < workingText.indexOf("working-new"));
+  assert.match(workingText, /Orbit2h agoblocked-waiting/);
+
+  const queue = groupRustTasks([
+    { ...rustTaskCard("queue-held", "queued"), title: "queue-held", attention: "attention", hold: { reason: "Held" }, wait: "hold", queuePriority: "promoted", stateSinceMs: now - 60_000, lifecycle: { ...rustTaskCard("queue-held", "queued").lifecycle, admittedAtMs: now - 4 * 60 * 60_000 } },
+    { ...rustTaskCard("queue-normal", "queued"), title: "queue-normal", queuePriority: "normal", lifecycle: { ...rustTaskCard("queue-normal", "queued").lifecycle, admittedAtMs: now - 5 * 60 * 60_000 } },
+  ]).queue;
+  const queueTree = mountList(t, list("queue", queue, "queue"));
+  const queueText = queueTree.text();
+  assert.ok(queueText.indexOf("queue-normal") < queueText.indexOf("queue-held"));
+  assert.match(queueText, /Orbit4h agoqueue-held/);
 });
 
 test("focus on the sentinel that loads a page moves to the page's first new card, so forward Tab reaches the new cards", async () => {

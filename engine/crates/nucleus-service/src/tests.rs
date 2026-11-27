@@ -564,7 +564,7 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
             .map(|task| task.id),
         Some(id.into())
     );
-    let worktrees = service.worktrees().expect("worktree root");
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, id)
         .expect("checkout");
@@ -582,7 +582,7 @@ async fn a_cold_pass_consumes_an_authenticated_report_despite_an_old_custody_blo
         let head = service.fixture().start.clone();
         let (forge, _, server) = forge_fixture_for_branch(&head, "ns-worker").await;
         service.forge = forge;
-        let worktrees = service.worktrees().unwrap();
+        let worktrees = service.worktrees();
         let checkout = worktrees
             .checkout(&service.fixture().checkout, REPOSITORY, "worker")
             .unwrap();
@@ -749,7 +749,7 @@ async fn unreplayable_parent_delivery_settles_only_on_a_decisive_read() {
         let identity = task.identity().clone();
         let task = Task::new(identity.clone(), "Fixture".into(), None);
         let binding = {
-            let work = service.worktrees().unwrap();
+            let work = service.worktrees();
             let checkout = work
                 .checkout(
                     &service.fixture().checkout,
@@ -1119,7 +1119,7 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     let (_home, mut service) = fixture(forge);
     let repo = service.fixture().checkout.clone();
     let old_head = service.fixture().start.clone();
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees.checkout(&repo, REPOSITORY, "partial").unwrap();
     checkout.allocate(&old_head).unwrap();
     let path = checkout.path().to_owned();
@@ -1208,6 +1208,12 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     forge_server.abort();
 }
 
+fn checkouts(service: &Service) -> usize {
+    std::fs::read_dir(service.storage.work().path())
+        .expect("work root")
+        .count()
+}
+
 async fn run_workspace_recheck(
     service: &Service,
     task: &str,
@@ -1244,7 +1250,7 @@ async fn interrupted_checkout_with_a_sent_worker_is_preserved() {
     ))
     .await;
     let (_home, service) = fixture(forge);
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, "sent")
         .unwrap();
@@ -1399,7 +1405,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         Task::new(shape.identity().clone(), shape.brief().text.clone(), None)
     };
     let pass = async |service: &Service| service.pass().await.expect("queue pass");
-    assert!(!service.storage.work().path().exists());
+    assert_eq!(checkouts(&service), 0);
     service
         .state
         .lock()
@@ -1677,8 +1683,20 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     clippy::too_many_lines,
     reason = "exercise the parent, service restart and worker dispatch in one trace"
 )]
-async fn unavailable_parent_turn_recovers_after_service_restart() {
-    for recover in [true, false] {
+#[expect(
+    clippy::too_many_lines,
+    reason = "exercise the recorded parent, native queue and capacity together"
+)]
+async fn lost_parent_turn_recovers_after_service_restart_and_capacity_wait() {
+    // Sanitized fields from the failed root error in the 2026-11-27 T3 projection.
+    let process_exit = "The provider process exited after signal SIGTERM. Check the server logs for the provider's output, then retry the turn.";
+    for (failure, recorded_failure, stranded) in [
+        ("Nucleus is unavailable.", false, false),
+        (process_exit, true, false),
+        (process_exit, false, true),
+        ("Provider turn failed.", false, false),
+        ("Another provider failed.", true, false),
+    ] {
         let (forge, forge_server) = serve_forge(Router::new().route(
             &format!("/repos/{REPOSITORY}/pulls"),
             get(|| async { Json(Vec::<Value>::new()) }),
@@ -1719,16 +1737,21 @@ async fn unavailable_parent_turn_recovers_after_service_restart() {
                     let mut runs = vec![json!({"id":"failed-run","status":"failed","rootNodeId":"failed-root",
                         "userMessageId":parent["initialMessage"]["messageId"], "providerInstanceId":"fixture-acp",
                         "modelSelection":{"instanceId":"fixture-acp","model":"nucleus"}})];
-                    if let Some(hold) = holds.first() { runs.push(json!({"id":"continued-run","status":"running",
-                        "rootNodeId":"continued-root","userMessageId":hold["messageId"]})); }
+                    for (index, hold) in holds.iter().enumerate() {
+                        let queued = stranded && index == 0;
+                        runs.push(json!({"id":format!("continued-run-{index}"),
+                            "status":if queued {"queued"} else {"running"},
+                            "startedAt":if queued {None} else {Some("2026-11-27T02:08:21Z")},
+                            "rootNodeId":format!("continued-root-{index}"),"userMessageId":hold["messageId"]}));
+                    }
                     return json!({"_tag":"Chunk","requestId":id,"values":[{"kind":"snapshot","snapshotSequence":17 + holds.len(),"projection":{
                         "thread":{"id":parent["threadId"],"projectId":parent["projectId"],
                             "branch":parent["workspaceStrategy"]["branch"],"worktreePath":parent["workspaceStrategy"]["worktreePath"],
                             "modelSelection":parent["modelSelection"],"providerInstanceId":"fixture-acp"},
                         "runs":runs,"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[{
                             "id":"error","type":"error","status":"failed","runId":"failed-run","nodeId":"failed-root",
-                            "ordinal":1,"updatedAt":"2026-11-26T04:07:04Z","failure":{"class":"provider_error",
-                                "message":if recover {"Nucleus is unavailable."} else {"Another provider failed."}}}]
+                            "ordinal":1,"updatedAt":"2026-11-27T02:08:21Z","failure":{"class":"provider_error",
+                                "message":failure,"code":null,"retryable":null}}]
                     }},{"kind":"synchronized"}]});
                 }
                 Some("orchestration.launchThread") => { writes.lock().unwrap().push(payload.clone()); json!({"sequence":1}) }
@@ -1778,14 +1801,111 @@ async fn unavailable_parent_turn_recovers_after_service_restart() {
             let row = service.task("restart-parent").await.unwrap();
             Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await
         };
-        if recover {
+        if recorded_failure {
+            let row = service.task("restart-parent").await.unwrap();
+            let state = service.state.lock().await;
+            let record = state
+                .store
+                .parent_deliveries("restart-parent", row.version, None)
+                .unwrap()
+                .remove(0);
+            state
+                .store
+                .finish_parent_delivery(
+                    "restart-parent",
+                    row.version,
+                    &record,
+                    nucleus_store::ParentResult::Failed,
+                    0,
+                )
+                .unwrap();
+        }
+        if failure != "Another provider failed." {
             assert!(matches!(
                 advance().await.unwrap(),
                 Action::Wait(WaitReason::Starting)
             ));
+            if stranded {
+                let row = service.task("restart-parent").await.unwrap();
+                let (mut holder, _, _) =
+                    reservation("holder", Entry::Brief, &service.fixture().start);
+                let instance = holder.run().unwrap().launch().instance.clone();
+                holder.record_send(&instance, 1).unwrap();
+                holder.revoke_run();
+                {
+                    let mut state = service.state.lock().await;
+                    state.settings.dispatch = Some(nucleus_store::DispatchSettings {
+                        global_slots: 1,
+                        project_default_slots: 1,
+                        ..Default::default()
+                    });
+                    state.store.create(&holder, &event("fixture")).unwrap();
+                    let record = state
+                        .store
+                        .parent_deliveries("restart-parent", row.version, None)
+                        .unwrap()
+                        .remove(0);
+                    // The native queue exists even when the wire acknowledgement was lost.
+                    state
+                        .store
+                        .finish_parent_delivery(
+                            "restart-parent",
+                            row.version,
+                            &record,
+                            nucleus_store::ParentResult::Pending,
+                            0,
+                        )
+                        .unwrap();
+                }
+                let calls = service.host.host_calls();
+                let waiting = advance().await;
+                assert!(matches!(waiting, Ok(Action::Wait(WaitReason::Capacity))));
+                assert_eq!(service.host.host_calls(), calls);
+                service
+                    .schedule_result(&row, &waiting, Priority::Effect)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    service.task("restart-parent").await.unwrap().version,
+                    row.version
+                );
+                assert_eq!(holds.lock().unwrap().len(), 1);
+                assert!(children.lock().unwrap().is_empty());
+
+                let holder = service.task("holder").await.unwrap();
+                let mut settled = holder.task.clone();
+                settled.reconcile(&Observation {
+                    host: Observed::Known(Host::Current {
+                        instance,
+                        state: nucleus_core::RunState::Ended,
+                    }),
+                    forge: Observed::Unknown,
+                    workspace: Observed::Unknown,
+                });
+                assert!(settled.run().is_none());
+                service
+                    .save(&holder, settled, &event("phase_reconciled"))
+                    .await
+                    .unwrap();
+                assert!(
+                    service
+                        .state
+                        .lock()
+                        .await
+                        .schedule
+                        .effect_ready("restart-parent", Instant::now())
+                );
+                assert!(matches!(
+                    advance().await.unwrap(),
+                    Action::Wait(WaitReason::Starting)
+                ));
+                let holds = holds.lock().unwrap();
+                assert_eq!(holds.len(), 2);
+                assert_ne!(holds[0]["commandId"], holds[1]["commandId"]);
+            }
             assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
             assert!(matches!(advance().await.unwrap(), Action::Launch { .. }));
-            assert_eq!(holds.lock().unwrap().len(), 1);
+            assert_eq!(holds.lock().unwrap().len(), if stranded { 2 } else { 1 });
             assert_eq!(children.lock().unwrap().len(), 1);
         } else {
             let result = advance().await;
@@ -1821,14 +1941,10 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
         project_default_slots: 1,
         ..nucleus_store::DispatchSettings::default()
     });
-    let root = service.storage.work().path();
-    assert!(
-        !root.exists(),
-        "the fresh profile has no managed checkout root"
-    );
+    assert_eq!(checkouts(&service), 0, "the fresh profile has no checkouts");
     let head = &service.fixture().start;
     let checkout_repo = &service.fixture().checkout;
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     for id in ["first-owned", "second-owned"] {
         let (shape, _, observation) = reservation(id, Entry::Brief, head);
         let mut task = Task::new(shape.identity().clone(), "Fixture".into(), None);
@@ -2140,6 +2256,7 @@ async fn host_backoff_does_not_delay_a_local_task_decision() {
 }
 
 mod close_requests;
+mod work_volume;
 
 #[tokio::test]
 async fn wait_retention_tracks_the_question_even_when_its_title_stays_the_same() {

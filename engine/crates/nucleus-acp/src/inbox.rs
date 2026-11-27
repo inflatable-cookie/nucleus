@@ -30,11 +30,22 @@ pub(crate) fn response_session(frame: &Value) -> Option<&str> {
 // A turn can queue one answer per form it actually offered. Keeping the
 // eligibility check at input also keeps stdin available for cancellation.
 pub(crate) struct Replies {
-    pub(crate) cards: Mutex<BTreeMap<String, Card>>,
-    pub(crate) answers: mpsc::UnboundedSender<(String, InboxAnswer)>,
+    cards: Mutex<BTreeMap<String, Card>>,
+    answers: mpsc::UnboundedSender<(String, InboxAnswer)>,
 }
 
 impl Replies {
+    pub(crate) fn channel() -> (Self, mpsc::UnboundedReceiver<(String, InboxAnswer)>) {
+        let (answers, receive) = mpsc::unbounded_channel();
+        (
+            Self {
+                cards: Mutex::default(),
+                answers,
+            },
+            receive,
+        )
+    }
+
     pub(crate) async fn receive(&self, frame: &Value) {
         let mut cards = self.cards.lock().await;
         if let Some(answer) = take_answer(&mut cards, frame) {
@@ -51,11 +62,8 @@ pub(crate) fn prompt(
     id: &Value,
     wait_for_ui_reply: bool,
 ) -> Turn {
-    let (answers, receive) = mpsc::unbounded_channel();
-    let replies = Arc::new(Replies {
-        cards: Mutex::default(),
-        answers,
-    });
+    let (replies, receive) = Replies::channel();
+    let replies = Arc::new(replies);
     let turn_replies = Arc::clone(&replies);
     let output = output.clone();
     let session = session.to_owned();
@@ -133,7 +141,7 @@ pub(crate) async fn follow(
         }
         .await;
         match result {
-            Err(Failure::Unavailable) => {
+            Err(Failure::Unavailable | Failure::Engine(_)) => {
                 tokio::time::sleep(Duration::from_secs(delay)).await;
                 delay = (delay * 2).min(30);
             }
@@ -172,7 +180,7 @@ async fn refresh_cards(
     Ok(has_pending || wait_for_ui.is_some())
 }
 
-pub(crate) struct Card {
+struct Card {
     request: String,
     options: Vec<String>,
     settled: bool,

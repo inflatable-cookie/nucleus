@@ -732,7 +732,7 @@ fn retained_role_task(
         url: format!("https://github.com/{REPOSITORY}/pull/1"),
         head: head.clone(),
     };
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&service.fixture().checkout, REPOSITORY, id)
         .unwrap();
@@ -832,24 +832,29 @@ fn retained_role_task(
 
 async fn retained_role_endpoints(
     service: &mut Service,
-    published: &PullRequest,
+    published: Option<&PullRequest>,
     binding: nucleus_hosts::Binding,
     thread: &'static str,
 ) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
+    let parent = nucleus_hosts::parent_thread(std::path::Path::new(&binding.worktree_path));
     let branch = binding.branch;
     let owned = binding.worktree_path;
-    let mut pull = forge_pull(&published.head);
-    pull["head"]["ref"] = json!(branch);
-    let checks = forge_checks(&published.head);
-    let (forge, forge_server) = serve_forge(
-        Router::new()
+    let mut router = Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls"),
+        get(|| async { Json(json!([])) }),
+    );
+    if let Some(published) = published {
+        let mut pull = forge_pull(&published.head);
+        pull["head"]["ref"] = json!(branch);
+        let checks = forge_checks(&published.head);
+        router = router
             .route(
                 &format!("/repos/{REPOSITORY}/pulls/1"),
                 get(move || async { Json(pull) }),
             )
-            .route("/graphql", post(move || async { Json(checks) })),
-    )
-    .await;
+            .route("/graphql", post(move || async { Json(checks) }));
+    }
+    let (forge, forge_server) = serve_forge(router).await;
     service.forge = forge;
     let root = service.fixture().checkout.clone();
     let (host, native_server) = native_fixture_with_traffic(move |request| {
@@ -857,7 +862,7 @@ async fn retained_role_endpoints(
             assert_eq!(request["payload"]["threadId"], thread);
             return json!({"_tag":"Chunk","requestId":request["id"],"values":[
                 {"kind":"snapshot","snapshotSequence":1,"projection":{
-                    "thread":{"id":thread,"projectId":"local-fixture","worktreePath":owned,"branch":branch},
+                    "thread":{"id":thread,"projectId":"local-fixture","worktreePath":owned,"branch":branch,"parentThreadId":parent},
                     "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[]
                 }},{"kind":"synchronized"}
             ]});
@@ -895,8 +900,7 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
         };
         let (task, binding) = retained_role_task(&service, id, author, reviewer, role, required);
         let (native_server, forge_server) =
-            retained_role_endpoints(&mut service, task.pull_request().unwrap(), binding, thread)
-                .await;
+            retained_role_endpoints(&mut service, task.pull_request(), binding, thread).await;
         {
             let mut state = service.state.lock().await;
             let mut settings = profiles.clone();
@@ -958,5 +962,158 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
         }
         native_server.abort();
         forge_server.abort();
+    }
+}
+
+const REMINDER_TASK: &str = "reserved-reminder";
+
+fn stored_reminder(
+    service: &Service,
+    role: Role,
+    required: bool,
+) -> (Task, nucleus_hosts::Binding, nucleus_core::Head) {
+    let worktrees = service.worktrees();
+    let checkout = worktrees
+        .checkout(&service.fixture().checkout, REPOSITORY, REMINDER_TASK)
+        .unwrap();
+    checkout.allocate(&service.fixture().start).unwrap();
+    create_fixture_commit(checkout.path(), "work already on the branch");
+    let head: nucleus_core::Head = git(checkout.path(), &["rev-parse", "HEAD"])
+        .parse()
+        .unwrap();
+    let binding = service.binding(&checkout).unwrap();
+    let (key, pr) = match role {
+        Role::Worker => ("worker", None),
+        Role::Reviewer => (
+            "reviewer",
+            Some(PullRequest {
+                url: format!("https://github.com/{REPOSITORY}/pull/1"),
+                head: head.clone(),
+            }),
+        ),
+    };
+    let brief = if required {
+        format!(
+            "---\nqueue: {{complexity: low, profileRequests: {{{key}: {{profileId: paused, reason: fixture, required: true}}}}}}\n---\nFix a typo."
+        )
+    } else {
+        "---\nqueue: {complexity: low}\n---\nFix a typo.".into()
+    };
+    let task = Task::new(
+        Identity {
+            id: REMINDER_TASK.into(),
+            reference: REMINDER_TASK.into(),
+            repository: REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        brief,
+        pr,
+    );
+    let mut task = serde_json::to_value(task).unwrap();
+    // Run and thread columns copied from two affected rows, with synthetic bindings.
+    let mut stored: Value =
+        serde_json::from_str(include_str!("paused-report-reminders.json")).unwrap();
+    let stored = &mut stored[key];
+    let launch = &mut stored["run"]["launch"];
+    let wire = &mut launch["input"];
+    wire["binding"] = json!(binding);
+    wire["parent"] = json!(nucleus_hosts::parent_thread(checkout.path()));
+    *wire = json!(wire.to_string());
+    if role == Role::Reviewer {
+        launch["review_head"] = json!(head);
+    }
+    task.as_object_mut()
+        .unwrap()
+        .append(stored.as_object_mut().unwrap());
+    (serde_json::from_value(task).unwrap(), binding, head)
+}
+
+#[tokio::test]
+async fn paused_reserved_reminders_reselect_from_stored_rows_unless_required() {
+    for (role, required, manual) in [
+        (Role::Worker, false, false),
+        (Role::Reviewer, false, false),
+        (Role::Reviewer, false, true),
+        (Role::Reviewer, true, false),
+    ] {
+        let (_home, mut service) = fixture(nucleus_forge::GitHub::new("fixture").unwrap());
+        let (task, binding, head) = stored_reminder(&service, role, required);
+        let thread = match role {
+            Role::Worker => "thread:worker",
+            Role::Reviewer => "thread:reviewer",
+        };
+        let (native, forge) =
+            retained_role_endpoints(&mut service, task.pull_request(), binding, thread).await;
+        let capacity = if role == Role::Worker {
+            "mechanical"
+        } else {
+            "worker"
+        };
+        let mut profiles: Profiles = serde_json::from_value(json!({"profiles":[
+            {"name":"Paused","group":"opencode-go","selection":{"id":"paused","provider":"codex","model":"second","capability":capacity}},
+            {"name":"Replacement","group":"other","selection":{"id":"replacement","provider":"claude","model":"other","capability":"worker"}}
+        ]})).unwrap();
+        {
+            let mut state = service.state.lock().await;
+            if manual {
+                profiles.paused_groups.insert("opencode-go".into());
+            } else {
+                service
+                    .record_subscription_pause(&state, "opencode-go", RESET_MS, now_ms())
+                    .unwrap();
+            }
+            state.settings.profiles = Some(Arc::new(profiles));
+            state.store.create(&task, &crate::event("fixture")).unwrap();
+        }
+        let run = task.run().unwrap();
+        let missing = run.report_reminder_for().unwrap();
+        assert!(run.last_send_at_ms().is_none());
+        wake(&service, &[REMINDER_TASK]).await;
+        let first = pass(&service).await.pop().unwrap().result.unwrap();
+        let after = service.task(REMINDER_TASK).await.unwrap();
+        if required {
+            assert_eq!(first, Action::Wait(WaitReason::Capacity));
+            assert_eq!(after.task.run(), Some(run));
+            assert!(matches!(
+                service.state.lock().await.wait_detail(REMINDER_TASK),
+                Some(crate::WaitDetail::Blocked(cause))
+                    if cause == &format!("Paused: subscription group opencode-go resets at {}.", snooze_deadline(RESET_MS))
+            ));
+        } else {
+            assert_eq!(first, Action::Advance(task.phase()));
+            assert!(after.task.run().is_none());
+            let second = pass(&service).await.pop().unwrap().result.unwrap();
+            assert_eq!(
+                second,
+                Action::Launch {
+                    role,
+                    via: Launch::Create
+                }
+            );
+            let next = service.task(REMINDER_TASK).await.unwrap();
+            let launch = next.task.run().unwrap().launch();
+            assert_ne!(launch.thread, thread);
+            assert_eq!(launch.profile().unwrap().id, "replacement");
+            assert_eq!(launch.subscription_group(), Some("other"));
+            let wire: Value = serde_json::from_str(&launch.input).unwrap();
+            let prompt = wire["payload"]["initialMessage"]["text"].as_str().unwrap();
+            assert!(prompt.contains(head.as_str()));
+            assert!(prompt.contains(missing));
+            assert!(prompt.contains("ended without an authenticated report"));
+            assert!(prompt.contains("submit the requested report using this run's binding"));
+            assert!(prompt.contains("Fix a typo."));
+            assert!(
+                !service
+                    .state
+                    .lock()
+                    .await
+                    .group_waits
+                    .contains_key(REMINDER_TASK)
+            );
+        }
+        native.abort();
+        forge.abort();
     }
 }

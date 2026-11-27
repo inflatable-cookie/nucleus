@@ -341,8 +341,10 @@ also check the open PR and clean checkout after native authorization.
   authenticated verdict as Nucleus approval. Branch protection remains in
   force. Formal GitHub review publication needs a separate reviewer identity
   on repos that require it. Merge with `PUT /repos/{owner}/{repo}/pulls/{n}/merge`
-  and the reviewed `sha`. On a lost response or head mismatch, read the PR
-  again. Use `merged` and its merge commit for readback, including squash merges.
+  with the reviewed `sha` and `merge_method: merge`. The reviewed head is a
+  parent of the merge commit. On a lost response or head mismatch, read the PR
+  again. Use `merged` and its merge commit for readback, including historical
+  and external squash merges.
   An externally merged head with no verdict requires recorded human acceptance.
   [GitHub's exact-head merge endpoint](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)
 
@@ -512,7 +514,8 @@ as `nucleus serve`. It reuses a healthy listener only when its controller
 credential and database path match. When the port is absent, it serializes
 startup and passes the lock to the detached engine. A later ACP launch can
 recover a stopped service. Keep the serve launcher's log under the configured
-log root.
+log root. The pass logs once when one task has held it for a minute, naming the
+task and the step.
 
 ### Set up T3
 

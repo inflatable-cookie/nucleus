@@ -270,11 +270,7 @@ impl Inventory {
         path: &Path,
         scratch: Option<&Path>,
         runtime: &HashSet<u32>,
-    ) -> Result<Activity, HostError> {
-        verify_root(path)?;
-        if let Some(scratch) = scratch {
-            verify_root(scratch)?;
-        }
+    ) -> Activity {
         let mut missing: Option<u32> = None;
         for (&pid, process) in &self.processes {
             if runtime.contains(&pid) {
@@ -283,17 +279,17 @@ impl Inventory {
             if process.cwd.as_ref().is_some_and(|cwd| {
                 cwd.starts_with(path) || scratch.is_some_and(|root| cwd.starts_with(root))
             }) {
-                return Ok(Activity::Busy(pid));
+                return Activity::Busy(pid);
             }
             if process.cwd.is_none() || process.ambiguous_path {
                 missing = Some(missing.map_or(pid, |prior| prior.min(pid)));
             }
         }
-        Ok(if missing.is_some() || self.processes.is_empty() {
+        if missing.is_some() || self.processes.is_empty() {
             Activity::Unknown(missing)
         } else {
             Activity::Quiet
-        })
+        }
     }
 
     pub(crate) fn writer(
@@ -302,10 +298,7 @@ impl Inventory {
         scratch: Option<&Path>,
         runtime: &HashSet<u32>,
     ) -> Result<Option<u32>, HostError> {
-        match self
-            .activity(checkout, scratch, runtime)
-            .map_err(coverage_error)?
-        {
+        match self.activity(checkout, scratch, runtime) {
             Activity::Busy(pid) => Ok(Some(pid)),
             Activity::Quiet => Ok(None),
             Activity::Unknown(pid) => Err(HostError::ProcessCoverage(
@@ -346,6 +339,18 @@ impl Inventory {
             })
             .collect()
     }
+}
+
+/// Verify that census roots are private directories of this user. They can sit on
+/// the work volume, so the read runs off the async worker under the probe deadline.
+pub(crate) async fn verify_roots(roots: &[Option<&Path>]) -> Result<(), HostError> {
+    let roots: Vec<PathBuf> = roots.iter().flatten().map(|&root| root.into()).collect();
+    let check =
+        tokio::task::spawn_blocking(move || roots.iter().try_for_each(|root| verify_root(root)));
+    time::timeout(DEADLINE, check)
+        .await
+        .map_err(|_| HostError::Timeout)?
+        .map_err(|_| HostError::Uncertain)?
 }
 
 fn verify_root(path: &Path) -> Result<(), HostError> {
@@ -569,7 +574,7 @@ mod tests {
         .expect("parse inventory");
         assert!(matches!(
             inventory.activity(&path, None, &HashSet::new()),
-            Ok(Activity::Unknown(Some(2)))
+            Activity::Unknown(Some(2))
         ));
     }
 
@@ -586,12 +591,12 @@ mod tests {
         inventory.processes.insert(exited, ProcessPaths::default());
         assert!(matches!(
             inventory.activity(&checkout, None, &HashSet::new()),
-            Ok(Activity::Unknown(Some(pid))) if pid == exited
+            Activity::Unknown(Some(pid)) if pid == exited
         ));
         inventory.complete_missing(&checkout).await;
         assert!(matches!(
             inventory.activity(&checkout, None, &HashSet::new()),
-            Ok(Activity::Quiet)
+            Activity::Quiet
         ));
     }
 
@@ -664,7 +669,7 @@ mod tests {
         );
         assert!(matches!(
             inventory.activity(&checkout, None, &HashSet::new()),
-            Ok(Activity::Busy(_))
+            Activity::Busy(_)
         ));
         child.kill().await.expect("stop fixture child");
     }
@@ -689,7 +694,7 @@ mod tests {
         );
         assert!(matches!(
             inventory.activity(&checkout, None, &HashSet::new()),
-            Ok(Activity::Busy(_))
+            Activity::Busy(_)
         ));
 
         for field in [
@@ -704,7 +709,7 @@ mod tests {
                 Inventory::from_listings(&listing, b"1 0 501 S\n", 501, 0).expect("inventory");
             assert!(matches!(
                 inventory.activity(&checkout, None, &HashSet::new()),
-                Ok(Activity::Unknown(Some(1)))
+                Activity::Unknown(Some(1))
             ));
         }
     }

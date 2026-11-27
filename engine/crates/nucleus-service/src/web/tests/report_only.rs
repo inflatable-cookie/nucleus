@@ -556,7 +556,7 @@ async fn archive_preserves_compare_errors_and_the_forge_retry_deadline() {
     let (_home, service) = fixture(forge);
     let project = service.fixture();
     let (task, _, _) = reservation(TASK, Entry::Brief, &project.start);
-    let worktrees = service.worktrees().unwrap();
+    let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&project.checkout, REPOSITORY, TASK)
         .unwrap();
@@ -591,7 +591,7 @@ async fn archive_preserves_compare_errors_and_the_forge_retry_deadline() {
 async fn cancelled_checkout_only_retires_clean_published_work() {
     let fixture = ReportFixture::new().await;
     fixture.admit().await;
-    let worktrees = fixture.service.worktrees().unwrap();
+    let worktrees = fixture.service.worktrees();
     let checkout = worktrees
         .checkout(&fixture.service.fixture().checkout, REPOSITORY, TASK)
         .unwrap();
@@ -867,7 +867,7 @@ impl ReportFixture {
     async fn reserve(&self) -> ReportTurn {
         let prior = self.service.task(TASK).await.expect("task");
         let mut task = prior.task.clone();
-        let worktrees = self.service.worktrees().expect("worktrees");
+        let worktrees = self.service.worktrees();
         let checkout = worktrees
             .checkout(&self.service.fixture().checkout, REPOSITORY, TASK)
             .expect("checkout");
