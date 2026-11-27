@@ -936,19 +936,7 @@ impl T3 {
         {
             return Ok(None);
         }
-        let ended_owned = prior
-            .and_then(|command| {
-                projection
-                    .ended_run_for_message(&message_id(command))
-                    .map(|run| (run, command))
-            })
-            .or_else(|| {
-                let run = latest?;
-                let command = projection
-                    .ended_parent_message(run)?
-                    .strip_suffix("-message")?;
-                child_reentry_command(command, &prefix).then_some((run, command))
-            });
+        let ended_owned = ended_reentry(&projection, prior, latest, &prefix);
         let evidence = activity_digest(&child_row);
         let mut ended_hold = None;
         let command = match (prior, ended_owned) {
@@ -1099,19 +1087,7 @@ impl T3 {
         let hold = write
             .command_id()
             .filter(|id| is_pinned_parent_hold(id))
-            .map(|id| {
-                (
-                    id.to_owned(),
-                    write.wire.payload["threadId"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    write.wire.payload["modelSelection"]["instanceId"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                )
-            });
+            .map(str::to_owned);
         match self
             .rpc
             .write_guarded(
@@ -1138,13 +1114,12 @@ impl T3 {
                     {
                         self.check_delivery_shell(thread, delivery, &write.owned_snoozes)?;
                     }
-                    if let Some((_, thread, provider)) = &hold
-                        && self.rpc.uses_held_shell()
-                    {
+                    if hold.is_some() && self.rpc.uses_held_shell() {
+                        let thread = thread_id.as_deref().ok_or(HostError::Binding)?;
                         let row = self.rpc.thread_row(thread).ok_or(HostError::Uncertain)?;
                         if !row["archivedAt"].is_null()
                             || !row["deletedAt"].is_null()
-                            || !parent_row_matches(&row, &write.wire.binding, provider)
+                            || !parent_row_matches(&row, &write.wire.binding, &write.wire.provider)
                         {
                             return Err(HostError::Binding);
                         }
@@ -1179,7 +1154,7 @@ impl T3 {
             Reply::Failure(cause)
                 if hold
                     .as_ref()
-                    .is_some_and(|(command, _, _)| crate::dispatch_rejected(&cause, command)) =>
+                    .is_some_and(|command| crate::dispatch_rejected(&cause, command)) =>
             {
                 Err(ParentSendError::Rejected)
             }
@@ -1222,6 +1197,27 @@ impl T3 {
             .map_err(|_| refuse("held shell visibility is invalid"))?;
         verify_delivery_visibility(visibility, delivery.row.sequence, observed, owned)
     }
+}
+
+fn ended_reentry<'a>(
+    projection: &'a Projection,
+    prior: Option<&'a str>,
+    latest: Option<&'a str>,
+    prefix: &str,
+) -> Option<(&'a str, &'a str)> {
+    prior
+        .and_then(|command| {
+            projection
+                .ended_run_for_message(&message_id(command))
+                .map(|run| (run, command))
+        })
+        .or_else(|| {
+            let run = latest?;
+            let command = projection
+                .ended_parent_message(run)?
+                .strip_suffix("-message")?;
+            child_reentry_command(command, prefix).then_some((run, command))
+        })
 }
 
 fn child_reentry_command(command: &str, prefix: &str) -> bool {
