@@ -56,8 +56,8 @@ use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
     ActiveChild, ArchiveWrite, DoneArchive, FrozenParentWrite, ParentAttempt, ParentRun,
-    ParentSendError, ParentStep, ParentWrite, QuietCheckout, is_parent_reentry,
-    is_pinned_parent_hold, parent_thread,
+    ParentSendError, ParentSnooze, ParentStep, ParentWrite, QuietCheckout, SnoozeRestoration,
+    is_parent_reentry, is_pinned_parent_hold, parent_thread,
 };
 /// A link within the same T3 environment as the task thread.
 #[must_use]

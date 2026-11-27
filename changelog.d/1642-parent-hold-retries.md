@@ -3,3 +3,4 @@ short delay. T3 reuses its original receipt, and a confirmed rejection schedules
 fresh command. Unconfirmed delivery no longer sends a planner notice or asks the
 operator to recover the task thread.
 A user snooze stays a visibility setting while the hold is sent.
+The engine retries restoring the chosen horizon after a failed read or write.

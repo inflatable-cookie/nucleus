@@ -291,7 +291,7 @@ impl Service {
                 write.use_legacy_intent(&record.command, &prompt);
             }
         }
-        let command = write.command_id().ok_or(ServiceError::Input)?;
+        let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
         if existing
             .as_ref()
             .is_some_and(|record| record.command != command)
@@ -312,7 +312,33 @@ impl Service {
         } else {
             None
         };
-        let result = self.host.write_parent(write).await;
+        let id = &row.task.identity().id;
+        let mut store_error = None;
+        let result = self
+            .host
+            .write_parent(write, |intent| {
+                let state = self.state.try_lock().ok_or(HostError::Uncertain)?;
+                state
+                    .store
+                    .record_parent_snooze(
+                        id,
+                        &command,
+                        &intent.thread,
+                        &intent,
+                        intent.until_ms,
+                        crate::now_ms(),
+                    )
+                    .map_err(|error| {
+                        store_error = Some(error);
+                        HostError::Uncertain
+                    })?;
+                self.title_wake.notify_one();
+                Ok(())
+            })
+            .await;
+        if let Some(error) = store_error {
+            return Err(error.into());
+        }
         match (result, attempt) {
             (Ok(()), record) => {
                 if let Some((record, _)) = record {
@@ -327,8 +353,12 @@ impl Service {
                     .ok_or(ServiceError::Input)?;
                 let wire = serde_json::to_string(&frozen).map_err(StoreError::from)?;
                 let due = retry_ms();
-                self.state.lock().await.store.retry_parent_delivery(
-                    &row.task.identity().id,
+                let state = self.state.lock().await;
+                state
+                    .store
+                    .finish_parent_snooze(id, &record.command, None)?;
+                state.store.retry_parent_delivery(
+                    id,
                     row.version,
                     &record,
                     &command,

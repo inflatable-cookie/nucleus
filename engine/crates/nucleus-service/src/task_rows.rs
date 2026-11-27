@@ -5,6 +5,7 @@ use std::{path::Path, time::Duration};
 use nucleus_core::{Role, Task, WaitReason};
 use nucleus_hosts::{
     ParentSendError, RowChange, RowChildren, RowObservation, RowVisibility, SendOutcome,
+    SnoozeRestoration,
 };
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
@@ -209,7 +210,7 @@ impl Service {
         provider: &str,
         threads: &[String],
     ) -> Result<Option<Duration>, ServiceError> {
-        let mut next = None;
+        let mut next = Box::pin(self.reconcile_parent_snoozes()).await?;
         for thread in threads {
             let id = self
                 .state
@@ -229,6 +230,51 @@ impl Service {
         }
         Ok(next
             .map(|deadline| Duration::from_millis(deadline.saturating_sub(self.visibility_now()))))
+    }
+
+    async fn reconcile_parent_snoozes(&self) -> Result<Option<u64>, ServiceError> {
+        let now = now_ms();
+        let due = self.state.lock().await.store.due_parent_snoozes(now)?;
+        for record in due {
+            let retry = if record.until_ms <= now {
+                None
+            } else {
+                let intent = serde_json::from_str(&record.intent)
+                    .map_err(nucleus_store::StoreError::from)?;
+                let attempt = match self
+                    .host
+                    .restore_parent_snooze(&intent, record.attempt, || {
+                        self.state.try_lock().is_some_and(|state| {
+                            state
+                                .store
+                                .parent_snooze_is_due(&record, now)
+                                .unwrap_or_else(|error| {
+                                    service_log!("parent snooze restoration: {error}");
+                                    false
+                                })
+                        })
+                    })
+                    .await
+                {
+                    Ok(SnoozeRestoration::Complete) => None,
+                    Ok(SnoozeRestoration::Pending) => Some(record.attempt),
+                    Ok(SnoozeRestoration::Rejected) => Some(record.attempt.saturating_add(1)),
+                    Err(error) => {
+                        service_log!("parent snooze restoration: {error}");
+                        Some(record.attempt)
+                    }
+                };
+                attempt.map(|attempt| (attempt, (now_ms() + RECHECK_MS).min(record.until_ms)))
+            };
+            let state = self.state.lock().await;
+            if state.store.parent_snooze_is_due(&record, now)? {
+                state
+                    .store
+                    .finish_parent_snooze(&record.task, &record.command, retry)?;
+            }
+        }
+        let next = self.state.lock().await.store.next_parent_snooze()?;
+        Ok(next.map(|due| self.visibility_now() + due.saturating_sub(now_ms())))
     }
 
     fn row_plan(
@@ -278,7 +324,7 @@ impl Service {
         let (row, prior, plan, ended, deadline) = {
             let mut state = self.state.lock().await;
             let row = self.lookup(&state, id)?;
-            if row.task.phase().is_terminal() {
+            if row.task.phase().is_terminal() || state.store.parent_snooze_pending(id, thread)? {
                 return Ok(None);
             }
             let prior = state.store.row_snooze(id, thread)?;

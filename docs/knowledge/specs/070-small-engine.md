@@ -1060,6 +1060,15 @@ with a fresh due command before another send. No planner or operator action is
 needed for unconfirmed delivery. Old refused, failed and held rows with command
 IDs resume as pending. Historical rows without a command ID do not gate delivery.
 
+Before a parent send can clear an operator snooze, the engine records the
+native destination, message and horizon separately from hold delivery. The
+visibility worker retries restoration after restart, once the exact message
+is visible and the snooze is clear. It reuses the restoration command ID
+after an uncertain reply and uses a fresh ID after a confirmed rejection.
+Automatic row visibility yields to the pending operator horizon until the
+shell confirms the restoration. Expiry, closure or a newer operator visibility
+change also ends the intent.
+
 Run the installed T3 receipt contract test when changing or upgrading the
 adapter. It starts the bundled server with its own store under scratch and
 checks accepted and rejected replies across a restart.

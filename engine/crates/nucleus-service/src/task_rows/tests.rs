@@ -66,6 +66,7 @@ struct NativeRow {
     live_holds: bool,
     parent_runs: Vec<Value>,
     delivered_messages: Vec<Value>,
+    readback_errors: usize,
 }
 
 impl NativeRow {
@@ -134,6 +135,12 @@ impl Fixture {
             let mut row = seen.lock().unwrap();
             match request["tag"].as_str().unwrap() {
                 "orchestration.subscribeThread" => {
+                    if row.readback_errors > 0 {
+                        row.readback_errors -= 1;
+                        return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Failure","cause":[
+                            {"_tag":"Fail","error":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":expected}}
+                        ]}});
+                    }
                     let target = &request["payload"]["threadId"];
                     if row.live_holds && target != &expected {
                         return json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Failure","cause":[
@@ -175,7 +182,7 @@ impl Fixture {
                         return json!({"_tag":"Exit","requestId":request["id"],"exit":{
                             "_tag":"Failure","cause":[{"_tag":"Fail","error":{
                                 "_tag":"OrchestrationV2DispatchCommandError",
-                                "commandId":id,"commandType":"message.dispatch",
+                                "commandId":id,"commandType":payload["type"],
                                 "cause":{"name":"OrchestratorCommandPreviouslyRejectedError",
                                     "message":format!("Command {id} was previously rejected: fixture.")}
                             }}]
@@ -648,6 +655,11 @@ async fn a_hold_restores_an_operator_snooze_applied_after_preparation() {
             .unwrap()
     );
 
+    let pending = pending_parent_snooze(service).await;
+    assert_eq!(pending.command, command);
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+    service.reconcile_parent_snoozes().await.unwrap();
+    observe_restored_parent_snooze(&fixture).await;
     let stored = fixture.parent_record(&row).await;
     assert_eq!(stored.command, command);
     assert_eq!(stored.result, nucleus_store::ParentResult::Accepted);
@@ -661,6 +673,133 @@ async fn a_hold_restores_an_operator_snooze_applied_after_preparation() {
     assert_eq!(restore["type"], "thread.snooze");
     assert_eq!(restore["threadId"], fixture.thread);
     assert_eq!(restore["snoozedUntil"], OPERATOR_SNOOZE);
+    assert_eq!(native.until, OPERATOR_SNOOZE);
+}
+
+async fn pending_parent_snooze(service: &Service) -> nucleus_store::StoredParentSnooze {
+    let state = service.state.lock().await;
+    let due = state.store.next_parent_snooze().unwrap().unwrap();
+    let mut records = state.store.due_parent_snoozes(due).unwrap();
+    assert_eq!(records.len(), 1);
+    records.pop().unwrap()
+}
+
+async fn allow_parent_snooze_retry(service: &Service) {
+    let record = pending_parent_snooze(service).await;
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .finish_parent_snooze(&record.task, &record.command, Some((record.attempt, 0)))
+        .unwrap();
+}
+
+async fn observe_restored_parent_snooze(fixture: &Fixture) {
+    let service = &fixture.service;
+    fixture.publish_shell();
+    allow_parent_snooze_retry(service).await;
+    service.reconcile_parent_snoozes().await.unwrap();
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .next_parent_snooze()
+            .unwrap()
+            .is_none()
+    );
+}
+
+async fn send_snoozed_hold(fixture: &Fixture, task: &Task) -> TaskRow {
+    let service = &fixture.service;
+    let row = {
+        let mut state = service.state.lock().await;
+        state.store.create(task, &event("fixture")).unwrap();
+        service.lookup(&state, ID).unwrap()
+    };
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.publish_shell();
+    let write = fixture
+        .prepare_hold("Preparing the task thread.", None)
+        .await;
+    assert!(
+        service
+            .deliver_parent(&row, write, None, false)
+            .await
+            .unwrap()
+    );
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+    row
+}
+
+#[tokio::test]
+async fn parent_snooze_survives_lost_readback_and_an_engine_restart() {
+    let task = pending_task();
+    let mut fixture = Fixture::new(&task).await;
+    let row = send_snoozed_hold(&fixture, &task).await;
+    fixture.native.lock().unwrap().readback_errors = 1;
+    fixture.service.reconcile_parent_snoozes().await.unwrap();
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+    let recorded = pending_parent_snooze(&fixture.service).await;
+    let intent: Value = serde_json::from_str(&recorded.intent).unwrap();
+    assert_eq!(intent["until"], OPERATOR_SNOOZE);
+    assert_eq!(
+        fixture.parent_record(&row).await.result,
+        nucleus_store::ParentResult::Accepted
+    );
+
+    fixture.restart();
+    fixture.publish_shell();
+    let delivered = std::mem::take(&mut fixture.native.lock().unwrap().delivered_messages);
+    allow_parent_snooze_retry(&fixture.service).await;
+    fixture.service.reconcile_parent_snoozes().await.unwrap();
+    assert_eq!(
+        pending_parent_snooze(&fixture.service).await.intent,
+        recorded.intent
+    );
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+    fixture.native.lock().unwrap().delivered_messages = delivered;
+    fixture.publish_shell();
+    allow_parent_snooze_retry(&fixture.service).await;
+    fixture.service.reconcile_parent_snoozes().await.unwrap();
+    assert_eq!(fixture.commands(), ["message.dispatch", "thread.snooze"]);
+    assert_eq!(fixture.native.lock().unwrap().until, OPERATOR_SNOOZE);
+    observe_restored_parent_snooze(&fixture).await;
+}
+
+#[tokio::test]
+async fn parent_snooze_replays_a_lost_reply_and_rotates_a_rejected_id() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    let row = send_snoozed_hold(&fixture, &task).await;
+    let service = &fixture.service;
+    for (reply, expected_attempt) in [(NextReply::Lost, 0), (NextReply::Rejected, 1)] {
+        allow_parent_snooze_retry(service).await;
+        fixture.native.lock().unwrap().next_reply = reply;
+        service.reconcile_parent_snoozes().await.unwrap();
+        assert_eq!(
+            pending_parent_snooze(service).await.attempt,
+            expected_attempt
+        );
+        assert_eq!(
+            fixture.parent_record(&row).await.result,
+            nucleus_store::ParentResult::Accepted
+        );
+    }
+    allow_parent_snooze_retry(service).await;
+    service.reconcile_parent_snoozes().await.unwrap();
+    observe_restored_parent_snooze(&fixture).await;
+    let native = fixture.native.lock().unwrap();
+    let [_, first, replay, fresh] = &native.commands[..] else {
+        panic!("expected the hold and three restoration requests");
+    };
+    assert_eq!(first, replay);
+    assert_ne!(replay["commandId"], fresh["commandId"]);
+    assert_eq!(fresh["type"], "thread.snooze");
+    assert_eq!(fresh["threadId"], fixture.thread);
+    assert_eq!(fresh["snoozedUntil"], OPERATOR_SNOOZE);
     assert_eq!(native.until, OPERATOR_SNOOZE);
 }
 
@@ -1452,7 +1591,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())
         .await
         .unwrap();
-    service.host.write_parent(write).await.unwrap();
+    service.host.write_parent(write, |_| Ok(())).await.unwrap();
     assert_eq!(fixture.commands(), ["thread.snooze", "message.dispatch"]);
     drop(fence);
     fixture.elapse_visibility_ms(HANDOVER_MS);
@@ -1473,6 +1612,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
             .await
             .unwrap()
     );
+    service.reconcile_parent_snoozes().await.unwrap();
     assert_eq!(
         fixture.commands()[3..],
         ["message.dispatch", "thread.snooze"]
@@ -1487,7 +1627,8 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         .await
         .unwrap();
     let (sent, calls) =
-        nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write))).await;
+        nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write, |_| Ok(()))))
+            .await;
     sent.unwrap();
     service
         .schedule_result(&row, &Ok(Action::Nothing), Priority::Effect)

@@ -684,7 +684,9 @@ impl Rpc {
         policy: ThreadRead<'_>,
     ) -> Result<(), HostError> {
         if row.is_some_and(closed_row)
-            || (row.is_none() && self.uses_held_shell() && matches!(policy, ThreadRead::Inbox))
+            || (row.is_none()
+                && self.uses_held_shell()
+                && matches!(policy, ThreadRead::Inbox | ThreadRead::Visibility))
         {
             return Err(HostError::Uncertain);
         }

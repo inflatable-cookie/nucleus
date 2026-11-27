@@ -16,6 +16,7 @@ pub(crate) enum ThreadRead<'a> {
     Observation,
     SentRun(&'a str),
     Exact,
+    Visibility,
     Inbox,
 }
 
@@ -31,6 +32,7 @@ impl ThreadRead<'_> {
                 "sentRunBackstop"
             }
             Self::SentRun(_) => "sentRunEvidence",
+            Self::Visibility => "visibilityEvidence",
             Self::Exact => "orderedEvidence",
             Self::Inbox => "inboxEvidence",
         }
@@ -331,7 +333,7 @@ impl ThreadSnapshots {
         let fresh = held.fresh();
         let overlapping = fresh && requested_at < held.observed_at;
         let reusable = match policy {
-            ThreadRead::Exact => false,
+            ThreadRead::Exact | ThreadRead::Visibility => false,
             ThreadRead::Inbox => held.same_marker || overlapping,
             ThreadRead::Observation => (held.same_marker && !held.active) || overlapping,
             ThreadRead::SentRun(message) => (fresh && held.usable_for_run(message)) || overlapping,
