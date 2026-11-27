@@ -604,12 +604,16 @@ Later decisions carry their own attribution.
     over". Today a reply goes to project `{from}`, which reaches that project's
     most recently verified planner, often not the sender. The TypeScript design
     (nucleus#1387, `core/questions/agent-messages.ts` at `737246d22`) carries over:
-    - Each delivered message gets an opaque reply handle (`nreply_` and random
-      bytes), never derived from a thread or agent ID. The handle is bound to
-      the sender's verified thread at send time.
-    - The delivered text ends with the exact reply command, for example
-      `Reply: nucleus tell {to:{reply:"nreply_…"}}`, and says the handle
-      reaches this sender, belongs to this recipient and expires after 7 days.
+    - Each delivered message gets an opaque reply handle, never derived from a
+      thread or agent ID. The handle is bound to the sender's verified thread at
+      send time. Handles issued before 2026-11-27 are `nreply_` plus random hex;
+      new ones are `r` plus 8 random hex digits, unique among every issued handle
+      (a collision is retried). Both forms resolve until they expire.
+    - The delivered text opens `From <sender's project name>` and ends with
+      `Reply: nucleus reply <handle> 'your message'`. The text does not restate
+      the reply rules: only the receiving thread can use the handle, it lasts
+      seven days and falls back to the sender's project planner. Those rules
+      live in the Nucleus skill. Old `nucleus tell {to:{reply}}` JSON still works.
     - Only that message's recipient thread can use the handle. An unknown,
       expired or foreign handle sends nothing and reveals nothing about the
       sender.

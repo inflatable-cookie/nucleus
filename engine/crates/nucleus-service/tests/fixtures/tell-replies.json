@@ -1,0 +1,23 @@
+{
+  "shortReply": {
+    "argv": ["reply", "r6e39f1a0", "Answer"],
+    "body": {"to": {"reply": "r6e39f1a0"}, "text": "Answer"}
+  },
+  "legacyReply": {
+    "argv": ["reply", "nreply_6e3950151761ff6799b6ffb4af25869b", "Answer"],
+    "body": {"to": {"reply": "nreply_6e3950151761ff6799b6ffb4af25869b"}, "text": "Answer"}
+  },
+  "legacyJsonTell": {
+    "argv": ["tell", "{\"to\":{\"reply\":\"nreply_6e3950151761ff6799b6ffb4af25869b\"}}", "Answer again"],
+    "body": {"to": {"reply": "nreply_6e3950151761ff6799b6ffb4af25869b"}, "text": "Answer again"}
+  },
+  "stdinReply": {
+    "argv": ["reply", "r6e39f1a0", "-"],
+    "stdin": "Answer from stdin",
+    "body": {"to": {"reply": "r6e39f1a0"}, "text": "Answer from stdin"}
+  },
+  "expiredReply": {
+    "argv": ["reply", "r7e0c9d21", "Too late"],
+    "body": {"to": {"reply": "r7e0c9d21"}, "text": "Too late"}
+  }
+}

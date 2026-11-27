@@ -37,6 +37,70 @@ fn fixture_storage(home: &Path) -> EngineStorage {
 }
 
 #[test]
+fn issued_reply_handles_resolve_in_both_forms_until_they_expire() {
+    use nucleus_core::QuestionDelivery;
+    use nucleus_store::{TellDispatch, TellRows, TellSubmission};
+    const WEEK_MS: i64 = 7 * 24 * 3_600_000;
+    let home = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&fixture_storage(home.path())).unwrap();
+    for (id, handle) in [
+        ("message-short", "r6e39f1a"),
+        ("message-long", "nreply_legacy"),
+    ] {
+        let submission = TellSubmission {
+            key: id,
+            sender: "sender",
+            from_project: "origin",
+            direct: None,
+            text: "Hello",
+            recorded_at: 100,
+            no_live_planners: &[],
+        };
+        store
+            .record_tell(&submission, &[(format!("target-{id}"), id.into())])
+            .unwrap();
+        store
+            .settle_tells(
+                TellRows::Receipt(id),
+                TellDispatch::Send {
+                    notice: QuestionDelivery {
+                        thread: "recipient".into(),
+                        command: id.into(),
+                        payload: String::new(),
+                        last_send_at_ms: None,
+                    },
+                    handle: handle.into(),
+                },
+                100,
+            )
+            .unwrap();
+    }
+    for handle in ["r6e39f1a", "nreply_legacy"] {
+        assert!(store.tell_reply_handle_issued(handle).unwrap());
+        assert_eq!(
+            store
+                .tell_reply_route(handle, "recipient", 101)
+                .unwrap()
+                .map(|(_, sender)| sender),
+            Some("sender".into())
+        );
+        assert!(
+            store
+                .tell_reply_route(handle, "someone-else", 101)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .tell_reply_route(handle, "recipient", 100 + WEEK_MS)
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert!(!store.tell_reply_handle_issued("r00000000").unwrap());
+}
+
+#[test]
 fn project_tell_rate_limit_follows_the_recipient_across_projects() {
     use nucleus_core::QuestionDelivery;
     use nucleus_store::{TellDispatch, TellRows, TellSubmission};
