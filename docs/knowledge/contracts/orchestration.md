@@ -278,7 +278,23 @@ inside that checkout or scratch. It records the signal outcomes in task history.
 A tree that only inherited the cwd is a shared service. Nucleus leaves it running,
 records its PIDs and commands in task history, and keeps the checkout held by
 PID until the operator restarts it. Host processes and their descendants stay
-protected. An incomplete census keeps the checkout.
+protected, apart from finished provider helpers. An incomplete census keeps the
+checkout.
+A provider app-server starts MCP helpers in a session’s working directory and can
+leave them running after the session ends. At terminal closeout, once the held
+shell shows every task role and the parent’s children quiet, Nucleus stops a
+process when its parent is a provider app-server, its cwd is inside the verified
+checkout or the task’s recorded run scratch, and it started in a later second
+than the checkout directory was created. A provider app-server is a direct child
+of the verified T3 server whose executable is named `codex` and whose first
+argument is `app-server`. The helper’s descendants with a cwd in those roots stop
+with it. Each signal rechecks identity, parentage and cwd, and task history records
+the PID, command, signal and outcome. A running role keeps the helpers and the
+wait names them. Nucleus never signals the app-server, T3, or a process whose cwd
+is outside those roots. T3 unloads the Codex thread itself when it idles, settles
+or archives, and only T3 holds the app-server connection, so the signals cover
+what that leaves behind. See
+[provider helpers](../../../engine/crates/nucleus-hosts/src/process/orphans/helpers.rs).
 For a retained Done code checkout, read the merged PR again and match its
 head to the task’s recorded head. An unavailable read leaves the checkout in
 place. The task and project fences span removal. Clean worktrees and checkouts

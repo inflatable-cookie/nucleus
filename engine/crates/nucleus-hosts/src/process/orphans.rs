@@ -1,9 +1,12 @@
 //! Terminal cleanup only. Candidates come from the shared cwd census.
-//! A tree is stopped only when one of its processes runs the checkout's own code.
-//! Immediately before signalling, check root cwd, parentage and process identity.
+//! An orphan tree is stopped only when one of its processes runs the checkout's own code.
+//! Provider helpers have their own evidence in `helpers`.
+//! Immediately before signalling, check cwd, parentage and process identity.
+mod helpers;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -20,6 +23,9 @@ pub struct OrphanProcess {
     parent: u32,
     started: String,
     command: String,
+    /// The provider app-server that started this helper's tree. Absent for orphans.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<u32>,
 }
 
 /// One scan of the orphan trees under a checkout or run scratch.
@@ -276,48 +282,68 @@ fn names_path(text: &str, root: &str) -> bool {
     })
 }
 
-async fn root_still_in_checkout(
-    root: u32,
-    checkout: &Path,
+/// The selected PIDs whose working directory is still under one of the roots.
+async fn cwd_within(
+    pids: &[u32],
+    roots: &[PathBuf],
     scratch: &Path,
-) -> Result<bool, HostError> {
+) -> Result<BTreeSet<u32>, HostError> {
+    if pids.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let selected = pids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     let listing = read_listing(
         "/usr/sbin/lsof",
-        &[
-            "-a",
-            "-p",
-            &root.to_string(),
-            "-d",
-            "cwd",
-            "-n",
-            "-P",
-            "-F0pfn",
-        ],
+        &["-a", "-p", &selected, "-d", "cwd", "-n", "-P", "-F0pfn"],
         Some(scratch),
         MAX_PROBE_OUTPUT,
     )
     .await?;
     Ok(listing
         .cwd_followup()
-        .and_then(|mut rows| rows.remove(&root))
-        .is_some_and(|p| {
-            !p.ambiguous_path && p.cwd.as_deref().is_some_and(|p| p.starts_with(checkout))
-        }))
+        .into_iter()
+        .flatten()
+        .filter(|(_, p)| {
+            !p.ambiguous_path
+                && p.cwd
+                    .as_deref()
+                    .is_some_and(|cwd| roots.iter().any(|root| cwd.starts_with(root)))
+        })
+        .map(|(pid, _)| pid)
+        .collect())
 }
 
 /// Confirm each PID immediately before signalling. After TERM, a surviving
 /// child can belong to launchd because its original parent has exited.
+/// An orphan tree proves its cwd at the root. Every provider helper member
+/// proves its own, and its root must still belong to the same app-server.
 /// # Errors
 /// An unreadable identity cannot authorize a signal.
 pub async fn verify_orphans(
     targets: &[OrphanProcess],
-    checkout: &Path,
+    roots: &[PathBuf],
     scratch: &Path,
     force: bool,
 ) -> Result<Vec<OrphanProcess>, HostError> {
-    verify_roots(&[Some(checkout)]).await?;
+    verify_roots(
+        &roots
+            .iter()
+            .map(|root| Some(root.as_path()))
+            .collect::<Vec<_>>(),
+    )
+    .await?;
     let now =
         process_identities(&targets.iter().map(|p| (p.pid, p.root)).collect(), scratch).await?;
+    let placed: Vec<u32> = targets
+        .iter()
+        .filter(|p| p.provider.is_some() || p.pid == p.root)
+        .map(|p| p.pid)
+        .collect();
+    let placed = cwd_within(&placed, roots, scratch).await?;
     let mut allowed = BTreeSet::new();
     let mut result = Vec::new();
     for member in targets.iter().rev() {
@@ -327,11 +353,16 @@ pub async fn verify_orphans(
         if member.started != current.started || member.command != current.command {
             continue;
         }
+        let reparented = force && current.parent == 1 && !now.contains_key(&member.parent);
         let owned = if member.pid == member.root {
-            current.parent == 1 && root_still_in_checkout(member.pid, checkout, scratch).await?
+            // An orphan root belongs to PID 1, a helper root to its app-server.
+            current.parent == member.provider.unwrap_or(1) && placed.contains(&member.pid)
+        } else if member.provider.is_some() {
+            (allowed.contains(&member.root) || !now.contains_key(&member.root))
+                && placed.contains(&member.pid)
+                && (current.parent == member.parent || reparented)
         } else {
-            (current.parent == member.parent && allowed.contains(&current.parent))
-                || (force && current.parent == 1 && !now.contains_key(&member.parent))
+            (current.parent == member.parent && allowed.contains(&current.parent)) || reparented
         };
         if owned {
             allowed.insert(member.pid);
@@ -343,6 +374,12 @@ pub async fn verify_orphans(
 }
 
 impl OrphanProcess {
+    /// The PID and short command, for a wait that names this process.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        format!("PID {} ({})", self.pid, self.command)
+    }
+
     /// Signal a verified member. Returns false if it has already exited.
     /// # Errors
     /// Returns the operating system's refusal if the signal could not be sent.
@@ -421,6 +458,7 @@ async fn process_identities(
                     parent,
                     started: [*weekday, *month, *day, *clock, *year].join(" "),
                     command: command.join(" "),
+                    provider: None,
                 },
             );
         }

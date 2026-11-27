@@ -428,6 +428,14 @@ impl TaskHost for Due {
         unreachable!()
     }
 
+    async fn terminal_helpers(
+        &self,
+        _: &[std::path::PathBuf],
+        _: &Path,
+    ) -> Result<Vec<nucleus_hosts::OrphanProcess>, HostError> {
+        unreachable!("no retirement in the replay fixture")
+    }
+
     async fn retirement_writer(&self, _: &Path) -> Result<Option<u32>, HostError> {
         unreachable!("no retirement in the replay fixture")
     }
