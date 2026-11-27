@@ -45,7 +45,7 @@ import {
 } from "./board/cards";
 import { Pill } from "./planning-roadmap";
 import { PageSentinel } from "./board/page-sentinel";
-import { Readable } from "./readable-text";
+import { Markdown } from "./markdown";
 
 /** The latest document as read. `null` is a lane with no document yet; `undefined` is not loaded. */
 export type LaneDocumentRead = {
@@ -872,7 +872,7 @@ export function LaneScreen({
           Version {past.version} · {past.document.author} ·{" "}
           {formatLocalDateTime(past.document.createdAt)} · not the latest
         </Text>
-        <Readable text={past.document.text} c={c} />
+        <Markdown text={past.document.text} c={c} />
       </View>
     );
   };
@@ -909,7 +909,7 @@ export function LaneScreen({
         </Text>
       )}
       {latest === null && <Text style={text}>No lane document yet.</Text>}
-      {latest && pastVersion === null && <Readable text={latest.text} c={c} />}
+      {latest && pastVersion === null && <Markdown text={latest.text} c={c} />}
       {latest && pastVersion !== null && pastDocument()}
       {latest && latest.version > 1 && (
         <View style={row}>

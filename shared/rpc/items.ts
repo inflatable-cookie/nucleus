@@ -30,6 +30,7 @@ export const itemDetailSchema = z.object({
   /** The item's repositories, each with whether it is bound to a T3 project. */
   repositories: z.array(z.object({ origin: z.string(), bound: z.boolean() })),
   author: z.string(),
+  authorLabel: z.string().optional(),
   state: z.enum(["open", "parked", "promoted", "dropped"]),
   reason: z.string().nullable(),
   disposition: itemDisposition.nullable(),

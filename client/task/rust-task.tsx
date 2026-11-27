@@ -1,3 +1,4 @@
+import { Markdown } from "../markdown";
 /**
  * The Rust task view (Spec 071, "Task view"): one scrolling view that answers, in
  * order, what state the task is in, whether anyone must act, and the evidence.
@@ -504,18 +505,14 @@ export function RustTaskDialog({
         <Collapsible c={c} title="Report" open={reportOpen} onToggle={() => setReportOpen(!reportOpen)}>
           {detail.report.delivery && (
             <>
-              <Text selectable style={{ ...typeScale.body, color: r.foreground }}>
-                {detail.report.delivery.summary}
-              </Text>
+              <Markdown text={detail.report.delivery.summary} c={c} />
               <Text style={metaText(c)}>
                 {`${detail.report.delivery.artifact.key} · version ${detail.report.delivery.artifact.version}`}
               </Text>
             </>
           )}
           {detail.report.failure && (
-            <Text selectable style={{ ...typeScale.body, color: r.foreground }}>
-              {detail.report.failure}
-            </Text>
+            <Markdown text={detail.report.failure} c={c} />
           )}
         </Collapsible>
       )}
@@ -558,9 +555,7 @@ export function RustTaskDialog({
             readBrief={async () => (await task.refetch({ throwOnError: true })).data?.brief}
           />
         ) : (
-          <Text selectable style={{ ...typeScale.body, color: r.foreground }}>
-            {detail.brief.text}
-          </Text>
+          <Markdown text={detail.brief.text} c={c} />
         )}
       </Collapsible>
     </Dialog>
@@ -710,9 +705,7 @@ function AttentionPanel({
           </Hint>
         )}
       </View>
-      <Text selectable style={{ ...typeScale.body, color: r.foreground }}>
-        {attention.text}
-      </Text>
+      <Markdown text={attention.text} c={c} />
       {attention.detail && <Text selectable style={metaText(c)}>{attention.detail}</Text>}
       {question && "accept" in question && (
         <Text selectable style={metaText(c)}>{`Head ${question.accept.head}`}</Text>

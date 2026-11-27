@@ -30,6 +30,7 @@
   "test/lane-screen-ui.test.ts",
   "test/lead-park-screen-1543.test.ts",
   "test/lead-screen-ui.test.ts",
+  "test/markdown.test.ts",
   "test/nucleus-dispatch.test.ts",
   "test/pipeline-visual.test.ts",
   "test/planning-menu-count.test.ts",
