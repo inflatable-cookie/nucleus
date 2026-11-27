@@ -1,0 +1,1 @@
+After a task's merge, Nucleus fast-forwards that repository's registered checkout to the merged commit. It never overwrites local changes, and task history records `checkout_not_updated` with the reason when the base is left where it was.

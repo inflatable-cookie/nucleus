@@ -221,6 +221,17 @@ pub(super) fn note_merge(audit: &mut EventDraft, forge: &Observed<Forge>) {
     }
 }
 
+/// The merge commit of a task which this audit first shows as landed.
+pub(super) fn landing(prior: &Task, task: &Task, audit: &EventDraft) -> Option<Head> {
+    if matches!(prior.phase(), Phase::Closing | Phase::Done)
+        || !matches!(task.phase(), Phase::Closing | Phase::Done)
+    {
+        return None;
+    }
+    let detail = serde_json::from_str::<Value>(&audit.detail).ok()?;
+    serde_json::from_value(detail.get("mergeCommit")?.clone()).ok()
+}
+
 pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &Store) -> EventDraft {
     let mut records = Vec::new();
     let prior_run = prior.run().filter(|run| run.last_send_at_ms().is_some());
@@ -292,11 +303,7 @@ pub(super) fn decorate(prior: &Task, task: &Task, audit: &EventDraft, store: &St
 
     let mut audit = audit.clone();
     let mut detail = serde_json::from_str::<Map<String, Value>>(&audit.detail).unwrap_or_default();
-    if !matches!(prior.phase(), Phase::Closing | Phase::Done)
-        && matches!(task.phase(), Phase::Closing | Phase::Done)
-        && let Some(commit) = detail.get("mergeCommit")
-        && let Ok(commit) = serde_json::from_value(commit.clone())
-    {
+    if let Some(commit) = landing(prior, task, &audit) {
         records.push(Milestone::Merged { commit });
     }
     if prior.phase() != task.phase() && task.phase().is_terminal() {

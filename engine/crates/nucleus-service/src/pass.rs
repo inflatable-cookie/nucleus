@@ -855,24 +855,37 @@ impl Service {
     ) -> Result<Head, ServiceError> {
         let landings = self.prerequisite_landings(identity).await?;
         let base = identity.base.clone();
+        Ok(self
+            .fetch_registered(checkout, move |checkout| {
+                checkout.published_start(&base, &landings)
+            })
+            .await?)
+    }
+
+    /// Run a fetch in the registered repository, one at a time: concurrent
+    /// moves of one tracking ref fail.
+    pub(super) async fn fetch_registered(
+        &self,
+        checkout: &Checkout<'_>,
+        operation: impl FnOnce(&Checkout<'_>) -> Result<Head, WorkError> + Send + 'static,
+    ) -> Result<Head, WorkError> {
         let fetch = checkout.job(
             self.git.clone(),
             Redactor::new([], RedactionRules::common()),
-            move |checkout| checkout.published_start(&base, &landings),
+            operation,
         );
         // The fetch moves a ref every task of the repository reads, so a fetch
         // still running holds back all of them.
         let repository = checkout.repository().to_string_lossy();
-        Ok(self
-            .volume
+        let _one = self.merges.fetching.lock().await;
+        self.volume
             .run(
                 &repository,
                 "fetching the published base",
                 Limit::Check,
                 fetch,
             )
-            .await
-            .map_err(WorkError::from)??)
+            .await?
     }
 
     async fn initialization_due(&self, task: &Task) -> bool {
