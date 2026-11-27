@@ -322,8 +322,9 @@ ran every worker and reviewer on Heavyweight or Frontier.
   subscription group leaves the set; when nothing meets the demand, selection
   takes the most capable eligible profiles.
 - **Roles.** The level applies to every automatic selection: worker, reviewer,
-  coordinator and replacements. Review independence is unchanged; the reviewer
-  still excludes every author model.
+  coordinator and replacements. Review independence is a preference: the reviewer
+  avoids every author model when a usable profile allows it, and a shared model
+  never blocks the task ([Spec 070 ruling 64](070-small-engine.md#rulings), Tom, 2026-11-27).
 - **Request a profile for each role that needs it.** The task planner, project
   planner or operator can name a profile and reason in `profileRequests`. An
   owner can use `route` for the same change on an existing task. Workers and
