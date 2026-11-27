@@ -51,6 +51,7 @@ impl NoticeFixture {
             .unwrap_or(match id {
                 "beta-planner" => "beta-native",
                 "missing-root" => "missing-native",
+                "standalone-agent" => "external-native",
                 _ => "alpha-native",
             });
         let provider = launched
