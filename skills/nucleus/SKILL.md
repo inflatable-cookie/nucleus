@@ -83,7 +83,11 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   Follow its wait and command preflight. With the version from `next`, use
   `set-dependencies` before dispatch or `set-prerequisite-wait` after dispatch.
   See the [prerequisite commands](https://github.com/inflatable-cookie/nucleus/blob/main/docs/knowledge/specs/070-small-engine.md#commands)
-  for references and how to clear a wait. `move`, `answer`, `cancel`, `amend`,
+  for references and how to clear a wait. Use `watch REF` to receive one queued
+  completion notice when a task you did not dispatch (such as a dependency or a
+  task in another project) reaches Done or Cancelled, and `unwatch REF` to stop.
+  Watching a finished task returns its outcome at once without subscribing;
+  `next REF` shows the watcher count and whether you are watching. `move`, `answer`, `cancel`, `amend`,
   `hold` and `release` act on the task. After a repair, use `recheck REF --version N`
   when Next offers it. Use `promote REF --version N` or `demote REF --version N`
   on a queued or capacity-waiting task to move it between Promoted and Normal order. The task's planner answers its work and

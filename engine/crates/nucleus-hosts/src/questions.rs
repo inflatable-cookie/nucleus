@@ -202,6 +202,17 @@ impl T3 {
             .is_some_and(|identity| !identity.is_child()))
     }
 
+    /// Read only the thread identity from the synchronized shell snapshot without
+    /// contacting the host.
+    /// # Errors
+    /// Returns an error for a malformed or mismatched shell row.
+    pub fn cached_thread_identity(&self, id: &str) -> Result<Option<PlannerIdentity>, HostError> {
+        let Some(row) = self.rpc.thread_row(id) else {
+            return Ok(None);
+        };
+        Self::parse_active_identity(&row, id)
+    }
+
     /// Read only the thread identity from a synchronized compact projection.
     /// # Errors
     /// Returns an error for an unreadable or mismatched identity.
@@ -214,8 +225,12 @@ impl T3 {
                 ThreadReply::Closed { .. } | ThreadReply::Missing => return Ok(None),
             }
         };
+        Self::parse_active_identity(&row, id)
+    }
+
+    fn parse_active_identity(row: &Value, id: &str) -> Result<Option<PlannerIdentity>, HostError> {
         let thread: PlannerIdentity =
-            serde_json::from_value(row).map_err(|_| HostError::Protocol)?;
+            serde_json::from_value(row.clone()).map_err(|_| HostError::Protocol)?;
         if thread.id != id {
             return Err(HostError::Binding);
         }
@@ -353,6 +368,24 @@ impl T3 {
         &self,
         delivery: &QuestionDelivery,
     ) -> Result<NoticeObservation, HostError> {
+        self.observe_notice_inner(delivery, false).await
+    }
+
+    /// Observe a task-watcher's target thread (top-level or child) without fallback.
+    /// # Errors
+    /// Returns an error when the request or the native snapshot is unreadable.
+    pub async fn observe_watcher_notice(
+        &self,
+        delivery: &QuestionDelivery,
+    ) -> Result<NoticeObservation, HostError> {
+        self.observe_notice_inner(delivery, true).await
+    }
+
+    async fn observe_notice_inner(
+        &self,
+        delivery: &QuestionDelivery,
+        allow_child: bool,
+    ) -> Result<NoticeObservation, HostError> {
         let now_ms = clock_ms()?;
         let payload = frozen_payload(delivery)?;
         let id = &delivery.thread;
@@ -364,7 +397,7 @@ impl T3 {
                 authorization: None,
             });
         };
-        if snapshot.thread.planner.is_child() {
+        if !allow_child && snapshot.thread.planner.is_child() {
             return Err(HostError::Binding);
         }
         let state = snapshot.state(delivery)?;
