@@ -371,9 +371,10 @@ about the work.
 A step which fails with no more specific wait shows `engine_blocked` with its
 cause, for example a registered checkout on the wrong branch. It retries after
 3 seconds, doubling to 10 minutes while it keeps failing, and offers Recheck.
-A finished task's retained or occupied checkout backs off the same way. A task
-commit, Recheck, resumed Dispatch or an answered process decision starts it
-again. Dispatch which was never configured is running.
+A finished task's retained or occupied checkout, Done or Cancelled, shows its
+cause and backs off the same way. A task commit, Recheck, resumed Dispatch or
+an answered process decision starts it again. Dispatch which was never
+configured is running.
 
 Read adapters outside the store lock. Every pass write compares the task row's
 version and run instance with what it read. A stale result drops out and wakes

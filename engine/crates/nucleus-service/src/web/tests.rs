@@ -5057,6 +5057,7 @@ async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_task
             checkout.path().join("unfinished-draft")
         };
         std::fs::write(&draft, "keep this draft").unwrap();
+        let mut cause = String::new();
 
         for expected in [3, 6, 12, 24, 48, 96, 192, 384, 600, 600] {
             let result = service.archive_done(&row).await;
@@ -5065,7 +5066,15 @@ async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_task
                 "{phase}: {result:?}"
             );
             assert_delay(settle_pass(&service, &id, &result).await, expected);
+            cause = result.unwrap_err().to_string();
         }
+        let service = Arc::new(service);
+        let api = settings_api(&service);
+        let view = json_body(get_as(&api, &format!("/v1/tasks/{id}"), &BOARD_KEY).await).await;
+        assert_eq!(view["phase"], phase);
+        assert_eq!(view["wait"], "stopping", "{phase}");
+        assert_eq!(view["waitDetail"], cause.as_str(), "{phase}");
+        assert!(cause.contains("Inspect its local changes"), "{cause}");
         {
             // The periodic scan finds the row and must keep the later deadline.
             let mut state = service.state.lock().await;
@@ -5099,7 +5108,8 @@ async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_task
 
 #[tokio::test]
 async fn an_unmapped_error_shows_its_cause_backs_off_and_accepts_recheck() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    service.fixture_mut().acp_provider = Some("fixture-acp".into());
     let project = service.fixture().clone();
     let (reserved, _, _) =
         crate::tests::reservation("wrong-branch", nucleus_core::Entry::Brief, &project.start);
@@ -5146,4 +5156,22 @@ async fn an_unmapped_error_shows_its_cause_backs_off_and_accepts_recheck() {
         .await
         .unwrap_err();
     assert_delay(settle_pass(&service, id, &Err(error)).await, 3);
+
+    // A cancelled task keeps the cause of a closeout which fails the same way.
+    service
+        .command(id, &operator, Command::Cancel)
+        .await
+        .unwrap();
+    for expected in [3, 6] {
+        let error = service
+            .verify_route(task.identity(), &route)
+            .await
+            .unwrap_err();
+        assert_delay(settle_pass(&service, id, &Err(error)).await, expected);
+    }
+    let view = json_body(get_as(&api, &format!("/v1/tasks/{id}"), &BOARD_KEY).await).await;
+    assert_eq!(view["phase"], "cancelled");
+    assert_eq!(view["wait"], "stopping");
+    let cause = view["waitDetail"].as_str().unwrap();
+    assert!(cause.contains("base branch"), "{cause}");
 }

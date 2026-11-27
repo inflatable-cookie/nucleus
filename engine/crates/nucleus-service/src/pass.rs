@@ -226,7 +226,7 @@ impl Service {
                     .is_none()
             {
                 return Err(ServiceError::CheckoutRetained(
-                    "Waiting for the checkout to be idle before removal.",
+                    "Waiting for the checkout to be idle before removal.".into(),
                 ));
             }
             return Ok(Action::Nothing);
@@ -237,7 +237,7 @@ impl Service {
             .await?;
         let retained = || {
             ServiceError::CheckoutRetained(
-                "The task checkout was retained. Inspect its local changes.",
+                "The task checkout was retained. Inspect its local changes.".into(),
             )
         };
         let Some(head) = head else {
@@ -256,7 +256,7 @@ impl Service {
             if !matches!(publication, Forge::Merged { ref pr, .. } if Some(pr) == task.pull_request())
             {
                 return Err(ServiceError::CheckoutRetained(
-                    "The merged pull request does not confirm the retained checkout's recorded head.",
+                    "The merged pull request does not confirm the retained checkout's recorded head.".into(),
                 ));
             }
         }
@@ -269,7 +269,7 @@ impl Service {
             ),
             Some(Retirement::Retained) => Err(retained()),
             None => Err(ServiceError::CheckoutRetained(
-                "Waiting for the checkout to be idle before removal.",
+                "Waiting for the checkout to be idle before removal.".into(),
             )),
             Some(Retirement::Removed | Retirement::Absent) => Ok(Action::Nothing),
         }
@@ -2262,7 +2262,7 @@ impl Service {
             let mut state = self.state.lock().await;
             if state.dispatch_mode() != DispatchMode::Running {
                 return Err(ServiceError::CheckoutRetained(
-                    "Process cleanup is waiting for Dispatch.",
+                    "Process cleanup is waiting for Dispatch.".into(),
                 ));
             }
             let id = &task.identity().id;
@@ -2282,7 +2282,7 @@ impl Service {
             })?;
             if state.dispatch_mode() != DispatchMode::Running {
                 return Err(ServiceError::CheckoutRetained(
-                    "Process cleanup is waiting for Dispatch.",
+                    "Process cleanup is waiting for Dispatch.".into(),
                 ));
             }
             let mut results = Vec::new();
@@ -2323,7 +2323,7 @@ impl Service {
             .map_err(|error| match error {
                 HostError::RowChildBusy => {
                     let names: Vec<_> = helpers.iter().map(OrphanProcess::describe).collect();
-                    ServiceError::ArchiveEvidence(format!(
+                    ServiceError::CheckoutRetained(format!(
                         "A task role is still running. Provider helpers in the task checkout or run scratch stay until it ends: {}.",
                         names.join(", ")
                     ))

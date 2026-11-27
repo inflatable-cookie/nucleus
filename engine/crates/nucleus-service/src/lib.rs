@@ -84,9 +84,9 @@ pub use web::{
 pub enum ServiceError {
     #[error("{0}")]
     ArchiveEvidence(String),
-    /// A checkout stays until someone changes it, its publication or Dispatch.
+    /// A checkout stays until its changes, publication, roles or Dispatch move.
     #[error("{0}")]
-    CheckoutRetained(&'static str),
+    CheckoutRetained(String),
     #[error("{0}")]
     CheckoutProcess(nucleus_hosts::RetirementBlocker),
     #[error("T3 parent message was not sent: {reason}")]
@@ -1242,12 +1242,6 @@ impl Service {
         let id = &row.task.identity().id;
         let mut state = self.state.lock().await;
         let mut current = self.lookup(&state, id)?;
-        let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
-            && (current.task.phase() == Phase::Done
-                || (current.task.phase() == Phase::Cancelled
-                    && matches!(result, Err(ServiceError::CheckoutProcess(_)))))
-            && current.task.run().is_none()
-            && !matches!(result, Ok(Action::Nothing));
         let held = held_call(result);
         if let Some((cause, since)) = held
             && since.elapsed() >= self.volume.stuck
@@ -1262,6 +1256,12 @@ impl Service {
             state.schedule.reset_failures(id);
             None
         };
+        // A cancelled task shows an archive cause only for a failure which backs off.
+        let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
+            && (current.task.phase() == Phase::Done
+                || (current.task.phase() == Phase::Cancelled && retry_after.is_some()))
+            && current.task.run().is_none()
+            && !matches!(result, Ok(Action::Nothing));
         let retired = state.retired_with_project(&current.task)?;
         if retired
             || !archive_due
@@ -1279,14 +1279,6 @@ impl Service {
                 && state.store.completion_notice(id)?.is_none()
             {
                 state.planner_notice_waiters.remove(id);
-            }
-            // A cancelled task shows no wait here, and the next scan must not hurry it.
-            if let Some(delay) =
-                retry_after.filter(|_| !retired && current.task.phase().is_terminal())
-            {
-                state
-                    .schedule
-                    .wake(id, Instant::now() + delay, Priority::Closeout);
             }
             return Ok(());
         }
