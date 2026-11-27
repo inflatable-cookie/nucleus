@@ -53,17 +53,20 @@ function stepEntered(row: RustTask, key: string, at: number): RustTask {
     ...row,
     lifecycle: {
       ...row.lifecycle,
-      steps: row.lifecycle.steps.map((step) => step.key === key ? { ...step, enteredAtMs: at } : step),
+      steps: row.lifecycle.steps.map((step) => row.phase === "report_ready" && step.key === "review"
+        ? { ...step, key: "report_ready", enteredAtMs: at }
+        : step.key === key ? { ...step, enteredAtMs: at } : step),
     },
   };
 }
 
 test("Rust task columns sort by their stable API lifecycle times", () => {
   // These rows use the /v1/tasks summary shape consumed by the board transport.
+  const admittedAtMs = 1_790_000_000_000;
   const needs = [
-    { ...task("needs-new", "blocked"), attention: "attention" as const, stateSinceMs: 300, latestEventAtMs: 900, number: 3 },
-    { ...task("needs-old", "error"), attention: "attention" as const, stateSinceMs: null, latestEventAtMs: 1_000, number: 1 },
-    { ...task("needs-tie", "blocked"), attention: "attention" as const, stateSinceMs: 300, number: 2 },
+    { ...task("needs-new", "blocked"), attention: "attention" as const, stateSinceMs: admittedAtMs + 1_000, latestEventAtMs: 1_800_000_000_000, number: 3 },
+    { ...task("needs-old", "error"), attention: "attention" as const, stateSinceMs: null, latestEventAtMs: 1_800_000_000_000, number: 1 },
+    { ...task("needs-tie", "blocked"), attention: "attention" as const, stateSinceMs: admittedAtMs, number: 2 },
   ];
   const queue = [
     { ...task("queue-normal", "queued"), queuePriority: "normal" as const, number: 2 },
@@ -100,7 +103,7 @@ test("Rust task columns sort by their stable API lifecycle times", () => {
   assert.deepEqual(grouped.closing.map(({ identity }) => identity.id), ["close-old", "close-new"]);
   assert.deepEqual(grouped.history.map(({ identity }) => identity.id), ["history-new", "history-old"]);
   assert.equal(rustCardAgeAt(needs[1]!), needs[1]!.lifecycle.admittedAtMs);
-  assert.equal(rustCardAgeAt({ ...needs[0]!, latestEventAtMs: 2_000 }), 300);
+  assert.equal(rustCardAgeAt({ ...needs[0]!, latestEventAtMs: 1_900_000_000_000 }), admittedAtMs + 1_000);
 });
 
 test("project activity counts distinct recent tasks and linked planning items", () => {
@@ -455,8 +458,11 @@ test("the paired Board tracks Rust task changes and uses the next command contra
     task("merging", "merging"),
     { ...task("closing", "closing"), wait: "workspace_blocked", attention: "attention" as const },
     { ...task("history-oldest", "done"), stateSinceMs: 1_790_000_000_000, latestEventAtMs: 1_799_000_000_000 },
-    { ...task("history-middle", "cancelled"), latestEventAtMs: 1_795_000_000_000 },
-    ...Array.from({ length: 23 }, (_, i) => task(`past-${String(i).padStart(2, "0")}`, "done")),
+    { ...task("history-middle", "cancelled"), stateSinceMs: 1_795_000_000_000, latestEventAtMs: 1_795_000_000_000 },
+    ...Array.from({ length: 23 }, (_, i) => {
+      const past = task(`past-${String(i).padStart(2, "0")}`, "done");
+      return { ...past, lifecycle: { ...past.lifecycle, finishedAtMs: 1_794_000_000_000 + i } };
+    }),
     { ...task("history-newest", "done"), stateSinceMs: 1_796_000_000_000 },
     ...Array.from({ length: 25 }, (_, index) =>
       task(`queued-${index}`, "queued"),
@@ -1087,6 +1093,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     hold: { reason: "Wait for the schema review. Then continue with the API." },
     stateLabel: "Held by planner",
     stateSinceMs: now - 3 * 3_600_000 - 60_000,
+    lifecycle: { ...task("held-task", "queued").lifecycle, admittedAtMs: now - 3 * 3_600_000 - 60_000 },
   };
   let dispatch = {
     usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
@@ -1241,6 +1248,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         ...task("board-task", taskPhase, "board-fixture#80"),
         number: 80,
         title: "Standalone task",
+        lifecycle: { ...task("board-task", taskPhase).lifecycle, admittedAtMs: taskPhase === "queued" ? now - 4 * 60_000 : now - 12 * 60_000 },
         stateLabel: taskPhase === "queued" ? "Waiting for capacity" : workerRunning ? "Working" : "Working*",
         stateSinceMs: taskPhase === "queued" ? null : now - 12 * 60_000,
         latestEventAtMs: now - 4 * 60_000,
@@ -1249,7 +1257,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       };
       if (taskPhase === "working") {
         card.lifecycle.steps = card.lifecycle.steps.map((step) => {
-          if (step.key === "working") return { ...step, activeSinceMs: now };
+          if (step.key === "working") return { ...step, enteredAtMs: now - 12 * 60_000, activeSinceMs: now };
           if (step.key === "review") return { ...step, elapsedMs: 430_000 };
           return step;
         });

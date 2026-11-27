@@ -24,7 +24,7 @@ export function rustCardAgeAt(task: RustTask, column = rustTaskColumn(task)): nu
   const admitted = task.lifecycle.admittedAtMs;
   if (column === "needs") return task.stateSinceMs ?? admitted;
   if (column === "queue") return admitted;
-  if (column === "history") return task.lifecycle.finishedAtMs ?? admitted;
+  if (column === "history") return task.lifecycle.finishedAtMs ?? task.stateSinceMs ?? admitted;
 
   const stepKey = column === "working" ? "working"
     : column === "review" ? (task.phase === "report_ready" ? "report_ready" : "review")
