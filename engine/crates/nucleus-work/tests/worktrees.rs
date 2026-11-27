@@ -2,7 +2,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use longhorn_git_workspace::{GitCredential, GitFailure, GitPolicy};
@@ -1002,6 +1002,94 @@ impl GitPolicy for AbandonAt {
     fn refresh_credential(&self, _: &GitCredential) -> Option<GitCredential> {
         None
     }
+}
+
+/// Records whether each fetch started as an admitted mutation.
+struct Fetches(Arc<Custody>, Arc<Mutex<Vec<bool>>>);
+
+impl GitPolicy for Fetches {
+    fn isolate(&self, command: &mut Command) {
+        if command.get_args().any(|argument| argument == "fetch") {
+            self.1.lock().unwrap().push(self.0.mutating());
+        }
+        LocalGit.isolate(command);
+    }
+
+    fn credential(&self, _: &str) -> Result<Option<GitCredential>, GitFailure> {
+        Ok(None)
+    }
+
+    fn refresh_credential(&self, _: &GitCredential) -> Option<GitCredential> {
+        None
+    }
+}
+
+#[test]
+fn a_fetch_is_an_admitted_mutation_which_an_abandoned_call_never_starts() {
+    let home = tempfile::tempdir().expect("scratch");
+    let upstream = home.path().join("upstream");
+    let registered = home.path().join("registered");
+    repository(&upstream);
+    git(
+        home.path(),
+        &[
+            "clone",
+            upstream.to_str().expect("path"),
+            registered.to_str().expect("path"),
+        ],
+    );
+    git(&upstream, &["commit", "--allow-empty", "-m", "Published"]);
+    let head: Head = git(&upstream, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("published head");
+    git(&upstream, &["update-ref", "refs/pull/7/head", "HEAD"]);
+    let worktrees = worktrees(home.path());
+    let checkout = worktrees
+        .checkout(&registered, "example/fixture", "fetching")
+        .expect("checkout");
+    let tracked = || git(&registered, &["rev-parse", "refs/remotes/origin/main"]);
+    let before = tracked();
+    let redactor = || Redactor::new([], RedactionRules::common());
+
+    // A call whose caller gave up during an earlier read starts neither fetch.
+    let fetches = Arc::new(Mutex::new(Vec::new()));
+    let custody = Arc::new(Custody::default());
+    custody.abandon();
+    let policy = Fetches(Arc::clone(&custody), Arc::clone(&fetches));
+    let job = checkout.job(policy, redactor(), |checkout| {
+        checkout.published_start("main", &[])
+    });
+    assert!(matches!(job(custody), Err(WorkError::Storage(_))));
+    let custody = Arc::new(Custody::default());
+    // The read before the review fetch outlasts the caller.
+    let policy = AbandonAt(Arc::clone(&custody), "cat-file");
+    let review = head.clone();
+    let job = checkout.job(policy, redactor(), move |checkout| {
+        checkout.allocate_review(&review, 7)
+    });
+    assert!(matches!(job(custody), Err(WorkError::Storage(_))));
+    assert_eq!(tracked(), before);
+    assert!(!checkout.path().exists());
+    assert!(fetches.lock().unwrap().is_empty());
+
+    // A fetch which runs is held as a mutation for as long as it runs.
+    for review in [true, false] {
+        let custody = Arc::new(Custody::default());
+        let policy = Fetches(Arc::clone(&custody), Arc::clone(&fetches));
+        let head = head.clone();
+        let job = checkout.job(policy, redactor(), move |checkout| {
+            if review {
+                checkout.allocate_review(&head, 7).map(drop)
+            } else {
+                checkout.published_start("main", &[]).map(drop)
+            }
+        });
+        job(Arc::clone(&custody)).expect("fetch");
+        assert!(!custody.mutating());
+    }
+    assert_eq!(*fetches.lock().unwrap(), [true, true]);
+    assert_eq!(tracked().trim(), head.as_str());
 }
 
 #[test]

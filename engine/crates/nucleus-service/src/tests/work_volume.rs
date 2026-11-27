@@ -131,7 +131,7 @@ async fn report_is_accepted(api: &Router, (path, key, body): &(String, [u8; 32],
 
 /// Run real passes until the reviewer task has the outcome the caller expects.
 async fn pass_until(service: &Service, mut done: impl FnMut(&PassOutcome) -> bool) {
-    tokio::time::timeout(Duration::from_secs(40), async {
+    tokio::time::timeout(Duration::from_mins(1), async {
         loop {
             let outcomes = service.pass().await.expect("pass");
             if outcomes.iter().any(&mut done) {
@@ -348,7 +348,7 @@ async fn a_hung_checkout_call_never_blocks_reads_or_a_report_for_its_own_task() 
 }
 
 #[tokio::test]
-async fn a_read_which_never_returns_does_not_hold_back_its_task() {
+async fn reads_which_never_return_do_not_hold_back_their_task() {
     let Outage {
         home,
         mut service,
@@ -356,16 +356,57 @@ async fn a_read_which_never_returns_does_not_hold_back_its_task() {
         ..
     } = outage().await;
     let hung = Hung::install(&mut service, home.path());
-    hung.0.holds.store(1, Ordering::SeqCst);
-    service.volume.check = ANSWER;
+    hung.0.holds.store(3, Ordering::SeqCst);
+    service.volume.check = Duration::from_secs(2);
     let service = Arc::new(service);
     let api = api(&service);
 
-    pass_until(&service, waits_for_volume).await;
-    assert_volume_wait(&service).await;
-    reads_answer(&api).await;
-    // The first call stays hung while the retry starts afresh and succeeds.
+    // An outage which outlasts several retries, each leaving a call behind.
+    for _ in 0..3 {
+        pass_until(&service, waits_for_volume).await;
+        assert_volume_wait(&service).await;
+        reads_answer(&api).await;
+    }
+    // Every one of them stays hung while a later retry succeeds.
     pass_until(&service, launches_review).await;
+    drop(hung);
+    forge.abort();
+}
+
+#[tokio::test]
+async fn a_stuck_allocation_resumes_after_the_volume_has_gone_and_returned() {
+    let Outage {
+        home,
+        mut service,
+        head,
+        forge,
+        ..
+    } = outage().await;
+    let hung = Hung::install(&mut service, home.path());
+    hung.0.only.set("add").unwrap();
+    hung.0.holds.store(1, Ordering::SeqCst);
+    service.volume.change = ANSWER;
+    // Stands for the longest time Git may run before it is killed.
+    service.volume.outlived = Duration::ZERO;
+    let service = Arc::new(service);
+    let api = api(&service);
+    let root = service.storage.work().path().to_owned();
+
+    // The worktree add outlasts its caller, and holds the task while the volume stays.
+    for _ in 0..2 {
+        pass_until(&service, waits_for_volume).await;
+        assert_volume_wait(&service).await;
+        reads_answer(&api).await;
+    }
+    assert_eq!(hung.0.entered.load(Ordering::SeqCst), 1);
+
+    let away = home.path().join("away");
+    std::fs::rename(&root, &away).unwrap();
+    pass_until(&service, waits_for_volume).await;
+    std::fs::rename(&away, &root).unwrap();
+    pass_until(&service, launches_review).await;
+    let checkout = nucleus_work::checkout_path(&root, REPOSITORY, "reviewer");
+    assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), head.as_str());
     drop(hung);
     forge.abort();
 }

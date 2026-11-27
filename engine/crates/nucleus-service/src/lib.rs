@@ -464,9 +464,10 @@ impl Service {
             host.use_held_shell();
         }
         let github_accounts = Arc::new(github_accounts::GitHubAccounts::new(settings.clone()));
+        let roots = vec![storage.work().clone(), storage.scratch().clone()];
         Ok(Self {
             storage,
-            volume: volume::WorkVolume::new(),
+            volume: volume::WorkVolume::new(roots),
             git,
             settings: settings.clone(),
             registry_provider,

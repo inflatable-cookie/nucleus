@@ -5,6 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Action, CallbackCredential, CheckState, CloseWorkspace, Forge, Head, Host, Launch,
     LaunchInputs, Observation, Observed, Phase, Report, Role, Run, RunState, Task, WaitReason,
@@ -852,14 +853,24 @@ impl Service {
     ) -> Result<Head, ServiceError> {
         let landings = self.prerequisite_landings(identity).await?;
         let base = identity.base.clone();
+        let fetch = checkout.job(
+            self.git.clone(),
+            Redactor::new([], RedactionRules::common()),
+            move |checkout| checkout.published_start(&base, &landings),
+        );
+        // The fetch moves a ref every task of the repository reads, so a fetch
+        // still running holds back all of them.
+        let repository = checkout.repository().to_string_lossy();
         Ok(self
-            .checkout_job(
-                checkout,
+            .volume
+            .run(
+                &repository,
                 "fetching the published base",
                 Limit::Check,
-                move |checkout| checkout.published_start(&base, &landings),
+                fetch,
             )
-            .await?)
+            .await
+            .map_err(WorkError::from)??)
     }
 
     async fn initialization_due(&self, task: &Task) -> bool {

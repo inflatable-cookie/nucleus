@@ -1,8 +1,8 @@
 //! Bounded access to the work volume. Each filesystem and Git call runs on its
 //! own thread under a deadline, never on an async worker or under the state lock.
-//! A call past its deadline may never return. It can start no further mutation,
-//! and it holds back its owner's later calls only while one it had already started
-//! is still running.
+//! A call past its deadline may never return, and it can start no further
+//! mutation. A hung read never holds back later calls. A mutation it had already
+//! started holds back its owner until it returns or can no longer take effect.
 
 use std::{
     cell::Cell,
@@ -10,7 +10,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex, PoisonError},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use longhorn_redact::{RedactionRules, Redactor};
@@ -23,7 +23,7 @@ use tokio::{
 
 use crate::{Service, ServiceError};
 
-/// The most calls one owner may leave running past their deadline.
+/// Hung calls one owner may collect before each further one must wait its turn.
 const UNRETURNED: usize = 16;
 /// A pass step older than this is logged once.
 const STUCK: Duration = Duration::from_mins(1);
@@ -39,10 +39,74 @@ pub(crate) enum Limit {
 pub(crate) struct WorkVolume {
     pub(crate) check: Duration,
     pub(crate) change: Duration,
+    /// Past [`UNRETURNED`] hung calls, an owner starts one more this often.
+    pub(crate) spacing: Duration,
+    /// Longer than Git may run before it is killed.
+    pub(crate) outlived: Duration,
     /// How many callers are waiting on a call, by owner.
     waiting: watch::Sender<BTreeMap<String, usize>>,
-    /// Calls no caller waits for any more. Each is shared with its thread until it returns.
-    abandoned: Mutex<BTreeMap<String, Vec<Arc<Custody>>>>,
+    abandoned: Arc<Abandoned>,
+}
+
+/// Calls no caller waits for any more, and the pinned roots they depend on.
+struct Abandoned {
+    roots: Vec<StorageDirectory>,
+    owners: Mutex<BTreeMap<String, Hung>>,
+}
+
+#[derive(Default)]
+struct Hung {
+    /// Each is shared with its thread until it returns.
+    calls: Vec<Arc<Custody>>,
+    /// When a call was last started past the limit.
+    extra: Option<Instant>,
+}
+
+impl Abandoned {
+    fn owners(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Hung>> {
+        self.owners.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether this owner may start another call beside its hung ones. The
+    /// number of threads grows slowly past the limit and never stops progress.
+    fn has_room(&self, owner: &str, spacing: Duration) -> bool {
+        let mut owners = self.owners();
+        let Some(hung) = owners.get_mut(owner) else {
+            return true;
+        };
+        // A call which has returned no longer shares its custody.
+        hung.calls.retain(|custody| Arc::strong_count(custody) > 1);
+        if hung.calls.len() < UNRETURNED {
+            return true;
+        }
+        if hung.extra.is_some_and(|at| at.elapsed() < spacing) {
+            return false;
+        }
+        hung.extra = Some(Instant::now());
+        true
+    }
+
+    /// Whether an earlier mutation of this owner could still take effect. This
+    /// reads the volume, so it runs on the new call's thread.
+    fn mutating(&self, owner: &str, outlived: Duration) -> bool {
+        let running: Vec<_> = self.owners().get(owner).map_or_else(Vec::new, |hung| {
+            hung.calls
+                .iter()
+                .filter(|custody| Arc::strong_count(custody) > 1 && custody.mutating())
+                .map(Arc::clone)
+                .collect()
+        });
+        if running.is_empty() {
+            return false;
+        }
+        // Reading the roots records their loss and return even when no other call does.
+        for root in &self.roots {
+            let _ = root.verify();
+        }
+        running
+            .iter()
+            .any(|custody| custody.may_still_apply(outlived))
+    }
 }
 
 /// Held by the awaiting caller. Dropping it unsettled abandons the call.
@@ -57,9 +121,11 @@ impl Drop for Waiting<'_> {
         if let Some(custody) = self.unsettled.take() {
             custody.abandon();
             self.volume
-                .abandoned()
+                .abandoned
+                .owners()
                 .entry(self.owner.into())
                 .or_default()
+                .calls
                 .push(custody);
         }
         self.volume.waiting.send_modify(|waiting| {
@@ -74,34 +140,22 @@ impl Drop for Waiting<'_> {
 }
 
 impl WorkVolume {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(roots: Vec<StorageDirectory>) -> Self {
         Self {
             check: Duration::from_mins(2),
             change: Duration::from_mins(12),
+            spacing: Duration::from_mins(5),
+            outlived: Duration::from_mins(11),
             waiting: watch::Sender::default(),
-            abandoned: Mutex::default(),
+            abandoned: Arc::new(Abandoned {
+                roots,
+                owners: Mutex::default(),
+            }),
         }
     }
 
-    fn abandoned(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Vec<Arc<Custody>>>> {
-        self.abandoned
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Whether earlier calls keep this owner from starting another.
-    fn held(&self, owner: &str) -> bool {
-        let mut abandoned = self.abandoned();
-        let Some(calls) = abandoned.get_mut(owner) else {
-            return false;
-        };
-        // A call which has returned no longer shares its custody.
-        calls.retain(|custody| Arc::strong_count(custody) > 1);
-        calls.len() >= UNRETURNED || calls.iter().any(|custody| custody.mutating())
-    }
-
-    /// Run one work-volume call for a task or housekeeping owner. Boxed to keep
-    /// the pass futures which await it small.
+    /// Run one work-volume call for an owner: a task, a repository or a kind of
+    /// housekeeping. Boxed to keep the pass futures which await it small.
     pub(crate) fn run<'a, T: Send + 'static>(
         &'a self,
         owner: &'a str,
@@ -110,18 +164,21 @@ impl WorkVolume {
         job: impl FnOnce(Arc<Custody>) -> T + Send + 'static,
     ) -> Pin<Box<impl Future<Output = Result<T, StorageError>>>> {
         Box::pin(async move {
-            if self.held(owner) {
+            if !self.abandoned.has_room(owner, self.spacing) {
                 return Err(StorageError::VolumeUnavailable);
             }
             let _step = Step::enter(step);
-            let custody = Arc::new(Custody::default());
+            let custody = Arc::new(Custody::over(self.abandoned.roots.clone()));
             let running = Arc::clone(&custody);
+            let (abandoned, name) = (Arc::clone(&self.abandoned), owner.to_owned());
+            let outlived = self.outlived;
             let (answer, answered) = oneshot::channel();
             // A hung call keeps its thread, so it must not take one from a shared pool.
             std::thread::Builder::new()
                 .name("nucleus-volume".into())
                 .spawn(move || {
-                    let done = job(Arc::clone(&running));
+                    let done =
+                        (!abandoned.mutating(&name, outlived)).then(|| job(Arc::clone(&running)));
                     drop(running);
                     let _ = answer.send(done);
                 })?;
@@ -141,7 +198,8 @@ impl WorkVolume {
                 return Err(StorageError::VolumeUnavailable);
             };
             waiting.unsettled = None;
-            done.map_err(|_| std::io::Error::other("a work volume call panicked").into())
+            done.map_err(|_| std::io::Error::other("a work volume call panicked"))?
+                .ok_or(StorageError::VolumeUnavailable)
         })
     }
 
@@ -234,11 +292,15 @@ impl Service {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
+    use std::{path::Path, sync::mpsc};
+
+    use nucleus_forge::GitHub;
 
     use super::*;
+    use crate::tests::fixture;
 
     const OWNER: &str = "task";
+    const SOON: Duration = Duration::from_secs(5);
 
     async fn quick(volume: &WorkVolume, owner: &str) -> bool {
         volume
@@ -247,35 +309,82 @@ mod tests {
             .is_ok()
     }
 
-    #[tokio::test]
-    async fn only_a_running_mutation_holds_back_its_owner() {
-        let mut volume = WorkVolume::new();
-        volume.check = Duration::from_millis(500);
+    /// Let the engine see a root go away, and put it back.
+    async fn lose_and_restore(volume: &WorkVolume, root: &Path) {
+        let away = root.with_extension("away");
+        std::fs::rename(root, &away).unwrap();
+        assert!(!quick(volume, OWNER).await, "still held while away");
+        std::fs::rename(&away, root).unwrap();
+    }
 
-        // A read which never returns costs its owner nothing after the deadline.
+    #[tokio::test]
+    async fn a_hung_read_never_holds_its_owner_and_may_not_mutate_later() {
+        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.volume.check = Duration::from_millis(500);
         let (read, hung) = mpsc::channel::<()>();
         let (outcome, admitted) = mpsc::channel();
-        let lost = volume.run(OWNER, "reading", Limit::Check, move |custody| {
-            let _ = hung.recv();
-            let _ = outcome.send(custody.mutate().is_ok());
-        });
+        let lost = service
+            .volume
+            .run(OWNER, "reading", Limit::Check, move |custody| {
+                let _ = hung.recv();
+                let _ = outcome.send(custody.mutate().is_ok());
+            });
         assert!(lost.await.is_err());
-        assert!(quick(&volume, OWNER).await);
-        // It may not mutate if it ever resumes.
+        assert!(quick(&service.volume, OWNER).await);
         drop(read);
-        assert!(!admitted.recv_timeout(Duration::from_secs(5)).unwrap());
+        assert!(!admitted.recv_timeout(SOON).unwrap());
+    }
 
+    #[tokio::test]
+    async fn a_stuck_mutation_holds_its_owner_until_the_volume_has_gone_and_returned() {
+        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.volume.check = Duration::from_millis(500);
+        service.volume.outlived = Duration::from_hours(1);
+        let root = service.storage.work().path().to_owned();
         let (mutation, hung) = mpsc::channel::<()>();
-        let lost = volume.run(OWNER, "writing", Limit::Check, move |custody| {
-            let _step = custody.mutate().expect("admitted while awaited");
-            let _ = hung.recv();
-        });
+        let (outcome, admitted) = mpsc::channel();
+        let lost = service
+            .volume
+            .run(OWNER, "writing", Limit::Check, move |custody| {
+                let step = custody.mutate().expect("admitted while awaited");
+                let _ = hung.recv();
+                drop(step);
+                let _ = outcome.send(custody.mutate().is_ok());
+            });
         assert!(lost.await.is_err());
-        assert!(!quick(&volume, OWNER).await);
-        assert!(quick(&volume, "another").await);
+        assert!(!quick(&service.volume, OWNER).await);
+        assert!(quick(&service.volume, "another").await);
+
+        // A return is not enough while its Git process could still be alive.
+        lose_and_restore(&service.volume, &root).await;
+        assert!(!quick(&service.volume, OWNER).await);
+        service.volume.outlived = Duration::ZERO;
+        assert!(quick(&service.volume, OWNER).await);
+
         drop(mutation);
-        time::timeout(Duration::from_secs(5), async {
-            while !quick(&volume, OWNER).await {
+        assert!(!admitted.recv_timeout(SOON).unwrap(), "no further mutation");
+    }
+
+    #[tokio::test]
+    async fn a_stuck_mutation_returning_releases_its_owner_without_an_outage() {
+        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.volume.check = Duration::from_millis(500);
+        service.volume.outlived = Duration::ZERO;
+        let (mutation, hung) = mpsc::channel::<()>();
+        let lost = service
+            .volume
+            .run(OWNER, "writing", Limit::Check, move |custody| {
+                let _step = custody.mutate().expect("admitted while awaited");
+                let _ = hung.recv();
+            });
+        assert!(lost.await.is_err());
+        assert!(
+            !quick(&service.volume, OWNER).await,
+            "the volume never left"
+        );
+        drop(mutation);
+        time::timeout(SOON, async {
+            while !quick(&service.volume, OWNER).await {
                 time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -284,19 +393,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hung_reads_are_bounded_for_each_owner() {
-        let mut volume = WorkVolume::new();
-        volume.check = Duration::from_millis(10);
+    async fn past_the_limit_hung_calls_take_turns_and_never_stop_progress() {
+        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        service.volume.check = Duration::from_millis(10);
+        service.volume.spacing = Duration::from_hours(1);
         let mut hung = Vec::new();
-        for _ in 0..UNRETURNED {
+        // The last of these is the first allowed past the limit.
+        for _ in 0..=UNRETURNED {
             let (release, wait) = mpsc::channel::<()>();
             hung.push(release);
-            let lost = volume.run(OWNER, "reading", Limit::Check, move |_| {
-                let _ = wait.recv();
-            });
+            let lost = service
+                .volume
+                .run(OWNER, "reading", Limit::Check, move |_| {
+                    let _ = wait.recv();
+                });
             assert!(lost.await.is_err());
         }
-        assert!(!quick(&volume, OWNER).await);
-        assert!(quick(&volume, "another").await);
+        assert!(!quick(&service.volume, OWNER).await);
+        assert!(quick(&service.volume, "another").await);
+        // Every earlier call is still hung when the next turn comes.
+        service.volume.spacing = Duration::ZERO;
+        assert!(quick(&service.volume, OWNER).await);
     }
 }

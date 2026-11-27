@@ -10,7 +10,7 @@ use std::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use longhorn_git_workspace::{Git, GitFailure, GitFailureCode, GitPolicy, WorktreeIdentity};
@@ -135,29 +135,51 @@ pub enum Retirement {
 /// Shared by a blocking call and the caller awaiting it. A caller which stops
 /// waiting refuses every later mutation and can tell whether one is running.
 #[derive(Debug, Default)]
-pub struct Custody(Mutex<Claim>);
+pub struct Custody {
+    claim: Mutex<Claim>,
+    roots: Vec<StorageDirectory>,
+}
 
 #[derive(Debug, Default)]
 struct Claim {
     abandoned: bool,
-    mutating: u32,
+    running: Option<Running>,
 }
 
-/// One admitted mutation, running until this is dropped.
+#[derive(Debug, Clone, Copy)]
+struct Running {
+    since: Instant,
+    epoch: u64,
+}
+
+/// The call's one admitted mutation, running until this is dropped.
 #[derive(Debug)]
 pub struct Mutation<'a>(&'a Custody);
 
 impl Custody {
-    /// Admit one mutation.
+    /// Custody for a call which depends on these pinned roots.
+    #[must_use]
+    pub fn over(roots: Vec<StorageDirectory>) -> Self {
+        Self {
+            claim: Mutex::default(),
+            roots,
+        }
+    }
+
+    /// Admit the call's next mutation. A call runs one at a time.
     ///
     /// # Errors
     /// Refuses once the caller has stopped waiting.
     pub fn mutate(&self) -> Result<Mutation<'_>, StorageError> {
+        let epoch = self.epoch();
         let mut claim = self.claim();
         if claim.abandoned {
             return Err(StorageError::VolumeUnavailable);
         }
-        claim.mutating += 1;
+        claim.running = Some(Running {
+            since: Instant::now(),
+            epoch,
+        });
         Ok(Mutation(self))
     }
 
@@ -169,17 +191,33 @@ impl Custody {
     /// Whether an admitted mutation is still running.
     #[must_use]
     pub fn mutating(&self) -> bool {
-        self.claim().mutating > 0
+        self.claim().running.is_some()
+    }
+
+    /// Whether a running mutation could still take effect. It no longer can once
+    /// the volume it started on has gone and returned, and it is older than
+    /// `outlived`, within which any Git process it started has been killed.
+    #[must_use]
+    pub fn may_still_apply(&self, outlived: Duration) -> bool {
+        let epoch = self.epoch();
+        self.claim()
+            .running
+            .is_some_and(|running| running.epoch == epoch || running.since.elapsed() < outlived)
+    }
+
+    // Changes whenever a root comes back after an outage or a remount.
+    fn epoch(&self) -> u64 {
+        self.roots.iter().map(StorageDirectory::returns).sum()
     }
 
     fn claim(&self) -> std::sync::MutexGuard<'_, Claim> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.claim.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 impl Drop for Mutation<'_> {
     fn drop(&mut self) {
-        self.0.claim().mutating -= 1;
+        self.0.claim().running = None;
     }
 }
 
@@ -525,17 +563,20 @@ impl Checkout<'_> {
     /// start lacks a landed prerequisite.
     pub fn published_start(&self, base: &str, landings: &[Landing]) -> Result<Head, WorkError> {
         let tracking = format!("refs/remotes/origin/{base}");
-        self.git(
-            &self.repository,
-            &[
-                "fetch",
-                "--no-tags",
-                "--no-write-fetch-head",
-                "--no-recurse-submodules",
-                "origin",
-                &format!("+refs/heads/{base}:{tracking}"),
-            ],
-        )?;
+        {
+            let _step = self.admit()?;
+            self.git(
+                &self.repository,
+                &[
+                    "fetch",
+                    "--no-tags",
+                    "--no-write-fetch-head",
+                    "--no-recurse-submodules",
+                    "origin",
+                    &format!("+refs/heads/{base}:{tracking}"),
+                ],
+            )?;
+        }
         let published: Head = self
             .git(
                 &self.repository,
@@ -870,6 +911,7 @@ impl Checkout<'_> {
             .is_err()
         {
             let reference = format!("refs/pull/{pull}/head");
+            let _step = self.admit()?;
             self.git(
                 &self.repository,
                 &[

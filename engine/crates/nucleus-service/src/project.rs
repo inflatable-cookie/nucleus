@@ -413,6 +413,8 @@ pub(crate) mod git_gate {
         pub entered: AtomicUsize,
         /// Hold only this many calls. Zero holds every call until release.
         pub holds: AtomicUsize,
+        /// Count and hold only Git commands with this argument.
+        pub only: OnceLock<&'static str>,
         released: Mutex<bool>,
         ready: Condvar,
     }
@@ -435,9 +437,13 @@ pub(crate) mod git_gate {
         gate
     }
 
-    pub fn enter(path: &PathBuf) {
+    pub fn enter(path: &PathBuf, command: &std::process::Command) {
         let gate = gates().lock().unwrap().get(path).cloned();
-        if let Some(gate) = gate {
+        if let Some(gate) = gate.filter(|gate| {
+            gate.only
+                .get()
+                .is_none_or(|only| command.get_args().any(|argument| argument == *only))
+        }) {
             let earlier = gate.entered.fetch_add(1, Ordering::SeqCst);
             let holds = gate.holds.load(Ordering::SeqCst);
             if holds != 0 && earlier >= holds {
@@ -456,7 +462,7 @@ pub(crate) mod git_gate {
 impl GitPolicy for LocalGit {
     fn isolate(&self, command: &mut Command) {
         #[cfg(test)]
-        git_gate::enter(&self.0);
+        git_gate::enter(&self.0, command);
         command
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
