@@ -576,3 +576,111 @@ test("Rust Settings opens a project without requesting owner candidates or showi
     done(ui);
   }
 });
+
+test("Settings → Projects edits the up-to-date base toggle and pre-merge check command", async () => {
+  const app = harness(
+    settingsOf([row("acowtancy", "Acowtancy", [repo("acme/acowtancy-v2")])]),
+  );
+  const ui = await app.mount(true);
+  try {
+    ui.press("Acowtancy");
+    const toggle = ui.get("Up-to-date base");
+    assert.equal(toggle.props.accessibilityRole, "switch");
+    assert.equal(toggle.props.accessibilityState?.checked, false);
+    assert.equal(textOf(toggle), "Off");
+    assert.equal(ui.get("Pre-merge check").props.value, "");
+
+    // Explanations live in (?) popovers.
+    assert.ok(ui.query("Up-to-date base help"));
+    assert.ok(ui.query("Pre-merge check help"));
+
+    // Toggle Up-to-date base on: autosaves immediately.
+    ui.press("Up-to-date base");
+    await settle(() => app.calls.length === 1, "toggle saved");
+    const baseRow = row("acowtancy", "Acowtancy", [repo("acme/acowtancy-v2")]);
+    app.set({
+      data: settingsOf([
+        {
+          ...baseRow,
+          project: { ...baseRow.project, requireUpToDateBase: true },
+        },
+      ]),
+    });
+    assert.equal(ui.get("Up-to-date base").props.accessibilityState?.checked, true);
+    assert.equal(textOf(ui.get("Up-to-date base")), "On");
+    assert.deepEqual(app.calls[0], [
+      "project.upsert",
+      {
+        key: "acowtancy",
+        name: "Acowtancy",
+        repositories: [repo("acme/acowtancy-v2")],
+        requireUpToDateBase: true,
+      },
+    ]);
+
+    // Enter a single-line pre-merge check command: autosaves on blur/debounce.
+    ui.type("Pre-merge check", "effigy farmyard/host:check");
+    ui.get("Pre-merge check").props.onBlur();
+    await settle(() => app.calls.length === 2, "pre-merge check saved");
+    app.set({
+      data: settingsOf([
+        {
+          ...baseRow,
+          project: {
+            ...baseRow.project,
+            requireUpToDateBase: true,
+            preMergeCheck: "effigy farmyard/host:check",
+          },
+        },
+      ]),
+    });
+    assert.deepEqual(app.calls[1], [
+      "project.upsert",
+      {
+        key: "acowtancy",
+        name: "Acowtancy",
+        repositories: [repo("acme/acowtancy-v2")],
+        requireUpToDateBase: true,
+        preMergeCheck: "effigy farmyard/host:check",
+      },
+    ]);
+
+    // Multi-line command is held back and not saved.
+    ui.type("Pre-merge check", "effigy a\neffigy b");
+    ui.get("Pre-merge check").props.onBlur();
+    assert.equal(app.calls.length, 2);
+
+    // Clearing the command saves null (removes the command) and toggling off saves false.
+    ui.type("Pre-merge check", "");
+    ui.get("Pre-merge check").props.onBlur();
+    await settle(() => app.calls.length === 3, "pre-merge check cleared");
+    app.set({
+      data: settingsOf([
+        {
+          ...baseRow,
+          project: { ...baseRow.project, requireUpToDateBase: true },
+        },
+      ]),
+    });
+    assert.deepEqual(app.calls[2], [
+      "project.upsert",
+      {
+        key: "acowtancy",
+        name: "Acowtancy",
+        repositories: [repo("acme/acowtancy-v2")],
+        requireUpToDateBase: true,
+        preMergeCheck: null,
+      },
+    ]);
+
+    ui.press("Up-to-date base");
+    await settle(() => app.calls.length === 4, "toggle off saved");
+    app.set({
+      data: settingsOf([baseRow]),
+    });
+    assert.equal(ui.get("Up-to-date base").props.accessibilityState?.checked, false);
+    assert.equal(app.calls[3]![1].requireUpToDateBase, false);
+  } finally {
+    done(ui);
+  }
+});

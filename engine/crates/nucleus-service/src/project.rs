@@ -21,6 +21,8 @@ pub(super) struct ProjectRoute {
     pub(super) host_project: String,
     pub(super) slots: Option<u32>,
     pub(super) repositories: Vec<String>,
+    pub(super) require_up_to_date_base: bool,
+    pub(super) pre_merge_check: Option<String>,
 }
 
 impl ProjectRoute {
@@ -78,6 +80,8 @@ impl Service {
                 .iter()
                 .map(|repo| repo.origin.clone())
                 .collect(),
+            require_up_to_date_base: project.require_up_to_date_base,
+            pre_merge_check: project.pre_merge_check.clone(),
         })
     }
 

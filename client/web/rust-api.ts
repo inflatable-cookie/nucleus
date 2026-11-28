@@ -91,6 +91,8 @@ export const project = z
     name: z.string(),
     archived: z.boolean(),
     repositories: z.array(repository),
+    requireUpToDateBase: z.boolean().optional(),
+    preMergeCheck: z.string().optional(),
   })
   .loose();
 const projects = z.object({ projects: z.record(z.string(), project) }).loose();

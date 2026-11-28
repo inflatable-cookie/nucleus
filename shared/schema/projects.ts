@@ -143,6 +143,9 @@ export const projectSchema = z.object({
   planner: z.object({ agentId: z.string().trim().min(1).max(300), name: projectAgentNameSchema.optional(), setBy: z.string().trim().min(1).max(300), setAt: z.string(), }).strict().nullable().optional(),
   // Task 1110: every named, non-task thread the project registers. Absent on rows written before it.
   agents: z.array(projectAgentSchema).max(100).optional(),
+  // Spec 070 ruling 70: opt in to requiring the approved head to contain the current base tip before merge.
+  requireUpToDateBase: z.boolean().optional(),
+  preMergeCheck: z.string().trim().min(1).max(1000).nullable().optional(),
 }).strict().refine(({ repositories, primary }) => primary === null
   ? repositories.length === 0
   : repositories.some(repo => repo.origin && primary.origin
@@ -208,6 +211,8 @@ export const projectUpsertInputSchema = z.object({
    * a stale list can never update another project. Omitted, the call is an upsert.
    */
   create: z.literal(true).optional(),
+  requireUpToDateBase: z.boolean().optional(),
+  preMergeCheck: z.string().trim().min(1).max(1000).nullable().optional(),
 }).strict()
   .refine(project => project.repositories.length === 1 || Boolean(project.primary),
     "Primary repository is required for a project with several repositories");

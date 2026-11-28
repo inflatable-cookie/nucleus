@@ -579,16 +579,25 @@ impl Observation {
         }
     }
 
-    pub(crate) fn merge_recovery(&self, task: &Task) -> Option<(&Head, String)> {
+    pub(crate) fn merge_recovery(
+        &self,
+        task: &Task,
+        pre_merge_check: Option<&str>,
+    ) -> Option<(&Head, String)> {
         let (head, checks) = self.recoverable_merge(task)?;
         let base = &task.identity.base;
         let instruction = match checks {
             CheckState::Conflict => format!(
                 "GitHub confirms a merge conflict at {head}. Fetch origin/{base}, rebase the task branch onto it, resolve the conflicts, run the relevant checks, and push the same PR branch with --force-with-lease."
             ),
-            CheckState::BaseMoved => format!(
-                "The base moved at reviewed head {head}. Fetch origin/{base}, rebase the task branch onto it, run the relevant checks, and push the same PR branch with --force-with-lease."
-            ),
+            CheckState::BaseMoved => match pre_merge_check {
+                Some(command) => format!(
+                    "The base moved at reviewed head {head}. Fetch origin/{base}, rebase the task branch onto it, run the project's pre-merge check (`{command}`) and report its result, and push the same PR branch with --force-with-lease."
+                ),
+                None => format!(
+                    "The base moved at reviewed head {head}. Fetch origin/{base}, rebase the task branch onto it, run the relevant checks, and push the same PR branch with --force-with-lease."
+                ),
+            },
             CheckState::FailedRequired(names) => format!(
                 "Checks that gate the merge failed at {head}: {names:?}. Inspect those failures, fix the task branch, run the relevant checks, and push the new head to the same PR branch."
             ),

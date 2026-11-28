@@ -571,6 +571,8 @@ async fn project_tell_retries_an_empty_snapshot_and_reuses_real_receipts() {
                         name: "Unbound project".into(),
                         archived: false,
                         repositories: Vec::new(),
+                        require_up_to_date_base: false,
+                        pre_merge_check: None,
                     },
                 );
                 Ok(())

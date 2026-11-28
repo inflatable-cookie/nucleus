@@ -460,6 +460,8 @@ fn seed_imported_container(settings: &nucleus_store::SettingsFile) {
                         planner_threads: Vec::new(),
                     })
                     .collect(),
+                require_up_to_date_base: false,
+                pre_merge_check: None,
             },
         )]),
         ..Default::default()

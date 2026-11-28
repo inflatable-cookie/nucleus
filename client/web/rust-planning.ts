@@ -64,6 +64,8 @@ export function boardProject(key: string, project: RustProject): api.Project {
     repositories: repos,
     primary: repos[0] ?? null,
     drain: null,
+    ...(project.requireUpToDateBase ? { requireUpToDateBase: true } : {}),
+    ...(project.preMergeCheck ? { preMergeCheck: project.preMergeCheck } : {}),
   };
 }
 

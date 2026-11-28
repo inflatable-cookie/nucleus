@@ -237,7 +237,10 @@ async fn a_lost_merge_reply_reconciles_the_same_pr_without_resubmission() {
     let target = branches().target(PR_URL).expect("target");
     let task = task_with_approval();
     for write in [MergeWrite::Unknown, MergeWrite::Skipped] {
-        let attempt = forge.merge(&task, &target).await.expect("read back merge");
+        let attempt = forge
+            .merge(&task, &target, false)
+            .await
+            .expect("read back merge");
         assert_eq!(attempt.write, write);
         assert!(
             matches!(attempt.observed, Ok(Forge::Merged { pr, commit }) if pr.head == sha('a') && commit == sha('f'))
@@ -345,7 +348,7 @@ async fn open_pull_without_a_rest_merge_commit_observes_only_the_selected_checks
     response["data"]["repository"]["pullRequest"]["statusCheckRollup"] = json!({"state":"SUCCESS"});
     let (forge, calls) = server(vec![Some(open), Some(response)]);
     assert!(matches!(
-        forge.merge(&task_with_approval(), &target).await,
+        forge.merge(&task_with_approval(), &target, false).await,
         Err(ForgeError::Incomplete)
     ));
     assert!(
@@ -375,7 +378,10 @@ async fn a_missing_rest_merge_commit_uses_the_exact_graphql_merge() {
     let target = branches().target(PR_URL).expect("target");
     let task = task_with_approval();
     for write in [MergeWrite::Unknown, MergeWrite::Skipped] {
-        let attempt = forge.merge(&task, &target).await.expect("confirm merge");
+        let attempt = forge
+            .merge(&task, &target, false)
+            .await
+            .expect("confirm merge");
         assert_eq!(attempt.write, write);
         assert!(matches!(
             attempt.observed, Ok(Forge::Merged { pr, commit }) if pr.head == sha('a') && commit == sha('f')
@@ -442,6 +448,7 @@ async fn a_new_head_or_unfinished_checks_do_not_send_a_merge() {
             .merge(
                 &task_with_approval(),
                 &branches().target(PR_URL).expect("target"),
+                false,
             )
             .await
             .expect("observe without merging");
@@ -489,7 +496,7 @@ async fn write_outcomes_survive_stale_or_unreadable_readback() {
         }
         let (forge, calls) = scripted(responses);
         let attempt = forge
-            .merge(&task_with_approval(), &target)
+            .merge(&task_with_approval(), &target, false)
             .await
             .expect("keep write outcome");
         assert_eq!(attempt.write, expected);
@@ -553,7 +560,7 @@ async fn a_rate_limited_put_returns_the_deadline_without_readback() {
         }));
         let (forge, calls) = scripted(responses);
         let attempt = forge
-            .merge(&task_with_approval(), &target)
+            .merge(&task_with_approval(), &target, false)
             .await
             .expect("deferral");
         let MergeWrite::Deferred { until } = attempt.write else {
@@ -591,7 +598,7 @@ async fn a_secondary_limit_body_defers_even_when_primary_requests_remain() {
         }));
         let (forge, calls) = scripted(responses);
         let attempt = forge
-            .merge(&task_with_approval(), &target)
+            .merge(&task_with_approval(), &target, false)
             .await
             .expect("secondary deferral");
         let MergeWrite::Deferred { until } = attempt.write else {
@@ -620,8 +627,10 @@ async fn a_graphql_rate_error_uses_the_reset_before_interpreting_partial_data() 
                 body: json!({"data": {"repository": false}, "errors": [{"type": "RATE_LIMITED"}]}),
             }),
         ]);
-        assert!(matches!(forge.merge(&task_with_approval(), &target).await,
-            Err(ForgeError::Deferred { until }) if until == UNIX_EPOCH + Duration::from_secs(2_000_000_000)));
+        assert!(
+            matches!(forge.merge(&task_with_approval(), &target, false).await,
+            Err(ForgeError::Deferred { until }) if until == UNIX_EPOCH + Duration::from_secs(2_000_000_000))
+        );
         assert_eq!(calls.join().expect("no further calls").len(), 2);
     }
 }
@@ -664,7 +673,7 @@ async fn a_retargeted_base_is_checked_before_and_after_the_put() {
         Some(retargeted),
     ]);
     assert!(matches!(
-        forge.merge(&task_with_approval(), &target).await,
+        forge.merge(&task_with_approval(), &target, false).await,
         Err(ForgeError::BaseChanged)
     ));
     assert_eq!(calls.join().expect("HTTP requests").len(), 3);
@@ -678,7 +687,7 @@ async fn a_retargeted_base_is_checked_before_and_after_the_put() {
     ]);
     let (forge, calls) = scripted(responses);
     let attempt = forge
-        .merge(&task_with_approval(), &target)
+        .merge(&task_with_approval(), &target, false)
         .await
         .expect("write and readback");
     assert_eq!(attempt.write, MergeWrite::Merged { commit: sha('f') });
@@ -769,7 +778,7 @@ async fn merge_gate_blocks_github_required_failure_and_allows_non_required_failu
     });
     let (forge, calls) = server(vec![Some(pull('a', false)), Some(required_failed)]);
     let attempt = forge
-        .merge(&task_with_approval(), &target)
+        .merge(&task_with_approval(), &target, false)
         .await
         .expect("observe blocked merge");
     assert_eq!(attempt.write, MergeWrite::Skipped);
@@ -810,7 +819,7 @@ async fn merge_gate_blocks_github_required_failure_and_allows_non_required_failu
         Some(pull('a', true)),
     ]);
     let attempt = forge
-        .merge(&task_with_approval(), &target)
+        .merge(&task_with_approval(), &target, false)
         .await
         .expect("merge with non-required failure");
     assert_eq!(attempt.write, MergeWrite::Merged { commit: sha('f') });
@@ -862,7 +871,7 @@ async fn fallback_merge_gate_blocks_failing_and_waits_on_pending_checks() {
         });
         let (forge, calls) = server(vec![Some(pull('a', false)), Some(response)]);
         let attempt = forge
-            .merge(&task_with_approval(), &target)
+            .merge(&task_with_approval(), &target, false)
             .await
             .expect("observe blocked fallback merge");
         assert_eq!(attempt.write, MergeWrite::Skipped);
@@ -905,7 +914,7 @@ async fn fallback_merge_gate_blocks_failing_and_waits_on_pending_checks() {
         });
         let (forge, calls) = server(vec![Some(pull('a', false)), Some(response)]);
         let attempt = forge
-            .merge(&task_with_approval(), &target)
+            .merge(&task_with_approval(), &target, false)
             .await
             .expect("observe pending fallback merge");
         assert_eq!(attempt.write, MergeWrite::Skipped);
@@ -964,7 +973,7 @@ async fn fallback_merge_gate_merges_passing_skipped_or_absent_checks_and_holds_i
             Some(pull('a', true)),
         ]);
         let attempt = forge
-            .merge(&task_with_approval(), &target)
+            .merge(&task_with_approval(), &target, false)
             .await
             .expect("merge with passing/skipped or absent checks");
         assert_eq!(attempt.write, MergeWrite::Merged { commit: sha('f') });
@@ -986,7 +995,7 @@ async fn fallback_merge_gate_merges_passing_skipped_or_absent_checks_and_holds_i
     });
     let (forge, calls) = server(vec![Some(pull('a', false)), Some(incomplete)]);
     let attempt = forge
-        .merge(&task_with_approval(), &target)
+        .merge(&task_with_approval(), &target, false)
         .await
         .expect("incomplete fallback stays unknown");
     assert_eq!(attempt.write, MergeWrite::Skipped);
@@ -1134,7 +1143,11 @@ async fn merge_checks_read_the_required_context_on_the_second_page() {
         Some(pull('a', true)),
     ]);
     let result = forge
-        .merge(&task_with_approval(), &branches().target(PR_URL).unwrap())
+        .merge(
+            &task_with_approval(),
+            &branches().target(PR_URL).unwrap(),
+            false,
+        )
         .await
         .expect("merge");
     assert!(matches!(result.observed, Ok(Forge::Merged { .. })));
@@ -1242,7 +1255,7 @@ async fn a_missing_review_decision_stops_before_another_page_or_merge_put() {
         }
         let (forge, calls) = server(pages);
         assert!(matches!(
-            forge.merge(&task, &target).await,
+            forge.merge(&task, &target, false).await,
             Err(ForgeError::Incomplete)
         ));
         if paged {
@@ -1274,7 +1287,7 @@ async fn a_base_sha_change_during_preflight_skips_the_merge_write() {
         Some(moved),
     ]);
     let attempt = forge
-        .merge(&task, &branches().target(PR_URL).unwrap())
+        .merge(&task, &branches().target(PR_URL).unwrap(), false)
         .await
         .expect("merge preflight");
     assert_eq!(attempt.write, MergeWrite::Skipped);
@@ -1319,7 +1332,10 @@ async fn a_refused_put_uses_positive_same_head_rebase_evidence_from_readback() {
         let total = responses.len();
         let (forge, calls) = scripted(responses);
         let target = branches().target(PR_URL).unwrap();
-        let attempt = forge.merge(&task_with_approval(), &target).await.unwrap();
+        let attempt = forge
+            .merge(&task_with_approval(), &target, false)
+            .await
+            .unwrap();
         assert!(
             matches!(attempt.observed, Ok(Forge::Open { pr, checks })
             if pr.head == sha(head) && checks == expected),

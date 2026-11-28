@@ -168,7 +168,10 @@ their supplied `blocked` or `error` result when they cannot deliver.
 
 Confirm the assigned branch before editing. Keep the held brief unchanged and
 preserve unrelated work. Own implementation and validation within scope. Use
-public review findings and bound instructions for revisions. Continue on the
+public review findings and bound instructions for revisions. When resumed
+because the base moved, rebase onto the current base, run the project's named
+pre-merge check when the instruction includes one, report its result in the PR
+and summary, and push the same PR branch for fresh review. Continue on the
 existing task branch and PR. Continue unfinished work in the same checkout. Ask the
 planner about a failure you cannot resolve, missing access or a scope decision. For a new PR, give the assigned head and base
 explicitly and use the supplied task-number title. Put material decisions and

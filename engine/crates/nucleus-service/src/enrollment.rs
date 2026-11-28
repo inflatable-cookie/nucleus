@@ -875,6 +875,8 @@ fn register(
             name,
             archived: false,
             repositories: vec![repository],
+            require_up_to_date_base: false,
+            pre_merge_check: None,
         },
     );
     Ok(())
