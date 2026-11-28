@@ -38,6 +38,11 @@ operator check.
 See the [controller boundary](../../../engine/crates/nucleus-service/src/web.rs)
 and [project enrollment](../../../engine/crates/nucleus-service/src/enrollment.rs).
 
+An ACP task session bound by a T3 controller stores the issuing thread alongside
+its credential digests. After proof loss or an engine restart, the session
+reauthorizes that thread by the same verification path, including from a
+scratch folder without a planner binding.
+
 A report ticket belongs to one task and run. The endpoint authenticates the
 bound instance before applying a report. A revoked or replaced run cannot report
 as current. A report ticket can read or write the bound lane of a report-only

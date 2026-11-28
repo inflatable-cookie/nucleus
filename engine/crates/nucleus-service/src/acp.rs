@@ -564,7 +564,13 @@ impl Service {
             command_credential,
             scratch_dir: Some(scratch_dir),
         };
-        write_binding(&state, &binding_path, &binding, Some(controller))?;
+        write_binding(
+            &state,
+            &binding_path,
+            &binding,
+            Some(controller),
+            scope.actor(),
+        )?;
         self.publish(task, row.version);
         Ok(MintedSession {
             session_id,
@@ -594,7 +600,7 @@ impl Service {
             {
                 binding.scratch_dir = Some(scratch_dir);
                 binding.endpoint = self.callback;
-                write_binding(&state, &binding_path, &binding, None)?;
+                write_binding(&state, &binding_path, &binding, None, None)?;
             }
             return Ok(());
         }
@@ -610,6 +616,7 @@ impl Service {
                 scratch_dir: Some(scratch_dir),
             },
             Some([0; 32]),
+            None,
         )
     }
 
@@ -664,7 +671,9 @@ impl Service {
     pub(super) async fn acp_reader(&self, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
         self.storage.database().verify().ok()?;
         let state = self.state.lock().await;
-        reader_controller(&state, task, key)
+        SessionAccess::Read
+            .authenticate(&state, task, key)
+            .map(|session| session.controller)
     }
 
     pub(super) async fn acp_credential(
@@ -672,22 +681,24 @@ impl Service {
         selector: &str,
         key: &[u8; 32],
         access: SessionAccess,
-    ) -> Option<(String, [u8; 32])> {
+    ) -> Option<(String, AcpSession)> {
         self.storage.database().verify().ok()?;
         let state = self.state.lock().await;
-        let controller = match access {
-            SessionAccess::Read => reader_controller,
-            SessionAccess::Write => writer_controller,
-        };
         if !selector.contains('#') {
-            return controller(&state, selector, key).map(|digest| (selector.into(), digest));
+            return access
+                .authenticate(&state, selector, key)
+                .map(|session| (selector.into(), session));
         }
         crate::numbers::TaskReference::parse(selector)
             .ok()?
             .candidates(&state)
             .ok()?
             .into_iter()
-            .find_map(|id| controller(&state, &id, key).map(|digest| (id, digest)))
+            .find_map(|id| {
+                access
+                    .authenticate(&state, &id, key)
+                    .map(|session| (id, session))
+            })
     }
 }
 
@@ -695,6 +706,17 @@ impl Service {
 pub(super) enum SessionAccess {
     Read,
     Write,
+}
+
+impl SessionAccess {
+    fn authenticate(self, state: &State, task: &str, key: &[u8; 32]) -> Option<AcpSession> {
+        let session = state.store.acp_session(task).ok()??;
+        let expected = match self {
+            Self::Read => session.reader,
+            Self::Write => session.writer?,
+        };
+        bool::from(expected.ct_eq(&digest(key))).then_some(session)
+    }
 }
 
 fn existing_binding<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, ServiceError> {
@@ -724,6 +746,7 @@ fn write_binding(
     path: &Path,
     binding: &Binding,
     controller: Option<[u8; 32]>,
+    controller_thread: Option<&str>,
 ) -> Result<(), ServiceError> {
     let (temporary, directory) = prepare_binding(path, binding)?;
     if let Some(controller) = controller {
@@ -734,6 +757,7 @@ fn write_binding(
                 reader: digest(&binding.credential),
                 writer: binding.command_credential.as_ref().map(digest),
                 controller,
+                controller_thread: controller_thread.map(str::to_owned),
             },
         )?;
     }
@@ -765,13 +789,9 @@ fn publish_binding(
 }
 
 pub(super) fn writer_controller(state: &State, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
-    let session = state.store.acp_session(task).ok()??;
-    bool::from(session.writer?.ct_eq(&digest(key))).then_some(session.controller)
-}
-
-fn reader_controller(state: &State, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
-    let session = state.store.acp_session(task).ok()??;
-    bool::from(session.reader.ct_eq(&digest(key))).then_some(session.controller)
+    SessionAccess::Write
+        .authenticate(state, task, key)
+        .map(|session| session.controller)
 }
 
 fn random_key() -> Result<[u8; 32], ServiceError> {

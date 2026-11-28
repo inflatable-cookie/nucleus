@@ -570,7 +570,16 @@ async fn reauthorize_controller(api: &Api, scope: &ControllerScope) -> Result<()
         .await
 }
 
-async fn controller_for_digest(api: &Api, digest: &[u8; 32]) -> Option<ControllerEntry> {
+async fn session_controller(
+    api: &Api,
+    session: &nucleus_store::AcpSession,
+) -> Option<ControllerEntry> {
+    let digest = &session.controller;
+    if let Some(thread) = &session.controller_thread {
+        let caller = ControllerEntry::t3(thread, api.t3_caller_key?);
+        return bool::from(caller.digest().ct_eq(digest)).then_some(caller);
+    }
+    // Sessions issued before the thread was stored can use the saved planner routes.
     if let Some(caller) = api
         .controllers
         .iter()
@@ -646,13 +655,14 @@ async fn authorize_task(
     } else {
         SessionAccess::Read
     };
-    let (id, digest) = api
+    let (id, session) = api
         .service
         .acp_credential(&selector, &supplied, access)
         .await
         .ok_or(ApiError::Unauthorized)?;
+    let digest = session.controller;
     let scope = if matches!(access, SessionAccess::Write) {
-        let caller = controller_for_digest(&api, &digest)
+        let caller = session_controller(&api, &session)
             .await
             .ok_or(ApiError::Unauthorized)?;
         caller.extend(&mut request);
@@ -667,7 +677,7 @@ async fn authorize_task(
         let scope = if api.service.project.is_some() || digest == [0; 32] {
             ControllerScope::default()
         } else {
-            controller_for_digest(&api, &digest)
+            session_controller(&api, &session)
                 .await
                 .ok_or(ApiError::Unauthorized)?
                 .scope

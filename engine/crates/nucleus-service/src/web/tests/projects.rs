@@ -5846,6 +5846,94 @@ async fn planner_paired_board_and_acp_sessions_reauthorize_after_stream_drop_and
     worker.abort();
 }
 
+#[tokio::test]
+async fn scratch_acp_session_reauthorizes_after_proof_loss_and_restart() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll(SCRATCH_AGENT).await;
+    // The session issuer differs from the task's origin.
+    let id = "scratch-acp";
+    registry.task("alpha-planner", id).await;
+    let (read_key, write_key) =
+        acp_keys(&registry.api, &format!("/v1/tasks/{id}/acp"), SCRATCH_AGENT).await;
+
+    let worker = spawn_enrollments(&registry.service);
+    assert_acp_reauthorized(
+        &registry.service,
+        &registry.api,
+        id,
+        &read_key,
+        &write_key,
+        json!({"hold": "Reauthorized scratch controller"}),
+    )
+    .await;
+    worker.abort();
+    let _ = worker.await;
+    assert!(
+        registry
+            .service
+            .task(id)
+            .await
+            .unwrap()
+            .task
+            .hold()
+            .is_some()
+    );
+
+    let registry = registry.reopen();
+    let worker = spawn_enrollments(&registry.service);
+    assert_acp_reauthorized(
+        &registry.service,
+        &registry.api,
+        id,
+        &read_key,
+        &write_key,
+        json!("release"),
+    )
+    .await;
+    worker.abort();
+    let _ = worker.await;
+    assert!(
+        registry
+            .service
+            .task(id)
+            .await
+            .unwrap()
+            .task
+            .hold()
+            .is_none()
+    );
+
+    {
+        let mut state = registry.service.state.lock().await;
+        assert!(state.settings.planner_route(SCRATCH_AGENT).is_none());
+        state.enrolled_planners.clear();
+    }
+    registry
+        .notices
+        .lock()
+        .unwrap()
+        .missing_threads
+        .insert(SCRATCH_AGENT.into());
+    let denied = registry
+        .inline_command(
+            SCRATCH_AGENT,
+            acp_call(
+                &registry.api,
+                Method::POST,
+                "/v1/tasks/scratch-acp/commands",
+                &write_key,
+                Some(json!("cancel")),
+            ),
+        )
+        .await;
+    assert_eq!(denied, StatusCode::FORBIDDEN);
+    assert_eq!(
+        registry.service.task(id).await.unwrap().task.phase(),
+        Phase::Queued
+    );
+}
+
 async fn reject_ticket_503_host(repo_root: &Path) -> (T3, tokio::task::JoinHandle<()>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
