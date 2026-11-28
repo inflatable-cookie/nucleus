@@ -461,11 +461,40 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
     // A disconnect after acceptance must leave the physical checkout in place.
     fixture.service.host.fixture_disconnect_shell();
     let done = fixture.service.task(TASK).await.expect("done");
+    let outcome = fixture.service.archive_done(&done).await;
+    assert!(
+        matches!(outcome, Err(ServiceError::ArchiveEvidence(ref cause)) if cause.contains("synchronize")),
+        "{outcome:?}"
+    );
+    assert!(fixture.checkout.is_dir());
+    fixture.service.host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+        "snapshotSequence":1,"projects":[{"id":HOST_PROJECT,"workspaceRoot":fixture.service.fixture().checkout}],
+        "threads":[],"archivedThreads":fixture.archived_threads(&done.task)
+    }}));
     std::fs::write(fixture.checkout.join("dirty"), "work").expect("untracked");
-    assert!(fixture.service.archive_done(&done).await.is_err());
+    let outcome = fixture.service.archive_done(&done).await;
+    assert!(
+        matches!(
+            outcome,
+            Err(ServiceError::ReportCheckout(
+                "the retained checkout contains local changes"
+            ))
+        ),
+        "{outcome:?}"
+    );
+    assert!(fixture.checkout.join("dirty").exists());
     std::fs::remove_file(fixture.checkout.join("dirty")).expect("clean fixture");
     *fixture.published.lock().expect("remote refs") = None;
-    assert!(fixture.service.archive_done(&done).await.is_err());
+    let outcome = fixture.service.archive_done(&done).await;
+    assert!(
+        matches!(
+            outcome,
+            Err(ServiceError::ReportCheckout(
+                "the source is not proved published on origin"
+            ))
+        ),
+        "{outcome:?}"
+    );
     assert!(fixture.checkout.is_dir());
     let root = &fixture.service.fixture().checkout;
     git(
@@ -493,9 +522,17 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
         );
     }
     let archive_read = "orchestration.getArchivedShellSnapshot";
-    let before = host.host_calls().get(archive_read).copied().unwrap_or(0);
-    assert!(fixture.service.archive_done(&done).await.is_err());
+    host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+        "snapshotSequence":1,"projects":[{"id":HOST_PROJECT,"workspaceRoot":fixture.service.fixture().checkout}],
+        "threads":[],"archivedThreads":[]
+    }}));
+    let outcome = fixture.service.archive_done(&done).await;
+    assert!(
+        matches!(outcome, Err(ServiceError::CheckoutRetained(ref cause)) if cause.contains("idle or gone")),
+        "{outcome:?}"
+    );
     assert!(fixture.checkout.exists());
+    let before = host.host_calls().get(archive_read).copied().unwrap_or(0);
     for status in ["running", "unknown"] {
         host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
             "snapshotSequence":1,"projects":[{"id":HOST_PROJECT,"workspaceRoot":fixture.service.fixture().checkout}],"threads":[
@@ -952,6 +989,7 @@ impl ReportFixture {
             branch: checkout.branch(),
             checkout_head: Some(&self.head),
             pr: None,
+            pr_description: None,
             discovered_skill: None,
             model: "fixture",
             shared_model: None,

@@ -414,6 +414,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
             key.as_bytes(),
             Report::Work(nucleus_core::WorkReport {
                 pull_request: pr.clone(),
+                code_changed: false,
                 summary: Some(
                     "Fixed the synthetic change.
 

@@ -211,6 +211,9 @@ pub struct DecisionAnswer {
     pub input: DecisionAnswerInput,
     pub author: String,
     pub answered_at_ms: u64,
+    /// The operator's verbatim chat message when the asking planner records it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relayed: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

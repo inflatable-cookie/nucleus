@@ -116,6 +116,11 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   and repeat `--option` for each choice. Keep the context, consequences and
   recommendation with the question. `decision.list --pending` reads open
   decisions. Inbox requests and operator decisions belong to the operator.
+  If Tom answers a decision you raised in chat, use
+  `decision.answer PROJECT ID OPTION --relayed "<his exact words>"`.
+  Record only what he said. For a gate decision on a task you dispatched,
+  record the exact option he chose. Ordinary decisions also accept
+  `--answer TEXT` in place of `OPTION`.
   Any verified thread can send an informational notice with `tell PROJECT TEXT`
   or `tell all TEXT`. Run `nucleus planner.claim` from the project's checkout
   to receive its messages. Replacing a claim notifies the previous planner.
@@ -171,7 +176,10 @@ review evidence in the PR without exposing credentials or local paths.
 
 Observe the remote branch or PR before retrying an uncertain write. Recheck the
 clean checkout and the real open non-draft PR at the exact pushed head before
-reporting `work`. If sent a read-only identity check, report the observed identity
+reporting `work`. If a resume adds proof or corrects the PR description at the
+same head, report `work` as usual. Say that the head is unchanged and name the
+evidence or correction in the summary.
+If sent a read-only identity check, report the observed identity
 from that branch and PR. Push finished authorized work before reporting a blocker
 when possible. Nucleus owns review routing, merge and cleanup.
 
@@ -187,7 +195,8 @@ any author model you share. Never read the worker's private transcript. Review
 the assigned exact head using the pinned checkout, public PR and comments,
 author evidence and recorded earlier verdicts.
 Read the named inputs yourself, inspect the diff and run the covering checks.
-On re-review, verify each claimed fix and reconsider affected subjects. Required
+On re-review, read the current PR description from the forge, even if the head
+is unchanged. Verify each claimed fix and reconsider affected subjects. Required
 proof must be sufficient for approval. Treat live-store counts as planner
 evidence and name any remaining planner check.
 

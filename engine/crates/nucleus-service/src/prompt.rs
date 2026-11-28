@@ -144,6 +144,7 @@ pub(super) struct Prompt<'a> {
     pub(super) branch: &'a str,
     pub(super) checkout_head: Option<&'a Head>,
     pub(super) pr: Option<&'a PullRequest>,
+    pub(super) pr_description: Option<&'a str>,
     pub(super) discovered_skill: Option<&'a Path>,
     pub(super) model: &'a str,
     pub(super) shared_model: Option<&'a str>,
@@ -155,6 +156,14 @@ pub(super) struct Prompt<'a> {
 
 impl Prompt<'_> {
     pub(super) fn render(&self) -> Assignment {
+        let assignment = self.render_sections(self.pr_description);
+        if self.pr_description.is_some() && assignment.too_large().is_some() {
+            return self.render_sections(None);
+        }
+        assignment
+    }
+
+    fn render_sections(&self, pr_description: Option<&str>) -> Assignment {
         let role = match self.role {
             Role::Worker => "Worker",
             Role::Reviewer => "Reviewer",
@@ -163,7 +172,7 @@ impl Prompt<'_> {
         let mut sections = BTreeMap::from([("identity", text.encode_utf16().count())]);
         let task = &self.row.task;
         section(&mut sections, "history", &mut text, |text| {
-            self.write_history(text);
+            self.write_history(text, pr_description);
         });
         section(&mut sections, "lane", &mut text, |text| {
             self.write_lane_context(text);
@@ -237,7 +246,7 @@ impl Prompt<'_> {
         text
     }
 
-    fn write_history(&self, text: &mut String) {
+    fn write_history(&self, text: &mut String, pr_description: Option<&str>) {
         let task = &self.row.task;
         if let Some(original) = task.threads().missing_report_from() {
             let _ = writeln!(
@@ -262,6 +271,19 @@ impl Prompt<'_> {
             );
         }
         if self.role == Role::Reviewer {
+            if let Some(summary) = task.same_head_revision_summary() {
+                let _ = writeln!(
+                    text,
+                    "\nWorker report at the same head\n----- BEGIN WORK REPORT -----\n{summary}\n----- END WORK REPORT -----"
+                );
+            }
+            if let Some(description) = pr_description {
+                let _ = writeln!(
+                    text,
+                    "\nPR description at assignment (review evidence)\n----- BEGIN PR DESCRIPTION -----\n{description}\n----- END PR DESCRIPTION -----"
+                );
+            }
+            text.push_str("Read the current PR description from the forge, including when the PR head is unchanged.\n");
             if let Some(message) = self.shared_model {
                 let _ = writeln!(text, "{message}");
             }
@@ -399,6 +421,9 @@ impl Prompt<'_> {
         }
         match self.role {
             Role::Worker => {
+                if self.pr.is_some() {
+                    text.push_str("For added proof or a PR description correction at the same head, report work as usual and say in the summary that the head is unchanged and what you added or corrected.\n");
+                }
                 let example = serde_json::json!({"work": {
                     "url": self.pr.map_or("https://github.com/OWNER/REPO/pull/NUMBER", |pr| &pr.url),
                     "head": "FULL_SHA",
@@ -550,6 +575,7 @@ mod tests {
             branch: "ns-test",
             checkout_head: None,
             pr: None,
+            pr_description: None,
             discovered_skill: None,
             model: "fixture",
             shared_model: None,

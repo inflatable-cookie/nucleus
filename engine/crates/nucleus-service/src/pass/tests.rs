@@ -1,6 +1,7 @@
 mod merge_cases;
 mod provider_helpers;
 mod retirement;
+mod revisions;
 
 use std::sync::{
     Arc,
