@@ -1724,11 +1724,7 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
     pass.write_control(permit.unarchive().expect("unarchive"))
         .await
         .expect("unarchived");
-    client
-        .rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":16,
-            "thread":restored_row
-        }));
+    publish_row(&client, 16, &restored_row);
     assert!(
         matches!(
             pass.authorize_send(task.run().expect("run")).await,
@@ -1737,11 +1733,7 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
         "a continuation must wait for the operator's snooze"
     );
     // The shell change which ends the snooze also retires the snoozed read.
-    client
-        .rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,
-            "thread":settled_row
-        }));
+    publish_row(&client, 17, &settled_row);
     let permit = pass
         .authorize_send(task.run().expect("run"))
         .await
@@ -1761,6 +1753,12 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
     assert_eq!(message["commandId"], instance);
     assert_eq!(message["threadId"], THREAD);
     assert_eq!(message["messageId"], format!("{instance}-message"));
+}
+
+fn publish_row(client: &T3, sequence: u64, row: &Value) {
+    client
+        .rpc
+        .fixture_shell(&json!({"kind":"thread.updated","sequence":sequence,"thread":row}));
 }
 
 fn continuation_profile() -> RoleProfile {
