@@ -411,7 +411,7 @@ impl Service {
         .await
     }
 
-    fn prepare_terminal_archive(
+    pub(super) fn prepare_terminal_archive(
         &self,
         task: &Task,
         route: &ProjectRoute,

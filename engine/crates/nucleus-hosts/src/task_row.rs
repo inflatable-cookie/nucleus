@@ -339,11 +339,14 @@ impl T3 {
         })
     }
 
-    /// Last delivered user message from the synchronized shell, without a native read.
+    /// Last delivered user message or snooze wake from the synchronized shell, without a native read.
     #[must_use]
     pub fn row_message_at(&self, thread: &str) -> Option<u64> {
         let row = self.rpc.thread_row(thread)?;
-        timestamp_ms(row["latestUserMessageAt"].as_str()?).ok()
+        ["latestUserMessageAt", "lastSnoozeWakeAt"]
+            .into_iter()
+            .filter_map(|key| native_time(&row, key))
+            .max()
     }
 
     #[cfg(feature = "loopback-fixture")]
