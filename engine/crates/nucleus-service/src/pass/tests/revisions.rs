@@ -271,6 +271,15 @@ async fn same_head_proof_returns_to_review_with_the_worker_summary() {
 }
 
 #[tokio::test]
+async fn same_head_code_coverage_results_return_to_review() {
+    Box::pin(revision(
+        "Head unchanged. Added code coverage results for the scoped tests.",
+        Revision::Proof,
+    ))
+    .await;
+}
+
+#[tokio::test]
 async fn same_head_description_fix_returns_to_review_with_the_current_body() {
     Box::pin(revision(
         "Head unchanged. Updated the PR description to explain the code fix.",
@@ -292,6 +301,15 @@ async fn new_head_revision_returns_to_review_at_the_new_head() {
 async fn same_head_code_change_claim_asks_the_planner() {
     Box::pin(revision(
         "Published the requested code fix.",
+        Revision::Contradiction,
+    ))
+    .await;
+}
+
+#[tokio::test]
+async fn same_head_claim_in_present_perfect_asks_the_planner() {
+    Box::pin(revision(
+        "I have fixed the parser.",
         Revision::Contradiction,
     ))
     .await;

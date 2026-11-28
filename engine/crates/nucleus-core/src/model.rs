@@ -402,19 +402,37 @@ impl WorkReport {
                 summary
                     .to_ascii_lowercase()
                     .split(['.', ';', '\n', '!', '?'])
-                    .flat_map(|sentence| sentence.split(" and "))
+                    .flat_map(|sentence| {
+                        sentence
+                            .split(" and ")
+                            .enumerate()
+                            .filter_map(|(index, clause)| {
+                                // A bare "updated code" after "and" can modify the evidence.
+                                let mut words = clause.split_whitespace();
+                                let subject = words.next();
+                                (index == 0
+                                    || matches!(subject, Some("i" | "we" | "i've" | "we've"))
+                                    || matches!(words.next(), Some("a" | "an" | "the")))
+                                .then_some(clause)
+                            })
+                    })
                     .any(claims_code_change)
             })
     }
 }
 
-// Require an affirmative action and an explicit source object. Evidence
-// summaries often mention the code fix after naming what the worker added.
+// Require an affirmative action on source. A source word can also qualify
+// evidence, as in "code coverage results" or "parser test output".
 fn claims_code_change(statement: &str) -> bool {
     let mut words = statement
         .split_whitespace()
         .map(|word| word.trim_matches(|character: char| !character.is_ascii_alphanumeric()));
-    let first = words.find(|word| !matches!(*word, "" | "i" | "we" | "the"));
+    let first = words.find(|word| {
+        !matches!(
+            *word,
+            "" | "i" | "we" | "i've" | "we've" | "the" | "have" | "has" | "had" | "now"
+        )
+    });
     let source = |word| {
         matches!(
             word,
@@ -456,7 +474,13 @@ fn claims_code_change(statement: &str) -> bool {
     let Some(first) = first else { return false };
     if source(first) {
         return words
-            .find(|word| !matches!(*word, "changes" | "was" | "were" | "has" | "have" | "been"))
+            .find(|word| {
+                !source(word)
+                    && !matches!(
+                        *word,
+                        "fix" | "changes" | "was" | "were" | "has" | "have" | "been"
+                    )
+            })
             .is_some_and(changed);
     }
     if !changed(first) {
@@ -465,29 +489,36 @@ fn claims_code_change(statement: &str) -> bool {
     let object = words.take_while(|word| {
         !matches!(
             *word,
-            "about" | "after" | "by" | "for" | "from" | "in" | "of" | "to" | "with" | "without"
+            "about"
+                | "after"
+                | "by"
+                | "covering"
+                | "explaining"
+                | "for"
+                | "from"
+                | "in"
+                | "including"
+                | "of"
+                | "showing"
+                | "that"
+                | "to"
+                | "where"
+                | "which"
+                | "with"
+                | "without"
+                | "verifying"
         )
     });
-    let mut claims_change = false;
+    let mut modifier = "";
+    let mut noun = "";
     for word in object {
-        if matches!(
-            word,
-            "body"
-                | "description"
-                | "documentation"
-                | "evidence"
-                | "example"
-                | "examples"
-                | "no"
-                | "notes"
-                | "proof"
-                | "summary"
-        ) {
+        if matches!(word, "no" | "not" | "unchanged" | "unmodified") {
             return false;
         }
-        claims_change |= source(word);
+        modifier = noun;
+        noun = word;
     }
-    claims_change
+    source(noun) || (matches!(noun, "fix" | "change" | "changes") && source(modifier))
 }
 
 /// An exact version and digest of a durable lane document.
@@ -1292,9 +1323,20 @@ mod work_report_tests {
             ("Published the requested code fix.", true),
             ("We pushed a new commit.", true),
             ("Fixed the parser bug.", true),
+            ("I have fixed the parser.", true),
+            ("I've now changed the code.", true),
             ("The implementation was updated.", true),
+            ("The code fix has been published.", true),
             ("Added proof and changed the code.", true),
+            ("Added code coverage results and fixed the parser.", true),
             ("Published proof of the requested code fix.", false),
+            (
+                "Head unchanged. Added code coverage results for the scoped tests.",
+                false,
+            ),
+            ("Added parser test output.", false),
+            ("Added evidence from the original and updated code.", false),
+            ("Added proof showing the changed code.", false),
             (
                 "Updated the PR description to explain the code change.",
                 false,
@@ -1302,6 +1344,8 @@ mod work_report_tests {
             ("Added test output for the code change.", false),
             ("Updated the code example in the PR description.", false),
             ("The code was not changed.", false),
+            ("I have not fixed the parser.", false),
+            ("Published the unchanged code.", false),
         ] {
             let report: WorkReport = serde_json::from_value(serde_json::json!({
                 "url": "https://github.com/example/fixture/pull/1",
