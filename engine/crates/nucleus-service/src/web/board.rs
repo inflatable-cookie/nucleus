@@ -13,9 +13,9 @@ use std::{
 use axum::{
     Extension, Json, Router,
     body::Bytes,
-    extract::{Request, State},
+    extract::{Request, State, rejection::JsonRejection},
     http::{
-        HeaderMap, HeaderValue, StatusCode,
+        HeaderMap, HeaderName, HeaderValue, StatusCode,
         header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, SET_COOKIE},
     },
     middleware::{self, Next},
@@ -27,8 +27,10 @@ use axum::{
 };
 use futures_util::{Stream, StreamExt, stream};
 use nucleus_core::Authority;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use tokio::{
     sync::watch,
     time::{Instant, sleep_until},
@@ -44,6 +46,9 @@ use sessions::{IDLE, SessionStore};
 const COOKIE_NAME: &str = "nucleus_engine_board";
 const COOKIE_SCOPE: &str = "/api/engine";
 const LINK_TTL: Duration = Duration::from_mins(2);
+const CODE_TTL: Duration = Duration::from_mins(5);
+const CODE_ALPHABET: &[u8; 32] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const MAX_CODE_ATTEMPTS: u8 = 5;
 const MAX_GRANTS: usize = 64;
 const PAGE_POLICY: HeaderValue = HeaderValue::from_static(
     "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -76,6 +81,7 @@ pub fn router_with_board_and_t3_callers(
         app: fs::read(assets.join("app.js"))?.into(),
         grants: Arc::new(Mutex::new(Grants {
             links: HashMap::new(),
+            code: None,
             sessions: SessionStore::open(service.storage.database().clone(), now_ms())?,
         })),
         revocations: watch::channel(()).0,
@@ -97,7 +103,16 @@ pub(crate) struct Board {
 
 struct Grants {
     links: HashMap<[u8; 32], Grant>,
+    code: Option<PairCode>,
     sessions: SessionStore,
+}
+
+struct PairCode {
+    digest: [u8; 32],
+    authority: Authority,
+    scope: ControllerScope,
+    expires: Instant,
+    attempts: u8,
 }
 
 #[derive(Clone)]
@@ -116,6 +131,13 @@ pub(super) struct BrowserSession {
 }
 
 impl Board {
+    #[cfg(test)]
+    pub(crate) fn expire_pair_code_for_test(&self) {
+        if let Some(code) = self.grants.lock().expect("board grants").code.as_mut() {
+            code.expires = Instant::now();
+        }
+    }
+
     pub(crate) fn inbox_link(&self, endpoint: SocketAddr) -> Option<String> {
         self.link(
             endpoint,
@@ -154,6 +176,7 @@ impl Board {
     pub(super) fn routes(self, api: &Api) -> Router<Api> {
         let board = Router::new()
             .route("/api/engine/session", get(session))
+            .route("/api/engine/pair/code", post(create_pair_code))
             .route("/api/engine/theme", get(theme))
             .route("/api/engine/profiles/catalog", get(profile_catalog))
             .route("/api/engine/profiles/usage", get(profile_usage))
@@ -197,6 +220,7 @@ impl Board {
             ));
         board
             .route("/api/engine/pair", post(pair))
+            .route("/api/engine/pair/redeem", post(redeem_pair_code))
             .route(
                 "/v1/board/link",
                 post(issue).route_layer(middleware::from_fn_with_state(api.clone(), authorize)),
@@ -308,13 +332,83 @@ async fn issue(
     })))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PairCodeInput {
+    code: String,
+}
+
+async fn create_pair_code(
+    Extension(board): Extension<Board>,
+    Extension(authority): Extension<Authority>,
+    Extension(scope): Extension<ControllerScope>,
+) -> Result<Json<Value>, ApiError> {
+    let mut raw = [0; 8];
+    getrandom::fill(&mut raw).map_err(|_| ApiError::BoardUnavailable)?;
+    let chars = raw.map(|byte| CODE_ALPHABET[usize::from(byte & 31)]);
+    let code = format!(
+        "{}-{}",
+        std::str::from_utf8(&chars[..4]).expect("ASCII alphabet"),
+        std::str::from_utf8(&chars[4..]).expect("ASCII alphabet"),
+    );
+    let expires_at_ms = now_ms() + u64::try_from(CODE_TTL.as_millis()).unwrap_or(u64::MAX);
+    let mut grants = board
+        .grants
+        .lock()
+        .map_err(|_| ApiError::BoardUnavailable)?;
+    grants.code = Some(PairCode {
+        digest: code_digest(&chars),
+        authority,
+        scope,
+        expires: Instant::now() + CODE_TTL,
+        attempts: 0,
+    });
+    Ok(Json(json!({ "code": code, "expiresAtMs": expires_at_ms })))
+}
+
+async fn redeem_pair_code(
+    Extension(board): Extension<Board>,
+    headers: HeaderMap,
+    input: Result<Json<PairCodeInput>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+    browser_request(&headers)?;
+    let input = super::body(input)?;
+    let normalized: Vec<u8> = input
+        .code
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace() && *byte != b'-')
+        .map(|byte| byte.to_ascii_uppercase())
+        .collect();
+    let supplied = code_digest(&normalized);
+    let now = Instant::now();
+    let mut grants = board
+        .grants
+        .lock()
+        .map_err(|_| ApiError::BoardUnavailable)?;
+    let Some(entry) = grants.code.as_mut() else {
+        return Err(ApiError::Unauthorized);
+    };
+    if entry.expires <= now {
+        grants.code = None;
+        return Err(ApiError::Unauthorized);
+    }
+    if !bool::from(entry.digest.ct_eq(&supplied)) {
+        entry.attempts += 1;
+        if entry.attempts >= MAX_CODE_ATTEMPTS {
+            grants.code = None;
+        }
+        return Err(ApiError::Unauthorized);
+    }
+    let entry = grants.code.take().expect("checked open pair code");
+    issue_session(&board, &mut grants, entry.authority, entry.scope)
+}
+
 async fn pair(
     Extension(board): Extension<Board>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     browser_request(&headers)?;
     let link = credential(&headers)?;
-    let session = random_key()?;
     let now = Instant::now();
     let mut grants = board
         .grants
@@ -325,9 +419,19 @@ async fn pair(
         .remove(&link)
         .filter(|grant| grant.expires > now)
         .ok_or(ApiError::Unauthorized)?;
+    issue_session(&board, &mut grants, grant.authority, grant.scope)
+}
+
+fn issue_session(
+    board: &Board,
+    grants: &mut Grants,
+    authority: Authority,
+    scope: ControllerScope,
+) -> Result<(StatusCode, [(HeaderName, HeaderValue); 1]), ApiError> {
+    let session = random_key()?;
     let evicted = grants
         .sessions
-        .insert(&session, grant.authority, grant.scope, now_ms(), MAX_GRANTS)
+        .insert(&session, authority, scope, now_ms(), MAX_GRANTS)
         .map_err(|_| ApiError::BoardUnavailable)?;
     if evicted > 0 {
         // An evicted session must not keep its open event stream. Streams that
@@ -338,6 +442,14 @@ async fn pair(
         StatusCode::NO_CONTENT,
         [(SET_COOKIE, session_cookie(&session)?)],
     ))
+}
+
+fn code_digest(normalized: &[u8]) -> [u8; 32] {
+    Sha256::new()
+        .chain_update(b"board pair code")
+        .chain_update(normalized)
+        .finalize()
+        .into()
 }
 
 fn session_cookie(session: &[u8; 32]) -> Result<HeaderValue, ApiError> {
@@ -366,7 +478,7 @@ async fn revoke(
         .sessions
         .revoke(now_ms())
         .map_err(|_| ApiError::BoardUnavailable)?;
-    let links = grants.links.len();
+    let links = grants.links.len() + usize::from(grants.code.take().is_some());
     grants.links.clear();
     board.revocations.send_replace(());
     Ok(Json(json!({"revoked": revoked + links})))

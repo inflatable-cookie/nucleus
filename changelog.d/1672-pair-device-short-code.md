@@ -1,0 +1,1 @@
+Added short-code device pairing to the web board: Settings now includes a **Devices** tab to generate a single-use 5-minute pairing code, and an unauthenticated board shows a code entry form under the expired-link notice to pair another browser or device into an ordinary board session.

@@ -11,6 +11,7 @@ export const settingsViews = [
   // nucleus#1526: every work-volume path is a setting; Storage is its own page, not a Backups section.
   { id: "storage", label: "Storage", short: "Storage" },
   { id: "github-accounts", label: "GitHub", short: "GitHub" },
+  { id: "devices", label: "Devices", short: "Devices" },
   { id: "telemetry", label: "Telemetry", short: "Telemetry" },
 ] as const;
 
