@@ -590,7 +590,7 @@ impl Observation {
                 "The base moved at reviewed head {head}. Fetch origin/{base}, rebase the task branch onto it, run the relevant checks, and push the same PR branch with --force-with-lease."
             ),
             CheckState::FailedRequired(names) => format!(
-                "GitHub required checks failed at {head}: {names:?}. Inspect those failures, fix the task branch, run the relevant checks, and push the new head to the same PR branch."
+                "Checks that gate the merge failed at {head}: {names:?}. Inspect those failures, fix the task branch, run the relevant checks, and push the new head to the same PR branch."
             ),
             _ => return None,
         };
