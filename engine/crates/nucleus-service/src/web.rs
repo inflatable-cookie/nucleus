@@ -53,7 +53,7 @@ mod settings;
 mod task_list;
 pub(crate) use board::Board;
 pub use board::{router_with_board, router_with_board_and_t3_callers};
-pub(crate) use settings::{CachedHost, ProjectMatchError, RuntimeSettings};
+pub(crate) use settings::{CachedHost, RuntimeSettings};
 use task_list::{ListCard, list};
 
 const DEFAULT_BODY_LIMIT: usize = 64 * 1024;
@@ -135,35 +135,21 @@ impl ControllerScope {
         self.actor.as_deref()
     }
 
-    pub(crate) fn require(
-        &self,
-        state: &EngineState,
-        project_id: &str,
-    ) -> Result<(), ServiceError> {
-        if self
-            .actor()
-            .is_none_or(|actor| state.live_planner_project(actor) == Some(project_id))
-        {
-            Ok(())
-        } else {
-            Err(ServiceError::ControllerProject)
-        }
-    }
-
     pub(crate) fn task(
         &self,
         state: &EngineState,
         identity: &Identity,
     ) -> Result<(), ServiceError> {
-        if self.actor.is_some() {
-            let (id, _, repo) = state
+        if let Some(actor) = self.actor() {
+            if !state.verified_controller(actor) {
+                return Err(ServiceError::PlannerAuthorityRefused);
+            }
+            let (id, _, _) = state
                 .settings
                 .project_for_origin(&identity.repository)
-                .ok_or(ServiceError::ControllerProject)?;
-            self.require(state, id)?;
-            if repo.base != identity.base {
-                return Err(ServiceError::ControllerProject);
-            }
+                .filter(|(_, _, repo)| repo.base == identity.base)
+                .ok_or(ServiceError::Project)?;
+            state.settings.require_active_project(id)?;
         }
         Ok(())
     }
@@ -534,7 +520,7 @@ async fn authorize(
     let supplied = credential(request.headers())?;
     let caller =
         request_controller(&api, &supplied, request.headers()).ok_or(ApiError::Unauthorized)?;
-    reauthorize_known(&api, &caller.scope).await?;
+    reauthorize_controller(&api, &caller.scope).await?;
     caller.extend(&mut request);
     Ok(next.run(request).await)
 }
@@ -571,29 +557,28 @@ fn request_controller(
     Some(ControllerEntry::t3(actor, key))
 }
 
-async fn reauthorize_known(api: &Api, scope: &ControllerScope) -> Result<(), ServiceError> {
+async fn reauthorize_controller(api: &Api, scope: &ControllerScope) -> Result<(), ServiceError> {
     let Some(actor) = scope.actor() else {
         return Ok(());
     };
-    {
-        let state = api.service.state.lock().await;
-        if state.live_planner_project(actor).is_some()
-            || state.settings.planner_route(actor).is_none()
-        {
-            return Ok(());
-        }
-    }
     scope
         .with_enrollment(|| async {
             let mut state = api.service.state.lock().await;
-            api.service
-                .planning_planner_project(&mut state, actor, None)
-                .map(|_| ())
+            api.service.require_controller(&mut state, actor)
         })
         .await
 }
 
-async fn controller_for_digest(api: &Api, digest: &[u8; 32]) -> Option<ControllerEntry> {
+async fn session_controller(
+    api: &Api,
+    session: &nucleus_store::AcpSession,
+) -> Option<ControllerEntry> {
+    let digest = &session.controller;
+    if let Some(thread) = &session.controller_thread {
+        let caller = ControllerEntry::t3(thread, api.t3_caller_key?);
+        return bool::from(caller.digest().ct_eq(digest)).then_some(caller);
+    }
+    // Sessions issued before the thread was stored can use the saved planner routes.
     if let Some(caller) = api
         .controllers
         .iter()
@@ -604,13 +589,18 @@ async fn controller_for_digest(api: &Api, digest: &[u8; 32]) -> Option<Controlle
     let key = api.t3_caller_key?;
     let state = api.service.state.lock().await;
     state
-        .settings
-        .projects
-        .as_ref()?
-        .projects
-        .values()
-        .flat_map(|project| &project.repositories)
-        .flat_map(|repo| repo.planner_threads.iter().map(String::as_str))
+        .enrolled_planners
+        .keys()
+        .map(String::as_str)
+        .chain(
+            state
+                .settings
+                .projects
+                .iter()
+                .flat_map(|registry| registry.projects.values())
+                .flat_map(|project| &project.repositories)
+                .flat_map(|repo| repo.planner_threads.iter().map(String::as_str)),
+        )
         .map(|actor| ControllerEntry::t3(actor, key))
         .find(|caller| bool::from(caller.digest().ct_eq(digest)))
 }
@@ -655,7 +645,7 @@ async fn authorize_task(
 ) -> Result<Response, ApiError> {
     let supplied = credential(request.headers())?;
     if let Some(caller) = request_controller(&api, &supplied, request.headers()) {
-        reauthorize_known(&api, &caller.scope).await?;
+        reauthorize_controller(&api, &caller.scope).await?;
         caller.extend(&mut request);
         return Ok(next.run(request).await);
     }
@@ -664,13 +654,14 @@ async fn authorize_task(
     } else {
         SessionAccess::Read
     };
-    let (id, digest) = api
+    let (id, session) = api
         .service
         .acp_credential(&selector, &supplied, access)
         .await
         .ok_or(ApiError::Unauthorized)?;
+    let digest = session.controller;
     let scope = if matches!(access, SessionAccess::Write) {
-        let caller = controller_for_digest(&api, &digest)
+        let caller = session_controller(&api, &session)
             .await
             .ok_or(ApiError::Unauthorized)?;
         caller.extend(&mut request);
@@ -681,11 +672,11 @@ async fn authorize_task(
         caller.scope
     } else {
         // Pilot readers are task-scoped independently of the current
-        // controller roster. Registry planner readers also carry project scope.
+        // controller roster. Registry readers also prove the issuing controller.
         let scope = if api.service.project.is_some() || digest == [0; 32] {
             ControllerScope::default()
         } else {
-            controller_for_digest(&api, &digest)
+            session_controller(&api, &session)
                 .await
                 .ok_or(ApiError::Unauthorized)?
                 .scope
@@ -697,7 +688,7 @@ async fn authorize_task(
         });
         scope
     };
-    reauthorize_known(&api, &scope).await?;
+    reauthorize_controller(&api, &scope).await?;
     if selector.contains('#') {
         // A task session proves its bound ID. Resolve the selector in its
         // controller's scope before handing that ID to the route.
@@ -1724,6 +1715,7 @@ fn service_error_status(error: &ServiceError) -> StatusCode {
             | nucleus_store::StoreError::DuplicateDecisionOptionLabel,
         )
         | ServiceError::Project
+        | ServiceError::ProjectRequired
         | ServiceError::UnboundCheckout { planner: false, .. }
         | ServiceError::Settings(
             nucleus_store::StorageError::InvalidSettings(_)
@@ -1735,9 +1727,7 @@ fn service_error_status(error: &ServiceError) -> StatusCode {
         ) => StatusCode::BAD_REQUEST,
         ServiceError::QuestionPlanner
         | ServiceError::AuthorDeclarationOperator
-        | ServiceError::TellPlannerRequired
         | ServiceError::WatchAgentRequired
-        | ServiceError::ControllerProject
         | ServiceError::UnboundCheckout { planner: true, .. }
         | ServiceError::PlannerEnrollmentRefused(_)
         | ServiceError::PlannerAuthorityRefused

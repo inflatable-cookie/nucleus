@@ -109,21 +109,15 @@ impl Service {
         scope: &ControllerScope,
     ) -> Result<(StateGuard<'_>, String), ServiceError> {
         self.storage.database().verify()?;
-        scope
-            .with_enrollment(|| async {
-                let mut state = self.state.lock().await;
-                let project = if let Some(actor) = scope.actor() {
-                    self.planning_planner_project(&mut state, actor, selector)?
-                } else {
-                    let selector = selector.ok_or(ServiceError::Project)?;
-                    state
-                        .settings
-                        .resolve_planning_project(self.project.as_ref(), selector)?
-                        .to_owned()
-                };
-                Ok((state, project))
-            })
-            .await
+        let state = self.state.lock().await;
+        if scope
+            .actor()
+            .is_some_and(|actor| !state.verified_controller(actor))
+        {
+            return Err(ServiceError::PlannerAuthorityRefused);
+        }
+        let project = self.planning_project(&state, scope, selector)?.to_owned();
+        Ok((state, project))
     }
 
     async fn admission_route(
@@ -132,14 +126,10 @@ impl Service {
         project: Option<&str>,
         repository: Option<&str>,
     ) -> Result<(RwLockReadGuard<'_, ()>, StateGuard<'_>, PlanningRepository), ServiceError> {
-        scope
-            .with_enrollment(|| async {
-                let projects = self.project_writes.read().await;
-                let mut state = self.state.lock().await;
-                let route = self.planning_repository(&mut state, scope, project, repository)?;
-                Ok((projects, state, route))
-            })
-            .await
+        let projects = self.project_writes.read().await;
+        let mut state = self.state.lock().await;
+        let route = self.planning_repository(&mut state, scope, project, repository)?;
+        Ok((projects, state, route))
     }
 
     pub(crate) async fn add_planned_task(

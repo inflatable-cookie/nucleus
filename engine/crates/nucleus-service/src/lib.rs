@@ -113,8 +113,8 @@ pub enum ServiceError {
     QueuePriorityUnavailable,
     #[error("The brief changed. Reopen Amend to edit the latest version.")]
     BriefConflict,
-    #[error("the controller cannot access this project")]
-    ControllerProject,
+    #[error("name a project to run this command, using its ID, name or repository")]
+    ProjectRequired,
     #[error("Nucleus is verifying this T3 planner and repository. Retry shortly.")]
     PlannerEnrollmentPending(watch::Receiver<()>),
     #[error("{0}")]
@@ -157,8 +157,6 @@ pub enum ServiceError {
     TellInput,
     #[error("This reply route is unavailable. Nothing was sent.")]
     TellReply,
-    #[error("tell requires a verified planner binding with a sending project")]
-    TellPlannerRequired,
     #[error("watching a task requires a verified planner thread or active run ticket")]
     WatchAgentRequired,
     #[error("no project named {0}. Use a registered project ID, name or repository.")]
