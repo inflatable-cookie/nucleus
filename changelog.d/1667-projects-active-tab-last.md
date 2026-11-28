@@ -1,0 +1,1 @@
+- Projects overview: each column's tabs read Leads, Papercuts, Queue, Active. Active is still the default.
