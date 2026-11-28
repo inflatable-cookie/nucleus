@@ -24,7 +24,6 @@ use longhorn_storage_layout::{
     StorageIdentity, StorageLayoutOverrides, StorageLayoutRequest, StorageProfile, TargetPlatform,
     native_platform_directory_facts, resolve_storage_layout,
 };
-use nucleus_core::profiles::Slots;
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -1010,9 +1009,16 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
         // Later versions follow one step at a time.
         let next = SchemaVersion::new(from.get() + 1)
             .map_err(|_| DomainIssue::new("migration", "unknown settings version"))?;
-        if S::FILE == DispatchSettings::FILE && from.get() == 2 {
-            split_global_slots(&mut value)?;
-            retired_keys.borrow_mut().insert("globalSlots");
+        if S::FILE == DispatchSettings::FILE && matches!(from.get(), 2 | 3) {
+            if from.get() == 2 {
+                split_global_slots(&mut value)?;
+                retired_keys.borrow_mut().insert("globalSlots");
+            } else {
+                combine_weight_slots(&mut value)?;
+                retired_keys
+                    .borrow_mut()
+                    .extend(["normalSlots", "lightSlots"]);
+            }
             return Ok(Some(MigrationStep {
                 schema_version: next,
                 value,
@@ -1094,15 +1100,33 @@ fn split_global_slots(value: &mut Value) -> Result<(), DomainIssue> {
         .and_then(Value::as_u64)
         .and_then(|total| u32::try_from(total).ok())
         .ok_or_else(invalid)?;
-    let slots = Slots::split(total);
+    let heavy = total.min(5);
+    let light = (total - heavy).min(5);
     for (key, count) in [
-        ("heavySlots", slots.heavy),
-        ("normalSlots", slots.normal),
-        ("lightSlots", slots.light),
+        ("heavySlots", heavy),
+        ("normalSlots", total - heavy - light),
+        ("lightSlots", light),
     ] {
         if fields.insert(key.into(), count.into()).is_some() {
             return Err(invalid());
         }
+    }
+    Ok(())
+}
+
+fn combine_weight_slots(value: &mut Value) -> Result<(), DomainIssue> {
+    let invalid = || DomainIssue::new("dispatch", "the stored slot counts are not usable");
+    let heavy = value["heavySlots"].as_u64().ok_or_else(invalid)?;
+    let fields = value.as_object_mut().ok_or_else(invalid)?;
+    let total = ["normalSlots", "lightSlots"]
+        .into_iter()
+        .try_fold(heavy, |total, key| {
+            total.checked_add(fields.remove(key)?.as_u64()?)
+        })
+        .and_then(|total| u32::try_from(total).ok())
+        .ok_or_else(invalid)?;
+    if fields.insert("totalSlots".into(), total.into()).is_some() {
+        return Err(invalid());
     }
     Ok(())
 }
@@ -1138,7 +1162,7 @@ mod tests {
 
         let dispatch = json!({
             "usage": "high", "usageUntilMs": 1_800_000_000_000_u64,
-            "heavySlots": 3, "normalSlots": 0, "lightSlots": 0,
+            "heavySlots": 3, "totalSlots": 3,
             "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8, "beta": 0},
             "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused",
             "plannerModel": {"provider": "claude", "model": "claude-opus-5-5", "effort": "high"}
@@ -1307,54 +1331,79 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_upgrade_splits_the_global_slot_count_by_weight_once() {
+    fn dispatch_upgrade_preserves_total_and_heavy_slots_once() {
         use serde_json::json;
 
-        for (global, heavy, normal, light) in [
-            (18, 5, 8, 5),
-            (32, 5, 22, 5),
-            (11, 5, 1, 5),
-            (10, 5, 0, 5),
-            (7, 5, 0, 2),
-            (5, 5, 0, 0),
-            (1, 1, 0, 0),
+        for (version, stored_slots, heavy, total) in [
+            (2, json!({"globalSlots": 32}), 5, 32),
+            (2, json!({"globalSlots": 1}), 1, 1),
+            (
+                3,
+                json!({"heavySlots": 6, "normalSlots": 13, "lightSlots": 0}),
+                6,
+                19,
+            ),
+            (
+                3,
+                json!({"heavySlots": 5, "normalSlots": 8, "lightSlots": 5}),
+                5,
+                18,
+            ),
+            (
+                3,
+                json!({"heavySlots": 0, "normalSlots": 1, "lightSlots": 0}),
+                0,
+                1,
+            ),
+            (
+                3,
+                json!({"heavySlots": 1, "normalSlots": 0, "lightSlots": 0}),
+                1,
+                1,
+            ),
         ] {
             let temporary = tempfile::tempdir().expect("fixture home");
             let home = temporary.path().canonicalize().expect("canonical home");
             std::fs::create_dir(home.join("config")).unwrap();
             let path = home.join("config").join(DispatchSettings::FILE);
-            let stored = json!({
-                "domain": DispatchSettings::ID, "schemaVersion": 2,
+            let mut stored = json!({
+                "domain": DispatchSettings::ID, "schemaVersion": version,
                 "value": {
-                    "usage": "high", "usageUntilMs": null, "globalSlots": global,
+                    "usage": "high", "usageUntilMs": null,
                     "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8},
                     "threadRetentionDays": 3, "threadRetentionIntervalHours": 12,
                     "mode": "running"
                 }
             });
+            stored["value"]
+                .as_object_mut()
+                .unwrap()
+                .extend(stored_slots.as_object().unwrap().clone());
             std::fs::write(&path, stored.to_string()).unwrap();
 
             let file = SettingsFile::open(&home).expect("upgrade on startup");
             let upgraded = std::fs::read(&path).unwrap();
             let mut expected = stored.clone();
-            expected["schemaVersion"] = json!(3);
+            expected["schemaVersion"] = json!(4);
             let value = expected["value"].as_object_mut().unwrap();
-            value.remove("globalSlots");
+            for key in ["globalSlots", "normalSlots", "lightSlots"] {
+                value.remove(key);
+            }
             value.insert("heavySlots".into(), json!(heavy));
-            value.insert("normalSlots".into(), json!(normal));
-            value.insert("lightSlots".into(), json!(light));
+            value.insert("totalSlots".into(), json!(total));
             // The rewrite also stores the default of a field added since.
             value.insert("plannerModel".into(), json!(crate::PlannerModel::default()));
             assert_eq!(
                 serde_json::from_slice::<Value>(&upgraded).unwrap(),
                 expected,
-                "{global}"
+                "{stored}"
             );
             let settings = file.read::<DispatchSettings>().unwrap().value;
-            assert_eq!(settings.slots().total(), global);
+            assert_eq!(settings.heavy_slots, heavy);
+            assert_eq!(settings.total_slots, total);
             drop(file);
 
-            // A current file is never split again.
+            // Reopening current settings leaves the file byte-for-byte intact.
             SettingsFile::open(&home).expect("reopen the current file");
             assert_eq!(std::fs::read(&path).unwrap(), upgraded);
         }

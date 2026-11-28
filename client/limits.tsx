@@ -31,7 +31,7 @@ import {
 
 /*
  * Settings → Dispatch limits. One place for what the host runs with: the usage
- * level, the task slots by weight, the planner model, project overrides.
+ * level, the heavy and total task slots, the planner model, project overrides.
  * Every limit reads as its value in force when that
  * differs from what is entered. The RPCs and their authority are unchanged; this
  * module only changes how they read (Tom, 2026-11-08: half the height, same controls).
@@ -193,17 +193,14 @@ function UsageSlider({
  * record is read through `queue.capacity-state`; Settings shows no view of it (Tom, 2026-11-08).
  */
 
-/** The dispatch limits exposed by the Rust board: a slot count per task weight, then the per-project limit. */
+/** The global and per-project task slots. */
 const CAPACITY_FIELDS = [
   { key: "heavySlots", label: "Heavy", min: 0, max: api.MAX_GLOBAL_SLOTS },
-  { key: "normalSlots", label: "Normal", min: 0, max: api.MAX_GLOBAL_SLOTS },
-  { key: "lightSlots", label: "Light", min: 0, max: api.MAX_GLOBAL_SLOTS },
+  { key: "totalSlots", label: "Total", min: 1, max: api.MAX_GLOBAL_SLOTS },
   { key: "projectLimit", label: "Per project", min: 1, max: 32 },
 ] as const;
 type CapacityKey = (typeof CAPACITY_FIELDS)[number]["key"];
 type LimitSpec = (typeof CAPACITY_FIELDS)[number];
-/** The weight slot cards, which share a row. */
-const WEIGHT_SLOTS = new Set<string>(["heavySlots", "normalSlots", "lightSlots"]);
 
 /** A limits read that has not settled: loading, a failed first read, or a failed refresh. Nothing here writes, so Try again is always safe. */
 function ReadNotice({
@@ -251,7 +248,7 @@ function ReadNotice({
   );
 }
 
-/** The task slots per weight, their total and the per-project limit. */
+/** The heavy, total and per-project limits. */
 function TaskSlots({
   c,
   values,
@@ -296,18 +293,23 @@ function TaskSlots({
   const field = (spec: LimitSpec, current: api.CapacityAuthorityState["effective"]) => {
     const name = spec.label;
     const draft = drafts[spec.key] ?? current[spec.key];
+    const min = spec.key === "totalSlots"
+      ? Math.max(spec.min, drafts.heavySlots ?? current.heavySlots)
+      : spec.min;
+    const max = spec.key === "heavySlots"
+      ? drafts.totalSlots ?? current.totalSlots
+      : spec.max;
     return (
       <NumberStepper
         key={spec.key}
         card
-        // The weight cards share a row: stacked, a short label like Light lines up with Heavy and Normal.
-        stacked={WEIGHT_SLOTS.has(spec.key)}
+        stacked={spec.key !== "projectLimit"}
         c={c}
         label={name}
-        a11yLabel={`${name} dispatch limit (slots, ${spec.min}–${spec.max})`}
+        a11yLabel={`${name} dispatch limit (slots, ${min}–${max})`}
         value={draft}
-        min={spec.min}
-        max={spec.max}
+        min={min}
+        max={max}
         onChange={(value) => edit(spec.key, value)}
         onCommit={() => void auto.saver.flush()}
       >
@@ -323,9 +325,8 @@ function TaskSlots({
     <Section
       c={c}
       title="Task slots"
-      note={values ? `Total ${values.heavySlots + values.normalSlots + values.lightSlots}` : undefined}
       status={auto.status}
-      description="Light tasks can use any slot, normal tasks normal or heavy slots, and heavy tasks only heavy slots. The heaviest waiting task takes a freed slot. Parked tasks hold no slot. Lowering a limit lets running work finish."
+      description="Heavy tasks are limited to Heavy. All other tasks can use any free slot up to Total. The heaviest waiting task that fits takes a freed slot. Parked tasks hold no slot. Lowering a limit lets running work finish."
     >
       <ReadNotice
         c={c}

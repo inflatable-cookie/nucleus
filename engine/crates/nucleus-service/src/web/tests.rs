@@ -1287,7 +1287,7 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
             .store
             .occupied_slots("")
             .unwrap()
-            .total(),
+            .total,
         1
     );
     server.abort();
@@ -2250,7 +2250,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     {
         let mut state = service.state.lock().await;
         state.capacity_waiters.insert((
-            nucleus_core::profiles::TaskWeight::Normal,
+            std::cmp::Reverse(false),
             nucleus_core::QueuePriority::Normal,
             1,
             "awaiting-slot".into(),
@@ -2264,14 +2264,17 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     }
     let path = "/v1/settings/dispatch";
     let original = json_body(get_as(&api, path, &BOARD_KEY).await).await;
-    for (key, slots) in [("heavySlots", 5), ("normalSlots", 22), ("lightSlots", 5)] {
+    for (key, slots) in [("heavySlots", 5), ("totalSlots", 32)] {
         assert_eq!(original["value"][key], slots);
     }
     assert_eq!(original["value"]["projectDefaultSlots"], 5);
     let mut update = json!({"revision": original["revision"], "value": original["value"]});
-    for key in ["heavySlots", "normalSlots", "lightSlots"] {
-        update["value"][key] = json!(0);
-    }
+    update["value"]["totalSlots"] = json!(0);
+    assert_eq!(
+        put_settings(&api, path, &BOARD_KEY, &update).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    update["value"]["totalSlots"] = json!(3);
     assert_eq!(
         put_settings(&api, path, &BOARD_KEY, &update).await.status(),
         StatusCode::BAD_REQUEST
@@ -2303,8 +2306,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
             .dispatch
             .as_ref()
             .expect("published dispatch")
-            .slots()
-            .total(),
+            .total_slots,
         3
     );
     assert!(

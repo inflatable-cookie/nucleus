@@ -101,7 +101,7 @@ const capacityAuthorityState = (
   overrides: Record<string, unknown> = {},
 ): CapacityView =>
   ({
-    effective: { ...CAPACITY_VALUES, heavySlots: 5, normalSlots: 22, lightSlots: 5 },
+    effective: { ...CAPACITY_VALUES, heavySlots: 5, totalSlots: 32 },
     revision: "limits-0",
     changes: [],
     ...overrides,
@@ -413,7 +413,7 @@ test("the bundled dark Settings screen adds a project override from the picker a
     ui.press("Dispatch limits");
     await settle(() => Boolean(ui.query("Remove the Project-D override")));
     assert.equal(
-      ui.get("Heavy dispatch limit (slots, 0–4294967295)").props.value,
+      ui.get("Heavy dispatch limit (slots, 0–32)").props.value,
       "5",
       "the task slots are writable again, seeded from the state in force",
     );
@@ -659,7 +659,7 @@ const saved = (ui: {
 
 async function mountRevisionedLimits() {
   const bundle = await loadBundle();
-  const slots = { heavySlots: 5, normalSlots: 86, lightSlots: 5 };
+  const slots = { heavySlots: 5, totalSlots: 96 };
   let effective = { ...CAPACITY_VALUES, ...slots, globalLimit: 96 };
   const writes: unknown[] = [];
   const revision = () => `limits-${writes.length}`;
@@ -712,7 +712,7 @@ async function mountRevisionedLimits() {
   await settle(() => ui.text().includes("Profiles"));
   ui.press("Dispatch limits");
   await settle(
-    () => ui.query("Heavy dispatch limit (slots, 0–4294967295)") !== undefined,
+    () => ui.query("Heavy dispatch limit (slots, 0–96)") !== undefined,
   );
   return {
     ui,
@@ -726,7 +726,7 @@ async function mountRevisionedLimits() {
 
 test("dark bundled Limits saves the edited slot at its displayed revision", async () => {
   const { ui, writes, close } = await mountRevisionedLimits();
-  const heavy = "Heavy dispatch limit (slots, 0–4294967295)";
+  const heavy = "Heavy dispatch limit (slots, 0–96)";
   const project = "Per project dispatch limit (slots, 1–32)";
   try {
     assert.equal(ui.get(heavy).props.value, "5");
