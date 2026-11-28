@@ -797,10 +797,10 @@ test("an inline label never shrinks into its words: a tight card wraps the contr
   );
 });
 
-test("Heavy and Total stack their labels alike and Per project stays inline", async () => {
+test("Heavy, Total and Per project share a row and each stacks its label above its control", async () => {
   const { ui, done } = await mountLimits();
   try {
-    for (const name of ["Heavy", "Total"]) {
+    for (const name of ["Heavy", "Total", "Per project"]) {
       assert.ok(
         ui.ofType("Text").some(
           (node) =>
@@ -811,12 +811,6 @@ test("Heavy and Total stack their labels alike and Per project stays inline", as
         `${name} takes its own line`,
       );
     }
-    assert.ok(
-      ui.ofType("Text").some(
-        (node) => node.children.join("") === "Per project" && node.props.style?.flexShrink === 0,
-      ),
-      "Per project shows inline",
-    );
   } finally {
     done();
   }
