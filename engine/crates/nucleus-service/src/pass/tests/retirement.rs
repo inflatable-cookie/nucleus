@@ -35,7 +35,7 @@ enum Interruption {
 }
 
 async fn interrupted_retirement(interruption: Interruption) {
-    let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
     let (host, _archive) = empty_archive_fixture(1).await;
     service.host = host;
     let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
@@ -132,7 +132,7 @@ fn live_checkout_rows(binding: &Binding, task: &Task) -> Vec<Value> {
 
 #[tokio::test]
 async fn an_archived_descendant_blocks_sweep_and_retirement_with_all_bound_rows_visible() {
-    let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
     let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
     let head = service.fixture().start.clone();
     let work = service.worktrees();
@@ -210,12 +210,12 @@ async fn an_archived_descendant_blocks_sweep_and_retirement_with_all_bound_rows_
 
 #[tokio::test]
 async fn retirement_requires_archive_or_deletion_evidence_for_omitted_roles() {
-    let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
     let (row, _) = settled_cleanup_task(&service, home.path(), false).await;
     let head = service.fixture().start.clone();
     let (forge, _forge) = publish_checkout_forge(head.clone()).await;
     service.forge = forge;
-    service.fixture_mut().acp_provider = Some("fixture".into());
+    service.set_fixture_acp_provider(Some("fixture"));
     let route = service.project_for(row.task.identity()).await.unwrap();
     let worktrees = service.worktrees();
     let checkout = worktrees

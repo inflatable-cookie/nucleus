@@ -25,7 +25,7 @@ fn representation(
 #[tokio::test]
 async fn external_close_request_budget() {
     use nucleus_core::{Answer, Authority, Command, Question};
-    let (home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+    let (home, mut service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
     let repo = &service.fixture().checkout;
     let recorded = service.fixture().start.clone();
     create_fixture_commit(repo, "external descendant");

@@ -1,4 +1,5 @@
 use super::*;
+use crate::tests::registry_fixture;
 
 const PROJECT: &str = "/v1/planning/local-fixture";
 
@@ -741,7 +742,7 @@ async fn reopen_items_preserves_history_and_rejects_stale_versions() {
 }
 
 async fn stored_label_fixture() -> (tempfile::TempDir, Service) {
-    let (home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
     service.host.fixture_project_shell(
         &json!({
             "projects": [{

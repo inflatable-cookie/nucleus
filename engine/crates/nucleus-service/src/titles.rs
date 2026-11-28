@@ -904,6 +904,7 @@ impl Service {
 
 #[cfg(test)]
 mod tests {
+    use crate::tests::registry_fixture;
     use std::sync::{Arc, Mutex};
 
     use nucleus_core::{Authority, Command, Entry, Identity};
@@ -994,7 +995,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_weight_slot_wait_keeps_the_capacity_title() {
-        let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+        let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
         let task = task();
         let id = task.identity().id.clone();
         let label = "Waiting for a heavy slot (5/5)";
@@ -1191,8 +1192,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_transient_wait_does_not_replace_an_unpublished_phase() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
+        service.set_fixture_acp_provider(Some("fixture-acp"));
         let mut task = task();
         let id = task.identity().id.clone();
         let thread = nucleus_hosts::parent_thread(&nucleus_work::checkout_path(
@@ -1295,7 +1296,7 @@ mod tests {
 
         let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
         let provider = "fixture-acp";
-        service.fixture_mut().acp_provider = Some(provider.into());
+        service.set_fixture_acp_provider(Some(provider));
         service.native_inbox = Some(crate::native_inbox::NativeInbox::open(&service).unwrap());
         let root = service.native_inbox.as_ref().unwrap().root.clone();
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -1422,7 +1423,7 @@ mod tests {
         reason = "keep the live shell and title receipt round trip in one fixture"
     )]
     async fn native_title_changes_once_and_idle_reconciliation_makes_no_writes() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
         let task = task();
         let mut subject = Task::new(
             Identity {
@@ -1476,7 +1477,7 @@ mod tests {
         })
         .await;
         service.host = host;
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        service.set_fixture_acp_provider(Some("fixture-acp"));
         {
             let mut state = service.state.lock().await;
             state
@@ -1576,7 +1577,7 @@ mod tests {
         String,
         serde_json::Value,
     ) {
-        let (home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+        let (home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
         let task = task();
         let subject = Task::new(
             Identity {
@@ -1615,7 +1616,7 @@ mod tests {
             "fixture-acp",
         );
         service.host = host;
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        service.set_fixture_acp_provider(Some("fixture-acp"));
         {
             let mut state = service.state.lock().await;
             state

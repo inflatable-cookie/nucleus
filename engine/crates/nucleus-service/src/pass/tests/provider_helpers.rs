@@ -87,13 +87,13 @@ async fn recorded(service: &Service, id: &str, kind: &str) -> Vec<serde_json::Va
     reason = "one real process tree is followed from a live role to a released checkout"
 )]
 async fn closeout_stops_a_finished_sessions_provider_helpers() {
-    let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
     let head = service.fixture().start.clone();
     let (forge, _server) = publish_checkout_forge(head).await;
     service.forge = forge;
     let (native, _archive) = empty_archive_fixture(1).await;
     service.host = crate::tests::verified_native_fixture(native, home.path());
-    service.fixture_mut().acp_provider = Some("fixture".into());
+    service.set_fixture_acp_provider(Some("fixture"));
     // Helper cleanup runs on a profile whose Dispatch was never configured.
     assert!(service.state.lock().await.settings.dispatch.is_none());
     let terminal = cancelled_cleanup_task(&service).await;
