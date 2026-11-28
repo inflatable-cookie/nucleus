@@ -210,11 +210,14 @@ Later decisions carry their own attribution.
     A task with a retained worker goes back to that worker when GitHub confirms
     a conflict or a read verifies that the base moved at the approved head.
     The ordinary readback after a refused merge can supply that evidence.
-    Confirmed required check failures return with the check names GitHub marks
-    required at that head. Pending checks wait. Non-required check failures do
-    not block merge when GitHub reports the PR mergeable; there is no
-    Nucleus-side checks list (ruling 53). Incomplete
-    evidence and unrelated branch protection keep their own gates.
+    Confirmed check failures return with the failing check names at that head.
+    When GitHub marks checks required on the pull request, only those checks
+    gate and non-required check failures do not block merge when GitHub reports
+    the PR mergeable. When no check is marked required, every check reported on
+    the exact approved head gates the merge (ruling 69). Pending gating checks
+    wait, skipped and neutral checks pass, and a pull request with no reported
+    checks merges as before; there is no Nucleus-side checks list (ruling 53).
+    Incomplete evidence and unrelated branch protection keep their own gates.
     Recovery retires the old merge authority and freezes the instruction in
     the retained worker's next run. It uses the same provider and model and
     keeps the native command ID on replay. The worker publishes a new head
@@ -759,7 +762,7 @@ Later decisions carry their own attribution.
 
 52. **Decision answers notify the asking planner.** Planner ruling, 2026-11-26: when an operator answers a decision from the board, the Inbox or the CLI, Nucleus records one notice in the same store transaction for the planner message queue (`tell`) to the decision's asking planner thread (or the task's origin thread for a task-linked decision). The notice states the decision ID, brief question, chosen option label and ID, any note, and the answer time, with no reply route, and is exempt from the 20-per-hour direct `tell` recipient cap so an operator answer always commits, wakes any linked task, and queues its notice even when the planner thread is at the cap. If the asking thread is archived or gone, delivery falls back to the project's planner under rulings 40 and 41. Uncertain delivery never resends, replaying the same answer sends nothing more, and a task-linked decision still wakes its task.
 
-53. **Retired concepts stay out of the Rust port.** Tom, 2026-11-26, after profile roles and scopes (retired by Spec 053 on 2026-10-21) turned up gating selection again: "Those concepts should never have made it into the rust port." He answered four questions about other leftovers, choosing the planner's recommendation each time. Remove the per-repository "Hung tool limit" ("Remove it"). The merge gate uses only the checks GitHub marks required on the branch, with no Nucleus-side checks list ("GitHub's only"). Hide the Default host picker until a second host is registered ("Hide until Orca"; Default host itself stays, as recorded above). Remove pilot mode, `serve --project` and its planner registration ("Remove pilot mode"). Interactive tasks (ruling 28) are rejected on submission like `queue.preferredProfileId`. The unused provider-limit cooldown setting goes. Board code that only served the TypeScript engine is deleted.
+53. **Retired concepts stay out of the Rust port.** Tom, 2026-11-26, after profile roles and scopes (retired by Spec 053 on 2026-10-21) turned up gating selection again: "Those concepts should never have made it into the rust port." He answered four questions about other leftovers, choosing the planner's recommendation each time. Remove the per-repository "Hung tool limit" ("Remove it"). The merge gate uses only the checks GitHub marks required on the branch, with no Nucleus-side checks list ("GitHub's only"; amended by ruling 69 when no check is marked required). Hide the Default host picker until a second host is registered ("Hide until Orca"; Default host itself stays, as recorded above). Remove pilot mode, `serve --project` and its planner registration ("Remove pilot mode"). Interactive tasks (ruling 28) are rejected on submission like `queue.preferredProfileId`. The unused provider-limit cooldown setting goes. Board code that only served the TypeScript engine is deleted.
 
 54. **Merge with merge commits; honour brief merge holds.** On 2026-11-26 a brief's `queue.mergeHold` was ignored and its PR was squash-merged. The project's release tag had to sit on the certified candidate commit, which was then not on main. The Rust port had dropped both TypeScript behaviours. Tom, asked to confirm merge commits: "It sounds like merge commits are the right choice for the reason this incident brings up - squashes change the commit". Nucleus merges with a merge commit, so the exact reviewed head is an ancestor of the base. Squash and rebase merges are not used. A brief's `queue.mergeHold: true` with a required `queue.mergeHoldReason` holds only the merge step until the owning planner or the operator releases it (Specs 040 and 058). Admission refuses unknown `queue` keys and names them. Amendments can keep or remove existing legacy keys and refuse any additions or changes to unknown keys by name.
 
