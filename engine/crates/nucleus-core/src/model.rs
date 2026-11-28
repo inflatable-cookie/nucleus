@@ -402,31 +402,56 @@ impl WorkReport {
                 summary
                     .to_ascii_lowercase()
                     .split(['.', ';', '\n', '!', '?'])
-                    .flat_map(|sentence| {
-                        sentence
-                            .split(" and ")
-                            .enumerate()
-                            .filter_map(|(index, clause)| {
-                                // A bare "updated code" after "and" can modify the evidence.
-                                let mut words = clause.split_whitespace();
-                                let subject = words.next();
-                                (index == 0
-                                    || matches!(subject, Some("i" | "we" | "i've" | "we've"))
-                                    || matches!(words.next(), Some("a" | "an" | "the")))
-                                .then_some(clause)
-                            })
-                    })
                     .any(claims_code_change)
             })
     }
 }
 
+fn claims_code_change(sentence: &str) -> bool {
+    let mut bare_predicate = true;
+    for clause in sentence.split(" and ") {
+        let mut words = report_words(clause);
+        let first = words.next();
+        if !bare_predicate
+            && !matches!(first, Some("i" | "we" | "i've" | "we've"))
+            && !matches!(words.next(), Some("a" | "an" | "the"))
+        {
+            continue;
+        }
+        if clause_claims_code_change(clause) {
+            return true;
+        }
+        // A modifier can contain coordinated nouns, as in "from the
+        // original and updated code". Allow bare predicates after a
+        // complete main clause such as "Added proof and changed code".
+        bare_predicate = !report_words(clause).any(modifier_start)
+            && (first.is_some_and(change_verb)
+                || matches!(
+                    report_words(clause).last(),
+                    Some(
+                        "coverage"
+                            | "description"
+                            | "evidence"
+                            | "output"
+                            | "proof"
+                            | "results"
+                            | "tests"
+                    )
+                ));
+    }
+    false
+}
+
+fn report_words(statement: &str) -> impl Iterator<Item = &str> {
+    statement
+        .split_whitespace()
+        .map(|word| word.trim_matches(|character: char| !character.is_ascii_alphanumeric()))
+}
+
 // Require an affirmative action on source. A source word can also qualify
 // evidence, as in "code coverage results" or "parser test output".
-fn claims_code_change(statement: &str) -> bool {
-    let mut words = statement
-        .split_whitespace()
-        .map(|word| word.trim_matches(|character: char| !character.is_ascii_alphanumeric()));
+fn clause_claims_code_change(statement: &str) -> bool {
+    let mut words = report_words(statement);
     let first = words.find(|word| {
         !matches!(
             *word,
@@ -451,26 +476,6 @@ fn claims_code_change(statement: &str) -> bool {
                 | "logic"
         )
     };
-    let changed = |word| {
-        matches!(
-            word,
-            "added"
-                | "changed"
-                | "committed"
-                | "fixed"
-                | "implemented"
-                | "made"
-                | "modified"
-                | "patched"
-                | "published"
-                | "pushed"
-                | "refactored"
-                | "removed"
-                | "rewrote"
-                | "shipped"
-                | "updated"
-        )
-    };
     let Some(first) = first else { return false };
     if source(first) {
         return words
@@ -481,34 +486,12 @@ fn claims_code_change(statement: &str) -> bool {
                         "fix" | "changes" | "was" | "were" | "has" | "have" | "been"
                     )
             })
-            .is_some_and(changed);
+            .is_some_and(change_verb);
     }
-    if !changed(first) {
+    if !change_verb(first) {
         return false;
     }
-    let object = words.take_while(|word| {
-        !matches!(
-            *word,
-            "about"
-                | "after"
-                | "by"
-                | "covering"
-                | "explaining"
-                | "for"
-                | "from"
-                | "in"
-                | "including"
-                | "of"
-                | "showing"
-                | "that"
-                | "to"
-                | "where"
-                | "which"
-                | "with"
-                | "without"
-                | "verifying"
-        )
-    });
+    let object = words.take_while(|word| !modifier_start(word));
     let mut modifier = "";
     let mut noun = "";
     for word in object {
@@ -519,6 +502,55 @@ fn claims_code_change(statement: &str) -> bool {
         noun = word;
     }
     source(noun) || (matches!(noun, "fix" | "change" | "changes") && source(modifier))
+}
+
+fn change_verb(word: &str) -> bool {
+    matches!(
+        word,
+        "added"
+            | "changed"
+            | "committed"
+            | "fixed"
+            | "implemented"
+            | "made"
+            | "modified"
+            | "patched"
+            | "published"
+            | "pushed"
+            | "refactored"
+            | "removed"
+            | "rewrote"
+            | "shipped"
+            | "updated"
+    )
+}
+
+fn modifier_start(word: &str) -> bool {
+    matches!(
+        word,
+        "about"
+            | "after"
+            | "against"
+            | "between"
+            | "by"
+            | "comparing"
+            | "covering"
+            | "explaining"
+            | "for"
+            | "from"
+            | "in"
+            | "including"
+            | "of"
+            | "showing"
+            | "that"
+            | "to"
+            | "using"
+            | "where"
+            | "which"
+            | "with"
+            | "without"
+            | "verifying"
+    )
 }
 
 /// An exact version and digest of a durable lane document.
@@ -1328,6 +1360,8 @@ mod work_report_tests {
             ("The implementation was updated.", true),
             ("The code fix has been published.", true),
             ("Added proof and changed the code.", true),
+            ("Head unchanged. Added proof and changed code.", true),
+            ("Collected proof and fixed parser.", true),
             ("Added code coverage results and fixed the parser.", true),
             ("Published proof of the requested code fix.", false),
             (
@@ -1336,6 +1370,11 @@ mod work_report_tests {
             ),
             ("Added parser test output.", false),
             ("Added evidence from the original and updated code.", false),
+            ("Compared original and updated code.", false),
+            (
+                "Added proof comparing the original and updated code.",
+                false,
+            ),
             ("Added proof showing the changed code.", false),
             (
                 "Updated the PR description to explain the code change.",
