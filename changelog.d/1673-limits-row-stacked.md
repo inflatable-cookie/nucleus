@@ -1,0 +1,1 @@
+- Settings → Limits: Heavy, Total and Per project lay out alike, each with its label above the control.

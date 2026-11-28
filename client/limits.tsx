@@ -303,7 +303,8 @@ function TaskSlots({
       <NumberStepper
         key={spec.key}
         card
-        stacked={spec.key !== "projectLimit"}
+        // The three cards share one row, so each puts its label above its control.
+        stacked
         c={c}
         label={name}
         a11yLabel={`${name} dispatch limit (slots, ${min}–${max})`}
