@@ -132,7 +132,11 @@ impl Registered {
             .lock()
             .await
             .store
-            .create(&task, &event("admitted"))
+            .create_with_facts(
+                &task,
+                &event("admitted"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("seed");
         self.service.task(id).await.expect("row")
     }

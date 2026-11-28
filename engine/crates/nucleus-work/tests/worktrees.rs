@@ -8,7 +8,7 @@ use std::{
 use longhorn_git_workspace::{GitCredential, GitFailure, GitPolicy};
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{Head, Workspace};
-use nucleus_store::{EngineSettings, SettingsFile};
+use nucleus_store::SettingsFile;
 use nucleus_work::{Custody, Landing, Retirement, WorkError, Worktrees};
 
 struct LocalGit;
@@ -44,9 +44,8 @@ fn worktrees_with_policy<'a>(
 ) -> Worktrees<'a> {
     let settings = SettingsFile::open(home).expect("fixture settings");
     settings
-        .save(&EngineSettings {
-            enabled: true,
-            ..EngineSettings::default()
+        .configure(&settings.read().expect("fixture settings"), |current| {
+            current.enabled = true;
         })
         .expect("save fixture settings");
     let storage = settings.storage().expect("resolve storage");

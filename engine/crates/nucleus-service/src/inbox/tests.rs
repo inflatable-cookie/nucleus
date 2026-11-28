@@ -5,13 +5,12 @@ use nucleus_core::{
     Entry, Forge, Identity, Observation, Observed, OperatorDecline, PullRequest, Task,
 };
 use nucleus_forge::GitHub;
-use nucleus_store::InboxBinding;
 use serde_json::{Value, json};
 
 use super::*;
 use crate::{
     native_inbox::NativeInbox,
-    tests::{fixture, native_fixture},
+    tests::{REGISTERED_PROJECT, fixture, native_fixture},
 };
 
 async fn seed(service: &Service, id: &str) -> (TaskRow, Observed<Forge>) {
@@ -46,7 +45,11 @@ async fn seed(service: &Service, id: &str) -> (TaskRow, Observed<Forge>) {
         .lock()
         .await
         .store
-        .create(&task, &event("admitted"))
+        .create_with_facts(
+            &task,
+            &event("admitted"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     (service.task(id).await.unwrap(), forge)
 }
@@ -69,35 +72,43 @@ async fn acceptance_waits_for_evidence_of_the_exact_external_merge() {
     }
 }
 
+/// A row as the retired TypeScript decision bridge stored it. Restored
+/// profiles can still hold one in the unread schema 14 table.
+fn store_legacy_binding(service: &Service, row: &TaskRow) {
+    let database = service.storage.database().path().join("engine.sqlite");
+    rusqlite::Connection::open(database)
+        .unwrap()
+        .execute(
+            "INSERT INTO inbox_bindings (task_id, task_version, decision_id, head)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                row.task.identity().id,
+                row.version,
+                format!("rust-inbox:fixture:{}:1", row.task.identity().id),
+                row.task.pull_request().unwrap().head.as_str(),
+            ],
+        )
+        .unwrap();
+}
+
 #[tokio::test]
-async fn restored_bridge_binding_keeps_the_native_offer_fenced() {
+async fn a_legacy_binding_row_does_not_fence_the_native_offer() {
     let (_home, mut service) = registry_fixture(GitHub::new("unused").unwrap());
     let (row, _) = seed(&service, "handoff").await;
-    let binding = InboxBinding {
-        task_version: row.version,
-        decision_id: "rust-inbox:fixture:handoff:1".into(),
-        head: row.task.operator_question().unwrap().as_str().into(),
-    };
-    service
-        .state
-        .lock()
-        .await
-        .store
-        .bind_inbox("handoff", &binding)
-        .unwrap();
+    store_legacy_binding(&service, &row);
     service.native_inbox = Some(NativeInbox::open(&service).unwrap());
-    assert!(matches!(
-        service.operator_decision(&row).await,
-        Err(ServiceError::InboxUnavailable { .. })
-    ));
+    assert_eq!(
+        service.operator_decision(&row).await.unwrap(),
+        Action::Wait(WaitReason::Question)
+    );
     let state = service.state.lock().await;
-    assert!(state.store.inbox_binding("handoff").unwrap().is_some());
-    assert!(
+    assert_eq!(
         state
             .store
-            .decisions("local-fixture", true)
+            .decisions(REGISTERED_PROJECT, true)
             .unwrap()
-            .is_empty()
+            .len(),
+        1
     );
 }
 
@@ -166,6 +177,18 @@ async fn decline_delivers_one_planner_notice_and_parks_without_a_due_time() {
         Some(OperatorDecline::Notified)
     );
     assert!(!crate::active(&parked.task));
+    // A leftover bridge row no longer returns a parked task to the scheduler.
+    store_legacy_binding(&service, &parked);
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .active_ids(None, 10)
+            .unwrap()
+            .is_empty()
+    );
     service.notify_question(&parked).await.unwrap();
     let notices = notices.lock().unwrap();
     assert_eq!(notices.len(), 1);

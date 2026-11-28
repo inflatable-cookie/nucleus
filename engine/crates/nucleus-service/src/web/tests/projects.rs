@@ -1606,7 +1606,7 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
         .lock()
         .await
         .store
-        .add_item(
+        .add_item_with_author_project(
             &project,
             "historic".into(),
             ItemKind::Lead,
@@ -1615,6 +1615,7 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
                 body: "---\nqueue:\n  complexity: low\n---\nA historic brief.".into(),
                 lanes: vec![],
             },
+            None,
             WriteAt {
                 actor: "imported",
                 at_ms: 1,
@@ -1759,7 +1760,7 @@ async fn seed_ready_report(service: &Service, id: &str, legacy_attempt: bool) {
     };
     task.reconcile(&observation);
     let credential = task
-        .reserve_launch(
+        .reserve_grouped_launch(
             &observation,
             LaunchInputs {
                 scratch: None,
@@ -1768,6 +1769,8 @@ async fn seed_ready_report(service: &Service, id: &str, legacy_attempt: bool) {
                 input: "fixture".into(),
             },
             &[4; 32],
+            None,
+            "fixture-group".into(),
         )
         .expect("worker launch");
     let instance = task.run().expect("worker").launch().instance.clone();
@@ -1803,7 +1806,11 @@ async fn seed_ready_report(service: &Service, id: &str, legacy_attempt: bool) {
     };
     state
         .store
-        .create(&task, &event(kind))
+        .create_with_facts(
+            &task,
+            &event(kind),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .expect("report ready row");
 }
 
@@ -1868,9 +1875,10 @@ impl TaskNotice {
                 completed["phase"] = json!("done");
                 state
                     .store
-                    .create(
+                    .create_with_facts(
                         &serde_json::from_value(completed).unwrap(),
                         &event("fixture"),
+                        nucleus_store::TaskAdmissionFacts::default(),
                     )
                     .unwrap();
                 drop(state);
@@ -2850,7 +2858,7 @@ fn occupy_slot(task: &mut Task, head: &nucleus_core::Head) {
         workspace: Observed::Known(Workspace::Clean(head.clone())),
     };
     let _ = task.reconcile(&observation);
-    task.reserve_launch(
+    task.reserve_grouped_launch(
         &observation,
         LaunchInputs {
             scratch: None,
@@ -2859,6 +2867,8 @@ fn occupy_slot(task: &mut Task, head: &nucleus_core::Head) {
             input: "fixture-only wire".into(),
         },
         &[3; 32],
+        None,
+        "fixture-group".into(),
     )
     .expect("reserve occupied task");
     let instance = task.run().expect("run").launch().instance.clone();
@@ -3478,14 +3488,13 @@ async fn finish_removal_task(registry: &Registry, id: &str, retained: Option<&He
     }
     let mut snapshot = serde_json::to_value(&task).unwrap();
     snapshot["phase"] = json!("done");
-    state
-        .store
-        .save_row(
-            &row,
-            &serde_json::from_value(snapshot).unwrap(),
-            &event("fixture_finished"),
-        )
-        .unwrap();
+    crate::tests::save_row(
+        &mut state.store,
+        &row,
+        &serde_json::from_value(snapshot).unwrap(),
+        &event("fixture_finished"),
+    )
+    .unwrap();
 }
 
 async fn seed_removal_planning(registry: &Registry, id: &str) {
@@ -5783,7 +5792,7 @@ async fn ticket_caller_watches_across_projects_and_receives_completion_notice() 
     let mut runner_task = runner.task.clone();
     let _ = runner_task.reconcile(&observation);
     let bearer = runner_task
-        .reserve_launch(
+        .reserve_grouped_launch(
             &observation,
             LaunchInputs {
                 scratch: None,
@@ -5792,6 +5801,8 @@ async fn ticket_caller_watches_across_projects_and_receives_completion_notice() 
                 input: "fixture-only wire".into(),
             },
             &credential,
+            None,
+            "fixture-group".into(),
         )
         .unwrap();
     let instance = runner_task.run().unwrap().launch().instance.clone();
