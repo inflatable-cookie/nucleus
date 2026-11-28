@@ -1024,7 +1024,8 @@ pub(super) fn assert_scheduled_wait(
     assert!((pass_started + delay..=wait.since + delay).contains(&due));
     assert!(
         state
-            .take_ready(due - Duration::from_nanos(1), &BTreeSet::new())
+            .schedule
+            .take_ready(due - Duration::from_nanos(1), &BTreeSet::new(), None)
             .is_none()
     );
     due
@@ -1149,8 +1150,8 @@ async fn run_workspace_recheck(
             pass_started,
             nucleus_hosts::T3_RETRY_DELAY,
         );
-        state
-            .take_ready(due, &BTreeSet::new())
+        service
+            .take_ready(&mut state, due, &BTreeSet::new())
             .expect("workspace recheck is ready at its deadline")
     };
     assert_eq!(recovery.id, task);

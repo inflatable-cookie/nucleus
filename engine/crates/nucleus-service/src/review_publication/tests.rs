@@ -708,8 +708,9 @@ async fn throttled_resubmission_waits_for_the_server_deadline_after_restart() {
     {
         let mut state = service.state.lock().await;
         assert!(
-            state
+            service
                 .take_ready(
+                    &mut state,
                     tokio::time::Instant::now(),
                     &std::collections::BTreeSet::new()
                 )

@@ -11,7 +11,7 @@ use tokio::time::Instant;
 
 use crate::ServiceError;
 
-/// Capacity waiters in order: heavy first, then promoted, then admission order.
+/// Stable waiter keys. Live project usage is added when selecting a run.
 pub(crate) type CapacityWaiters = BTreeSet<(Reverse<bool>, QueuePriority, i64, String)>;
 
 const SCAN_PAGE: u32 = 32;
@@ -358,12 +358,12 @@ impl Schedule {
         Ok(housekeeping)
     }
 
-    pub(crate) fn take_ready<'a>(
-        &mut self,
+    pub(crate) fn pick_ready<'a>(
+        &'a self,
         now: Instant,
         visited: &BTreeSet<String>,
-        waiting: impl IntoIterator<Item = &'a str>,
-    ) -> Option<DueTask> {
+        prefer_capacity: impl FnOnce(Priority, &str) -> Option<(Priority, &'a str)>,
+    ) -> Option<(Priority, String)> {
         let mut closeout = None;
         let mut ordinary = None;
         for (id, pending) in &self.tasks {
@@ -379,45 +379,58 @@ impl Schedule {
                 }
             }
         }
-        // Give closeout and ordinary work turns while both are ready. FIFO
-        // capacity selection applies only on ordinary turns.
+        // Give closeout and ordinary work turns while both are ready.
         let ((priority, _), id) = if self.served_closeout {
             ordinary.or(closeout)?
         } else {
             closeout.or(ordinary)?
         };
         let (priority, id) = if priority == Priority::Closeout {
-            (priority, id)
+            (priority, id.as_str())
         } else {
-            waiting
-                .into_iter()
-                .filter_map(|id| self.tasks.get_key_value(id))
-                .filter_map(|(id, due)| due.ready(now).map(|(priority, _)| (priority, id)))
-                .find(|(candidate, _)| {
-                    *candidate != Priority::Closeout
-                        && (priority != Priority::Effect || *candidate == Priority::Effect)
-                })
-                .unwrap_or((priority, id))
+            prefer_capacity(priority, id).unwrap_or((priority, id))
         };
         // Start a fresh pass instead of observing the same task again with the
         // census shared by this pass. Lower priority work stays in the queue.
-        if visited.contains(id) {
-            return None;
-        }
+        (!visited.contains(id)).then(|| (priority, id.to_owned()))
+    }
+
+    pub(crate) fn capacity_ready(&self, id: &str, now: Instant) -> Option<Priority> {
+        let (priority, _) = self.tasks.get(id)?.ready(now)?;
+        (priority != Priority::Closeout).then_some(priority)
+    }
+
+    pub(crate) fn take(&mut self, priority: Priority, id: String) -> DueTask {
         self.served_closeout = priority == Priority::Closeout;
         let depth = self.tasks.len();
-        let id = id.clone();
         let pending = self.tasks.remove(&id).expect("selected due task");
         let timing = crate::diagnostics::enabled().then(|| DueTiming {
             due: pending.due().expect("selected task has a deadline"),
             selected_due: pending.deadlines[priority as usize].expect("selected priority is due"),
             depth,
         });
-        Some(DueTask {
+        DueTask {
             id,
             priority,
             timing,
-        })
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_ready<'a>(
+        &mut self,
+        now: Instant,
+        visited: &BTreeSet<String>,
+        waiting: impl IntoIterator<Item = &'a str>,
+    ) -> Option<DueTask> {
+        let (priority, id) = self.pick_ready(now, visited, |priority, _| {
+            waiting.into_iter().find_map(|id| {
+                let candidate = self.capacity_ready(id, now)?;
+                (priority != Priority::Effect || candidate == Priority::Effect)
+                    .then_some((candidate, id))
+            })
+        })?;
+        Some(self.take(priority, id))
     }
 
     pub(crate) fn first_service(&mut self, task: &DueTask) -> Option<FirstService> {
