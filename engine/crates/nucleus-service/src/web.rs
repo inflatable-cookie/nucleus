@@ -1376,6 +1376,7 @@ impl Summary {
 struct CardInputs {
     observed_wait: Option<crate::TaskWait>,
     dependencies_block: bool,
+    snooze: Option<crate::WaitDetail>,
     state_label: String,
     attention: crate::attention::TaskAttention,
 }
@@ -1388,15 +1389,11 @@ impl CardInputs {
     ) -> Result<Self, ServiceError> {
         let task = &row.task;
         let observed_wait = state.waits.get(&task.identity().id).cloned();
-        let reason = observed_wait.as_ref().and_then(|wait| wait.reason);
-        let wait = if dependencies_block && task.run().is_none() {
-            Some(WaitReason::Prerequisite)
-        } else {
-            reason.filter(|wait| *wait != WaitReason::Prerequisite || dependencies_block)
-        };
+        let wait = state.effective_wait(task)?;
         let detail = observed_wait.as_ref().and_then(|wait| wait.detail.as_ref());
         Ok(Self {
             state_label: state.display_state_label(task, wait, detail)?,
+            snooze: state.operator_snoozes.get(&task.identity().id).filter(|snooze| matches!(snooze, crate::WaitDetail::OperatorSnoozed { until, .. } if *until > crate::now_ms())).cloned(),
             observed_wait,
             dependencies_block,
             attention: state.task_attention_with_dependencies(row, || Ok(dependencies_block))?,
@@ -1448,11 +1445,7 @@ impl Card {
         let observed = inputs.observed_wait.as_ref();
         let reason = observed.and_then(|wait| wait.reason);
         let detail = observed.and_then(|wait| wait.detail.as_ref());
-        let wait = if inputs.dependencies_block && task.run().is_none() {
-            Some(WaitReason::Prerequisite)
-        } else {
-            reason.filter(|wait| *wait != WaitReason::Prerequisite || inputs.dependencies_block)
-        };
+        let wait = state.effective_wait(task)?;
         let times = state.store.board_times(id)?;
         let created_at_ms = times.admitted;
         let fixed = crate::titles::task_label_from_facts(task);
@@ -1487,6 +1480,7 @@ impl Card {
             None
         };
         let wait_detail = archive_detail
+            .or(task.hold().map(|hold| hold.reason.as_str()))
             .or(merge_hold.map(|hold| hold.reason.as_str()))
             .or(prerequisite_detail.as_deref())
             .or_else(|| {
@@ -1498,6 +1492,13 @@ impl Card {
                 }
                 board_wait_detail(detail?)
             });
+        let snooze = inputs.snooze.as_ref().and_then(board_wait_detail);
+        let wait_detail = match (wait_detail, snooze) {
+            (Some(reason), Some(snooze)) => Some(format!("{reason} {snooze}")),
+            (Some(reason), None) => Some(reason.to_owned()),
+            (None, Some(snooze)) => Some(snooze.to_owned()),
+            (None, None) => None,
+        };
         Ok(Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
@@ -1510,7 +1511,7 @@ impl Card {
             lifecycle: crate::presentation::task_lifecycle(
                 task,
                 &state.store,
-                wait_detail.unwrap_or(&state_label),
+                wait_detail.as_deref().unwrap_or(&state_label),
                 wait,
                 created_at_ms,
                 transcript,
@@ -1520,7 +1521,7 @@ impl Card {
             latest_event_at_ms: times.latest_event,
             created_at_ms,
             wait,
-            wait_detail: wait_detail.map(str::to_owned),
+            wait_detail,
             question: task.question().cloned(),
             hold: task.hold().or(merge_hold).cloned(),
         })

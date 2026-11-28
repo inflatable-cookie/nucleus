@@ -166,9 +166,6 @@ pub(super) fn task_state_label(
         }
         .into();
     }
-    if matches!(detail, Some(WaitDetail::OperatorSnoozed { .. })) {
-        return phase_with_delay(task, None);
-    }
     if wait == Some(WaitReason::Capacity)
         && let Some(WaitDetail::SlotCap(label)) = detail
     {
@@ -456,7 +453,7 @@ impl Service {
             id,
         );
         let thread = nucleus_hosts::parent_thread(&path);
-        let desired = Self::stage_task_title(state, task, number, &thread, timing);
+        let desired = self.stage_task_title(state, task, number, &thread, timing);
         match desired {
             Ok(true) => {
                 self.title_wake.notify_one();
@@ -471,6 +468,7 @@ impl Service {
     }
 
     fn stage_task_title(
+        &self,
         state: &mut State,
         task: &Task,
         number: Option<i64>,
@@ -479,7 +477,7 @@ impl Service {
     ) -> Result<bool, nucleus_store::StoreError> {
         let stored = state.store.title_state(thread)?;
         let desired = stored.as_ref().map(|title| title.receipt.desired.as_str());
-        let (label, timing) = Self::row_label(state, task, timing)?;
+        let (label, timing) = self.row_label(state, task, thread, timing)?;
         let id = &task.identity().id;
         let text = task_title(task, number, &label);
         let timing = if desired.is_none() {
@@ -504,13 +502,24 @@ impl Service {
     }
 
     fn row_label(
+        &self,
         state: &State,
         task: &Task,
+        thread: &str,
         timing: TitleTiming,
     ) -> Result<(String, TitleTiming), nucleus_store::StoreError> {
+        if let Some(label) = task_label_from_facts(task) {
+            return Ok((label, TitleTiming::Immediate));
+        }
         let id = &task.identity().id;
-        let detail = state.wait_detail(id);
-        let wait = state.effective_wait(task)?;
+        // Slot counts belong on the board; changing counts must not rename T3 rows.
+        let detail = state
+            .wait_detail(id)
+            .filter(|detail| !matches!(detail, WaitDetail::SlotCap(_)));
+        let (activity, _, handover) = self.role_window(thread, task);
+        let wait = state.effective_wait(task)?.filter(|reason| {
+            *reason != WaitReason::Starting || activity != nucleus_hosts::RowChildren::Active
+        });
         let person_needed = crate::attention::waiting_for_person(task, wait);
         let timing = if person_needed
             || matches!(
@@ -521,7 +530,16 @@ impl Service {
         } else {
             timing
         };
-        let label = state.display_state_label(task, wait, detail)?;
+        let snoozed = self
+            .host
+            .row_visibility_hint(thread)
+            .and_then(|row| row.snoozed_until_ms)
+            .is_some_and(|until| until > self.visibility_now());
+        let label = if !person_needed && !snoozed && handover.is_some() {
+            "Waiting".into()
+        } else {
+            state.display_state_label(task, wait, detail)?
+        };
         Ok((label, timing))
     }
 
@@ -614,7 +632,7 @@ impl Service {
                     .and_then(|candidate| candidate.task_id.clone())
                 {
                     let row = self.lookup(&state, &id)?;
-                    Self::stage_task_title(
+                    self.stage_task_title(
                         &mut state,
                         &row.task,
                         row.number,
