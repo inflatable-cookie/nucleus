@@ -54,7 +54,11 @@ async fn external_close_request_budget() {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let host = service.host.fixture_pass();
     let advance = || async {

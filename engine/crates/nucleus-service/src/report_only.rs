@@ -1136,7 +1136,7 @@ mod tests {
         };
         task.reconcile(&observation);
         let credential = task
-            .reserve_launch(
+            .reserve_grouped_launch(
                 &observation,
                 LaunchInputs {
                     scratch: None,
@@ -1145,6 +1145,8 @@ mod tests {
                     input: "fixture".into(),
                 },
                 &[4; 32],
+                None,
+                "fixture-group".into(),
             )
             .unwrap();
         let instance = task.run().unwrap().launch().instance.clone();
@@ -1177,7 +1179,11 @@ mod tests {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .unwrap();
         service.task("report-notice").await.unwrap()
     }

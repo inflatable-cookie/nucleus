@@ -857,10 +857,6 @@ The installed service launcher may still have TypeScript transition assignments.
 Remove `NUCLEUS_RUST_INBOX_URL`, `NUCLEUS_RUST_INBOX_ENGINE` and
 `NUCLEUS_RUST_INBOX_KEY_FILE` when rolling the release that retires the bridge.
 
-A restored profile with a legacy Inbox binding keeps its native offer fenced.
-The operator must authorize forward recovery of that decision before the native
-Inbox can offer the task question.
-
 The Rust Inbox records native form answers as
 `operator via T3 Inbox (unattested)`. T3 currently returns the same response
 for a desktop submission and an MCP submission.

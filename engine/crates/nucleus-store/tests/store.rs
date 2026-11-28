@@ -9,8 +9,8 @@ use nucleus_core::{
     },
 };
 use nucleus_store::{
-    DependencyEdit, EngineSettings, EngineStorage, EventDraft, PinnedVolume, SettingsFile,
-    StorageError, Store, StoreError, TaskRow,
+    AllowanceObservation, DependencyEdit, EngineSettings, EngineStorage, EventDraft, PinnedVolume,
+    SettingsFile, StorageError, Store, StoreError, SubscriptionPause, TaskAdmissionFacts, TaskRow,
 };
 
 use rusqlite::Connection;
@@ -20,14 +20,59 @@ mod numbers;
 #[path = "store/planning.rs"]
 mod planning;
 
+/// A save that charges no allowance time.
+const IDLE: AllowanceObservation = AllowanceObservation {
+    elapsed_ms: 0,
+    charging: false,
+    extension: None,
+};
+
+fn publish(file: &SettingsFile, settings: &EngineSettings) -> Result<(), StorageError> {
+    file.configure(&file.read()?, |current| current.clone_from(settings))
+}
+
+fn stored(store: &Store, id: &str) -> Result<Option<Task>, StoreError> {
+    Ok(store.row(id)?.map(|row| row.task))
+}
+
+fn save_row(
+    store: &mut Store,
+    expected: &TaskRow,
+    task: &Task,
+    event: &EventDraft,
+) -> Result<i64, StoreError> {
+    store.save_accounted(expected, task, event, None, IDLE, false)
+}
+
+fn save_launch(
+    store: &mut Store,
+    expected: &TaskRow,
+    task: &Task,
+    event: &EventDraft,
+    group: &str,
+) -> Result<i64, StoreError> {
+    store.save_accounted(expected, task, event, Some(group), IDLE, false)
+}
+
+fn pause(store: &Store, group: &str, until_ms: u64, now_ms: u64) -> Result<(), StoreError> {
+    let pause = SubscriptionPause {
+        until_ms,
+        fallback: false,
+    };
+    store.set_subscription_pause(group, pause, now_ms)?;
+    Ok(())
+}
+
 fn fixture_storage(home: &Path) -> EngineStorage {
     let settings = SettingsFile::open(home).expect("open fixture settings");
-    settings
-        .save(&EngineSettings {
+    publish(
+        &settings,
+        &EngineSettings {
             enabled: true,
             ..EngineSettings::default()
-        })
-        .expect("save fixture settings");
+        },
+    )
+    .expect("save fixture settings");
     let storage = settings.storage().expect("resolve fixture storage");
     storage
         .database()
@@ -190,7 +235,11 @@ fn a_parent_retry_keeps_the_first_recorded_prompt() {
     let storage = fixture_storage(home.path());
     let mut store = Store::open(&storage).unwrap();
     store
-        .create(&task("fixture", "fixture"), &event("admitted"))
+        .create_with_facts(
+            &task("fixture", "fixture"),
+            &event("admitted"),
+            TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let mut append = |kind, command, prompt: Option<&str>| {
         let mut entry = event(kind);
@@ -247,7 +296,13 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
         "refused_replay",
         "refresh_pending",
     ] {
-        store.create(&task(id, id), &event("admitted")).unwrap();
+        store
+            .create_with_facts(
+                &task(id, id),
+                &event("admitted"),
+                TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         let version = row(&store, id).version;
         versions.push((id, version));
         seed_delivery_fence(&mut store, id, version);
@@ -418,7 +473,11 @@ fn board_activity_keeps_the_work_time_after_done_housekeeping() {
     let storage = fixture_storage(home.path());
     let mut store = Store::open(&storage).unwrap();
     store
-        .create(&task("closed", "closed"), &event("admitted"))
+        .create_with_facts(
+            &task("closed", "closed"),
+            &event("admitted"),
+            TaskAdmissionFacts::default(),
+        )
         .unwrap();
     for (at, kind) in (2..).zip([
         "entered_done",
@@ -448,7 +507,11 @@ fn claiming_a_task_effect_twice_preserves_the_first_board_timestamp() {
     let version = {
         let mut store = Store::open(&storage).expect("open before failure");
         let version = store
-            .create(&task("fixture", "fixture"), &event("admitted"))
+            .create_with_facts(
+                &task("fixture", "fixture"),
+                &event("admitted"),
+                TaskAdmissionFacts::default(),
+            )
             .expect("admit");
         let mut receipt = event("native_turn_failed");
         receipt.at += 1;
@@ -516,18 +579,10 @@ fn provider_pauses_survive_reopen_and_expire_at_the_deadline() {
     let storage = fixture_storage(home.path());
     {
         let store = Store::open(&storage).expect("open before pause");
-        store
-            .record_provider_pause("shared", 5_000, 1_000)
-            .expect("first limit");
-        store
-            .record_provider_pause("shared", 6_000, 2_000)
-            .expect("later deadline");
-        store
-            .record_provider_pause("shared", 5_500, 3_000)
-            .expect("shorter deadline");
-        store
-            .record_provider_pause("stale", 4_000, 4_000)
-            .expect("expired input");
+        pause(&store, "shared", 5_000, 1_000).expect("first limit");
+        pause(&store, "shared", 6_000, 2_000).expect("later deadline");
+        pause(&store, "shared", 5_500, 3_000).expect("shorter deadline");
+        pause(&store, "stale", 4_000, 4_000).expect("expired input");
     }
     let store = Store::open(&storage).expect("reopen after limits");
     assert_eq!(
@@ -565,7 +620,7 @@ fn only_the_displayed_fallback_can_be_cleared_after_reopen() {
     );
     assert_eq!(store.fallback_pause_groups(5).unwrap(), ["group"]);
     assert!(!store.clear_fallback_pause("group", 60_000).unwrap());
-    store.record_provider_pause("group", 70_000, 6).unwrap();
+    pause(&store, "group", 70_000, 6).unwrap();
     assert!(!store.set_subscription_pause("group", estimate, 7).unwrap());
     assert!(!store.clear_fallback_pause("group", 70_000).unwrap());
     assert!(store.fallback_pause_groups(7).unwrap().is_empty());
@@ -585,10 +640,16 @@ fn a_stale_writer_cannot_change_state_or_append_history() {
     let mut first = Store::open(&storage).expect("open");
     let mut second = Store::open(&storage).expect("open another connection");
     let initial = task("1", "fixture#1");
-    first.create(&initial, &event("accepted")).expect("admit");
+    first
+        .create_with_facts(&initial, &event("accepted"), TaskAdmissionFacts::default())
+        .expect("admit");
     assert!(
         first
-            .create(&task("2", "fixture#1"), &event("duplicate"))
+            .create_with_facts(
+                &task("2", "fixture#1"),
+                &event("duplicate"),
+                TaskAdmissionFacts::default()
+            )
             .is_err()
     );
     let prior = row(&second, "1");
@@ -597,15 +658,13 @@ fn a_stale_writer_cannot_change_state_or_append_history() {
         working.reconcile(&observation()),
         Action::Advance(Phase::Working)
     );
-    first
-        .save_row(&prior, &working, &event("working"))
-        .expect("save");
+    save_row(&mut first, &prior, &working, &event("working")).expect("save");
     assert!(matches!(
-        second.save_row(&prior, &initial, &event("stale")),
+        save_row(&mut second, &prior, &initial, &event("stale")),
         Err(StoreError::StaleTask)
     ));
-    assert_eq!(second.get("1").expect("read"), Some(working.clone()));
-    assert_eq!(second.get("2").expect("read absent"), None);
+    assert_eq!(stored(&second, "1").expect("read"), Some(working.clone()));
+    assert_eq!(stored(&second, "2").expect("read absent"), None);
     let newest = second.history("1", None, 1).expect("latest event");
     assert_eq!(newest[0].content.kind, "phase_transition");
     assert_eq!(newest[0].content.at, event("working").at);
@@ -622,7 +681,7 @@ fn a_stale_writer_cannot_change_state_or_append_history() {
     drop(first);
     drop(second);
     let reopened = Store::open(&storage).expect("reopen older and new rows");
-    assert_eq!(reopened.get("1").unwrap(), Some(working));
+    assert_eq!(stored(&reopened, "1").unwrap(), Some(working));
     assert_eq!(reopened.lifecycle_events("1").unwrap().len(), 1);
 }
 
@@ -632,23 +691,21 @@ fn a_row_that_returns_to_the_same_task_still_invalidates_old_decisions() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("open store");
     let initial = task("1", "fixture#1");
-    store.create(&initial, &event("admitted")).expect("admit");
+    store
+        .create_with_facts(&initial, &event("admitted"), TaskAdmissionFacts::default())
+        .expect("admit");
     let stale = store.row("1").expect("row").expect("versioned row");
     let mut working = initial.clone();
     let _ = working.reconcile(&observation());
-    let next = store
-        .save_row(&stale, &working, &event("working"))
-        .expect("advance");
+    let next = save_row(&mut store, &stale, &working, &event("working")).expect("advance");
     let current = store.row("1").expect("row").expect("advanced row");
     assert_eq!(current.version, next);
-    store
-        .save_row(&current, &initial, &event("moved back"))
-        .expect("move back");
+    save_row(&mut store, &current, &initial, &event("moved back")).expect("move back");
     assert!(matches!(
-        store.save_row(&stale, &working, &event("stale")),
+        save_row(&mut store, &stale, &working, &event("stale")),
         Err(StoreError::StaleTask)
     ));
-    assert_eq!(store.get("1").expect("read row"), Some(initial));
+    assert_eq!(stored(&store, "1").expect("read row"), Some(initial));
     let transitions = store.lifecycle_events("1").unwrap();
     let details: Vec<serde_json::Value> = transitions
         .iter()
@@ -671,7 +728,7 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
     let scratch = root.path().join("r/abcdef001122");
     let observation = observation();
     task.reconcile(&observation);
-    task.reserve_launch(
+    task.reserve_grouped_launch(
         &observation,
         LaunchInputs {
             scratch: Some(scratch.clone()),
@@ -680,10 +737,14 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
             input: "first launch".into(),
         },
         &[7; 32],
+        None,
+        "fixture-group".into(),
     )
     .expect("reserve");
     let mut store = Store::open(&storage).expect("open");
-    store.create(&task, &event("launched")).expect("admit");
+    store
+        .create_with_facts(&task, &event("launched"), TaskAdmissionFacts::default())
+        .expect("admit");
     let before = row(&store, "1");
     assert_eq!(
         before.task.run().unwrap().launch().scratch.as_deref(),
@@ -695,9 +756,7 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
     );
     let instance = task.run().expect("prepared run").launch().instance.clone();
     task.record_send(&instance, 1).expect("record dispatch");
-    store
-        .save_row(&before, &task, &event("sent"))
-        .expect("save send marker");
+    save_row(&mut store, &before, &task, &event("sent")).expect("save send marker");
     assert_eq!(store.occupied_slots("other").expect("sent run").total(), 1);
     assert_eq!(
         store
@@ -715,13 +774,10 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
         &observation,
     )
     .expect("cancel");
-    store
-        .save_row(&before, &task, &event("cancelled"))
-        .expect("save");
+    save_row(&mut store, &before, &task, &event("cancelled")).expect("save");
     drop(store);
 
     let mut store = Store::open(&storage).expect("reopen");
-    assert_eq!(store.active().expect("active"), vec![task.clone()]);
     assert_eq!(
         store.active_ids(None, 1).expect("first page"),
         [nucleus_store::TaskSeed {
@@ -754,11 +810,9 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
         ..observation
     };
     assert_eq!(task.reconcile(&settled), Action::Advance(Phase::Cancelled));
-    store
-        .save_row(&before, &task, &event("stopped"))
-        .expect("save");
-    assert_eq!(store.get("1").expect("stored task"), Some(task));
-    assert!(store.active().expect("active").is_empty());
+    save_row(&mut store, &before, &task, &event("stopped")).expect("save");
+    assert_eq!(stored(&store, "1").expect("stored task"), Some(task));
+    assert!(store.active_ids(None, 1).expect("active").is_empty());
     assert_eq!(
         store.occupied_slots("other").expect("settled run").total(),
         0
@@ -797,7 +851,11 @@ fn title_receipts_keep_the_same_request_across_restart_and_retry() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("open");
     store
-        .create(&task("1", "fixture#1"), &event("admitted"))
+        .create_with_facts(
+            &task("1", "fixture#1"),
+            &event("admitted"),
+            TaskAdmissionFacts::default(),
+        )
         .expect("admit");
     assert!(
         store
@@ -871,7 +929,11 @@ fn title_redesire_keeps_command_id_and_preserves_newer_generations() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("open");
     store
-        .create(&task("1", "fixture#1"), &event("admitted"))
+        .create_with_facts(
+            &task("1", "fixture#1"),
+            &event("admitted"),
+            TaskAdmissionFacts::default(),
+        )
         .expect("admit");
     assert!(
         store
@@ -969,7 +1031,9 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("open");
     let task = task("1", "fixture#1");
-    store.create(&task, &event("admitted")).expect("admit");
+    store
+        .create_with_facts(&task, &event("admitted"), TaskAdmissionFacts::default())
+        .expect("admit");
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
@@ -1008,7 +1072,12 @@ fn migrating_version_nine_preserves_assigned_numbers_and_the_allocator() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("fixture store");
     let first = task("first", "fixture#first");
-    assert_eq!(store.create(&first, &event("admitted")).expect("admit"), 1);
+    assert_eq!(
+        store
+            .create_with_facts(&first, &event("admitted"), TaskAdmissionFacts::default())
+            .expect("admit"),
+        1
+    );
     drop(store);
 
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
@@ -1029,7 +1098,12 @@ fn migrating_version_nine_preserves_assigned_numbers_and_the_allocator() {
     assert_eq!(restored.number, Some(1));
     assert_eq!(store.history("first", None, 1).expect("history").len(), 1);
     let second = task("second", "fixture#second");
-    assert_eq!(store.create(&second, &event("admitted")).expect("admit"), 2);
+    assert_eq!(
+        store
+            .create_with_facts(&second, &event("admitted"), TaskAdmissionFacts::default())
+            .expect("admit"),
+        2
+    );
 }
 
 #[test]
@@ -1038,7 +1112,9 @@ fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("fixture store");
     let mut task = task("merge-recovery", "fixture#1");
-    store.create(&task, &event("admitted")).unwrap();
+    store
+        .create_with_facts(&task, &event("admitted"), TaskAdmissionFacts::default())
+        .unwrap();
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
     db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 10;")
@@ -1081,7 +1157,7 @@ fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
         &observation(),
     )
     .unwrap();
-    store.save_row(&prior, &task, &event("owner_move")).unwrap();
+    save_row(&mut store, &prior, &task, &event("owner_move")).unwrap();
     drop(store);
     let reopened = Store::open(&storage).expect("reopen migrated store");
     let current = row(&reopened, "merge-recovery");
@@ -1096,7 +1172,12 @@ fn dependency_tables_open_from_the_previous_live_schema() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("fixture store");
     let first = task("first", "fixture#first");
-    assert_eq!(store.create(&first, &event("admitted")).unwrap(), 1);
+    assert_eq!(
+        store
+            .create_with_facts(&first, &event("admitted"), TaskAdmissionFacts::default())
+            .unwrap(),
+        1
+    );
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
     db.execute_batch(
@@ -1151,7 +1232,13 @@ fn prerequisite_waits_cannot_close_a_cycle() {
     let home = tempfile::tempdir().unwrap();
     let mut store = Store::open(&fixture_storage(home.path())).unwrap();
     for id in ["first", "second", "third"] {
-        store.create(&task(id, id), &event("admitted")).unwrap();
+        store
+            .create_with_facts(
+                &task(id, id),
+                &event("admitted"),
+                TaskAdmissionFacts::default(),
+            )
+            .unwrap();
     }
     let second = ["second".to_owned()];
     let third = ["third".to_owned()];
@@ -1214,7 +1301,9 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
         }
     };
     let _ = task.reconcile(&observation);
-    store.create(&task, &event("admitted")).expect("admit");
+    store
+        .create_with_facts(&task, &event("admitted"), TaskAdmissionFacts::default())
+        .expect("admit");
     let row = row(store, id);
     assert_eq!(row.task.review_author(), task.review_author());
     let profile = Profile {
@@ -1232,13 +1321,10 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
         usage: UsageLevel::Normal,
         candidates: &[Candidate {
             profile: &profile,
-            enabled: true,
-            available: true,
             group_available: true,
             supported_efforts: &[],
             counts,
         }],
-        planner_brief: true,
     };
     let intent = if counts == RotationCounts::default() {
         decide_weighted_launch(&task, &observation, &policy, 42)
@@ -1247,7 +1333,7 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
     }
     .expect("eligible choice")
     .expect("launch decision");
-    task.reserve_profile_launch(
+    task.reserve_grouped_launch(
         &observation,
         LaunchInputs {
             scratch: None,
@@ -1256,7 +1342,8 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
             input: "synthetic launch".into(),
         },
         &[1; 32],
-        intent,
+        Some(intent),
+        "fixture-group".into(),
     )
     .expect("freeze profiled launch");
     (row, task)
@@ -1277,15 +1364,13 @@ fn an_empty_usage_store_allows_a_profiled_launch() {
         Some(RotationCounts::default())
     );
     let (prior, task) = profile_reservation(&mut store, "initial", Role::Worker);
-    store
-        .save_profile_launch(&prior, &task, &event("run_reserved"), group)
+    save_launch(&mut store, &prior, &task, &event("run_reserved"), group)
         .expect("launch from an empty history");
     let mut sent = row(&store, "initial");
     let instance = task.run().expect("run").launch().instance.clone();
     sent.task.record_send(&instance, 43).expect("record send");
     let prior = row(&store, "initial");
-    store
-        .save_row(&prior, &sent.task, &event("run_sent"))
+    save_row(&mut store, &prior, &sent.task, &event("run_sent"))
         .expect("send marker does not charge again");
     assert_eq!(
         store.rotation_counts(Role::Worker, "greeting", group),
@@ -1307,8 +1392,7 @@ fn reopening_keeps_the_role_window_and_lifetime_counts() {
     for i in 0..54 {
         let role = if i < 52 { Role::Worker } else { Role::Reviewer };
         let (prior, task) = profile_reservation(&mut store, &i.to_string(), role);
-        store
-            .save_profile_launch(&prior, &task, &event("run_reserved"), group)
+        save_launch(&mut store, &prior, &task, &event("run_reserved"), group)
             .expect("charge frozen instance");
     }
     drop(store);
@@ -1351,9 +1435,14 @@ fn history_failure_does_not_lose_the_launch_or_leave_a_partial_charge() {
     )
     .expect("fail the second usage write");
     let (prior, task) = profile_reservation(&mut store, "fallback", Role::Worker);
-    store
-        .save_profile_launch(&prior, &task, &event("run_reserved"), "shared-subscription")
-        .expect("usage failure leaves task writes available");
+    save_launch(
+        &mut store,
+        &prior,
+        &task,
+        &event("run_reserved"),
+        "shared-subscription",
+    )
+    .expect("usage failure leaves task writes available");
     assert_eq!(row(&store, "fallback").task, task);
     assert_eq!(
         store.rotation_counts(Role::Worker, "greeting", "shared-subscription"),
@@ -1366,9 +1455,14 @@ fn history_failure_does_not_lose_the_launch_or_leave_a_partial_charge() {
         None
     );
     let (prior, task) = profile_reservation(&mut store, "unreadable", Role::Worker);
-    store
-        .save_profile_launch(&prior, &task, &event("run_reserved"), "shared-subscription")
-        .expect("unreadable rotation falls back to weights");
+    save_launch(
+        &mut store,
+        &prior,
+        &task,
+        &event("run_reserved"),
+        "shared-subscription",
+    )
+    .expect("unreadable rotation falls back to weights");
     assert_eq!(row(&store, "unreadable").task, task);
 }
 
@@ -1378,17 +1472,19 @@ fn an_audit_insert_failure_rolls_back_the_task_update() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("open");
     let initial = task("1", "fixture#1");
-    store.create(&initial, &event("admitted")).expect("admit");
+    store
+        .create_with_facts(&initial, &event("admitted"), TaskAdmissionFacts::default())
+        .expect("admit");
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
     db.execute_batch("CREATE TRIGGER fail_audit BEFORE INSERT ON events WHEN NEW.kind = 'reject' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").expect("install fixture trigger");
     let mut changed = initial.clone();
     changed.reconcile(&observation());
     let before = row(&store, "1");
-    assert!(store.save_row(&before, &changed, &event("reject")).is_err());
+    assert!(save_row(&mut store, &before, &changed, &event("reject")).is_err());
     assert_eq!(row(&store, "1"), before);
     assert_eq!(
-        store.get("1").expect("read rolled back task"),
+        stored(&store, "1").expect("read rolled back task"),
         Some(initial)
     );
     assert_eq!(store.history("1", None, 10).expect("audit").len(), 1);
@@ -1400,9 +1496,15 @@ fn restore_checks_the_digest_of_each_stored_brief() {
     let storage = fixture_storage(home.path());
     let mut store = Store::open(&storage).unwrap();
     let healthy = task("healthy", "fixture#1");
-    store.create(&healthy, &event("admitted")).unwrap();
     store
-        .create(&task("damaged", "fixture#2"), &event("admitted"))
+        .create_with_facts(&healthy, &event("admitted"), TaskAdmissionFacts::default())
+        .unwrap();
+    store
+        .create_with_facts(
+            &task("damaged", "fixture#2"),
+            &event("admitted"),
+            TaskAdmissionFacts::default(),
+        )
         .unwrap();
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
@@ -1416,8 +1518,8 @@ fn restore_checks_the_digest_of_each_stored_brief() {
     let listing = reopened.list().unwrap();
     assert_eq!(listing.readable[0].task, healthy);
     assert_eq!(listing.unreadable[0].identity.id, "damaged");
-    assert_eq!(reopened.get("healthy").unwrap(), Some(healthy));
-    let Err(StoreError::UnreadableTask(error)) = reopened.get("damaged") else {
+    assert_eq!(stored(&reopened, "healthy").unwrap(), Some(healthy));
+    let Err(StoreError::UnreadableTask(error)) = stored(&reopened, "damaged") else {
         panic!("expected a brief integrity error");
     };
     assert!(
@@ -1462,12 +1564,17 @@ fn restoring_a_review_entry_with_planner_acceptance_is_refused() {
         &merged,
     )
     .expect("accept a brief");
-    store.create(&task, &event("admitted")).expect("admit");
+    store
+        .create_with_facts(&task, &event("admitted"), TaskAdmissionFacts::default())
+        .expect("admit");
     let db = Connection::open(storage.database().path().join("engine.sqlite"))
         .expect("fixture connection");
     db.execute("UPDATE tasks SET entry='review_entry'", [])
         .expect("inject invalid restored state");
-    assert!(matches!(store.get("1"), Err(StoreError::UnreadableTask(_))));
+    assert!(matches!(
+        stored(&store, "1"),
+        Err(StoreError::UnreadableTask(_))
+    ));
 }
 
 #[test]
@@ -1521,7 +1628,7 @@ fn settings_do_not_create_storage_until_the_configured_volume_is_verified() {
             work_volume: Some(volume),
             ..EngineSettings::default()
         };
-        assert!(file.save(&settings).is_err());
+        assert!(publish(&file, &settings).is_err());
         assert_eq!(
             std::fs::read_dir(root.path())
                 .expect("inspect untouched home")
@@ -1534,7 +1641,7 @@ fn settings_do_not_create_storage_until_the_configured_volume_is_verified() {
         work_volume: Some(matching),
         ..EngineSettings::default()
     };
-    file.save(&settings).expect("publish versioned settings");
+    publish(&file, &settings).expect("publish versioned settings");
     assert_eq!(file.load().expect("read settings back"), settings);
     let storage = file.storage().expect("load verified roots");
     assert_eq!(storage.work().path(), root.path().join("work"));
@@ -1563,7 +1670,7 @@ fn pinned_work_and_scratch_roots_cannot_resolve_to_another_volume() {
         },
     ] {
         assert!(matches!(
-            file.save(&settings),
+            publish(&file, &settings),
             Err(StorageError::OutsideVolume)
         ));
     }
@@ -1670,7 +1777,13 @@ fn version_eleven_decodes_delivery_history_once() {
         ("sent", "accepted"),
         ("preflight", "none"),
     ] {
-        store.create(&task(id, id), &event("admitted")).unwrap();
+        store
+            .create_with_facts(
+                &task(id, id),
+                &event("admitted"),
+                TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         let version = row(&store, id).version;
         let mut append = |kind, detail: serde_json::Value| {
             let mut entry = event(kind);
@@ -1735,7 +1848,11 @@ fn schema_twelve_preserves_existing_snooze_ownership() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).unwrap();
     store
-        .create(&task("row", "row"), &event("admitted"))
+        .create_with_facts(
+            &task("row", "row"),
+            &event("admitted"),
+            TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let receipt = RowSnooze {
         episode: 1_000,
@@ -1773,12 +1890,16 @@ fn schema_sixteen_preserves_the_current_hold_and_refresh_independently() {
     let storage = fixture_storage(home.path());
     let mut store = Store::open(&storage).unwrap();
     for id in ["task", "unknown"] {
-        store.create(&task(id, id), &event("admitted")).unwrap();
+        store
+            .create_with_facts(
+                &task(id, id),
+                &event("admitted"),
+                TaskAdmissionFacts::default(),
+            )
+            .unwrap();
     }
     let initial = row(&store, "task");
-    let version = store
-        .save_row(&initial, &initial.task, &event("role_changed"))
-        .unwrap();
+    let version = save_row(&mut store, &initial, &initial.task, &event("role_changed")).unwrap();
     drop(store);
 
     let path = storage.database().path().join("engine.sqlite");
@@ -1876,7 +1997,13 @@ fn retention_keeps_other_tasks_and_remembers_its_interval_and_archive_attempts()
     let storage = fixture_storage(home.path());
     let mut store = Store::open(&storage).unwrap();
     for id in ["active", "finished"] {
-        store.create(&task(id, id), &event("admitted")).unwrap();
+        store
+            .create_with_facts(
+                &task(id, id),
+                &event("admitted"),
+                TaskAdmissionFacts::default(),
+            )
+            .unwrap();
     }
     let conn = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
     conn.execute_batch(r#"UPDATE tasks SET threads='{"worker":"shared","reviewer":"review"}',phase='done' WHERE id='finished';
@@ -1957,7 +2084,11 @@ fn scheduled_backup_restores_the_live_rows_and_rotates_verified_utc_tiers() {
     let storage = fixture_storage(home.path());
     let mut store = Store::open(&storage).unwrap();
     store
-        .create(&task("kept", "project#1"), &event("created"))
+        .create_with_facts(
+            &task("kept", "project#1"),
+            &event("created"),
+            TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let archives = EngineStorage::scheduled_directory(home.path(), storage.backup()).unwrap();
     archives.ensure().unwrap();
@@ -2045,8 +2176,12 @@ fn migrating_version_twelve_defaults_queue_priority_without_rewriting_rows() {
         promoted.queue_priority(),
         nucleus_core::QueuePriority::Promoted
     );
-    store.create(&legacy, &event("admitted")).unwrap();
-    store.create(&promoted, &event("admitted")).unwrap();
+    store
+        .create_with_facts(&legacy, &event("admitted"), TaskAdmissionFacts::default())
+        .unwrap();
+    store
+        .create_with_facts(&promoted, &event("admitted"), TaskAdmissionFacts::default())
+        .unwrap();
     let expected_rowid = store.admission_order("legacy").unwrap();
     drop(store);
 
@@ -2102,7 +2237,9 @@ fn migrating_version_thirteen_keeps_existing_holds_and_stores_merge_holds() {
         )
         .unwrap();
     let mut store = Store::open(&storage).unwrap();
-    store.create(&legacy, &event("admitted")).unwrap();
+    store
+        .create_with_facts(&legacy, &event("admitted"), TaskAdmissionFacts::default())
+        .unwrap();
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
     restore_v15_parent_tables(&db);
@@ -2116,9 +2253,13 @@ fn migrating_version_thirteen_keeps_existing_holds_and_stores_merge_holds() {
     legacy
         .set_brief_merge_hold(Some("Verify the candidate"), &operator, 123)
         .unwrap();
-    store
-        .save_row(&prior, &legacy, &event("brief_merge_hold_changed"))
-        .unwrap();
+    save_row(
+        &mut store,
+        &prior,
+        &legacy,
+        &event("brief_merge_hold_changed"),
+    )
+    .unwrap();
     drop(store);
     let reopened = Store::open(&storage).unwrap();
     assert_eq!(row(&reopened, "held").task, legacy);

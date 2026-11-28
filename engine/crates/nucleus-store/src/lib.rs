@@ -37,7 +37,6 @@ pub use dependencies::{
     Dependencies, DependencyClock, DependencyEdit, PrerequisiteRelease, PrerequisiteWait,
 };
 pub use github_accounts::{GITHUB_HOST, GitHubAccount, GitHubAccountSettings};
-pub use inbox::InboxBinding;
 pub use parent_delivery::{ParentDelivery, ParentResult};
 pub use review_publication::{ReviewIntent, ReviewPublication, ReviewPublicationOutcome};
 pub use settings::{
@@ -563,14 +562,6 @@ impl Store {
         Ok(())
     }
 
-    /// Look up one task by its engine ID.
-    ///
-    /// # Errors
-    /// Returns an error if the database cannot read or decode the row.
-    pub fn get(&self, id: &str) -> Result<Option<Task>, StoreError> {
-        Ok(self.row(id)?.map(|row| row.task))
-    }
-
     /// Read a task with the exact version required for compare-and-set.
     /// # Errors
     /// Returns an error if the row cannot be read or decoded.
@@ -601,8 +592,6 @@ impl Store {
                   OR phase = 'report_ready' AND coalesce(json_extract(report_task, '$.notice_attempted'), 0) = 0)
              AND (run IS NOT NULL OR coalesce(json_extract(question, '$.operator_decline'), '') != 'notified')
              AND rowid > (SELECT seq FROM cursor)
-             UNION SELECT t.rowid, b.task_id FROM inbox_bindings b JOIN tasks t ON t.id = b.task_id
-               WHERE t.rowid > (SELECT seq FROM cursor) AND t.phase NOT IN ('done','cancelled')
              UNION SELECT t.rowid, n.task_id FROM task_prerequisite_notices n JOIN tasks t ON t.id = n.task_id
                WHERE t.rowid > (SELECT seq FROM cursor) AND n.attempted_at_ms IS NULL AND t.phase NOT IN ('done','cancelled')
              UNION SELECT t.rowid, w.task_id FROM task_prerequisite_waits w
@@ -999,16 +988,6 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Read tasks that can still take an engine pass, including pending stops.
-    ///
-    /// # Errors
-    /// Returns an error if the database cannot read or decode the rows.
-    pub fn active(&self) -> Result<Vec<Task>, StoreError> {
-        self.tasks(&format!(
-            "SELECT {TASK_COLUMNS}, {PAPERCUT_TITLE} FROM tasks WHERE phase NOT IN ('done','cancelled') OR run IS NOT NULL ORDER BY id"
-        ))
-    }
-
     /// Read all tasks for the board, including terminal rows.
     /// # Errors
     /// Returns an error if the database cannot read or decode the rows.
@@ -1043,20 +1022,6 @@ impl Store {
         Ok(tasks)
     }
 
-    fn tasks(&self, statement: &str) -> Result<Vec<Task>, StoreError> {
-        let mut query = self.connection.prepare_cached(statement)?;
-        let rows = query.query_map([], decode_display_task)?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// Admit a task and append its first audit event together.
-    ///
-    /// # Errors
-    /// Returns an error on duplicate identity, invalid state, or database failure.
-    pub fn create(&mut self, task: &Task, event: &EventDraft) -> Result<i64, StoreError> {
-        self.create_with_facts(task, event, TaskAdmissionFacts::default())
-    }
-
     /// Admit a task with its prerequisites and any Low usage decision together.
     ///
     /// # Errors
@@ -1073,19 +1038,6 @@ impl Store {
         let number = admit(&tx, task, event, facts)?;
         tx.commit()?;
         Ok(number)
-    }
-
-    /// Replace exactly the row version and run read by the caller. State and
-    /// audit commit together. Remote I/O belongs outside the transaction.
-    /// # Errors
-    /// Returns an error on a competing write or transaction failure.
-    pub fn save_row(
-        &mut self,
-        expected: &TaskRow,
-        task: &Task,
-        event: &EventDraft,
-    ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, None, None, None)
     }
 
     /// Amend a queued brief and replace its resolved dependency list together.
@@ -1108,22 +1060,6 @@ impl Store {
             Some((prerequisites, clock)),
             None,
         )
-    }
-
-    /// Commit a newly frozen profiled launch and charge its subscription group.
-    /// The launch stays valid if the optional rotation history cannot be written.
-    ///
-    /// # Errors
-    /// Returns an error on a stale row, a task without a fresh profile reservation,
-    /// or failure to commit the task and its audit event.
-    pub fn save_profile_launch(
-        &mut self,
-        expected: &TaskRow,
-        task: &Task,
-        event: &EventDraft,
-        group: &str,
-    ) -> Result<i64, StoreError> {
-        self.save(expected, task, event, Some(group), None, None)
     }
 
     /// Save the task and account for the lifecycle transition atomically.
@@ -1165,27 +1101,6 @@ impl Store {
     /// Returns a database error if the recorded counts could not be read.
     pub fn profile_usage(&self) -> Result<ProfileUsage, StoreError> {
         Ok(usage::profile_usage(&self.connection)?)
-    }
-
-    /// Record a positive provider deadline without shortening another known pause.
-    ///
-    /// # Errors
-    /// Returns a database error if the deadline could not be recorded.
-    pub fn record_provider_pause(
-        &self,
-        group: &str,
-        until_ms: u64,
-        now_ms: u64,
-    ) -> Result<(), StoreError> {
-        self.set_subscription_pause(
-            group,
-            SubscriptionPause {
-                until_ms,
-                fallback: false,
-            },
-            now_ms,
-        )?;
-        Ok(())
     }
 
     /// Record a task effect once and return its journal sequence when newly inserted.
@@ -1672,7 +1587,9 @@ mod completion_notice_tests {
     use nucleus_core::{Entry, Head, Identity, Task};
     use serde_json::{Value, json};
 
-    use crate::{EventDraft, Store, settings::test_store};
+    use crate::{
+        AllowanceObservation, EventDraft, Store, TaskAdmissionFacts, TaskRow, settings::test_store,
+    };
 
     const PLAIN: &str = "---\nqueue:\n  complexity: low\n---\n# Fix rounding";
     const ON: &str = "---\nqueue:\n  notifyOriginOnCloseout: true\n---\n# Fix rounding";
@@ -1704,13 +1621,24 @@ mod completion_notice_tests {
         (temporary, store)
     }
 
+    fn save(store: &mut Store, row: &TaskRow, task: &Task, event: &EventDraft) {
+        let idle = AllowanceObservation {
+            elapsed_ms: 0,
+            charging: false,
+            extension: None,
+        };
+        store
+            .save_accounted(row, task, event, None, idle, false)
+            .unwrap();
+    }
+
     /// Move the stored task to `phase` through the same save path closeout uses.
     fn settle(store: &mut Store, id: &str, phase: &str) {
         let row = store.row(id).unwrap().unwrap();
         let mut value = serde_json::to_value(&row.task).unwrap();
         value["phase"] = json!(phase);
         let settled: Task = serde_json::from_value(value).unwrap();
-        store.save_row(&row, &settled, &event("settled")).unwrap();
+        save(store, &row, &settled, &event("settled"));
     }
 
     #[test]
@@ -1723,9 +1651,10 @@ mod completion_notice_tests {
             ("on-done", ON),
         ] {
             store
-                .create(
+                .create_with_facts(
                     &Task::new(identity(id), brief.into(), None),
                     &event("admitted"),
+                    TaskAdmissionFacts::default(),
                 )
                 .unwrap();
         }
@@ -1749,7 +1678,7 @@ mod completion_notice_tests {
         let head: Head = serde_json::from_value(json!("a".repeat(40))).unwrap();
         for id in ["unreported", "reported"] {
             store
-                .create(
+                .create_with_facts(
                     &Task::new_report_only(
                         identity(id),
                         PLAIN.into(),
@@ -1758,6 +1687,7 @@ mod completion_notice_tests {
                         head.clone(),
                     ),
                     &event("admitted"),
+                    TaskAdmissionFacts::default(),
                 )
                 .unwrap();
         }
@@ -1772,7 +1702,7 @@ mod completion_notice_tests {
         });
         let mut reported: Task = serde_json::from_value(value).unwrap();
         reported.mark_report_notice_attempted();
-        store.save_row(&row, &reported, &event("reported")).unwrap();
+        save(&mut store, &row, &reported, &event("reported"));
 
         settle(&mut store, "unreported", "cancelled");
         settle(&mut store, "reported", "cancelled");
@@ -1787,15 +1717,17 @@ mod completion_notice_tests {
         let mut origin_identity = identity("watched");
         origin_identity.origin_thread = Some("origin-planner".into());
         store
-            .create(
+            .create_with_facts(
                 &Task::new(origin_identity, PLAIN.into(), None),
                 &event("admitted"),
+                TaskAdmissionFacts::default(),
             )
             .unwrap();
         store
-            .create(
+            .create_with_facts(
                 &Task::new(identity("opt-out"), OFF.into(), None),
                 &event("admitted"),
+                TaskAdmissionFacts::default(),
             )
             .unwrap();
 
@@ -1887,9 +1819,10 @@ mod completion_notice_tests {
     fn upgrading_schema_14_migrates_completion_notices_per_recipient() {
         let (home, mut store) = fixture();
         store
-            .create(
+            .create_with_facts(
                 &Task::new(identity("watched"), PLAIN.into(), None),
                 &event("admitted"),
+                TaskAdmissionFacts::default(),
             )
             .unwrap();
         settle(&mut store, "watched", "done");

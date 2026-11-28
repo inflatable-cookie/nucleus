@@ -118,29 +118,6 @@ impl T3 {
         self.rpc.fixture_shell(item);
     }
 
-    /// Read the exact root, provider and visibility of a task's parent.
-    ///
-    /// # Errors
-    /// Returns an error for a mismatched binding or unknown host read.
-    pub async fn observe_task_row(
-        &self,
-        binding: &Binding,
-        provider: &str,
-    ) -> Result<Option<RowObservation>, HostError> {
-        let thread = parent_thread(Path::new(&binding.worktree_path));
-        let Some(projection) = self
-            .read_thread(binding, &thread, crate::thread_snapshots::ThreadRead::Exact)
-            .await?
-        else {
-            return Ok(None);
-        };
-        let Some(observed) = projection.row_observation()? else {
-            return Ok(None);
-        };
-        projection.require_parent_provider(provider)?;
-        Ok(Some(observed))
-    }
-
     /// Send a single recorded visibility command, rechecking any supplied shell proof.
     ///
     /// # Errors

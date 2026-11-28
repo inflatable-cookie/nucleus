@@ -263,7 +263,14 @@ impl Fixture {
         );
         {
             let mut state = self.service.state.lock().await;
-            state.store.create(&dependency, &event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    &dependency,
+                    &event("fixture"),
+                    TaskAdmissionFacts::default(),
+                )
+                .unwrap();
             state
                 .store
                 .create_with_facts(
@@ -491,7 +498,10 @@ async fn failed_snooze_waits_for_later_shell_evidence() {
     let fixture = Fixture::new(&pending).await;
     {
         let mut state = fixture.service.state.lock().await;
-        state.store.create(&pending, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&pending, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         fixture.service.desire_title(&mut state, &pending, None);
     }
     fixture.native.lock().unwrap().next_reply = NextReply::Lost;
@@ -542,7 +552,10 @@ async fn a_delivered_parent_message_supersedes_an_unconfirmed_snooze_once() {
         .store(1_893_456_000_000, std::sync::atomic::Ordering::Relaxed);
     {
         let mut state = service.state.lock().await;
-        state.store.create(&pending, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&pending, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.desire_title(&mut state, &pending, None);
     }
     fixture.sync().await;
@@ -587,7 +600,10 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
             ID.into(),
             (run.instance.clone(), RunState::IdleWithoutTerminalRun),
         );
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.desire_title(&mut state, &task, None);
         service.lookup(&state, ID).unwrap()
     };
@@ -639,7 +655,10 @@ async fn a_hold_restores_an_operator_snooze_applied_after_preparation() {
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     fixture.publish_shell();
@@ -716,7 +735,10 @@ async fn send_snoozed_hold(fixture: &Fixture, task: &Task) -> TaskRow {
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
@@ -809,7 +831,11 @@ async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
         let mut state = service.state.lock().await;
         state
             .store
-            .create(&pending_task(), &event("fixture"))
+            .create_with_facts(
+                &pending_task(),
+                &event("fixture"),
+                TaskAdmissionFacts::default(),
+            )
             .unwrap();
         service.lookup(&state, ID).unwrap()
     };
@@ -893,7 +919,10 @@ async fn a_rejected_hold_persists_its_replacement_before_retrying() {
     let mut fixture = Fixture::new(&task).await;
     let row = {
         let mut state = fixture.service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         fixture.service.lookup(&state, ID).unwrap()
     };
     fixture.publish_shell();
@@ -1001,7 +1030,10 @@ async fn a_successor_prompt_releases_the_previous_acp_turn_and_anchors_the_reser
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     let deadline = crate::acp::run_hold_deadline(&row).unwrap();
@@ -1156,7 +1188,10 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
     fixture.child(&launch.thread, false);
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&worker, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&worker, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         state.set_wait(ID, Some(WaitReason::HostUnknown));
         service.desire_title(&mut state, &worker, None);
         service.lookup(&state, ID).unwrap()
@@ -1235,7 +1270,10 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
     fixture.child(worker, false);
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("run_reserved")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("run_reserved"), TaskAdmissionFacts::default())
+            .unwrap();
         service.desire_title(&mut state, &task, None);
         service.lookup(&state, ID).unwrap()
     };
@@ -1441,7 +1479,10 @@ async fn a_planner_question_stays_visible_regardless_of_child_activity() {
     );
     {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         state
             .observe_wait(&task, Some(WaitReason::Question))
             .unwrap();
@@ -1467,7 +1508,10 @@ async fn an_actionable_row_retries_its_claimed_clear_with_the_same_command() {
     let service = &fixture.service;
     {
         let mut state = service.state.lock().await;
-        state.store.create(&pending, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&pending, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.desire_title(&mut state, &pending, None);
     }
     fixture.sync().await;
@@ -1505,13 +1549,20 @@ async fn an_actionable_row_retries_its_claimed_clear_with_the_same_command() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "follow one row through owned, operator and cleared snoozes"
+)]
 async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze() {
     let pending = pending_task();
     let fixture = Fixture::new(&pending).await;
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&pending, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&pending, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.desire_title(&mut state, &pending, None);
         service.lookup(&state, ID).unwrap()
     };
@@ -1620,7 +1671,10 @@ async fn launch_preparation_can_unarchive_before_recording_a_hold() {
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     let archive = json!({
@@ -1674,7 +1728,10 @@ async fn an_active_role_publishes_its_frozen_parent_prompt() {
     fixture.publish_shell();
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
 
@@ -1729,7 +1786,10 @@ async fn the_held_parent_follows_the_child_across_an_authenticated_report() {
     fixture.publish_shell();
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     service.reconcile_live_parent(&row).await.unwrap();
@@ -1792,7 +1852,10 @@ async fn instant_parent_fixture() -> (Fixture, TaskRow) {
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     task.record_send(&launch.instance, 2).unwrap();
@@ -2026,7 +2089,10 @@ async fn a_queued_run_waits_for_the_start_deadline_without_replacing_the_hold_af
 async fn create_visibility_row(fixture: &Fixture, task: &Task) -> TaskRow {
     let row = {
         let mut state = fixture.service.state.lock().await;
-        state.store.create(task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
         fixture.service.desire_title(&mut state, task, None);
         fixture.service.lookup(&state, ID).unwrap()
     };
@@ -2402,7 +2468,10 @@ async fn a_handover_publishes_permission_and_planner_titles_immediately() {
     fixture.publish_shell();
 
     let mut state = service.state.lock().await;
-    state.store.create(&task, &event("fixture")).unwrap();
+    state
+        .store
+        .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+        .unwrap();
     let row = service.lookup(&state, ID).unwrap();
     assert!(service.role_window(&fixture.thread, &task).2.is_some());
     let pending_title =

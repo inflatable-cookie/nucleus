@@ -189,7 +189,6 @@ fn wait_label(task: &Task, wait: Option<WaitReason>) -> Option<&'static str> {
         Some(WaitReason::IdleWithoutTerminalRun) => "turn",
         Some(WaitReason::Permission) => "permission",
         Some(WaitReason::Input) => "input",
-        Some(WaitReason::RetainedThreadBusy) => "busy",
         Some(WaitReason::ForgeUnknown) => "GitHub",
         Some(WaitReason::ExternalMergeBlocked) => "source",
         Some(WaitReason::ReviewPublicationBlocked) => "publication",
@@ -834,7 +833,6 @@ mod tests {
             W::Permission,
             W::UsagePermission,
             W::Input,
-            W::RetainedThreadBusy,
             W::Stopping,
             W::ForgeUnknown,
             W::ReviewPublicationBlocked,
@@ -885,7 +883,11 @@ mod tests {
         let mut state = service.state.lock().await;
         state
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("stored task");
         state
             .observe_wait_detail(
@@ -1000,7 +1002,14 @@ mod tests {
         let parent = "fixture-parent";
         {
             let mut state = service.state.lock().await;
-            state.store.create(&task, &crate::event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    &task,
+                    &crate::event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
             state
                 .store
                 .desire_title(&task.identity().id, parent, "Reviewing")
@@ -1040,7 +1049,14 @@ mod tests {
             &id,
         ));
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.desire_title(&mut state, &task, None);
         let row = state.store.row(&id).unwrap().unwrap();
         let observation = nucleus_core::Observation {
@@ -1202,7 +1218,7 @@ mod tests {
             state.settings.dispatch = None;
             state
                 .store
-                .answer_decision(
+                .answer_decision_with_notice(
                     &project,
                     "test-decision",
                     nucleus_store::planning::DecisionAnswerInput {
@@ -1212,6 +1228,7 @@ mod tests {
                         note: None,
                     },
                     stamp("operator", 1),
+                    None,
                 )
                 .unwrap();
         }
@@ -1320,7 +1337,11 @@ mod tests {
             let mut state = service.state.lock().await;
             state
                 .store
-                .create(&subject, &event("admitted"))
+                .create_with_facts(
+                    &subject,
+                    &event("admitted"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
                 .expect("seed task");
             let row = service
                 .lookup(&state, &subject.identity().id)
@@ -1456,7 +1477,11 @@ mod tests {
             let mut state = service.state.lock().await;
             state
                 .store
-                .create(&subject, &event("admitted"))
+                .create_with_facts(
+                    &subject,
+                    &event("admitted"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
                 .expect("seed task");
         }
         (home, service, native, id, parent, row_json)

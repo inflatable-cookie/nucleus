@@ -673,7 +673,11 @@ mod tests {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("seed question");
         service.task("notice").await.expect("first row")
     }

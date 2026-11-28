@@ -498,7 +498,11 @@ async fn a_restart_ranks_a_waiting_heavy_reviewer_before_an_earlier_light_task()
         .lock()
         .await
         .store
-        .create(&task, &crate::event("fixture"))
+        .create_with_facts(
+            &task,
+            &crate::event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .expect("stored reviewer");
 
     let published = task.pull_request().expect("published pull").clone();

@@ -219,22 +219,8 @@ impl Store {
         read(&self.connection, ItemRecord, project, id)
     }
 
-    /// Record a new item. Its author comes from the authenticated write.
-    ///
-    /// # Errors
-    /// Returns an error for invalid content, a duplicate ID, or database failure.
-    pub fn add_item(
-        &mut self,
-        project: &str,
-        id: String,
-        kind: ItemKind,
-        content: ItemContent,
-        stamp: WriteAt<'_>,
-    ) -> Result<Item, StoreError> {
-        self.add_item_with_author_project(project, id, kind, content, None, stamp)
-    }
-
-    /// Record an item with the project whose planner claim authenticated its author.
+    /// Record a new item. Its author comes from the authenticated write, with the
+    /// project whose planner claim authenticated them.
     ///
     /// # Errors
     /// Returns an error for invalid content, a duplicate ID, or database failure.
@@ -482,39 +468,13 @@ impl Store {
         Ok(Some(id))
     }
 
-    /// Admit the task, link its source and record the item's promotion together.
-    ///
-    /// # Errors
-    /// Returns an error if the current item is ineligible, the task has a different brief,
-    /// or any part of admission fails.
-    pub fn promote_item(
-        &mut self,
-        source: &ItemSource,
-        task: &Task,
-        event: &EventDraft,
-        stamp: WriteAt<'_>,
-    ) -> Result<(Item, i64), StoreError> {
-        self.promote_item_with_facts(
-            source,
-            PromotionCheck {
-                body: &task.brief().text,
-                version: None,
-                source_body: None,
-            },
-            task,
-            event,
-            stamp,
-            TaskAdmissionFacts::default(),
-        )
-    }
-
     /// Promote the item, including its prerequisites and any required Low usage permission, in one transaction.
     /// A changed source body (a lead's chosen complexity) is saved with the promotion, so the
     /// item's brief changes only when its task is admitted.
     ///
     /// # Errors
-    /// Returns the same conflicts and write errors as [`Self::promote_item`], and a conflict
-    /// when the item moved past the expected version.
+    /// Returns an error if the item is ineligible, the task has a different brief, the item
+    /// moved past the expected version, or any part of admission fails.
     pub fn promote_item_with_facts(
         &mut self,
         source: &ItemSource,

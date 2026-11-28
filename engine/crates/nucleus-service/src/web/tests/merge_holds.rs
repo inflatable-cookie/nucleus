@@ -149,7 +149,7 @@ fn approve_candidate(mut task: Task, head: &Head) -> Task {
         ),
     ] {
         let credential = task
-            .reserve_launch(
+            .reserve_grouped_launch(
                 &observation,
                 LaunchInputs {
                     scratch: None,
@@ -158,6 +158,8 @@ fn approve_candidate(mut task: Task, head: &Head) -> Task {
                     input: thread.into(),
                 },
                 &[3; 32],
+                None,
+                "fixture-group".into(),
             )
             .unwrap();
         let instance = task.run().unwrap().launch().instance.clone();

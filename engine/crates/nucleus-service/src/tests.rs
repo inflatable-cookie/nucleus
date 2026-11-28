@@ -20,7 +20,7 @@ use nucleus_hosts::{
     Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
     SendOutcome, StopProgress, TaskHost,
 };
-use nucleus_store::{EngineSettings, PinnedVolume};
+use nucleus_store::{AllowanceObservation, PinnedVolume, Store, StoreError};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
@@ -39,13 +39,28 @@ pub(super) fn author_declaration() -> AuthorDeclaration {
     }
 }
 
+/// Seed a task change through the production save, charging no allowance time.
+pub(super) fn save_row(
+    store: &mut Store,
+    expected: &TaskRow,
+    task: &Task,
+    event: &EventDraft,
+) -> Result<i64, StoreError> {
+    let idle = AllowanceObservation {
+        elapsed_ms: 0,
+        charging: false,
+        extension: None,
+    };
+    store.save_accounted(expected, task, event, None, idle, false)
+}
+
 pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     fixture_with_volume(forge, None)
 }
 
 pub(super) fn fixture_with_volume(
     forge: GitHub,
-    work_volume: Option<PinnedVolume>,
+    work_volume: Option<&PinnedVolume>,
 ) -> (tempfile::TempDir, Service) {
     let home = tempfile::tempdir().expect("fixture volume directory");
     let root = home.path().canonicalize().expect("portable root");
@@ -67,10 +82,9 @@ pub(super) fn fixture_with_volume(
         .expect("base head");
     let settings = SettingsFile::open(&root).expect("portable settings");
     settings
-        .save(&EngineSettings {
-            enabled: true,
-            work_volume,
-            ..EngineSettings::default()
+        .configure(&settings.read().expect("fixture settings"), |current| {
+            current.enabled = true;
+            current.work_volume = work_volume.cloned();
         })
         .expect("enable fixture");
     let profile = RoleProfile {
@@ -181,7 +195,7 @@ pub(super) fn reservation_at(
     };
     let _ = task.reconcile(&observation);
     let credential = task
-        .reserve_launch(
+        .reserve_grouped_launch(
             &observation,
             LaunchInputs {
                 scratch: None,
@@ -190,6 +204,8 @@ pub(super) fn reservation_at(
                 input: "fixture-only wire".into(),
             },
             &[3; 32],
+            None,
+            "fixture-group".into(),
         )
         .expect("reserve exact callback run");
     (task, credential, observation)
@@ -234,7 +250,9 @@ pub(super) fn reserved_reviewer_with(
         Action::Advance(Phase::Reviewing)
     );
     let launch = inputs(&task);
-    let credential = task.reserve_launch(&observation, launch, &[4; 32]).unwrap();
+    let credential = task
+        .reserve_grouped_launch(&observation, launch, &[4; 32], None, "fixture-group".into())
+        .unwrap();
     (task, credential, observation)
 }
 
@@ -383,7 +401,11 @@ async fn a_held_review_waits_and_a_late_report_wins_the_reminder_reservation() {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let owner = Authority::Operator {
         actor: "fixture".into(),
@@ -541,7 +563,11 @@ async fn a_move_during_the_forge_read_prevents_stale_launch() {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .expect("seed");
     let stale = service.task(id).await.expect("old version");
     let (result, moved) = tokio::join!(service.pass(), async {
@@ -628,7 +654,14 @@ async fn a_cold_pass_consumes_an_authenticated_report_despite_an_old_custody_blo
             .unwrap();
         {
             let mut state = service.state.lock().await;
-            let version = state.store.create(&task, &event("fixture")).unwrap();
+            let version = state
+                .store
+                .create_with_facts(
+                    &task,
+                    &event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
             let mut blocked = event("host_observation_blocked");
             blocked.detail = serde_json::json!({
                 "version": version, "deliveryPending": false,
@@ -680,7 +713,14 @@ async fn proven_unsent_preflights_replan_without_fencing_the_task_version() {
     let row = {
         let (task, _, _) = reservation("unsent", Entry::Brief, &service.fixture().start);
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         let row = service.lookup(&state, "unsent").unwrap();
         state.set_wait("unsent", Some(WaitReason::HostObservationBlocked));
         row
@@ -750,7 +790,14 @@ async fn a_generic_runless_check_cannot_replace_a_proven_refusal_with_a_fence() 
     let task = Task::new(reserved.identity().clone(), "Fixture".into(), None);
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, "runless").unwrap()
     };
     let refusal = Err(service.parent_not_sent("parent proof changed"));
@@ -808,7 +855,11 @@ async fn a_settled_run_wakes_the_oldest_slot_waiter() {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("seed waiter");
         let row = service.task(id).await.expect("waiter");
         service
@@ -833,7 +884,11 @@ async fn a_settled_run_wakes_the_oldest_slot_waiter() {
         .lock()
         .await
         .store
-        .create(&holder, &event("fixture"))
+        .create_with_facts(
+            &holder,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .expect("seed holder");
     let actor = Authority::Operator {
         actor: "fixture".into(),
@@ -995,7 +1050,13 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
             capacity_waiters,
             ..
         } = &mut *state;
-        store.create(&task, &event("fixture")).unwrap();
+        store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         let now = Instant::now();
         schedule
             .seed(
@@ -1114,7 +1175,14 @@ async fn interrupted_checkout_with_a_sent_worker_is_preserved() {
     assert!(task.run().is_none());
     {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         state
             .observe_wait(&task, Some(WaitReason::WorkspaceUnknown))
             .unwrap();
@@ -1267,7 +1335,11 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         .lock()
         .await
         .store
-        .create(&queued(oldest), &event("fixture"))
+        .create_with_facts(
+            &queued(oldest),
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     assert!(matches!(
         pass(&service).await[0].result,
@@ -1295,12 +1367,26 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     winner.record_send(&instance, 2).unwrap();
     {
         let mut state = service.state.lock().await;
-        state.store.create(&winner, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &winner,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         state.schedule.park("winner");
         // The next oldest-task decision follows the fixture's capacity or native evidence.
         state.schedule.park(oldest);
         for id in newest {
-            state.store.create(&queued(id), &event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    &queued(id),
+                    &event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
             state.schedule.wake(id, Instant::now(), Priority::Wake);
         }
     }
@@ -1569,7 +1655,14 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
             .allocate(head)
             .unwrap();
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         state.schedule.park(id);
     }
     let (shape, _, _) = reservation("queued", Entry::Brief, head);
@@ -1577,7 +1670,14 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
     {
         let mut state = service.state.lock().await;
         assert_eq!(state.store.occupied_slots("").unwrap().total(), 0);
-        state.store.create(&queued, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &queued,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
     }
     for _ in 0..2 {
         let outcomes = service.pass().await.unwrap();
@@ -1640,7 +1740,14 @@ async fn paused_passes_leave_twenty_runless_rows_and_native_traffic_unchanged() 
             );
             assert!(task.run().is_none());
             assert!(task.threads().get(nucleus_core::Role::Worker).is_some());
-            state.store.create(&task, &event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    &task,
+                    &event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
         }
     }
     for _ in 0..2 {
@@ -1765,7 +1872,14 @@ async fn a_due_task_stays_queued_when_its_row_cannot_be_used() {
     let task = Task::new(identity, "Fixture".into(), None);
     {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         state
             .schedule
             .wake("bad-scope", Instant::now(), Priority::Wake);
@@ -1800,7 +1914,14 @@ async fn recorded_role_send_time_does_not_extend_an_observation_outage() {
     task.record_send(&instance, now_ms()).unwrap();
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, "sent").unwrap()
     };
     let deadline = Instant::now() + Duration::from_mins(2);
@@ -1841,7 +1962,14 @@ async fn done_archive_keeps_its_cause_and_respects_host_deferral() {
     let task = serde_json::from_value(snapshot).unwrap();
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, "archive").unwrap()
     };
     let until = Instant::now() + Duration::from_mins(1);
@@ -1870,7 +1998,14 @@ async fn host_backoff_does_not_delay_a_local_task_decision() {
     let task = Task::new(task.identity().clone(), "Fixture".into(), None);
     {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
     }
     service
         .command(
@@ -1902,7 +2037,14 @@ async fn wait_retention_tracks_the_question_even_when_its_title_stays_the_same()
     let mut task = Task::new(reserved.identity().clone(), "Initial brief".into(), None);
     assert!(task.ask_allowance(20, 10));
     let mut state = service.state.lock().await;
-    state.store.create(&task, &event("admitted")).unwrap();
+    state
+        .store
+        .create_with_facts(
+            &task,
+            &event("admitted"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
+        .unwrap();
     let id = &task.identity().id;
     state.set_wait(id, Some(WaitReason::Question));
     let deadline = Instant::now() + Duration::from_mins(1);
