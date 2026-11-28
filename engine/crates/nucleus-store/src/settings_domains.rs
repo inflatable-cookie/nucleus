@@ -5,7 +5,7 @@ use std::{
 };
 
 use longhorn_config::{DomainIssue, StorageClass};
-use nucleus_core::profiles::{Profile, UsageLevel};
+use nucleus_core::profiles::{Effort, Profile, Provider, Slots, UsageLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::{Host, Url};
@@ -93,7 +93,10 @@ impl SettingsValue for Profiles {
 pub struct DispatchSettings {
     pub usage: UsageLevel,
     pub usage_until_ms: Option<u64>,
-    pub global_slots: u32,
+    /// The three slot counts. Their sum is the global slot count (ruling 63).
+    pub heavy_slots: u32,
+    pub normal_slots: u32,
+    pub light_slots: u32,
     #[serde(default = "default_project_slots")]
     pub project_default_slots: u32,
     #[serde(default)]
@@ -104,6 +107,28 @@ pub struct DispatchSettings {
     pub thread_retention_interval_hours: u32,
     #[serde(default)]
     pub mode: DispatchMode,
+    /// Starts a planner in a T3 project that has no default model.
+    #[serde(default)]
+    pub planner_model: PlannerModel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlannerModel {
+    pub provider: Provider,
+    pub model: String,
+    #[serde(default)]
+    pub effort: Option<Effort>,
+}
+
+impl Default for PlannerModel {
+    fn default() -> Self {
+        Self {
+            provider: Provider::Claude,
+            model: "claude-opus-5-5".into(),
+            effort: Some(Effort::High),
+        }
+    }
 }
 
 /// The operator's global dispatch switch. It gates launches only; a stored
@@ -151,17 +176,30 @@ impl Default for DispatchSettings {
         Self {
             usage: UsageLevel::Normal,
             usage_until_ms: None,
-            global_slots: 32,
+            heavy_slots: 5,
+            normal_slots: 22,
+            light_slots: 5,
             project_default_slots: default_project_slots(),
             project_slot_overrides: BTreeMap::new(),
             thread_retention_days: default_thread_retention_days(),
             thread_retention_interval_hours: default_thread_retention_interval_hours(),
             mode: DispatchMode::Running,
+            planner_model: PlannerModel::default(),
         }
     }
 }
 
 impl DispatchSettings {
+    /// The slot limits per task weight.
+    #[must_use]
+    pub const fn slots(&self) -> Slots {
+        Slots {
+            heavy: self.heavy_slots,
+            normal: self.normal_slots,
+            light: self.light_slots,
+        }
+    }
+
     /// Resolve the limit in force for a registered project.
     #[must_use]
     pub fn project_slots(&self, project_key: &str) -> u32 {
@@ -184,9 +222,23 @@ impl SettingsValue for DispatchSettings {
     const ID: &'static str = "nucleus.engine.dispatch";
     const FILE: &'static str = "dispatch.json";
     const CLASS: StorageClass = StorageClass::UserConfig;
+    const VERSION: u32 = 3;
 
     fn validate(&self) -> Result<(), DomainIssue> {
-        check(self.global_slots > 0, "dispatch", "use positive slots")?;
+        let total = self
+            .heavy_slots
+            .checked_add(self.normal_slots)
+            .and_then(|slots| slots.checked_add(self.light_slots));
+        check(
+            total.is_some_and(|total| total > 0),
+            "dispatch",
+            "use positive slots",
+        )?;
+        check(
+            text(&self.planner_model.model),
+            "plannerModel",
+            "choose a planner model",
+        )?;
         check(
             (1..=32).contains(&self.project_default_slots)
                 && self
@@ -491,12 +543,14 @@ mod dispatch_mode_tests {
     #[test]
     fn a_saved_domain_without_a_mode_reads_as_running() {
         let saved: DispatchSettings = serde_json::from_value(serde_json::json!({
-            "usage": "normal", "usageUntilMs": null, "globalSlots": 2
+            "usage": "normal", "usageUntilMs": null,
+            "heavySlots": 1, "normalSlots": 1, "lightSlots": 0
         }))
         .expect("dispatch settings");
         assert_eq!(saved.mode, DispatchMode::Running);
         let stopped: DispatchSettings = serde_json::from_value(serde_json::json!({
-            "usage": "normal", "usageUntilMs": null, "globalSlots": 2, "mode": "stopped"
+            "usage": "normal", "usageUntilMs": null,
+            "heavySlots": 1, "normalSlots": 1, "lightSlots": 0, "mode": "stopped"
         }))
         .expect("dispatch settings");
         assert_eq!(stopped.mode, DispatchMode::Stopped);

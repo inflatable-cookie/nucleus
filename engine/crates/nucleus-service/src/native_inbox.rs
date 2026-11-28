@@ -252,6 +252,8 @@ impl Service {
             &decision.id,
             DecisionAnswerInput {
                 option_id: answer.option_id,
+                answer: None,
+                based_on_option_id: None,
                 note: None,
             },
             &authority,

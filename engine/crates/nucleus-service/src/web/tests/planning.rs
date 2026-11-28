@@ -551,6 +551,18 @@ async fn planning_decision_history_identifies_authenticated_actors() {
         assert_eq!(answered["answer"]["author"], "operator");
         assert_eq!(answered["answer"]["optionId"], option);
     }
+    let custom = json_body(
+        post_as(
+            &api,
+            &answer,
+            &BOARD_KEY,
+            &json!({"answer":"Ship after checks", "basedOnOptionId":"yes"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(custom["answer"]["answer"], "Ship after checks");
+    assert_eq!(custom["answer"]["basedOnOptionId"], "yes");
     let pending = format!("{decisions}?pending=true");
     assert_eq!(
         json_body(get_as(&api, &pending, &BOARD_KEY).await).await,
@@ -561,6 +573,10 @@ async fn planning_decision_history_identifies_authenticated_actors() {
     assert_eq!(history[0]["actor"], "planner");
     assert_eq!(history[1]["snapshot"]["answer"]["optionId"], "yes");
     assert_eq!(history[2]["snapshot"]["answer"]["optionId"], "no");
+    assert_eq!(
+        history[3]["snapshot"]["answer"]["answer"],
+        "Ship after checks"
+    );
 }
 
 // Pause the real Git invocation after admission has released the state lock.

@@ -940,6 +940,32 @@ async fn send_snoozed_hold(fixture: &Fixture, task: &Task) -> TaskRow {
 }
 
 #[tokio::test]
+async fn an_accepted_send_that_leaves_the_snooze_needs_no_restore() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    send_snoozed_hold(&fixture, &task).await;
+    let service = &fixture.service;
+
+    // An older shell row cannot settle the intent.
+    assert!(
+        service
+            .reconcile_delivery_snoozes()
+            .await
+            .unwrap()
+            .is_some()
+    );
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.publish_shell();
+    allow_delivery_snooze_retry(service).await;
+
+    let (result, calls) =
+        nucleus_hosts::T3::count_pass_calls(Box::pin(service.reconcile_delivery_snoozes())).await;
+    assert!(result.unwrap().is_none());
+    assert!(calls.is_empty());
+    assert_eq!(fixture.commands(), ["message.dispatch"]);
+}
+
+#[tokio::test]
 async fn delivery_snooze_survives_a_delayed_shell_and_engine_restart() {
     let task = pending_task();
     let mut fixture = Fixture::new(&task).await;

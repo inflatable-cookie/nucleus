@@ -272,6 +272,9 @@ impl T3 {
             return Ok(
                 if shown != Some(intent.until_ms)
                     || native_time(row, "snoozedAt") != intent.snoozed_at_ms
+                    || intent
+                        .accepted_sequence
+                        .is_some_and(|sequence| fence.at_or_after(sequence))
                 {
                     SnoozeRestoration::Complete
                 } else {

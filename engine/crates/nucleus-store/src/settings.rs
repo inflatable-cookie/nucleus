@@ -24,6 +24,7 @@ use longhorn_storage_layout::{
     StorageIdentity, StorageLayoutOverrides, StorageLayoutRequest, StorageProfile, TargetPlatform,
     native_platform_directory_facts, resolve_storage_layout,
 };
+use nucleus_core::profiles::Slots;
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -831,6 +832,8 @@ pub trait SettingsValue: Default + Serialize + DeserializeOwned {
     const ID: &'static str;
     const FILE: &'static str;
     const CLASS: StorageClass;
+    /// The domain's current schema version. Version 1 files upgrade on startup.
+    const VERSION: u32 = 2;
 
     /// Check stored or submitted settings without consulting an adapter.
     ///
@@ -875,7 +878,7 @@ struct SettingsDomain<S> {
 impl<S: SettingsValue> SettingsDomain<S> {
     fn new() -> Result<Self, StorageError> {
         let id = DomainId::new(S::ID).map_err(|_| StorageError::Layout)?;
-        let version = SchemaVersion::new(2).map_err(|_| StorageError::Layout)?;
+        let version = SchemaVersion::new(S::VERSION).map_err(|_| StorageError::Layout)?;
         let path = DomainFilePath::new(S::FILE).map_err(|_| StorageError::Layout)?;
         Ok(Self {
             descriptor: DomainDescriptor::new(id, version, S::CLASS, Some(path))
@@ -918,7 +921,7 @@ impl<S: SettingsValue> SettingsDomain<S> {
     fn rewrite(&self, store: &ConfigStore, backup: &Path) -> Result<(), Box<dyn Error>> {
         let mut catalog = BackupCatalog::new();
         catalog.include(self)?;
-        let id = format!("settings-v1-{}-{}", S::FILE, uuid::Uuid::new_v4());
+        let id = format!("settings-upgrade-{}-{}", S::FILE, uuid::Uuid::new_v4());
         let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
         let application = BackupApplication::new(APP_ID, APP_VERSION)?;
         let producer = BackupProducer::new("nucleus", APP_VERSION)?;
@@ -997,9 +1000,27 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
         from: SchemaVersion,
         mut value: Value,
     ) -> Result<Option<MigrationStep>, DomainIssue> {
-        let Some(retired_keys) = self.retired_keys.as_ref().filter(|_| from.get() == 1) else {
+        let Some(retired_keys) = self
+            .retired_keys
+            .as_ref()
+            .filter(|_| from < self.descriptor.schema_version())
+        else {
             return Ok(None);
         };
+        // Later versions follow one step at a time.
+        let next = SchemaVersion::new(from.get() + 1)
+            .map_err(|_| DomainIssue::new("migration", "unknown settings version"))?;
+        if S::FILE == DispatchSettings::FILE && from.get() == 2 {
+            split_global_slots(&mut value)?;
+            retired_keys.borrow_mut().insert("globalSlots");
+            return Ok(Some(MigrationStep {
+                schema_version: next,
+                value,
+            }));
+        }
+        if from.get() != 1 {
+            return Ok(None);
+        }
         let mut retired = BTreeSet::new();
         let mut rewrite = |object: &mut Value, key: &'static str, replacement: Option<&str>| {
             if let Some(fields) = object.as_object_mut()
@@ -1054,12 +1075,36 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
             }
             _ => {}
         }
-        retired_keys.replace(retired);
+        retired_keys.borrow_mut().extend(retired);
         Ok(Some(MigrationStep {
-            schema_version: self.descriptor.schema_version(),
+            schema_version: next,
             value,
         }))
     }
+}
+
+/// Dispatch version 3 replaces the one global slot count with a count per task
+/// weight, keeping their sum (ruling 63).
+fn split_global_slots(value: &mut Value) -> Result<(), DomainIssue> {
+    let invalid = || DomainIssue::new("dispatch", "the stored global slot count is not usable");
+    let fields = value.as_object_mut().ok_or_else(invalid)?;
+    let total = fields
+        .remove("globalSlots")
+        .as_ref()
+        .and_then(Value::as_u64)
+        .and_then(|total| u32::try_from(total).ok())
+        .ok_or_else(invalid)?;
+    let slots = Slots::split(total);
+    for (key, count) in [
+        ("heavySlots", slots.heavy),
+        ("normalSlots", slots.normal),
+        ("lightSlots", slots.light),
+    ] {
+        if fields.insert(key.into(), count.into()).is_some() {
+            return Err(invalid());
+        }
+    }
+    Ok(())
 }
 
 /// A durable store under a fresh portable root, for store-level tests.
@@ -1092,9 +1137,11 @@ mod tests {
         std::fs::create_dir(&state).unwrap();
 
         let dispatch = json!({
-            "usage": "high", "usageUntilMs": 1_800_000_000_000_u64, "globalSlots": 3,
+            "usage": "high", "usageUntilMs": 1_800_000_000_000_u64,
+            "heavySlots": 3, "normalSlots": 0, "lightSlots": 0,
             "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8, "beta": 0},
-            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused"
+            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused",
+            "plannerModel": {"provider": "claude", "model": "claude-opus-5-5", "effort": "high"}
         });
         let legacy_dispatch = json!({
             "usage": "high", "usageUntilMs": 1_800_000_000_000_u64, "slots": 3,
@@ -1218,9 +1265,14 @@ mod tests {
             .iter()
             .map(|(path, domain, _, expected)| {
                 let bytes = std::fs::read(path).unwrap();
+                let version = if *domain == DispatchSettings::ID {
+                    DispatchSettings::VERSION
+                } else {
+                    2
+                };
                 assert_eq!(
                     serde_json::from_slice::<Value>(&bytes).unwrap(),
-                    json!({"domain": domain, "schemaVersion": 2, "value": expected}),
+                    json!({"domain": domain, "schemaVersion": version, "value": expected}),
                     "{}",
                     path.display()
                 );
@@ -1252,6 +1304,60 @@ mod tests {
             );
         }
         assert_eq!(std::fs::read_dir(backup_root).unwrap().count(), cases.len());
+    }
+
+    #[test]
+    fn dispatch_upgrade_splits_the_global_slot_count_by_weight_once() {
+        use serde_json::json;
+
+        for (global, heavy, normal, light) in [
+            (18, 5, 8, 5),
+            (32, 5, 22, 5),
+            (11, 5, 1, 5),
+            (10, 5, 0, 5),
+            (7, 5, 0, 2),
+            (5, 5, 0, 0),
+            (1, 1, 0, 0),
+        ] {
+            let temporary = tempfile::tempdir().expect("fixture home");
+            let home = temporary.path().canonicalize().expect("canonical home");
+            std::fs::create_dir(home.join("config")).unwrap();
+            let path = home.join("config").join(DispatchSettings::FILE);
+            let stored = json!({
+                "domain": DispatchSettings::ID, "schemaVersion": 2,
+                "value": {
+                    "usage": "high", "usageUntilMs": null, "globalSlots": global,
+                    "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8},
+                    "threadRetentionDays": 3, "threadRetentionIntervalHours": 12,
+                    "mode": "running"
+                }
+            });
+            std::fs::write(&path, stored.to_string()).unwrap();
+
+            let file = SettingsFile::open(&home).expect("upgrade on startup");
+            let upgraded = std::fs::read(&path).unwrap();
+            let mut expected = stored.clone();
+            expected["schemaVersion"] = json!(3);
+            let value = expected["value"].as_object_mut().unwrap();
+            value.remove("globalSlots");
+            value.insert("heavySlots".into(), json!(heavy));
+            value.insert("normalSlots".into(), json!(normal));
+            value.insert("lightSlots".into(), json!(light));
+            // The rewrite also stores the default of a field added since.
+            value.insert("plannerModel".into(), json!(crate::PlannerModel::default()));
+            assert_eq!(
+                serde_json::from_slice::<Value>(&upgraded).unwrap(),
+                expected,
+                "{global}"
+            );
+            let settings = file.read::<DispatchSettings>().unwrap().value;
+            assert_eq!(settings.slots().total(), global);
+            drop(file);
+
+            // A current file is never split again.
+            SettingsFile::open(&home).expect("reopen the current file");
+            assert_eq!(std::fs::read(&path).unwrap(), upgraded);
+        }
     }
 
     #[test]

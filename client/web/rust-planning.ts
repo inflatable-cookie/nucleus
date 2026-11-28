@@ -178,11 +178,12 @@ export function boardDecision(
       papercuts: [],
     },
     status,
+    gate: Boolean(decision.task),
     answer:
-      answer && chosen
+      answer && (chosen || answer.answer)
         ? {
-            optionId: chosen.id,
-            text: chosen.label,
+            ...(chosen ? { optionId: chosen.id } : {}),
+            text: answer.answer ?? chosen?.label ?? "",
             answeredBy: answer.author,
             answeredAt: iso(answer.answeredAtMs),
             relayed: null,
@@ -197,7 +198,8 @@ export function boardDecision(
     versions: [],
     stale: false,
     projectKey: key,
-    askerLabel: decision.author || "Planner",
+    projectName: project.name,
+    askerLabel: decision.authorLabel,
   };
 }
 
@@ -220,6 +222,7 @@ export function listenForPlanningIssues(
 
 const history = z.array(
   z.object({
+    sequence: z.number().int(),
     actor: z.string(),
     actorLabel: z.string().default("Agent thread"),
     recipientLabel: z.string().optional(),
@@ -233,6 +236,8 @@ const historySnapshot = z.object({
   note: z.string().optional(),
   disposition: z.enum(["completed", "deprecated"]).optional(),
   recipient: z.string().optional(),
+  cause: z.string().optional(),
+  send: z.number().int().optional(),
 });
 
 async function laneRevision(
@@ -503,11 +508,13 @@ export function createRustPlanning(
           actorLabel: entry.actorLabel,
           atMs: entry.atMs,
           action: entry.action,
-          note: snapshot?.note ?? null,
+          // Why an assessment send is waiting shows as that entry's note.
+          note: (entry.action === "assess_blocked" ? snapshot?.cause : snapshot?.note) ?? null,
           disposition:
             entry.action === "drop" ? (snapshot?.disposition ?? "deprecated") : null,
           recipient: entry.action === "assess" ? (snapshot?.recipient ?? null) : null,
           recipientLabel: entry.action === "assess" ? (entry.recipientLabel ?? null) : null,
+          send: entry.action === "assess" ? entry.sequence : (snapshot?.send ?? null),
         };
       }),
     };
@@ -746,6 +753,8 @@ export function createRustPlanning(
       id: string;
       project?: string;
       optionId?: string;
+      answer?: string;
+      basedOnOptionId?: string;
       note?: string;
     }) => {
       const { row, record } = await recordOwner(
@@ -755,10 +764,10 @@ export function createRustPlanning(
         input.project,
       );
       const { optionId } = input;
-      if (!optionId || !record.options.some((option) => option.id === optionId))
-        throw new Error("Choose one of the decision's options.");
       const saved = await rust.answerDecision(row.id, record.id, {
-        optionId,
+        ...(optionId
+          ? { optionId }
+          : { answer: input.answer, basedOnOptionId: input.basedOnOptionId }),
         note: input.note || null,
       });
       return boardDecision(saved, row.board.key, row.project);

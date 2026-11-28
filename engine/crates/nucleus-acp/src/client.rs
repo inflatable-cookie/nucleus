@@ -24,7 +24,7 @@ use rustix::{
 };
 use serde::{Deserialize, de::DeserializeOwned};
 
-use crate::recovery::{Recovery, connection_refused};
+use crate::recovery::{Recovery, connect_failed};
 
 const DEADLINE: Duration = Duration::from_secs(5);
 // Allow three of the service's 15-second SSE keepalive intervals.
@@ -190,6 +190,11 @@ impl ServiceClient {
         self.task.is_none()
     }
 
+    #[cfg(test)]
+    pub(crate) fn log_lines(&self) -> Vec<String> {
+        self.log.lock().expect("fixture log").clone()
+    }
+
     /// Reload a rotated reader. A valid binding with a different identity
     /// positively replaces this session. An unreadable file proves neither.
     pub(crate) fn renew_task_reader(&mut self, cwd: &Path, session: &str) -> Result<bool, Failure> {
@@ -244,9 +249,8 @@ impl ServiceClient {
             let response = request.send().await.map_err(|error| {
                 if error.is_timeout() {
                     outcome = "timeout".into();
-                } else {
-                    refused = connection_refused(&error);
                 }
+                refused = connect_failed(&error);
                 Failure::Unavailable
             })?;
             outcome = response.status().as_u16().to_string();
@@ -265,9 +269,11 @@ impl ServiceClient {
             } else {
                 "/v1/acp/inbox"
             };
-            let event = serde_json::json!({"time": time::OffsetDateTime::now_utc().to_string(), "route": format!("{resource}{path}"), "outcome": outcome, "latency_ms": started.elapsed().as_millis(), "attempt": attempt});
+            let event = serde_json::json!({"time": time::OffsetDateTime::now_utc().to_string(), "route": format!("{resource}{path}"), "outcome": outcome, "refused": refused, "latency_ms": started.elapsed().as_millis(), "attempt": attempt});
+            // Clients share `acp.log`, so each line goes out in one write.
             #[cfg(not(test))]
-            eprintln!("{event}");
+            let _ =
+                std::io::Write::write_all(&mut std::io::stderr(), format!("{event}\n").as_bytes());
             #[cfg(test)]
             self.log.lock().unwrap().push(event.to_string());
         }
@@ -459,6 +465,7 @@ mod tests {
         assert!(event["time"].as_str().unwrap().contains("+00:00"));
         assert_eq!(event["route"], "/v1/acp/inbox");
         assert_eq!(event["outcome"], outcome);
+        assert_eq!(event["refused"], false);
         assert!(event["latency_ms"].as_u64().is_some());
         assert_eq!(event["attempt"], 1);
     }

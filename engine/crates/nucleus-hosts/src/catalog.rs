@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use nucleus_core::profiles::{Effort, Profile, Provider};
+use nucleus_core::profiles::{Capability, Effort, Profile, Provider, Weight};
 use serde_json::{Value, json};
 
 use crate::{HostError, ModelOption, RoleProfile, available};
@@ -290,6 +290,26 @@ impl ProfileCatalog {
             .any(|provider| provider["driver"] == "acpRegistry" && available(provider, &profile))
     }
 
+    /// T3's model selection for a canonical choice, if a ready provider offers it.
+    #[must_use]
+    pub fn planner_selection(
+        &self,
+        provider: Provider,
+        model: &str,
+        effort: Option<Effort>,
+    ) -> Option<Value> {
+        let profile = Profile {
+            id: "planner".into(),
+            capability: Capability::default(),
+            weight: Weight::default(),
+            provider,
+            model: model.into(),
+            effort,
+        };
+        let offer = self.offer(&profile, None, "full-access", &BTreeMap::new())?;
+        Some(offer.resolve(effort).ok()?.selection())
+    }
+
     #[must_use]
     pub fn offer(
         &self,
@@ -475,7 +495,6 @@ fn carrier_efforts(provider: Provider, carrier: &Value) -> Vec<(Effort, ModelOpt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nucleus_core::profiles::{Capability, Weight};
 
     #[test]
     fn migrated_options_and_modes_resolve_against_the_exact_native_instance() {

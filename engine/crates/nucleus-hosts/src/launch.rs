@@ -42,7 +42,7 @@ pub struct ModelOption {
 }
 
 impl RoleProfile {
-    fn selection(&self) -> Value {
+    pub(crate) fn selection(&self) -> Value {
         let mut selection = json!({"instanceId": self.instance_id, "model": self.model});
         if !self.options.is_empty() {
             selection["options"] = json!(self.options);

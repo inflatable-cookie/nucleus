@@ -90,6 +90,11 @@ pub(super) fn task_state_label(
         }
         .into();
     }
+    if wait == Some(WaitReason::Capacity)
+        && let Some(WaitDetail::SlotCap(label)) = detail
+    {
+        return label.clone();
+    }
     // A capacity wait that carries a cause is a paused subscription group (ruling 51).
     if wait == Some(WaitReason::Capacity) && matches!(detail, Some(WaitDetail::Blocked(_))) {
         return phase_with_delay(task, Some("paused"));
@@ -392,7 +397,11 @@ impl Service {
             .row_visibility_hint(thread)
             .and_then(|row| row.snoozed_until_ms)
             .filter(|&until| until > self.visibility_now());
-        let detail = state.wait_detail(id);
+        // The T3 title keeps "capacity": slot counts would rename the thread
+        // as they change (ruling 11).
+        let detail = state
+            .wait_detail(id)
+            .filter(|detail| !matches!(detail, WaitDetail::SlotCap(_)));
         let (activity, _, handover) = self.role_window(thread, task);
         let wait = state.effective_wait(task)?.filter(|wait| {
             *wait != WaitReason::Starting || activity != nucleus_hosts::RowChildren::Active
@@ -416,6 +425,7 @@ impl Service {
     }
 
     pub(super) async fn watch_titles(&self) {
+        // Planner notices can need snooze restoration without an ACP provider.
         let provider = self.acp_provider();
         if provider.is_some() {
             let mut state = self.state.lock().await;
@@ -872,6 +882,34 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_weight_slot_wait_keeps_the_capacity_title() {
+        let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+        let task = task();
+        let id = task.identity().id.clone();
+        let label = "Waiting for a heavy slot (5/5)";
+        let mut state = service.state.lock().await;
+        state
+            .store
+            .create(&task, &event("fixture"))
+            .expect("stored task");
+        state
+            .observe_wait_detail(
+                &task,
+                Some(WaitReason::Capacity),
+                Some(WaitDetail::SlotCap(label.into())),
+            )
+            .expect("slot wait");
+        assert_eq!(
+            task_state_label(&task, Some(WaitReason::Capacity), state.wait_detail(&id)),
+            label
+        );
+        let (title, _) = service
+            .row_label(&state, &task, "thread", TitleTiming::Stable)
+            .expect("title label");
+        assert_eq!(title, "Queued · capacity");
+    }
+
     #[test]
     fn title_policy_formats_reference_roles_and_waits() {
         let mut task = task();
@@ -1175,6 +1213,8 @@ mod tests {
                     "test-decision",
                     nucleus_store::planning::DecisionAnswerInput {
                         option_id: "yes".into(),
+                        answer: None,
+                        based_on_option_id: None,
                         note: None,
                     },
                     stamp("operator", 1),

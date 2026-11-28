@@ -66,6 +66,7 @@ function MenuEntry({
     <Pressable
       accessibilityRole="tab"
       accessibilityState={{ selected: on }}
+      aria-selected={on}
       accessibilityLabel={
         value === null || !loaded
           ? label
@@ -117,8 +118,9 @@ function MenuEntry({
 }
 
 /**
- * The board menu (Tom, 2026-11-21): Needs you, a divider, Projects (nucleus#1666,
- * Rust board only, no count), Planning, Leads, Papercuts, Queue, a divider, then Working, In review and Closing. Counts are
+ * The board menu (Tom, 2026-11-21): Projects (nucleus#1666, Rust board only, no
+ * count; at the top since nucleus#1667), a divider, Needs you, a divider, Planning,
+ * Leads, Papercuts, Queue, a divider, then Working, In review and Closing. Counts are
  * real totals — Planning shows the number of open lanes in scope (nucleus#1546);
  * only Needs you is highlighted, because only it asks the operator to act. A count is hidden until the board loads. An entry whose count is 0
  * renders dimmed but stays selectable; the selected entry keeps its styling.
@@ -147,9 +149,8 @@ export function InboxMenu({
   const allEntries: readonly { id: BoardView; label: string; icon: string }[] =
     rust
       ? [
-          ...inboxViews.slice(0, 1),
           { id: "projects", label: "Projects", icon: "Columns3" },
-          ...inboxViews.slice(1, -1),
+          ...inboxViews.slice(0, -1),
           { id: "merging", label: "Merging", icon: "GitMerge" },
           ...inboxViews.slice(-1),
           { id: "history", label: "History", icon: "History" },
@@ -214,8 +215,9 @@ export function InboxMenu({
     >
       {entries.map((entry) => (
         <React.Fragment key={entry.id}>
-          {(entry.id === (rust && !standalone ? "projects" : "planning") ||
-            entry.id === "working") &&
+          {(entry.id === "planning" ||
+            entry.id === "working" ||
+            (entry.id === "needs" && entries[0]?.id === "projects")) &&
             divider(`${entry.id}-divider`)}
           {item(
             entry.id,

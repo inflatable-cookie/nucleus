@@ -60,23 +60,26 @@ export const papercutCards = (board: PipelineBoard) =>
   triageCards(board, "papercuts", "All");
 
 /**
- * One project's Leads and Papercuts totals (nucleus#1666): the same projection and
- * default set the lists read, with the project filter on that project alone.
+ * One project's open Leads and Papercuts (nucleus#1666, nucleus#1667): the same
+ * projection, default set and order the lists read, with the project filter on
+ * that project alone.
  */
-export function projectTriageCounts(
+export function projectTriageCards(
   projects: Project[],
   leads: readonly BoardLead[],
   project: string,
-) {
+): { leads: BoardLead[]; papercuts: BoardLead[] } {
   const board = pipelineBoard({
     projects,
     selection: [project],
     leads,
     tasks: [],
   });
+  const values = (cards: PipelineCard[]) =>
+    cards.flatMap((card) => (card.kind === "lead" ? [card.value] : []));
   return {
-    leads: leadsCards(board).length,
-    papercuts: papercutCards(board).length,
+    leads: values(leadsCards(board)),
+    papercuts: values(papercutCards(board)),
   };
 }
 

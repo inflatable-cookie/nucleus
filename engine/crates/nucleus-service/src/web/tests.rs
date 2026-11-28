@@ -1259,7 +1259,14 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
     );
     assert!(reads.load(Ordering::Relaxed) <= 5);
     assert_eq!(
-        service.state.lock().await.store.occupied_slots("").unwrap(),
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .occupied_slots("")
+            .unwrap()
+            .total(),
         1
     );
     server.abort();
@@ -2222,6 +2229,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     {
         let mut state = service.state.lock().await;
         state.capacity_waiters.insert((
+            nucleus_core::profiles::TaskWeight::Normal,
             nucleus_core::QueuePriority::Normal,
             1,
             "awaiting-slot".into(),
@@ -2235,10 +2243,14 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     }
     let path = "/v1/settings/dispatch";
     let original = json_body(get_as(&api, path, &BOARD_KEY).await).await;
-    assert_eq!(original["value"]["globalSlots"], 32);
+    for (key, slots) in [("heavySlots", 5), ("normalSlots", 22), ("lightSlots", 5)] {
+        assert_eq!(original["value"][key], slots);
+    }
     assert_eq!(original["value"]["projectDefaultSlots"], 5);
     let mut update = json!({"revision": original["revision"], "value": original["value"]});
-    update["value"]["globalSlots"] = json!(0);
+    for key in ["heavySlots", "normalSlots", "lightSlots"] {
+        update["value"][key] = json!(0);
+    }
     assert_eq!(
         put_settings(&api, path, &BOARD_KEY, &update).await.status(),
         StatusCode::BAD_REQUEST
@@ -2247,7 +2259,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
         json_body(get_as(&api, path, &BOARD_KEY).await).await,
         original
     );
-    update["value"]["globalSlots"] = json!(3);
+    update["value"]["heavySlots"] = json!(3);
     assert_eq!(
         put_settings(&api, path, &PLANNER_KEY, &update)
             .await
@@ -2256,7 +2268,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     );
 
     let saved = json_body(put_settings(&api, path, &BOARD_KEY, &update).await).await;
-    assert_eq!(saved["value"]["globalSlots"], 3);
+    assert_eq!(saved["value"]["heavySlots"], 3);
     assert_ne!(saved["revision"], original["revision"]);
     assert_eq!(
         put_settings(&api, path, &BOARD_KEY, &update).await.status(),
@@ -2270,7 +2282,8 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
             .dispatch
             .as_ref()
             .expect("published dispatch")
-            .global_slots,
+            .slots()
+            .total(),
         3
     );
     assert!(
@@ -3332,7 +3345,7 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
         json_body(browser_request(&api, Method::GET, dispatch, Some(&operator), None).await).await;
     assert_eq!(starting["value"]["mode"], "running");
     let mut update = json!({"revision": starting["revision"], "value": starting["value"]});
-    update["value"]["globalSlots"] = json!(3);
+    update["value"]["heavySlots"] = json!(3);
     update["value"]["mode"] = json!("held");
     assert_eq!(
         browser_request(&api, Method::PUT, dispatch, Some(&planner), Some(&update))
@@ -3344,7 +3357,7 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
         browser_request(&api, Method::PUT, dispatch, Some(&operator), Some(&update)).await,
     )
     .await;
-    assert_eq!(saved["value"]["globalSlots"], 3);
+    assert_eq!(saved["value"]["heavySlots"], 3);
     assert_eq!(saved["value"]["mode"], "held");
     assert_event(&mut events, &["event: settings"]).await;
     let admission = json!({"id":"board-task","reference":"D1","brief":"---\nqueue:\n  complexity: low\n---\n# Standalone task"});

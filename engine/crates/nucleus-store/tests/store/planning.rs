@@ -240,6 +240,8 @@ fn legacy_duplicate_decision_labels_remain_answerable_by_id() {
     assert_eq!(store.decisions("project", true).unwrap(), [snapshot]);
     let answer = DecisionAnswerInput {
         option_id: "second".into(),
+        answer: None,
+        based_on_option_id: None,
         note: None,
     };
     let result = store
@@ -295,8 +297,21 @@ fn task_decision_keeps_one_answer_and_hides_obsolete_questions() {
             .expect("ensure again");
         assert_eq!(decision, repeated);
 
+        let custom = DecisionAnswerInput {
+            option_id: String::new(),
+            answer: Some("Please review first".into()),
+            based_on_option_id: Some("accept".into()),
+            note: None,
+        };
+        assert!(matches!(
+            store.answer_decision("project", &decision.id, custom, STAMP),
+            Err(StoreError::PlanningInput)
+        ));
+
         let answer = DecisionAnswerInput {
             option_id: "accept".into(),
+            answer: None,
+            based_on_option_id: None,
             note: Some("Accepted.".into()),
         };
         if id == "answered" {

@@ -120,17 +120,17 @@ Later decisions carry their own attribution.
    operator session can edit. Usage strips show up to the last 50 assignments
    in the selected view across both roles or for one role.
 
-   **Limits (Tom, 2026-11-24).** Dispatch owns the global limit, per-project default and a sparse map of overrides keyed by project. Limits is the shared editor for all three. Edits to the global ceiling and project default use the Dispatch revision displayed in Settings. A conflict refreshes the values for a new edit. A run needs room under both ceilings, counting the project's member repositories together. A first worker checkout also needs room under twice the effective project limit. An existing managed checkout counts while its task is nonterminal, including when the task is held or awaiting recovery. An absent checkout occupies no workspace capacity. Review entry and existing work continue through their own gates. The Rust Limits editor shows usage, global slots, the project default and project overrides. It omits Concurrent host calls and the Advanced disclosure. The TypeScript editor remains available during drain.
+   **Limits (Tom, 2026-11-24).** Dispatch owns the heavy, normal and light slot counts (ruling 63), whose sum is the global limit, the per-project default and a sparse map of overrides keyed by project. Limits is the shared editor for all three. Edits to the slot counts and project default use the Dispatch revision displayed in Settings. A conflict refreshes the values for a new edit. A run needs room under its weight's nested caps and the project limit, counting the project's member repositories together. A task waiting only on a weight cap shows `Waiting for a heavy slot (5/5)`, or `normal`, on the board and in `next`; its T3 title keeps `capacity`. A first worker checkout also needs room under twice the effective project limit. An existing managed checkout counts while its task is nonterminal, including when the task is held or awaiting recovery. An absent checkout occupies no workspace capacity. Review entry and existing work continue through their own gates. The Rust Limits editor shows usage, the three slot counts and their total, the project default and project overrides. It omits Concurrent host calls and the Advanced disclosure. The TypeScript editor remains available during drain.
 
-   Fresh installs start at 32 global slots and 5 per project, matching the TypeScript defaults. During cutover, `limits.import` read five capacity and retention meta keys from a fenced TypeScript copy and published them to Dispatch under the stopped profile lock. Projects without an imported override inherit the per-project default. The active CLI retires this command in milestone 4.
+   Fresh installs start at 5 heavy, 22 normal and 5 light slots (32 in all) and 5 per project. Dispatch version 3 splits a stored global count once: up to 5 heavy, then up to 5 light, and the rest normal. During cutover, `limits.import` read five capacity and retention meta keys from a fenced TypeScript copy and published them to Dispatch under the stopped profile lock. Projects without an imported override inherit the per-project default. The active CLI retires this command in milestone 4.
 
    Tom retired Papercuts slots, Stall threshold, Hold reminder, Hold escalation and Host outage notice on 2026-11-24. Ruling 12 retires Lane drain and Lane drain escalation. Default host stays. Tom, 2026-11-26: “those mechanics were valid - we may only support T3 now, but I was aiming on adding support for most ADEs so it would have still come into place”. Its options are the registered hosts plus the planner's host, never a static list of supported host kinds. A stored kind absent from registration stays unavailable and is not rewritten. The import carries retention settings ahead of the scheduler pruning change.
 
    **Saved settings (Tom, 2026-11-26).** Each Longhorn domain uses schema
-   version 2. Portable configuration contains Dispatch, Profiles and GitHub
+   version 2, except Dispatch at version 3 (ruling 63). Portable configuration contains Dispatch, Profiles and GitHub
    accounts. Machine state contains Storage, Projects and Hosts. Dispatch owns
    all slot limits. The [engine settings table](../../../engine/README.md#settings)
-   lists the file shapes. At startup the store migrates version 1 once, verifies
+   lists the file shapes. At startup the store migrates an older version once, verifies
    a backup of each original beside the existing backups, publishes the new
    file atomically and logs the retired keys it removed. The current schema
    rejects unknown keys and identifies the file and field. The upgrade affects
@@ -138,6 +138,7 @@ Later decisions carry their own attribution.
    in the database.
 
 9. **The profile matrix carries over exactly.** Tom, 2026-11-23: "The profile matrix we agreed earlier definitely needs to come over, we've finally got that working just as I want it". The usage-level matrices in [Spec 052](052-usage-level.md), as amended on 2026-11-23, are ported cell for cell. That covers worker start brackets by complexity and level, the reviewer bracket relative to the worker, the step-up after an applied changes-required review, the smoothed Maximum, the Frontier request rule and critical tasks. So is [Spec 053](053-demand-based-selection.md)'s demand-based selection (the five-stop weight slider). They become pure functions with a test for every cell of both matrices, matching today's `test/demand.test.ts`. The only change is that the retired coordinator role drops out. A climb to a new profile starts a new worker child thread, as the TypeScript engine does. Tom, 2026-11-23: "The current TS policy of creating a new child thread is correct, we won't be able to switch profiles in the same thread when they have different providers".
+   A brief may also declare `queue.weight: light | normal | heavy` (ruling 63), `normal` when absent; admission and amendment refuse any other value by name.
    New tasks and item promotions require `queue.complexity` in the brief. For a papercut, the board choice or `item.promote --complexity` supplies it in the task brief. Board promotion sends the selected repository with that complexity. Existing tasks remain readable. A High or Very High admission at Low usage commits its operator decision with the task. The scheduler waits for approval through the Inbox, preserving independent holds. Raising usage or lowering complexity below High withdraws that permission requirement.
 10. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
@@ -311,6 +312,7 @@ Later decisions carry their own attribution.
       and updates the native title through the existing receipt.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
     - When an unknown T3 planner calls a planning command, the scheduler reads that exact thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.
+    - Send to planner can also bind a matching T3 project when it starts a project's first planner ([Spec 071, decision 7](071-detail-views.md#decisions)).
     - Several verified planners can bind to the same project through any of its repositories. Projects settings retain those thread IDs with their native project and repository route. After restart or loss of host observation, the scheduler rechecks a candidate on demand against the exact current T3 identity and checkout before restoring authority. A positive read that the thread is gone, archived, a child or in a different native project removes the binding. Uncertain reads and checkout mismatches keep the record pending verification.
     - Task commands accept any live planner binding for the project. A command missing PR-head evidence reads it within the request and checks the same task revision and caller before committing. If the proof times out or fails, the caller receives the cause. Nucleus does not queue the command for later replay. Notices try the task's origin first and fall back to another verified planner in the project after positive evidence rules the origin out. An unresolved origin read leaves delivery pending.
     - The remote and exact-root checks run automatically at registration. A mismatch refuses with a readable reason.
@@ -384,8 +386,8 @@ Later decisions carry their own attribution.
     Retained reads record a missing bounded projection when the shell still
     lists the thread. Revoked-run custody can still require a local writer check.
     Title, settle and snooze changes preserve matching custody evidence.
-    Delivery still checks current binding, requests, children, background
-    work and row visibility, including ownership of any snooze it clears.
+    Delivery checks current binding, requests, children and background work.
+    Snooze ownership determines whether to restore the horizon under ruling 62.
     A pre-wire retry keeps the row visible and releases the ACP turn while
     it waits. An exact terminal parent and an exact absent child let Nucleus
     discard a delegation that has no send intent and prepare it again.
@@ -786,6 +788,7 @@ Later decisions carry their own attribution.
 
 63. **Tasks declare a weight, and heavy work has its own slots.** Tom, 2026-11-27: "right now we have no concept of what a slot will do.. it might be just making changes to the readme, or it might run a 5 hour test suite building multiple rust binaries in a VM! Would it be possible to have an enum on tasks that defines the weight of a task, and then limit the number of heavy slots that can run concurrently?" He named the options `light`, `normal` and `heavy`, asked that it "doesn't block anything and keeps the queue moving", agreed the planner's shape ("yes, that matches"), and asked for the controls in Settings → Limits. A brief declares `queue.weight: light | normal | heavy`, separate from complexity, which picks the model. A missing weight means `normal`. The weight applies to every run of the task, reviews included. Dispatch keeps three slot counts, heavy H, normal M and light L, whose sum is the global slot count. They act as nested caps: heavy runs ≤ H, heavy plus normal runs ≤ H + M, all runs ≤ H + M + L. So light work can use any slot, normal work normal or heavy slots, and heavy work only heavy slots. When a slot frees, the heaviest waiting task that fits takes it. Within one weight, today's order holds (promoted, then admission), and project slot limits still apply. Nothing is preempted, a free slot is always used whenever any waiting task fits it, and a task waiting on its cap says so. The defaults for this machine are heavy 5, normal 8 and light 5.
 64. **A shared model never blocks a review.** Tom, 2026-11-27: "I've seen a few tasks get stuck due to the reviewer being the same model as the worker for whatever reason. While nucleus should do what it can to ensure it's a different model, it shouldn't block the task". Selection still prefers a reviewer whose model differs from every author model on the task, and a worker whose model differs from the retained reviewer's. If no usable profile with a different model can take the role, because of usage level, paused groups, catalog limits or a required profile request that names the other role's model, the role launches on the best usable profile anyway. The task records that the review shares a model with the work, and the review and the task view show it. A required profile request is honoured even when it names the other role's model. Waiting, refusing or raising a decision because of model overlap is never the outcome. This amends the reviewer-independence line in [Spec 052](052-usage-level.md) for Nucleus tasks. Review-entry tasks still refuse before any agent when their external author models are missing ([Spec 017](017-external-pr-review-entry.md)), and once those models are known the same preference applies.
+65. **Any verified agent thread can work in any project.** Tom, 2026-11-27, after a version-bump sweep run from a thread in a scratch folder was refused for projects that thread wasn't attached to: "we need to get rid of that blocker". A controller is still authenticated: it must be a T3 thread Nucleus has verified, or the operator. But its project no longer limits what it can do. It may admit tasks to any non-archived project, run task commands on any task, read and write any project's planning records, and send `tell`, `all` and `reply` messages (Tom: "Tell needs to work too"), naming the project or task explicitly when it isn't its own. A thread with no project, such as one in a scratch folder, is a valid controller once T3 confirms its identity, with no repository check. The admitting thread is the task's origin, so it receives completion notices (ruling 55). A reply to a message goes back to the exact thread that sent it, whatever its project. Planner claims and project mail stay per project (ruling 41), and Inbox decisions still need the operator.
 
 ## The model
 
@@ -920,7 +923,9 @@ the existing run, question, hold and exact-head rules still apply.
 Report-ready, work-question, operator-decline and prerequisite-release notices
 stay pending while a planner route is unavailable. A binding change wakes the
 waiting notice, and the next due pass can also retry routing. The scheduler
-records the concrete send intent after checking the recipient and snooze horizon. T3 wakes a settled planner in the message dispatch transaction.
+checks the recipient and records the concrete send intent. T3 wakes a settled
+planner in the message dispatch transaction. If that send clears an operator
+snooze, Nucleus restores its deadline under ruling 62.
 A queued notice remains read-only if the planner settles again. An uncertain
 question or operator-decline send keeps its exact attempt.
 For report-ready and prerequisite-release notices, a
@@ -1265,6 +1270,10 @@ across projects. `item.list` and `decision.list` read the current records.
 New decisions require at least two options with distinct IDs and labels.
 Labels are compared after trimming. The board retains each option's ID from
 the read through the answer, including older decisions whose labels repeat.
+Decision answers on the board may use free text for ordinary decisions. An edited
+choice records its source option when available. Task-owned decisions apply an
+automatic gate and accept only an exact option; the store rejects free text for
+them. Answer notices include the custom text and its source option when present.
 Answering requires an operator binding and an explicit project. Answering a
 planner-authored or task-linked decision also delivers one answer notice
 through the planner message queue under ruling 52. A decision that belongs to a

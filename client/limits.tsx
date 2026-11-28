@@ -21,6 +21,8 @@ import { radius, roles, space, type } from "./design";
 import { DateTimeLink, formatLocalDateTime } from "./date-time-field";
 import { USAGE_LABELS } from "../shared/pool";
 import * as api from "../shared/contracts";
+import type { HostCatalog } from "../shared/host";
+import { THINKING_LABELS, type ThinkingLevel } from "../shared/profile-vocabulary";
 import {
   usageLevels,
   type UiQueueState,
@@ -29,7 +31,7 @@ import {
 
 /*
  * Settings → Dispatch limits. One place for what the host runs with: the usage
- * level, the task slots, project overrides.
+ * level, the task slots by weight, the planner model, project overrides.
  * Every limit reads as its value in force when that
  * differs from what is entered. The RPCs and their authority are unchanged; this
  * module only changes how they read (Tom, 2026-11-08: half the height, same controls).
@@ -49,6 +51,8 @@ export type DispatchLimitsProps = {
   authority: api.CapacityAuthorityState | undefined;
   authorityError: unknown;
   retryAuthority: () => void;
+  /** The host's models in Nucleus's vocabulary, for the planner model. */
+  catalog?: HostCatalog;
   refreshBoard: () => Promise<unknown>;
   saveUsage: (level: UsageLevel, until: string | null) => Promise<void>;
   saveCapacity: (values: api.CapacityInput) => Promise<void>;
@@ -189,13 +193,17 @@ function UsageSlider({
  * record is read through `queue.capacity-state`; Settings shows no view of it (Tom, 2026-11-08).
  */
 
-/** The two dispatch limits exposed by the Rust board. */
+/** The dispatch limits exposed by the Rust board: a slot count per task weight, then the per-project limit. */
 const CAPACITY_FIELDS = [
-  { key: "globalLimit", label: "Global", max: 64 },
-  { key: "projectLimit", label: "Per project", max: 32 },
+  { key: "heavySlots", label: "Heavy", min: 0, max: api.MAX_GLOBAL_SLOTS },
+  { key: "normalSlots", label: "Normal", min: 0, max: api.MAX_GLOBAL_SLOTS },
+  { key: "lightSlots", label: "Light", min: 0, max: api.MAX_GLOBAL_SLOTS },
+  { key: "projectLimit", label: "Per project", min: 1, max: 32 },
 ] as const;
 type CapacityKey = (typeof CAPACITY_FIELDS)[number]["key"];
 type LimitSpec = (typeof CAPACITY_FIELDS)[number];
+/** The weight slot cards, which share a row. */
+const WEIGHT_SLOTS = new Set<string>(["heavySlots", "normalSlots", "lightSlots"]);
 
 /** A limits read that has not settled: loading, a failed first read, or a failed refresh. Nothing here writes, so Try again is always safe. */
 function ReadNotice({
@@ -243,7 +251,7 @@ function ReadNotice({
   );
 }
 
-/** The global and per-project task slots. */
+/** The task slots per weight, their total and the per-project limit. */
 function TaskSlots({
   c,
   values,
@@ -253,7 +261,7 @@ function TaskSlots({
   save,
 }: {
   c: Colors;
-  values: api.CapacityAuthorityValues | null;
+  values: api.CapacityAuthorityState["effective"] | null;
   revision?: string;
   authorityError: unknown;
   retry: () => void;
@@ -269,36 +277,37 @@ function TaskSlots({
     try {
       await save(input);
     } catch (error) {
-      if ("revision" in input) retry();
+      retry();
       throw error;
     } finally {
       setDrafts(pending.current.fields);
     }
   });
   const edit = (key: CapacityKey, value: number) => {
-    if (!values) return;
+    if (!values || revision === undefined) return;
     const fields = { ...pending.current.fields, [key]: value };
     const base = pending.current.revision ?? revision;
     pending.current = { revision: base, fields };
     setDrafts(fields);
-    auto.enqueue(base === undefined ? { ...values, ...fields } : { revision: base, ...fields }, 600);
+    auto.enqueue({ revision: base, ...fields }, 600);
   };
   // A labelled card per limit. The line under it names the value in force only when the
   // entered value differs, so an unsaved draft never reads as applied.
-  const field = (spec: LimitSpec, current: api.CapacityAuthorityValues) => {
+  const field = (spec: LimitSpec, current: api.CapacityAuthorityState["effective"]) => {
     const name = spec.label;
-    const max = revision !== undefined && spec.key === "globalLimit" ? api.MAX_GLOBAL_SLOTS : spec.max;
     const draft = drafts[spec.key] ?? current[spec.key];
     return (
       <NumberStepper
         key={spec.key}
         card
+        // The weight cards share a row: stacked, a short label like Light lines up with Heavy and Normal.
+        stacked={WEIGHT_SLOTS.has(spec.key)}
         c={c}
         label={name}
-        a11yLabel={`${name} dispatch limit (slots, 1–${max})`}
+        a11yLabel={`${name} dispatch limit (slots, ${spec.min}–${spec.max})`}
         value={draft}
-        min={1}
-        max={max}
+        min={spec.min}
+        max={spec.max}
         onChange={(value) => edit(spec.key, value)}
         onCommit={() => void auto.saver.flush()}
       >
@@ -314,8 +323,9 @@ function TaskSlots({
     <Section
       c={c}
       title="Task slots"
+      note={values ? `Total ${values.heavySlots + values.normalSlots + values.lightSlots}` : undefined}
       status={auto.status}
-      description="Parked tasks hold no slot. Lowering a limit lets running work finish."
+      description="Light tasks can use any slot, normal tasks normal or heavy slots, and heavy tasks only heavy slots. The heaviest waiting task takes a freed slot. Parked tasks hold no slot. Lowering a limit lets running work finish."
     >
       <ReadNotice
         c={c}
@@ -332,6 +342,95 @@ function TaskSlots({
           </View>
         </>
       )}
+    </Section>
+  );
+}
+
+/** The model that starts a planner when Send to planner finds none to receive an item. */
+function PlannerModelSetting({
+  c,
+  value,
+  revision,
+  catalog,
+  retry,
+  save,
+}: {
+  c: Colors;
+  value: api.PlannerModel;
+  revision: string;
+  catalog: HostCatalog | undefined;
+  retry: () => void;
+  save: (values: api.CapacityInput) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<api.PlannerModel | null>(null);
+  // A queued save writes against the revision read after the one before it.
+  const latest = useRef(revision);
+  latest.current = revision;
+  const auto = useSectionAutoSave<api.PlannerModel>(async (plannerModel) => {
+    try {
+      await save({ revision: latest.current, plannerModel });
+    } catch (error) {
+      retry();
+      throw error;
+    } finally {
+      setDraft((current) => (current === plannerModel ? null : current));
+    }
+  });
+  const shown = draft ?? value;
+  const edit = (next: api.PlannerModel) => {
+    setDraft(next);
+    auto.enqueue(next);
+  };
+  const models = (catalog?.providers ?? []).flatMap((provider) =>
+    provider.models.map((model) => ({
+      value: `${provider.key}/${model.id}`,
+      label: `${provider.label} · ${model.label}`,
+      provider: provider.key,
+      model,
+    })),
+  );
+  const key = `${shown.provider}/${shown.model}`;
+  const chosen = models.find((option) => option.value === key);
+  const levels = chosen?.model.thinkingOptions ?? [];
+  return (
+    <Section
+      c={c}
+      title="Planner model"
+      status={auto.status}
+      description="Starts a planner for Send to planner when the T3 project has no default model."
+    >
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>
+        <DropdownSelect
+          c={c}
+          label="Model"
+          minWidth={220}
+          value={key}
+          options={chosen ? models : [...models, { value: key, label: shown.model }]}
+          onChange={(next) => {
+            const option = models.find((candidate) => candidate.value === next);
+            if (!option) return;
+            const offered = option.model.thinkingOptions.some((level) => level.id === shown.effort);
+            edit({
+              provider: option.provider,
+              model: option.model.id,
+              effort: offered ? shown.effort : option.model.defaultThinkingOptionId,
+            });
+          }}
+        />
+        <DropdownSelect
+          c={c}
+          label="Thinking"
+          value={shown.effort ?? ""}
+          options={[
+            { value: "", label: "Host default" },
+            ...levels.map((level) => ({ value: level.id, label: level.label })),
+            ...(shown.effort && !levels.some((level) => level.id === shown.effort)
+              ? [{ value: shown.effort, label: THINKING_LABELS[shown.effort as ThinkingLevel] ?? shown.effort }]
+              : []),
+          ]}
+          onChange={(effort) => edit({ ...shown, effort: effort || null })}
+        />
+      </View>
     </Section>
   );
 }
@@ -600,7 +699,7 @@ function ProjectLimitRow({
 
 /**
  * Settings → Dispatch limits, in the order the operator reads it: usage level, task
- * slots, project overrides.
+ * slots, planner model, project overrides.
  */
 export function DispatchLimits(props: DispatchLimitsProps) {
   const { c, state, authority } = props;
@@ -616,6 +715,16 @@ export function DispatchLimits(props: DispatchLimitsProps) {
         retry={props.retryAuthority}
         save={props.saveCapacity}
       />
+      {authority?.plannerModel && (
+        <PlannerModelSetting
+          c={c}
+          value={authority.plannerModel}
+          revision={authority.revision}
+          catalog={props.catalog}
+          retry={props.retryAuthority}
+          save={props.saveCapacity}
+        />
+      )}
       <ProjectOverrides
         c={c}
         state={state}

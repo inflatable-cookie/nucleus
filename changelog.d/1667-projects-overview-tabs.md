@@ -1,0 +1,1 @@
+The Projects view's header counts are now tabs: Active, Leads, Papercuts and Queue each show that type's cards in the project's column without leaving the board, and each column remembers its tab. Projects now tops the board menu, above Needs you.

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { capabilityLevels } from "../../shared/schema/settings/capability";
+import { plannerModelSchema } from "../../shared/schema/settings/capacity";
 import {
   CANONICAL_PROVIDERS,
   THINKING_LEVELS,
@@ -60,10 +61,13 @@ const dispatch = z
   .object({
     usage,
     usageUntilMs: integer.nullable(),
-    globalSlots: integer,
+    heavySlots: integer,
+    normalSlots: integer,
+    lightSlots: integer,
     projectDefaultSlots: integer,
     projectSlotOverrides: z.record(z.string(), integer),
     mode: dispatchMode.default("running"),
+    plannerModel: plannerModelSchema.optional(),
   })
   .loose();
 const repository = z
@@ -263,6 +267,7 @@ export const item = z.object({
   complexity: z.enum(capabilityLevels).optional(),
 });
 export const decision = z.object({
+  authorLabel: z.string().default("Agent thread"),
   id: z.string(),
   projectId: z.string(),
   question: z.string(),
@@ -271,7 +276,9 @@ export const decision = z.object({
   createdAtMs: integer,
   answer: z
     .object({
-      optionId: z.string(),
+      optionId: z.string().optional(),
+      answer: z.string().optional(),
+      basedOnOptionId: z.string().optional(),
       note: z.string().nullable(),
       author: z.string(),
       answeredAtMs: integer,
@@ -479,7 +486,12 @@ export function createRustApi(fetcher: typeof fetch = fetch) {
     answerDecision: (
       project: string,
       id: string,
-      value: { optionId: string; note: string | null },
+      value: {
+        optionId?: string;
+        answer?: string;
+        basedOnOptionId?: string;
+        note: string | null;
+      },
     ) =>
       board.read(
         decision,

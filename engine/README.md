@@ -117,8 +117,10 @@ Staging signs the copied executable with the fixed identifier
 same certificate across releases so Keychain can recognize the engine.
 
 At activation, point the CLI runtime link and the service and ACP launchers
-at the staged `nucleus`. The [registry launcher](#registry-serve-launcher) uses its matching board assets. The managed
-skill link at `<engine-home>/skills/nucleus` points to that release's skill
+at the staged `nucleus`. The new release then
+[refreshes the ACP command lines](#set-up-t3). The
+[registry launcher](#registry-serve-launcher) uses its matching board assets.
+The managed skill link at `<engine-home>/skills/nucleus` points to that release's skill
 directory. Configure each provider to discover the stable link once. On later
 rolls, update the stable target with the runtime and keep the provider's skill
 path. The engine embeds its run protocol when a provider has yet to discover
@@ -185,10 +187,19 @@ command is waiting on forge evidence. Launches, settlement and native writes
 still use fresh evidence. T3 transport failures defer requests for 15 seconds.
 GitHub transport and server failures pause requests across all tasks for 30
 seconds, doubling up to four minutes until a read succeeds. Rate limits retain
-their supplied deadline. A settled run that held a launch slot wakes the oldest
-capacity waiter. Capacity also has a 60-second backstop. Slot limits take effect
-when a Limits edit commits to Dispatch. The API serves task views from the
+their supplied deadline. A settled run that held a launch slot wakes the first
+capacity waiter that fits: the heaviest, then promoted, then oldest. Capacity
+also has a 60-second backstop. Slot limits take effect when a Limits edit
+commits to Dispatch.
+
+A brief's `queue.weight` (`light`, `normal` or `heavy`; `normal` when absent)
+counts for every run of its task. With H heavy, M normal and L light slots,
+heavy runs fit in H, heavy and normal runs in H + M, and all runs in H + M + L.
+Running work is never preempted. The API serves task views from the
 store and memory and pushes invalidations.
+
+A task joins the capacity waiters when it asks for a slot; the freed slot is
+offered to those already waiting and isn't reserved while one prepares its run.
 
 Normalize the relevant observations to one signal per phase. The bound run
 takes precedence over downstream work until its turn is quiescent. A required
@@ -348,7 +359,9 @@ wake that task after their transaction commits. A T3 stream wakes the task when
 its known thread changes. A fresh running hint can defer a routine refresh.
 A disconnect discards hints, and a periodic active scan catches any missed wake.
 The next due time drives the timer even when the scan is idle.
-The backstop pages through the active index with a fixed read budget.
+The backstop pages through the active index with a fixed read budget. The
+first scan after startup also ranks, in one read, every task whose next run
+still needs a slot, whatever its role, before any pass can assign one.
 
 A pass takes tasks that are due and shares one bounded process inventory.
 For each task, read its row, then fetch the exact T3 turn, PR and checkout facts
@@ -509,17 +522,30 @@ The ACP launcher calls `nucleus ensure` for the same profile and endpoint
 as `nucleus serve`. It reuses a healthy listener only when its controller
 credential and database path match. When the port is absent, it serializes
 startup and passes the lock to the detached engine. A running ACP client
-also calls the launcher after at least two seconds of connection refusals.
-It logs each recovery attempt to `acp.log` and backs off between attempts.
+also calls the launcher after at least two seconds of failed connections to
+its engine. A timed out or reset connection does not count. The engine is the
+one at `--endpoint`, or the one the session binding names when the flag is
+omitted. Failed and slow request lines in `acp.log` show this classification
+as `refused`. The client logs each recovery attempt there and backs off
+between attempts.
 
 Keep the serve launcher's log under the configured log root. On SIGINT,
 SIGTERM or SIGHUP, `serve` logs the signal and its uptime and shuts down.
 If the scheduler stops, `serve` logs the cause and exits with an error so
 clients can restart it.
-Once `serve` holds the profile lock, it records the run before initializing
-the service. The next start reports the last log time and how the previous
-run ended, including errors and SIGKILL during initialization. The pass
-logs once when one task has held it for a minute, naming the task and the step.
+`serve` runs as a thin parent and an engine child. The child holds the profile
+lock and the port. The parent forwards SIGINT, SIGTERM and SIGHUP, waits for
+the child and logs its exit code or signal, uptime and peak resident memory.
+It then exits with the same code, or dies by the same signal. Signal either
+process to stop the engine. A SIGKILL of the parent alone leaves the engine
+running without an exit record.
+
+Once the engine holds the profile lock, it records the run before initializing
+the service. The next start reports the last log time, how the previous run
+ended and the parent's exit record, including errors and SIGKILL during
+initialization. If both processes die together, there is no exit record. The
+pass logs once when one task has held it for a minute, naming the task and the
+step.
 
 ### Set up T3
 
@@ -582,9 +608,12 @@ place. Other provider IDs and running sessions are left alone.
 
 The launcher ensures the engine on `127.0.0.1` and execs Rust ACP over
 stdio with the profile's binding directory and `loadSession: true`.
-Refresh the installed launcher with `t3 install --adopt` when upgrading
-to ACP client recovery. Clients get recovery on their next launch. Install
-waits for the exact T3 registration, the `nucleus` model probe and the
+When `ensure` or `serve` starts, it rewrites a marked ACP launcher that differs
+from this release's output and logs the change. It keeps the launcher's control
+key and serve launcher paths. It leaves unmarked launchers, and launchers for
+another endpoint, unchanged. The engine does not generate the serve launcher
+and never rewrites it. Clients get new command lines on their next launch.
+Install waits for the exact T3 registration, the `nucleus` model probe and the
 engine's observation of the pinned Rust Inbox. During the TS transition, a
 still-pinned TS Inbox defers Rust Inbox setup. Rerun install once that Inbox
 is retired. The Rust provider can already be ready at that point.
@@ -709,10 +738,10 @@ Keep the Settings tabs, shared controls and save feedback. Use one noun per
 control, put explanations in `?` popovers, autosave, prefer dropdowns and put
 Remove inside the editor.
 
-| Group | Profile file (schema version 2) | Settings |
+| Group | Profile file (schema version 2; Dispatch 3) | Settings |
 | --- | --- | --- |
 | Profiles | `config/profiles.json` | Profile names, enabled flags, selections (stable ID, capability, weight, provider, model and effort), subscription groups, operator pauses and host-specific profile choices. |
-| Dispatch | `config/dispatch.json` | Usage and optional end, global slots, project defaults and overrides, thread retention and dispatch mode. |
+| Dispatch | `config/dispatch.json` | Usage and optional end, heavy, normal and light slots, project defaults and overrides, thread retention and dispatch mode. |
 | GitHub accounts | `config/github-accounts.json` | Verified account identities and account bindings for workers and reviewers. |
 | Projects | `state/projects.json` | Names, archival, repository routes, planner bindings and removal receipts. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and the environment key referring to its credential. |
@@ -801,8 +830,8 @@ even if a repository has yet to enroll. Enrollment keeps an existing Projects
 ID for an exact matching route.
 
 Edit the project name, archive state and repository checks in Projects. In
-Limits, set global slots, the per-project default or an individual project’s
-override. Limits saves the changed fields against the Dispatch revision it
+Limits, set the heavy, normal and light slots, the per-project default or an
+individual project’s override. Limits saves the changed fields against the Dispatch revision it
 read. A project’s slots cover all its routed repositories. New and amended briefs reject the retired
 `queue.preferredProfileId` key. Use `queue.profileRequests.worker` with a
 profile ID, reason and `required: true` for a required worker profile. A non-fixture
