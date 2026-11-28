@@ -65,7 +65,9 @@ fn board_wait_detail(detail: &crate::WaitDetail) -> Option<&str> {
         crate::WaitDetail::BeforeSend(message) => *message,
         crate::WaitDetail::ConfirmingDelivery(message)
         | crate::WaitDetail::Observation(message) => Some(*message),
-        crate::WaitDetail::Blocked(message) => Some(message.as_str()),
+        crate::WaitDetail::Blocked(message) | crate::WaitDetail::SlotCap(message) => {
+            Some(message.as_str())
+        }
         crate::WaitDetail::OperatorSnoozed { .. } | crate::WaitDetail::Archive(_) => None,
     }
 }

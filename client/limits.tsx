@@ -29,7 +29,7 @@ import {
 
 /*
  * Settings → Dispatch limits. One place for what the host runs with: the usage
- * level, the task slots, project overrides.
+ * level, the task slots by weight, project overrides.
  * Every limit reads as its value in force when that
  * differs from what is entered. The RPCs and their authority are unchanged; this
  * module only changes how they read (Tom, 2026-11-08: half the height, same controls).
@@ -189,10 +189,12 @@ function UsageSlider({
  * record is read through `queue.capacity-state`; Settings shows no view of it (Tom, 2026-11-08).
  */
 
-/** The two dispatch limits exposed by the Rust board. */
+/** The dispatch limits exposed by the Rust board: a slot count per task weight, then the per-project limit. */
 const CAPACITY_FIELDS = [
-  { key: "globalLimit", label: "Global", max: 64 },
-  { key: "projectLimit", label: "Per project", max: 32 },
+  { key: "heavySlots", label: "Heavy", min: 0, max: api.MAX_GLOBAL_SLOTS },
+  { key: "normalSlots", label: "Normal", min: 0, max: api.MAX_GLOBAL_SLOTS },
+  { key: "lightSlots", label: "Light", min: 0, max: api.MAX_GLOBAL_SLOTS },
+  { key: "projectLimit", label: "Per project", min: 1, max: 32 },
 ] as const;
 type CapacityKey = (typeof CAPACITY_FIELDS)[number]["key"];
 type LimitSpec = (typeof CAPACITY_FIELDS)[number];
@@ -243,7 +245,7 @@ function ReadNotice({
   );
 }
 
-/** The global and per-project task slots. */
+/** The task slots per weight, their total and the per-project limit. */
 function TaskSlots({
   c,
   values,
@@ -253,7 +255,7 @@ function TaskSlots({
   save,
 }: {
   c: Colors;
-  values: api.CapacityAuthorityValues | null;
+  values: api.CapacityAuthorityState["effective"] | null;
   revision?: string;
   authorityError: unknown;
   retry: () => void;
@@ -269,25 +271,24 @@ function TaskSlots({
     try {
       await save(input);
     } catch (error) {
-      if ("revision" in input) retry();
+      retry();
       throw error;
     } finally {
       setDrafts(pending.current.fields);
     }
   });
   const edit = (key: CapacityKey, value: number) => {
-    if (!values) return;
+    if (!values || revision === undefined) return;
     const fields = { ...pending.current.fields, [key]: value };
     const base = pending.current.revision ?? revision;
     pending.current = { revision: base, fields };
     setDrafts(fields);
-    auto.enqueue(base === undefined ? { ...values, ...fields } : { revision: base, ...fields }, 600);
+    auto.enqueue({ revision: base, ...fields }, 600);
   };
   // A labelled card per limit. The line under it names the value in force only when the
   // entered value differs, so an unsaved draft never reads as applied.
-  const field = (spec: LimitSpec, current: api.CapacityAuthorityValues) => {
+  const field = (spec: LimitSpec, current: api.CapacityAuthorityState["effective"]) => {
     const name = spec.label;
-    const max = revision !== undefined && spec.key === "globalLimit" ? api.MAX_GLOBAL_SLOTS : spec.max;
     const draft = drafts[spec.key] ?? current[spec.key];
     return (
       <NumberStepper
@@ -295,10 +296,10 @@ function TaskSlots({
         card
         c={c}
         label={name}
-        a11yLabel={`${name} dispatch limit (slots, 1–${max})`}
+        a11yLabel={`${name} dispatch limit (slots, ${spec.min}–${spec.max})`}
         value={draft}
-        min={1}
-        max={max}
+        min={spec.min}
+        max={spec.max}
         onChange={(value) => edit(spec.key, value)}
         onCommit={() => void auto.saver.flush()}
       >
@@ -314,8 +315,9 @@ function TaskSlots({
     <Section
       c={c}
       title="Task slots"
+      note={values ? `Total ${values.heavySlots + values.normalSlots + values.lightSlots}` : undefined}
       status={auto.status}
-      description="Parked tasks hold no slot. Lowering a limit lets running work finish."
+      description="Light tasks can use any slot, normal tasks normal or heavy slots, and heavy tasks only heavy slots. The heaviest waiting task takes a freed slot. Parked tasks hold no slot. Lowering a limit lets running work finish."
     >
       <ReadNotice
         c={c}

@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Deserializer, de};
 
-use super::{Complexity, Effort};
+use super::{Complexity, Effort, TaskWeight};
 use crate::{Brief, QueuePriority, Role};
 
 /// The engine policy declared in a brief's `queue` frontmatter.
@@ -11,6 +11,9 @@ use crate::{Brief, QueuePriority, Role};
 pub struct BriefPolicy {
     pub complexity: Option<Complexity>,
     pub priority: Option<QueuePriority>,
+    /// Kept as written, so a stored brief with another value stays readable.
+    #[serde(default, deserialize_with = "present_value")]
+    weight: Option<yaml_serde::Value>,
     pub critical: bool,
     #[serde(default, deserialize_with = "optional_notify")]
     notify_origin_on_closeout: Option<bool>,
@@ -46,6 +49,12 @@ enum LaneSelection {
 
 fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<()>, D::Error> {
     de::IgnoredAny::deserialize(deserializer).map(|_| Some(()))
+}
+
+fn present_value<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<yaml_serde::Value>, D::Error> {
+    yaml_serde::Value::deserialize(deserializer).map(Some)
 }
 
 fn optional_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
@@ -116,6 +125,7 @@ pub enum BriefPolicyError {
     RetiredProfile,
     RetiredInteractive,
     UnknownQueueKey(String),
+    Weight(String),
     MergeHoldReason,
     InvalidFrontmatter(yaml_serde::Error),
     UnjustifiedRequest(Role),
@@ -128,6 +138,10 @@ impl fmt::Display for BriefPolicyError {
             Self::RetiredProfile => f.write_str("queue.preferredProfileId is retired; use queue.profileRequests.worker with profileId and reason (required: true to require it)"),
             Self::RetiredInteractive => f.write_str("queue.interactive is retired; submit the work as a normal brief"),
             Self::UnknownQueueKey(key) => write!(f, "unknown queue key: queue.{key}"),
+            Self::Weight(value) => write!(
+                f,
+                "unsupported queue.weight value: {value}; use light, normal or heavy"
+            ),
             Self::MergeHoldReason => f.write_str("queue.mergeHold: true requires a queue.mergeHoldReason of 1 to 4000 characters"),
             Self::UnclosedFrontmatter => {
                 f.write_str("brief frontmatter is missing its closing delimiter")
@@ -157,7 +171,7 @@ impl BriefPolicy {
     /// # Errors
     /// Returns an error for unsupported keys or invalid policy.
     pub fn submitted(brief: &str) -> Result<Self, BriefPolicyError> {
-        Self::parse(brief)?.validate(&BTreeMap::new())
+        Self::parse(brief)?.validate(&Self::default())
     }
 
     /// Validate a replacement brief against the stored policy.
@@ -165,13 +179,19 @@ impl BriefPolicy {
     /// # Errors
     /// Returns an error for new or changed unknown keys or invalid policy.
     pub fn amended(&self, brief: &str) -> Result<Self, BriefPolicyError> {
-        Self::parse(brief)?.validate(&self.unknown)
+        Self::parse(brief)?.validate(self)
     }
 
-    fn validate(
-        self,
-        stored_unknown: &BTreeMap<String, yaml_serde::Value>,
-    ) -> Result<Self, BriefPolicyError> {
+    /// The declared task weight, `normal` when the brief names none.
+    #[must_use]
+    pub fn weight(&self) -> TaskWeight {
+        self.weight
+            .as_ref()
+            .and_then(|value| yaml_serde::from_value(value.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    fn validate(self, stored: &Self) -> Result<Self, BriefPolicyError> {
         if self.preferred_profile_id.is_some() {
             return Err(BriefPolicyError::RetiredProfile);
         }
@@ -181,9 +201,24 @@ impl BriefPolicy {
         if let Some((key, _)) = self
             .unknown
             .iter()
-            .find(|(key, value)| stored_unknown.get(*key) != Some(*value))
+            .find(|(key, value)| stored.unknown.get(*key) != Some(*value))
         {
             return Err(BriefPolicyError::UnknownQueueKey(key.clone()));
+        }
+        if let Some(value) = self
+            .weight
+            .as_ref()
+            .filter(|value| stored.weight.as_ref() != Some(*value))
+            && yaml_serde::from_value::<TaskWeight>(value.clone()).is_err()
+        {
+            let shown = match value {
+                yaml_serde::Value::String(text) => text.clone(),
+                other => yaml_serde::to_string(other)
+                    .map_err(BriefPolicyError::InvalidFrontmatter)?
+                    .trim()
+                    .to_owned(),
+            };
+            return Err(BriefPolicyError::Weight(shown));
         }
         if self.merge_hold == Some(true) {
             if self
@@ -329,7 +364,7 @@ impl BriefPolicy {
 
 #[cfg(test)]
 mod submission_tests {
-    use super::BriefPolicy;
+    use super::{BriefPolicy, TaskWeight};
 
     #[test]
     fn retired_selector_only_refuses_new_or_amended_input() {
@@ -389,6 +424,44 @@ mod submission_tests {
                 format!("unknown queue key: queue.{key}")
             );
         }
+    }
+
+    #[test]
+    fn weight_defaults_to_normal_and_refuses_other_values_by_name() {
+        let brief = |entry: &str| format!("---\nqueue:\n  complexity: high\n{entry}---\nWork");
+        let parsed = |entry: &str| BriefPolicy::submitted(&brief(entry)).unwrap().weight();
+        assert_eq!(parsed(""), TaskWeight::Normal);
+        for (value, weight) in [
+            ("light", TaskWeight::Light),
+            ("normal", TaskWeight::Normal),
+            ("heavy", TaskWeight::Heavy),
+        ] {
+            assert_eq!(parsed(&format!("  weight: {value}\n")), weight);
+        }
+        let held = BriefPolicy::parse(&brief("")).unwrap();
+        for (value, shown) in [
+            ("huge", "huge"),
+            ("Heavy", "Heavy"),
+            ("3", "3"),
+            ("", "null"),
+        ] {
+            let replacement = brief(&format!("  weight: {value}\n"));
+            for refused in [
+                BriefPolicy::submitted(&replacement),
+                held.amended(&replacement),
+            ] {
+                assert_eq!(
+                    refused.unwrap_err().to_string(),
+                    format!("unsupported queue.weight value: {shown}; use light, normal or heavy")
+                );
+            }
+        }
+        // A stored brief with another value stays readable and amendable.
+        let legacy = brief("  weight: fewer\n");
+        let stored = BriefPolicy::parse(&legacy).unwrap();
+        assert_eq!(stored.weight(), TaskWeight::Normal);
+        assert!(stored.amended(&legacy.replace("Work", "Amended")).is_ok());
+        assert!(stored.amended(&brief("  weight: heavy\n")).is_ok());
     }
 
     #[test]

@@ -102,15 +102,24 @@ const legacyCapacitySchema = z
   })
   .strict();
 
-/** Rust Dispatch uses a positive u32 for the global ceiling. */
+/** Rust Dispatch uses a u32 for each slot count and for their positive sum. */
 export const MAX_GLOBAL_SLOTS = 0xffff_ffff;
 const globalSlots = z.number().int().min(1).max(MAX_GLOBAL_SLOTS);
+const weightSlots = z.number().int().min(0).max(MAX_GLOBAL_SLOTS);
+/** Spec 070 ruling 63: one slot count per task weight. */
+const slotFields = {
+  heavySlots: weightSlots,
+  normalSlots: weightSlots,
+  lightSlots: weightSlots,
+};
 const slotPatch = z.object({
   revision: z.string().min(1),
-  globalLimit: globalSlots.optional(),
+  heavySlots: weightSlots.optional(),
+  normalSlots: weightSlots.optional(),
+  lightSlots: weightSlots.optional(),
   projectLimit: legacyCapacitySchema.shape.projectLimit.optional(),
 }).strict().refine(
-  (patch) => patch.globalLimit !== undefined || patch.projectLimit !== undefined,
+  (patch) => Object.entries(patch).some(([key, value]) => key !== "revision" && value !== undefined),
   "Choose a dispatch limit to change",
 );
 
@@ -184,8 +193,9 @@ export type CapacityChange = z.infer<typeof capacityChangeSchema>;
  */
 export const capacityAuthorityStateSchema = z
   .object({
-    effective: capacityAuthorityValuesSchema.extend({ globalLimit: globalSlots }),
-    revision: z.string().min(1).optional(),
+    // The global limit is the sum of the three slot counts.
+    effective: capacityAuthorityValuesSchema.extend({ globalLimit: globalSlots, ...slotFields }),
+    revision: z.string().min(1),
     changes: z.array(capacityChangeSchema).max(CAPACITY_CHANGE_LOG_LIMIT),
   })
   .strict();

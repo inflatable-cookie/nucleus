@@ -22,7 +22,10 @@ mod volume;
 
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use nucleus_core::{Head, Identity, Phase, QueuePriority, Role, Task, profiles::RotationCounts};
+use nucleus_core::{
+    Head, Identity, Phase, QueuePriority, Role, Task,
+    profiles::{BriefPolicy, RotationCounts, Slots, TaskWeight},
+};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, named_params,
     params,
@@ -172,6 +175,13 @@ pub struct TaskList {
     pub unreadable: Vec<UnreadableTask>,
 }
 
+fn declared_weight(brief: Option<&str>) -> TaskWeight {
+    brief
+        .and_then(|brief| BriefPolicy::parse(brief).ok())
+        .map(|policy| policy.weight())
+        .unwrap_or_default()
+}
+
 /// Scheduling facts for one task from the active backstop scan.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TaskSeed {
@@ -183,6 +193,8 @@ pub struct TaskSeed {
     pub closeout: bool,
     /// Queue dispatch order for capacity waiters.
     pub queue_priority: QueuePriority,
+    /// The slot weight of a task awaiting its first role.
+    pub weight: TaskWeight,
 }
 
 /// A task's execution snapshot plus its public number. Equality fences the
@@ -590,7 +602,9 @@ impl Store {
              ORDER BY admitted LIMIT ?1)
              SELECT due.id, CASE WHEN t.phase IN ('queued', 'working') AND t.entry = 'brief' AND t.run IS NULL
                AND json_extract(t.threads, '$.worker') IS NULL AND json_extract(t.threads, '$.reviewer') IS NULL
-               THEN due.admitted END, t.phase IN ('closing', 'done', 'cancelled'), t.queue_priority
+               THEN due.admitted END, t.phase IN ('closing', 'done', 'cancelled'), t.queue_priority,
+               CASE WHEN t.phase IN ('queued', 'working') AND t.run IS NULL
+               THEN json_extract(t.brief, '$.text') END
              FROM due JOIN tasks t ON t.id = due.id ORDER BY due.admitted",
         )?;
         let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| {
@@ -603,6 +617,7 @@ impl Store {
                 admission_order: row.get(1)?,
                 closeout: row.get(2)?,
                 queue_priority: priority,
+                weight: declared_weight(row.get::<_, Option<String>>(4)?.as_deref()),
             })
         })?;
         Ok(ids.collect::<Result<_, _>>()?)
@@ -630,11 +645,18 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Count other tasks whose possibly sent run still holds a launch slot.
+    /// Count other tasks whose possibly sent run still holds a launch slot, by
+    /// the weight each held brief declares.
     /// # Errors
     /// Returns an error if row custody cannot be read.
-    pub fn occupied_slots(&self, except: &str) -> Result<u32, StoreError> {
-        Ok(self.connection.query_row("SELECT count(*) FROM tasks WHERE id <> ?1 AND run IS NOT NULL AND json_extract(run, '$.last_send_at_ms') IS NOT NULL", [except], |row| row.get(0))?)
+    pub fn occupied_slots(&self, except: &str) -> Result<Slots, StoreError> {
+        let mut query = self.connection.prepare_cached("SELECT json_extract(brief, '$.text') FROM tasks WHERE id <> ?1 AND run IS NOT NULL AND json_extract(run, '$.last_send_at_ms') IS NOT NULL")?;
+        let mut rows = query.query([except])?;
+        let mut occupied = Slots::default();
+        while let Some(row) = rows.next()? {
+            occupied.add(declared_weight(row.get::<_, Option<String>>(0)?.as_deref()));
+        }
+        Ok(occupied)
     }
 
     /// Count other held slots among the repositories in one project.

@@ -26,6 +26,8 @@ use crate::{
 };
 use nucleus_store::DispatchSettings;
 
+mod slots;
+
 const IDS: [&str; 3] = ["overlap-a", "overlap-b", "overlap-c"];
 const RESET_MS: u64 = 4_070_908_800_000;
 const LOW_BRIEF: &str = "---\nqueue: {complexity: low}\n---\nFix a typo.";
@@ -392,7 +394,9 @@ async fn launch_three(service: &Service, native: &Mutex<NativeRuns>) -> Vec<Stri
     {
         let mut state = service.state.lock().await;
         state.settings.dispatch = Some(DispatchSettings {
-            global_slots: 3,
+            heavy_slots: 3,
+            normal_slots: 0,
+            light_slots: 0,
             ..DispatchSettings::default()
         });
         state.settings.profiles = Some(Arc::new(serde_json::from_value(json!({

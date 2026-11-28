@@ -93,6 +93,11 @@ pub(super) fn task_state_label(
     if matches!(detail, Some(WaitDetail::OperatorSnoozed { .. })) {
         return phase_with_delay(task, None);
     }
+    if wait == Some(WaitReason::Capacity)
+        && let Some(WaitDetail::SlotCap(label)) = detail
+    {
+        return label.clone();
+    }
     // A capacity wait that carries a cause is a paused subscription group (ruling 51).
     if wait == Some(WaitReason::Capacity) && matches!(detail, Some(WaitDetail::Blocked(_))) {
         return phase_with_delay(task, Some("paused"));
@@ -395,7 +400,11 @@ impl Service {
             .row_visibility_hint(thread)
             .and_then(|row| row.snoozed_until_ms)
             .filter(|&until| until > self.visibility_now());
-        let detail = state.wait_detail(id);
+        // The T3 title keeps "capacity": slot counts would rename the thread
+        // as they change (ruling 11).
+        let detail = state
+            .wait_detail(id)
+            .filter(|detail| !matches!(detail, WaitDetail::SlotCap(_)));
         let (activity, _, handover) = self.role_window(thread, task);
         let wait = state.effective_wait(task)?.filter(|wait| {
             *wait != WaitReason::Starting || activity != nucleus_hosts::RowChildren::Active
