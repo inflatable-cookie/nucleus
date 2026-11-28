@@ -693,14 +693,23 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
         before.task.run().unwrap().launch().scratch.as_deref(),
         Some(scratch.as_path())
     );
-    assert_eq!(store.occupied_slots("other").expect("unsent run"), 0);
+    assert_eq!(
+        store.occupied_slots("other").expect("unsent run").total(),
+        0
+    );
     let instance = task.run().expect("prepared run").launch().instance.clone();
     task.record_send(&instance, 1).expect("record dispatch");
     store
         .save_row(&before, &task, &event("sent"))
         .expect("save send marker");
-    assert_eq!(store.occupied_slots("other").expect("sent run"), 1);
-    assert_eq!(store.occupied_slots("1").expect("own slot excluded"), 0);
+    assert_eq!(store.occupied_slots("other").expect("sent run").total(), 1);
+    assert_eq!(
+        store
+            .occupied_slots("1")
+            .expect("own slot excluded")
+            .total(),
+        0
+    );
     let before = row(&store, "1");
     task.command(
         Command::Cancel,
@@ -724,6 +733,7 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
             admission_order: None,
             closeout: true,
             queue_priority: nucleus_core::QueuePriority::Normal,
+            weight: nucleus_core::profiles::TaskWeight::Normal,
         }]
     );
     assert!(
@@ -732,7 +742,13 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
             .expect("after cursor")
             .is_empty()
     );
-    assert_eq!(store.occupied_slots("other").expect("revoked pending"), 1);
+    assert_eq!(
+        store
+            .occupied_slots("other")
+            .expect("revoked pending")
+            .total(),
+        1
+    );
     let before = row(&store, "1");
     let settled = Observation {
         host: Observed::Known(Host::Current {
@@ -747,7 +763,10 @@ fn a_cancelled_task_stays_active_until_the_revoked_run_settles() {
         .expect("save");
     assert_eq!(store.get("1").expect("stored task"), Some(task));
     assert!(store.active().expect("active").is_empty());
-    assert_eq!(store.occupied_slots("other").expect("settled run"), 0);
+    assert_eq!(
+        store.occupied_slots("other").expect("settled run").total(),
+        0
+    );
 }
 
 #[test]
@@ -1940,12 +1959,14 @@ fn migrating_version_twelve_defaults_queue_priority_without_rewriting_rows() {
                 admission_order: Some(expected_rowid),
                 closeout: false,
                 queue_priority: nucleus_core::QueuePriority::Normal,
+                weight: nucleus_core::profiles::TaskWeight::Normal,
             },
             nucleus_store::TaskSeed {
                 id: "promoted".into(),
                 admission_order: Some(expected_rowid + 1),
                 closeout: false,
                 queue_priority: nucleus_core::QueuePriority::Normal,
+                weight: nucleus_core::profiles::TaskWeight::Normal,
             },
         ]
     );

@@ -142,7 +142,11 @@ test("Settings override removal stays locked across tab switches, distinguishes 
     }
     if (method === "queue.capacity-state") {
       return {
+        revision: "limits-0",
         effective: {
+          heavySlots: 5,
+          normalSlots: 22,
+          lightSlots: 5,
           globalLimit: 32,
           projectLimit: 4,
           hostCallLimit: 6,

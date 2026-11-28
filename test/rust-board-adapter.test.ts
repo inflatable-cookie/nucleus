@@ -51,7 +51,9 @@ function engine(laneByProject: Record<string, RustLane> = {}) {
   let dispatch = {
     usage: "normal",
     usageUntilMs: null,
-    globalSlots: 4,
+    heavySlots: 2,
+    normalSlots: 1,
+    lightSlots: 1,
     projectDefaultSlots: 2,
     projectSlotOverrides: { Orbit_Main: 3, lantern: 1 },
     mode: "running",
@@ -802,7 +804,7 @@ test("shared Limits writes sparse project overrides and the two Dispatch default
   assert.equal(effective.projectLimit, 2);
   await adapter.rpc(api.configureCapacity, {
     revision,
-    globalLimit: 8,
+    heavySlots: 6,
     projectLimit: 4,
   });
   for (const limit of [5, null, 0]) {
@@ -845,7 +847,7 @@ test("two Limits tabs preserve untouched slots and refuse an edit against an old
   assert.ok(initial.revision);
   await first.rpc(api.configureCapacity, {
     revision: initial.revision,
-    globalLimit: 96,
+    normalSlots: 93,
   });
   await assert.rejects(
     second.rpc(api.configureCapacity, {
@@ -857,6 +859,10 @@ test("two Limits tabs preserve untouched slots and refuse an edit against an old
   assert.equal(fake.writes.length, 1);
   const refreshed = await second.rpc(api.capacityState, {});
   assert.equal(refreshed.effective.globalLimit, 96);
+  assert.deepEqual(
+    [refreshed.effective.heavySlots, refreshed.effective.normalSlots, refreshed.effective.lightSlots],
+    [2, 93, 1],
+  );
   assert.ok(refreshed.revision);
   await second.rpc(api.configureCapacity, {
     revision: refreshed.revision,

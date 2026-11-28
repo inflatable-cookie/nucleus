@@ -6,8 +6,10 @@ import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs } from "./support/render";
 import { formatLocalDateTime } from "../shared/date-time";
 import type {
+  CapacityAuthorityState,
   CapacityAuthorityValues,
   CapacityChange,
+  CapacityInput,
 } from "../shared/contracts";
 
 useNativeStubs();
@@ -59,13 +61,18 @@ const change = (
     ),
   } as CapacityAuthorityValues,
 });
+const SLOTS = { heavySlots: 5, normalSlots: 22, lightSlots: 5 };
+const HEAVY = "Heavy dispatch limit (slots, 0–4294967295)";
+const NORMAL = "Normal dispatch limit (slots, 0–4294967295)";
+const LIGHT = "Light dispatch limit (slots, 0–4294967295)";
 const authority = (
   overrides: {
-    effective?: Partial<CapacityAuthorityValues>;
+    effective?: Partial<CapacityAuthorityState["effective"]>;
     changes?: CapacityChange[];
   } = {},
 ) => ({
-  effective: { ...CAPACITY, ...overrides.effective },
+  effective: { ...CAPACITY, ...SLOTS, ...overrides.effective },
+  revision: "shown",
   changes: overrides.changes ?? [],
 });
 const state = (overrides: Record<string, unknown> = {}) =>
@@ -124,11 +131,9 @@ async function mountLimits(overrides: Record<string, unknown> = {}) {
 test("Limits sends the edited field at the displayed Dispatch revision", async () => {
   const saves: unknown[] = [];
   const { ui, done } = await mountLimits({
-    authority: { ...authority({ effective: { globalLimit: 96 } }), revision: "shown" },
     saveCapacity: async (input: unknown) => { saves.push(input); },
   });
   try {
-    assert.equal(ui.get("Global dispatch limit (slots, 1–4294967295)").props.value, "96");
     const label = "Per project dispatch limit (slots, 1–32)";
     ui.press(`Decrease ${label}`);
     ui.get(label).props.onSubmitEditing();
@@ -153,7 +158,6 @@ test("the planner model saves its model and thinking level at the displayed revi
   const { ui, done } = await mountLimits({
     authority: {
       ...authority(),
-      revision: "shown",
       plannerModel: { provider: "claude", model: "claude-opus-5-5", effort: "high" },
     },
     catalog: {
@@ -189,8 +193,36 @@ test("the planner model saves its model and thinking level at the displayed revi
   }
 });
 
+test("each weight has its own slot count beside their total, and an edit saves itself", async () => {
+  const saves: CapacityInput[] = [];
+  const { ui, done } = await mountLimits({
+    saveCapacity: async (input: CapacityInput) => { saves.push(input); },
+  });
+  try {
+    for (const [label, slots] of [[HEAVY, "5"], [NORMAL, "22"], [LIGHT, "5"]] as const)
+      assert.equal(ui.get(label).props.value, slots);
+    assert.match(ui.text(), /Heavy[^]*Normal[^]*Light/);
+    assert.match(ui.text(), /Total 32/);
+    assert.equal(ui.query(/Global dispatch limit/), undefined);
+    assert.match(
+      ui.get("Task slots help").props.accessibilityHint,
+      /Light tasks can use any slot, normal tasks normal or heavy slots, and heavy tasks only heavy slots\. The heaviest waiting task takes a freed slot\./,
+    );
+    // Two edits inside one debounce save together, with no button.
+    ui.press(`Increase ${HEAVY}`);
+    ui.press(`Decrease ${LIGHT}`);
+    await settle(() => /In force 5 slots/.test(ui.text()));
+    assert.match(ui.text(), /Total 32/, "the total reads what is in force");
+    ui.get(LIGHT).props.onSubmitEditing();
+    await settle(() => saves.length > 0);
+    assert.deepEqual(saves, [{ revision: "shown", heavySlots: 6, lightSlots: 4 }]);
+  } finally {
+    done();
+  }
+});
+
 test("limits show applied values beside controls, and the recorded changes stay off the screen", async () => {
-  const applied = { globalLimit: 21, projectLimit: 6 };
+  const applied = { globalLimit: 21, normalSlots: 11, projectLimit: 6 };
   const v1 = "2026-11-02T09:00:00.000Z",
     v2 = "2026-11-03T10:30:00.000Z";
   const { ui, done } = await mountLimits({
@@ -203,10 +235,8 @@ test("limits show applied values beside controls, and the recorded changes stay 
     }),
   });
   try {
-    assert.equal(
-      ui.get("Global dispatch limit (slots, 1–64)").props.value,
-      "21",
-    );
+    assert.equal(ui.get(NORMAL).props.value, "11");
+    assert.match(ui.text(), /Total 21/);
     assert.doesNotMatch(
       ui.text(),
       /In force/,
@@ -238,10 +268,7 @@ test("a full record adds nothing to the screen: Project overrides is the last se
     authority: authority({ changes: twenty }),
   });
   try {
-    assert.equal(
-      ui.get("Global dispatch limit (slots, 1–64)").props.value,
-      "32",
-    );
+    assert.equal(ui.get(HEAVY).props.value, "5");
     assert.doesNotMatch(ui.text(), /Recorded changes|of 20 kept/);
     // nucleus#1325: the default host picker lives in Settings → Hosts now.
     const titles = ui
@@ -334,11 +361,11 @@ test("the value in force appears under a limit only once the entered value diffe
   const { ui, done } = await mountLimits();
   try {
     assert.doesNotMatch(ui.text(), /In force/);
-    ui.get("Global dispatch limit (slots, 1–64)").props.onFocus();
-    ui.get("Global dispatch limit (slots, 1–64)").props.onChangeText("40");
-    await settle(() => /In force 32 slots/.test(ui.text()));
+    ui.get(HEAVY).props.onFocus();
+    ui.get(HEAVY).props.onChangeText("40");
+    await settle(() => /In force 5 slots/.test(ui.text()));
     assert.equal(
-      ui.get("Global dispatch limit (slots, 1–64)").props.value,
+      ui.get(HEAVY).props.value,
       "40",
     );
   } finally {
@@ -351,7 +378,7 @@ test("loading, a failed first read and a failed refresh each say what is and is 
   try {
     assert.match(loading.ui.text(), /Reading the dispatch limits…/);
     assert.equal(
-      loading.ui.query("Global dispatch limit (slots, 1–64)"),
+      loading.ui.query(HEAVY),
       undefined,
       "no field is shown as applied while reading",
     );
@@ -376,7 +403,7 @@ test("loading, a failed first read and a failed refresh each say what is and is 
     );
     assert.match(failed.ui.text(), /capacity store offline/);
     assert.equal(
-      failed.ui.query("Global dispatch limit (slots, 1–64)"),
+      failed.ui.query(HEAVY),
       undefined,
     );
     assert.equal(
@@ -401,8 +428,8 @@ test("loading, a failed first read and a failed refresh each say what is and is 
       /Couldn't refresh the dispatch limits\. The values shown may be out of date; nothing was changed\./,
     );
     assert.equal(
-      stale.ui.get("Global dispatch limit (slots, 1–64)").props.value,
-      "32",
+      stale.ui.get(HEAVY).props.value,
+      "5",
       "the last values read stay on screen, marked stale",
     );
     stale.ui.press("Retry reading the dispatch limits");
@@ -609,8 +636,8 @@ test("the task slots sit on one wrapping row of steppers at narrow and wide size
         .filter((node) =>
           /dispatch limit \(/.test(node.props.accessibilityLabel ?? ""),
         ).length,
-      2,
-      "both task slots are typeable steppers",
+      4,
+      "every limit is a typeable stepper",
     );
     assert.ok(
       !ui.ofType("View").some((node) => node.props.style?.width === 200),
@@ -754,10 +781,14 @@ test("an inline label never shrinks into its words: a tight card wraps the contr
 test("Task slot labels stay inline", async () => {
   const { ui, done } = await mountLimits();
   try {
-    for (const name of ["Global", "Per project"]) {
-      const text = textNode(ui, name);
-      assert.ok(text, `${name} shows`);
-      assert.equal(text.props.style.flexShrink, 0, `${name} stays inline`);
+    for (const name of ["Heavy", "Normal", "Light", "Per project"]) {
+      // "Normal" is also a usage level, so any text of the name may be the card's.
+      assert.ok(
+        ui.ofType("Text").some(
+          (node) => node.children.join("") === name && node.props.style?.flexShrink === 0,
+        ),
+        `${name} shows inline`,
+      );
     }
   } finally {
     done();

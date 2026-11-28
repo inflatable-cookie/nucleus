@@ -141,7 +141,8 @@ test("the capacity catalogue is the only place a limit is bounded and defaulted"
     revision: "v1", projectLimit: 3,
   });
   assert.throws(() => capacitySchema.parse({ revision: "v1" }));
-  assert.throws(() => capacitySchema.parse({ revision: "v1", globalLimit: 2 ** 32 }));
+  assert.throws(() => capacitySchema.parse({ revision: "v1", heavySlots: 2 ** 32 }));
+  assert.throws(() => capacitySchema.parse({ revision: "v1", globalLimit: 2 }));
   // An absent field keeps the catalogue's default, and the bound is the catalogue's.
   assert.equal(
     capacityStateFields.hostCallLimit.parse(undefined),

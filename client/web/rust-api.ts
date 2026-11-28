@@ -61,7 +61,9 @@ const dispatch = z
   .object({
     usage,
     usageUntilMs: integer.nullable(),
-    globalSlots: integer,
+    heavySlots: integer,
+    normalSlots: integer,
+    lightSlots: integer,
     projectDefaultSlots: integer,
     projectSlotOverrides: z.record(z.string(), integer),
     mode: dispatchMode.default("running"),

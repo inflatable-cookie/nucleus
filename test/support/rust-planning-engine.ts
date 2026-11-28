@@ -88,7 +88,9 @@ const settings = (projects: Record<string, PlanningProject> = planningProjects) 
   dispatch: snapshot({
     usage: "normal",
     usageUntilMs: null,
-    globalSlots: 4,
+    heavySlots: 4,
+    normalSlots: 0,
+    lightSlots: 0,
     projectDefaultSlots: 2,
     projectSlotOverrides: {},
     mode: "running",
