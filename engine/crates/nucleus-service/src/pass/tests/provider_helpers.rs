@@ -93,6 +93,10 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
     service.forge = forge;
     let (native, _archive) = empty_archive_fixture(1).await;
     service.host = crate::tests::verified_native_fixture(native, home.path());
+    assert!(
+        service.host.runtime_identity().is_some(),
+        "fixture native runtime identity"
+    );
     service.set_fixture_acp_provider(Some("fixture"));
     // Helper cleanup runs on a profile whose Dispatch was never configured.
     assert!(service.state.lock().await.settings.dispatch.is_none());
@@ -204,7 +208,8 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
             results.iter().any(|result| {
                 result["process"]["pid"] == pids[name] && result["outcome"] == "sent"
             }),
-            "{name}: {results:?}"
+            "{name}: {results:?}; history: {:?}",
+            service.history(&id, None, 100).await.unwrap()
         );
         assert!(!alive(pids[name]), "{name}");
     }

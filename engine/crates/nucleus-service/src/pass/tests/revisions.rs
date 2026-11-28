@@ -1,4 +1,5 @@
 use nucleus_core::RetainedThread;
+use nucleus_store::TaskAdmissionFacts;
 
 use super::*;
 use crate::tests::{create_fixture_commit, forge_pull, git, reserved_reviewer};
@@ -89,8 +90,22 @@ async fn after_changes(service: &Service, head: &Head) -> (TaskRow, Observation)
     (service.task("revision").await.unwrap(), observation)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one revision lifecycle verifies the resulting review"
+)]
 async fn revision(summary: &str, kind: Revision) {
     let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+    let root = service.fixture().checkout.clone();
+    let runs = Arc::new(std::sync::Mutex::new(
+        crate::profiles::tests::NativeRuns::default(),
+    ));
+    let (host, native) = native_fixture(move |request| {
+        crate::profiles::tests::native_response(request, &root, &mut runs.lock().unwrap())
+    })
+    .await;
+    service.host = host;
+    crate::profiles::tests::publish_parent_shell(&service).await;
     let reviewed_head = &service.fixture().start;
     let (forge, description, server) = revision_forge(reviewed_head).await;
     service.forge = forge;
@@ -109,9 +124,22 @@ async fn revision(summary: &str, kind: Revision) {
     let Action::Launch { role, via } = decide(&row.task, &observation) else {
         panic!("expected the retained worker to resume");
     };
-    Box::pin(service.reserve(&row, &checkout, observation.clone(), role, via, &host))
-        .await
-        .unwrap();
+    let first = Box::pin(service.reserve(
+        &row,
+        &checkout,
+        observation.clone(),
+        role,
+        via.clone(),
+        &host,
+    ))
+    .await
+    .unwrap();
+    if first == Action::Wait(WaitReason::Starting) {
+        crate::profiles::tests::publish_parent_shell(&service).await;
+        Box::pin(service.reserve(&row, &checkout, observation.clone(), role, via, &host))
+            .await
+            .unwrap();
+    }
     let row = service.task("revision").await.unwrap();
     let head = if matches!(kind, Revision::NewHead) {
         std::fs::write(
@@ -184,6 +212,7 @@ async fn revision(summary: &str, kind: Revision) {
     }
     server.abort();
     assert!(server.await.unwrap_err().is_cancelled());
+    native.abort();
 }
 
 async fn report_revision(
@@ -241,21 +270,39 @@ async fn reviewer_prompt(
         panic!("expected a new reviewer round");
     };
     assert_eq!(role, Role::Reviewer);
-    Box::pin(service.reserve(
+    let first = Box::pin(service.reserve(
         row,
         checkout,
-        observation,
+        observation.clone(),
         role,
-        via,
+        via.clone(),
         &service.host.fixture_pass(),
     ))
     .await
     .unwrap();
+    if first == Action::Wait(WaitReason::Starting) {
+        crate::profiles::tests::publish_parent_shell(service).await;
+        Box::pin(service.reserve(
+            row,
+            checkout,
+            observation,
+            role,
+            via,
+            &service.host.fixture_pass(),
+        ))
+        .await
+        .unwrap();
+    }
     let review = service.task("revision").await.unwrap();
     let launch = review.task.run().unwrap().launch();
     assert_eq!(launch.review_head.as_ref(), Some(head));
     let wire: serde_json::Value = serde_json::from_str(&launch.input).unwrap();
-    let prompt = wire["payload"]["text"].as_str().unwrap();
+    let payload = &wire["payload"];
+    let prompt = payload["text"]
+        .as_str()
+        .or_else(|| payload["initialMessage"]["text"].as_str())
+        .or_else(|| payload["task"].as_str())
+        .expect("reviewer prompt");
     assert!(prompt.contains(&format!("PR head: {head}")));
     assert!(prompt.contains("Read the current PR description from the forge"));
     prompt.to_owned()

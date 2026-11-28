@@ -299,14 +299,21 @@ async fn record_report(service: &Service, decision: Review) -> String {
 }
 
 fn restart_service(service: Service, remote: &ForgeFixture) -> Service {
-    let project = service.fixture().clone();
     let settings = service.settings.clone();
     let forge = GitHub::loopback_fixture(*remote.address.get().unwrap()).unwrap();
     let callback = service.callback;
     let report_command = service.report_command.clone();
     drop(service);
     let host = nucleus_hosts::T3::new("http://127.0.0.1:9", "unused-fixture-key").unwrap();
-    Service::open(&settings, project, host, forge, callback, report_command).unwrap()
+    Service::open_projects(
+        settings.lock_profile().unwrap(),
+        "fixture-acp".into(),
+        host,
+        forge,
+        callback,
+        report_command,
+    )
+    .unwrap()
 }
 
 async fn advance(service: &Service) -> Result<Action, ServiceError> {

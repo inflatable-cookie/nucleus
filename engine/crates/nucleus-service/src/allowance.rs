@@ -277,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn admission_pins_the_affected_test_declaration() {
-        let (_root, mut service) = fixture(GitHub::new("unused").unwrap());
+        let (_root, service) = fixture(GitHub::new("unused").unwrap());
         let checkout = service.fixture().checkout.clone();
         let config = checkout.join("effigy.toml");
         std::fs::write(&config, "[tasks]\n\"test:affected\" = \"test\"\n").unwrap();
@@ -294,13 +294,11 @@ mod tests {
                 "Declare affected selection",
             ],
         );
-        service.fixture_mut().start = git(&checkout, &["rev-parse", "HEAD"])
-            .trim()
-            .parse()
-            .unwrap();
+        git(&checkout, &["push", "origin", "main"]);
         std::fs::write(&config, "# Dirty checkout has no test declaration\n").unwrap();
         let row = service
-            .admit(
+            .admit_to(
+                Some(crate::tests::REPOSITORY),
                 "affected".into(),
                 "affected".into(),
                 "---\nqueue:\n  complexity: very_low\n---\nFixture brief.".into(),
