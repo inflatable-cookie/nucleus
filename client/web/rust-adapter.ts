@@ -638,7 +638,6 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     });
     return {
       workRoot: active.workRoot,
-      workVolumeId: stored.value.workVolume?.volumeId ?? null,
       worktreesRoot: active.bargePaths?.worktrees ?? active.workRoot,
       ...(active.buildsRoot ? { buildsRoot: active.buildsRoot } : {}),
       ...(stored.value.placement ?? active.placement

@@ -147,8 +147,7 @@ async fn only_a_shell_active_role_gets_the_legacy_hint_without_a_hold() {
                     &nucleus_store::ParentDelivery {
                         version: row.version,
                         command: write.command_id().unwrap().into(),
-                        wire: Some(serde_json::to_string(frozen).unwrap()),
-                        legacy_prompt: None,
+                        wire: serde_json::to_string(frozen).unwrap(),
                         due_ms: 0,
                         result: nucleus_store::ParentResult::Pending,
                     }
@@ -2827,11 +2826,8 @@ async fn dispatch_with_project_slots(api: &Router, overrides: Value) -> Value {
 }
 
 #[tokio::test]
-async fn storage_saves_preference_without_unpinning_a_legacy_profile() {
-    let volume =
-        nucleus_store::PinnedVolume::detect(&std::env::temp_dir()).expect("fixture volume");
-    let (_home, service) =
-        crate::tests::fixture_with_volume(GitHub::new("fixture").expect("client"), Some(volume));
+async fn storage_saves_the_preference_and_reports_a_failed_backup() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let service = Arc::new(service);
     let api = settings_api(&service);
     let path = "/v1/settings/storage";
@@ -2849,22 +2845,26 @@ async fn storage_saves_preference_without_unpinning_a_legacy_profile() {
         "revision": original["settings"]["revision"],
         "value": original["settings"]["value"],
     });
-    update["value"]["placement"] = json!("barge");
+    update["value"]["workVolume"] = json!({"mount": "/fixture/volume", "volumeId": "fixture"});
     assert_eq!(
         put_settings(&api, path, &BOARD_KEY, &update).await.status(),
         StatusCode::BAD_REQUEST
     );
-    update["value"]["placement"] = json!("internal");
+    update["value"]
+        .as_object_mut()
+        .unwrap()
+        .remove("workVolume");
     update["value"]["retention"]["keepNewest"] = json!(3);
     let saved = json_body(put_settings(&api, path, &BOARD_KEY, &update).await).await;
     assert_eq!(saved["settings"]["value"]["retention"]["keepNewest"], 3);
-    assert!(
+    assert_eq!(
         service
             .settings
             .load()
             .expect("read on-disk settings")
-            .work_volume
-            .is_some()
+            .retention
+            .keep_newest,
+        3
     );
 }
 

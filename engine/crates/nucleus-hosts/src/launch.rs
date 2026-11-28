@@ -63,7 +63,7 @@ pub enum Dispatch {
         parent: ParentRun,
     },
     Continue {
-        profile: Option<RoleProfile>,
+        profile: RoleProfile,
     },
 }
 
@@ -89,7 +89,7 @@ impl RunRequest {
     ) -> Result<LaunchInputs, HostError> {
         let message = message_id(instance);
         let selection = match &self.dispatch {
-            Dispatch::Continue { profile } => profile.as_ref().map(RoleProfile::selection),
+            Dispatch::Continue { profile } => Some(profile.selection()),
             _ => None,
         };
         let (method, payload) = match &self.dispatch {
@@ -121,14 +121,13 @@ impl RunRequest {
                     "completionWake":"settled_only"
                 }),
             ),
-            Dispatch::Continue { .. } => (
+            Dispatch::Continue { profile } => (
                 Method::Continue,
-                continuation_payload(instance, &thread, &self.text, selection.as_ref()),
+                continuation_payload(instance, &thread, &self.text, &profile.selection()),
             ),
         };
         let wire = Wire {
             binding: self.binding.clone(),
-            pinned: false,
             parent: self.parent.clone(),
             method,
             selection,
@@ -162,9 +161,8 @@ impl T3 {
         }
         let thread = run.launch().thread.clone();
         let selection = prior.model_selection()?.ok_or(HostError::Binding)?;
-        let payload = continuation_payload(instance, &thread, text, Some(&selection));
+        let payload = continuation_payload(instance, &thread, text, &selection);
         let wire = Wire {
-            pinned: false,
             selection: Some(selection),
             binding: prior.binding,
             parent: prior.parent,
@@ -180,21 +178,13 @@ impl T3 {
     }
 }
 
-fn continuation_payload(
-    instance: &str,
-    thread: &str,
-    text: &str,
-    selection: Option<&Value>,
-) -> Value {
-    let mut payload = json!({
+fn continuation_payload(instance: &str, thread: &str, text: &str, selection: &Value) -> Value {
+    json!({
         "type": "message.dispatch", "commandId": instance, "threadId": thread,
         "messageId": message_id(instance), "text": text, "attachments": [],
         "createdBy": "user", "creationSource": "server", "dispatchMode": {"type": "queue_after_active"},
-    });
-    if let Some(selection) = selection {
-        payload["modelSelection"] = selection.clone();
-    }
-    payload
+        "modelSelection": selection,
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,8 +207,6 @@ impl Method {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Wire {
     pub(crate) binding: Binding,
-    #[serde(skip)]
-    pub(crate) pinned: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) parent: Option<String>,
     pub(crate) method: Method,
@@ -287,7 +275,7 @@ impl Wire {
 
     pub(crate) fn read(run: &Run) -> Result<Self, HostError> {
         let launch = run.launch();
-        let mut wire: Self =
+        let wire: Self =
             serde_json::from_str(&launch.input).map_err(|_| HostError::Configuration)?;
         let payload: Value =
             serde_json::from_str(wire.payload.get()).map_err(|_| HostError::Configuration)?;
@@ -318,27 +306,21 @@ impl Wire {
                     && payload["completionWake"] == "settled_only"
                     && launch.thread == delegated_child(&launch.instance)
             }
+            // A continuation always pins the provider and model it was reserved for.
             Method::Continue => {
-                if let Some(selection) = payload.get("modelSelection") {
-                    let valid = wire.selection.as_ref() == Some(selection)
-                        && selection["instanceId"]
-                            .as_str()
-                            .is_some_and(|id| !id.is_empty())
-                        && selection["model"]
-                            .as_str()
-                            .is_some_and(|model| !model.is_empty());
-                    if !valid {
-                        return Err(HostError::Binding);
-                    }
-                    wire.pinned = true;
-                }
-                payload["type"] == "message.dispatch"
+                let selection = &payload["modelSelection"];
+                wire.selection.as_ref() == Some(selection)
+                    && ["instanceId", "model"]
+                        .iter()
+                        .all(|key| selection[key].as_str().is_some_and(|id| !id.is_empty()))
+                    && payload["type"] == "message.dispatch"
                     && payload["threadId"] == launch.thread
                     && payload["messageId"] == message
                     && payload["dispatchMode"]["type"] == "queue_after_active"
             }
         };
-        let reminder_matches = run.report_reminder_for().is_none() || wire.pinned;
+        let reminder_matches =
+            run.report_reminder_for().is_none() || wire.method == Method::Continue;
         if matches && reminder_matches && payload["commandId"] == launch.instance {
             Ok(wire)
         } else {
@@ -380,19 +362,12 @@ pub fn child_origin_instance(thread: &str) -> Option<&str> {
         .filter(|instance| !instance.is_empty())
 }
 
-/// Whether a worker reservation predates the explicit T3 provider and model pin.
 /// Whether a worker run continues a retained thread. Such a run reuses the
 /// task parent's turn instead of holding it at launch.
 #[must_use]
 pub fn retained_worker_continuation(run: &Run) -> bool {
     run.launch().role == nucleus_core::Role::Worker
         && Wire::read(run).is_ok_and(|wire| wire.method == Method::Continue)
-}
-
-#[must_use]
-pub fn unpinned_worker_continuation(run: &Run) -> bool {
-    run.launch().role == nucleus_core::Role::Worker
-        && Wire::read(run).is_ok_and(|wire| wire.method == Method::Continue && !wire.pinned)
 }
 
 pub(crate) fn delegated_child(instance: &str) -> String {

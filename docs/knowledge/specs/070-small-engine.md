@@ -126,15 +126,15 @@ Later decisions carry their own attribution.
 
    Tom retired Papercuts slots, Stall threshold, Hold reminder, Hold escalation and Host outage notice on 2026-11-24. Ruling 12 retires Lane drain and Lane drain escalation. Default host stays. Tom, 2026-11-26: “those mechanics were valid - we may only support T3 now, but I was aiming on adding support for most ADEs so it would have still come into place”. Its options are the registered hosts plus the planner's host, never a static list of supported host kinds. A stored kind absent from registration stays unavailable and is not rewritten. The import carries retention settings ahead of the scheduler pruning change.
 
-   **Saved settings (Tom, 2026-11-26).** Each Longhorn domain uses schema
+   **Saved settings (Tom, 2026-11-26; version 1 reads retired by ruling 59).** Each Longhorn domain uses schema
    version 2, except Dispatch at version 3 (ruling 63). Portable configuration contains Dispatch, Profiles and GitHub
    accounts. Machine state contains Storage, Projects and Hosts. Dispatch owns
    all slot limits. The [engine settings table](../../../engine/README.md#settings)
-   lists the file shapes. At startup the store migrates an older version once, verifies
-   a backup of each original beside the existing backups, publishes the new
-   file atomically and logs the retired keys it removed. The current schema
-   rejects unknown keys and identifies the file and field. The upgrade affects
-   settings files only. Recorded provider pauses, reset times and reasons stay
+   lists the file shapes. Startup refuses a version 1 file by name and leaves it
+   untouched. It migrates a version 2 Dispatch file once, verifies a backup of
+   the original beside the existing backups and publishes the new file
+   atomically. The current schema rejects unknown keys and identifies the file
+   and field. The upgrade affects settings files only. Recorded provider pauses, reset times and reasons stay
    in the database.
 
 9. **The profile matrix carries over exactly.** Tom, 2026-11-23: "The profile matrix we agreed earlier definitely needs to come over, we've finally got that working just as I want it". The usage-level matrices in [Spec 052](052-usage-level.md), as amended on 2026-11-23, are ported cell for cell. That covers worker start brackets by complexity and level, the reviewer bracket relative to the worker, the step-up after an applied changes-required review, the smoothed Maximum, the Frontier request rule and critical tasks. So is [Spec 053](053-demand-based-selection.md)'s demand-based selection (the five-stop weight slider). They become pure functions with a test for every cell of both matrices, matching today's `test/demand.test.ts`. The only change is that the retired coordinator role drops out. A climb to a new profile starts a new worker child thread, as the TypeScript engine does. Tom, 2026-11-23: "The current TS policy of creating a new child thread is correct, we won't be able to switch profiles in the same thread when they have different providers".
@@ -276,7 +276,7 @@ Later decisions carry their own attribution.
       - The engine home (database, settings, keys, local configuration and schema backups, and the service log) is durable state that no Barge class holds, so it always stays on the internal drive. It defaults to `~/.nucleus`, where the TypeScript engine kept its data; during the transition the Rust home is `~/.nucleus/engine`.
       - Bulky expendable data goes where Barge places its class: worktrees in the `worktrees` class (`worktrees/nucleus`), scratch and run evidence in the `scratch` class (`scratch/nucleus`), and install builds in the `builds` class (`builds/nucleus`). The engine asks Barge for those class paths when the operator enables Barge placement. Without Barge, they use the internal platform defaults.
       - Nothing is written at a volume's root. When Barge placement is on and a class's volume is absent, the engine refuses to start rather than falling back to the internal drive.
-      - Existing volume-pinned profiles remain readable and keep enforcing their pin until the operator moves the profile and explicitly clears it. See the [offline move procedure](../../../engine/README.md#move-an-existing-engine-home).
+      - Ruling 59 retires the volume-pinned profile. A profile that still stores a pin is refused by name.
     - The rule covers the engine's own roots. A project's registered checkout and its Git common directory belong to the project and stay where the operator keeps them, as with the TypeScript engine's Stash worktrees today. Git's small per-worktree metadata and the task's commit objects land in that common directory. The bulk (worktree files, build output, dependencies, scratch, logs and the database) stays on the configured roots. The engine never makes its own clone of a project to satisfy this (planner decision, 2026-11-24).
 20. **One binary.** Tom, 2026-11-24: "The single binary is perfect yes".
     - The engine ships as one `nucleus` binary with subcommands: `serve` runs the service, `acp` runs the stdio ACP agent, `ensure` starts the service when it isn't healthy, and the other subcommands are the CLI.
@@ -556,7 +556,7 @@ Later decisions carry their own attribution.
       Tokens never appear in settings files, logs or prompts.
     - The planner's baseline before this ruling was to restore the TypeScript
       per-org reviewer token from the keychain. That baseline becomes this
-      ruling's reviewer fallback path.
+      ruling's reviewer fallback path. (Ruling 59 removes that token's import.)
 
 39. **Releases use Effigy's pipeline. Homebrew waits.** The planner proposed a
     release baseline on 2026-11-25. Tom: "I think to begin with we hold off on
@@ -1055,14 +1055,15 @@ Cargo builds" rule for the `engine/` workspace only:
 
 ### Parent delivery storage and upgrade
 
-Schema 12 stores the command, frozen wire payload and due time for each parent
+The database stores the command, frozen wire payload and due time for each parent
 send. A pending command is due again after backoff and uses the same ID and
 payload across reconnects and restarts. Current task and destination checks
 still authorize sending it. An accepted reply or positive native turn evidence
 settles the occurrence. An exact T3 rejection replaces the rejected message ID
 with a fresh due command before another send. No planner or operator action is
 needed for unconfirmed delivery. Old refused, failed and held rows with command
-IDs resume as pending. Historical rows without a command ID do not gate delivery.
+IDs resume as pending. A row without a command ID or a frozen wire is never read
+and does not gate delivery.
 
 The delivery snooze journal records the destination, message and future
 operator horizon before a send. It includes pending parent-only records
@@ -1083,15 +1084,14 @@ checks accepted and rejected replies across a restart.
 node scripts/test-t3-hold-receipts.mjs "/Applications/T3 Code (Nightly).app" "$TMPDIR"
 ```
 
-Before a schema upgrade the engine copies the committed database into its
-configured backup root and verifies the copy read-only. Schema 12 decodes
-schema 10 and 11 parent history once. Historical events remain readable as
-history. New parent delivery does not write a compatibility ledger. Installed
-releases move forward. Earlier engines reject schema 12, and restoring an older
-backup is an explicit operator-directed recovery with dispatch held until
-native effects after that backup are reconciled. Ship schema 12 as a
-standalone release after project removal (#642). The planner approved the
-measured 76-line production Rust increase for this scoped change.
+The engine upgrades a schema 14 or later database (ruling 59). It refuses an
+older one by name before changing it. Before an upgrade it copies the committed
+database into its configured backup root and verifies the copy read-only.
+Historical events remain readable as history. New parent delivery does not write
+a compatibility ledger. Installed releases move forward. Earlier engines reject
+a newer schema, and restoring an older backup is an explicit operator-directed
+recovery with dispatch held until native effects after that backup are
+reconciled.
 
 ## Migration
 

@@ -21,9 +21,7 @@ use nucleus_hosts::{
     Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
     SendOutcome, StopProgress, TaskHost,
 };
-use nucleus_store::{
-    EngineSettings, PinnedVolume, Profiles, ProjectSettings, Projects, RepositorySettings,
-};
+use nucleus_store::{EngineSettings, Profiles, ProjectSettings, Projects, RepositorySettings};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
@@ -42,10 +40,6 @@ pub(super) fn author_declaration() -> AuthorDeclaration {
         attested_by: "operator".into(),
         provenance: "Verified the fixture's authoring records.".into(),
     }
-}
-
-pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
-    fixture_with_volume(forge, None)
 }
 
 /// The production registry over one checkout: Projects settings register it, and
@@ -143,10 +137,7 @@ fn fixture_checkout(root: &Path) -> PathBuf {
     checkout
 }
 
-pub(super) fn fixture_with_volume(
-    forge: GitHub,
-    work_volume: Option<PinnedVolume>,
-) -> (tempfile::TempDir, Service) {
+pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     let home = tempfile::tempdir().expect("fixture volume directory");
     let root = home.path().canonicalize().expect("portable root");
     let checkout = fixture_checkout(&root);
@@ -157,7 +148,6 @@ pub(super) fn fixture_with_volume(
     settings
         .save(&EngineSettings {
             enabled: true,
-            work_volume,
             ..EngineSettings::default()
         })
         .expect("enable fixture");

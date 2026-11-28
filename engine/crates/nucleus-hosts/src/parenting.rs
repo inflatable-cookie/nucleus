@@ -245,25 +245,6 @@ impl ParentWrite {
         Ok(())
     }
 
-    /// Reconstruct a pre-wire hold while keeping its original provider and message ID.
-    ///
-    /// # Errors
-    /// Returns a binding error if a pinned command names another provider.
-    pub fn use_legacy_intent(&mut self, command: &str, prompt: &str) -> Result<(), HostError> {
-        if parent_hold_provider(command).is_some_and(|provider| provider != self.wire.provider) {
-            return Err(HostError::Binding);
-        }
-        self.wire.payload["commandId"] = json!(command);
-        if self.wire.method == Method::Create {
-            self.wire.payload["initialMessage"]["text"] = json!(prompt);
-            self.wire.payload["initialMessage"]["messageId"] = json!(message_id(command));
-        } else {
-            self.wire.payload["text"] = json!(prompt);
-            self.wire.payload["messageId"] = json!(message_id(command));
-        }
-        Ok(())
-    }
-
     /// Whether this write creates the task's visible T3 thread.
     #[must_use]
     pub fn creates_thread(&self) -> bool {
@@ -274,23 +255,6 @@ impl ParentWrite {
     pub fn starts_turn(&self) -> bool {
         self.creates_thread() || self.wire.payload["type"] == "message.dispatch"
     }
-}
-
-/// Identify holds whose command identity fixes the ACP routing on every replay.
-#[must_use]
-pub fn is_pinned_parent_hold(command: &str) -> bool {
-    parent_hold_provider(command).is_some()
-}
-
-fn parent_hold_provider(command: &str) -> Option<&str> {
-    let command = command.split_once('~').map_or(command, |(base, _)| base);
-    let (_, pin) = command
-        .strip_prefix("thread:nucleus-")?
-        .split_once("-hold-acp-")?;
-    let (revision, provider) = pin.split_once(':')?;
-    (revision.parse::<u64>().is_ok() || revision.starts_with("child-"))
-        .then_some(provider)
-        .filter(|provider| !provider.is_empty())
 }
 
 fn successor_command(base: &str, previous: &str) -> String {

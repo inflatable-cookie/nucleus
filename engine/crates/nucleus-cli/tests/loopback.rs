@@ -403,6 +403,32 @@ fi
     assert!(!classes.join("fallback/nucleus").exists());
 }
 
+#[test]
+fn the_former_volume_pin_flags_are_refused_without_changing_the_profile() {
+    let directory = tempfile::tempdir().expect("fixture home");
+    let home = directory.path().canonicalize().expect("canonical home");
+    let configure = |flags: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_nucleus"))
+            .args(["configure", "--enable", "--home"])
+            .arg(&home)
+            .args(flags)
+            .output()
+            .expect("configure")
+    };
+    assert!(configure(&[]).status.success());
+    let stored = fs::read(home.join("state/engine.json")).expect("saved settings");
+    for flags in [
+        &["--clear-legacy-volume"][..],
+        &["--volume", "/fixture/volume"],
+    ] {
+        let refused = configure(flags);
+        assert_eq!(refused.status.code(), Some(2));
+        let error = String::from_utf8_lossy(&refused.stderr);
+        assert!(error.contains(flags[0]), "{error}");
+        assert_eq!(fs::read(home.join("state/engine.json")).unwrap(), stored);
+    }
+}
+
 #[tokio::test]
 async fn item_reopen_cli_round_trips_note_and_response() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("loopback");

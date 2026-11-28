@@ -474,7 +474,6 @@ fn storage_view(service: &Service, settings: &SettingsSnapshot<EngineSettings>) 
         builds_root,
         log_root,
         retention,
-        work_volume: _,
     } = &settings.value;
     json!({
         "settings": {
@@ -557,20 +556,8 @@ pub(super) async fn put(
                 Ok(host_view(&service, saved).await)
             }
             Domain::Storage => {
-                let mut value: EngineSettings = decode(value)?;
-                if value.work_volume.is_some() {
-                    return Err(ApiError::Invalid);
-                }
-                let (saved, _) = edit(
-                    &service.settings,
-                    revision,
-                    move |current: &mut EngineSettings| {
-                        value.work_volume.clone_from(&current.work_volume);
-                        *current = value;
-                        Ok(())
-                    },
-                )
-                .await?;
+                let (saved, _) =
+                    replace::<EngineSettings>(&service.settings, revision, value).await?;
                 Ok(storage_view(&service, &saved))
             }
         };

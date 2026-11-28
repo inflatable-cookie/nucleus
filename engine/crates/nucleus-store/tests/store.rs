@@ -9,8 +9,8 @@ use nucleus_core::{
     },
 };
 use nucleus_store::{
-    DependencyEdit, EngineSettings, EngineStorage, EventDraft, PinnedVolume, SettingsFile,
-    StorageError, Store, StoreError, TaskRow,
+    DependencyEdit, EngineSettings, EngineStorage, EventDraft, SettingsFile, StorageError, Store,
+    StoreError, TaskRow,
 };
 
 use rusqlite::Connection;
@@ -181,231 +181,6 @@ fn observation() -> Observation {
         host: Observed::Unknown,
         forge: Observed::Unknown,
         workspace: Observed::Known(Workspace::Absent),
-    }
-}
-
-#[test]
-fn a_parent_retry_keeps_the_first_recorded_prompt() {
-    let home = tempfile::tempdir().unwrap();
-    let storage = fixture_storage(home.path());
-    let mut store = Store::open(&storage).unwrap();
-    store
-        .create(&task("fixture", "fixture"), &event("admitted"))
-        .unwrap();
-    let mut append = |kind, command, prompt: Option<&str>| {
-        let mut entry = event(kind);
-        let mut detail = serde_json::json!({"command":command,"version":1,"session":"host"});
-        if let Some(prompt) = prompt {
-            detail["prompt"] = prompt.into();
-        }
-        entry.detail = detail.to_string();
-        store.claim_task_effect("fixture", &entry, false).unwrap();
-    };
-    append("native_turn_intent", "legacy-hold", None);
-    append("native_turn_replay", "legacy-hold", Some("Starting worker"));
-    append(
-        "native_turn_intent",
-        "new-hold",
-        Some("Starting reviewer round 2"),
-    );
-    append(
-        "native_turn_replay",
-        "new-hold",
-        Some("Starting reviewer round 3"),
-    );
-    drop(store);
-
-    revert_parent_schema(&storage);
-    let store = Store::open(&storage).unwrap();
-    let hold = store.current_parent_hold("fixture").unwrap().unwrap();
-    assert_eq!(hold.command, "new-hold");
-    assert_eq!(
-        hold.legacy_prompt.as_deref(),
-        Some("Starting reviewer round 2")
-    );
-}
-
-#[test]
-fn delivery_fences_follow_pending_attempts_across_reopen() {
-    let home = tempfile::tempdir().unwrap();
-    let storage = fixture_storage(home.path());
-    let mut store = Store::open(&storage).unwrap();
-    let mut versions = Vec::new();
-    for id in [
-        "completed",
-        "first",
-        "ambiguous",
-        "later_send",
-        "new_ambiguity",
-        "legacy_without_claim",
-        "legacy_unresolved",
-        "legacy_refused",
-        "failed",
-        "no_attempt",
-        "refused",
-        "replacement_observed",
-        "refused_replay",
-        "refresh_pending",
-    ] {
-        store.create(&task(id, id), &event("admitted")).unwrap();
-        let version = row(&store, id).version;
-        versions.push((id, version));
-        seed_delivery_fence(&mut store, id, version);
-    }
-    drop(store);
-    revert_parent_schema(&storage);
-    let store = Store::open(&storage).unwrap();
-    for (id, version) in versions {
-        use nucleus_store::ParentResult::Pending;
-        let hold = store.current_parent_hold(id).unwrap();
-        let unsettled = hold
-            .as_ref()
-            .filter(|record| record.result == Pending)
-            .map(|record| record.command.as_str());
-        let expected = match id {
-            "ambiguous"
-            | "legacy_unresolved"
-            | "replacement_observed"
-            | "refused_replay"
-            | "refused"
-            | "legacy_refused"
-            | "failed" => Some("thread-hold-1"),
-            "later_send" => Some("thread-hold-3"),
-            _ => None,
-        };
-        assert_eq!(unsettled, expected, "{id}");
-        assert_eq!(
-            store.pending_parent_preparation(id, version).unwrap(),
-            expected.is_some(),
-            "{id}"
-        );
-        assert!(!store.pending_parent_preparation(id, version + 1).unwrap());
-    }
-}
-
-fn seed_delivery_fence(store: &mut Store, id: &str, version: i64) {
-    let mut append = |kind: &str, detail: serde_json::Value| {
-        let mut entry = event(kind);
-        entry.detail = detail.to_string();
-        store.claim_task_effect(id, &entry, false).unwrap().unwrap()
-    };
-    let attempt = matches!(
-        id,
-        "completed"
-            | "ambiguous"
-            | "refused"
-            | "legacy_unresolved"
-            | "legacy_refused"
-            | "replacement_observed"
-            | "refused_replay"
-            | "failed"
-    )
-    .then(|| {
-        append(
-            "native_turn_intent",
-            serde_json::json!({
-                "version":version, "session":"runtime", "command":"thread-hold-1",
-            }),
-        )
-    });
-    if !matches!(
-        id,
-        "legacy_without_claim" | "legacy_unresolved" | "legacy_refused" | "no_attempt"
-    ) {
-        append(
-            "native_turn_not_sent",
-            serde_json::json!({
-                "version":version,
-                "attempt": if id == "refused" { attempt } else { None },
-                "session": if id == "refused" { "runtime" } else { "preflight" },
-                "command": if matches!(id, "ambiguous" | "refused") { "thread-hold-1" } else { "thread-hold-2" },
-            }),
-        );
-    }
-    if id == "legacy_refused" {
-        append(
-            "native_turn_not_sent",
-            serde_json::json!({"version":version,"session":"runtime","command":"thread-hold-1"}),
-        );
-    }
-    if id == "later_send" {
-        append(
-            "native_turn_intent",
-            serde_json::json!({
-                "version":version, "session":"runtime", "command":"thread-hold-3",
-            }),
-        );
-    }
-    let mut blocked = serde_json::json!({"version":version,"session":"runtime/previous-engine"});
-    if !id.starts_with("legacy_") {
-        blocked["deliveryPending"] = serde_json::json!(id == "new_ambiguity");
-    }
-    append("host_observation_blocked", blocked);
-    if id == "new_ambiguity" {
-        append(
-            "host_observation_blocked",
-            serde_json::json!({
-                "version":version, "session":"runtime/previous-engine", "deliveryPending":false,
-            }),
-        );
-    }
-    seed_delivery_outcomes(id, version, append);
-}
-
-fn seed_delivery_outcomes(
-    id: &str,
-    version: i64,
-    mut append: impl FnMut(&str, serde_json::Value) -> i64,
-) {
-    if id == "completed" {
-        append(
-            "native_turn_observed",
-            serde_json::json!({
-                "version":version, "session":"runtime", "command":"thread-hold-1",
-            }),
-        );
-        append(
-            "native_turn_replay",
-            serde_json::json!({
-                "version":version, "session":"runtime", "command":"thread-hold-1",
-            }),
-        );
-    }
-    if id == "refresh_pending" {
-        append(
-            "acp_row_refresh_intent",
-            serde_json::json!({"version":version,"session":"runtime","command":"thread-refresh-1"}),
-        );
-    }
-    if id == "refused_replay" {
-        let replay = append(
-            "native_turn_replay",
-            serde_json::json!({"version":version,"session":"runtime/later","command":"thread-hold-1"}),
-        );
-        append(
-            "native_turn_not_sent",
-            serde_json::json!({"version":version,"session":"runtime/later","command":"thread-hold-1","attempt":replay}),
-        );
-    }
-    if id == "replacement_observed" {
-        append(
-            "native_turn_observed",
-            serde_json::json!({"version":version,"session":"replacement","command":"thread-hold-1"}),
-        );
-        append(
-            "native_turn_failed",
-            serde_json::json!({"version":version,"session":"replacement/scope","command":"thread-hold-1"}),
-        );
-    }
-    if id == "failed" {
-        append(
-            "native_turn_replay",
-            serde_json::json!({"version":version,"session":"runtime/previous-engine","command":"thread-hold-1"}),
-        );
-        append(
-            "native_turn_failed",
-            serde_json::json!({"version":version,"session":"runtime/current-engine","command":"thread-hold-1"}),
-        );
     }
 }
 
@@ -952,112 +727,13 @@ fn title_redesire_keeps_command_id_and_preserves_newer_generations() {
 }
 
 #[test]
-fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
-    let root = tempfile::tempdir().expect("scratch directory");
-    let storage = fixture_storage(root.path());
-    let mut store = Store::open(&storage).expect("open");
-    let task = task("1", "fixture#1");
-    store.create(&task, &event("admitted")).expect("admit");
-    drop(store);
-    let db = Connection::open(storage.database().path().join("engine.sqlite"))
-        .expect("fixture connection");
-    db.execute_batch(
-        "DROP TABLE task_numbers; DROP TABLE task_number_counters;
-         DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
-         DROP TABLE planning_items; DROP TABLE planning_lanes; DROP TABLE planning_plans;
-         DROP TABLE task_titles; DROP TABLE inbox_bindings; DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
-         DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 2;",
-    )
-    .expect("restore version two schema");
-    let store = Store::open(&storage).expect("migrate version two");
-    assert_eq!(
-        row(&store, "1"),
-        TaskRow {
-            task,
-            version: 1,
-            number: None
-        }
-    );
-    assert_eq!(store.history("1", None, 1).expect("audit").len(), 1);
-    assert_eq!(
-        db.query_row(
-            "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='occupied_launch_slots'",
-            [],
-            |row| row.get::<_, u32>(0)
-        )
-        .expect("slot index"),
-        1
-    );
-}
-
-#[test]
-fn migrating_version_nine_preserves_assigned_numbers_and_the_allocator() {
-    let root = tempfile::tempdir().expect("scratch directory");
-    let storage = fixture_storage(root.path());
-    let mut store = Store::open(&storage).expect("fixture store");
-    let first = task("first", "fixture#first");
-    assert_eq!(store.create(&first, &event("admitted")).expect("admit"), 1);
-    drop(store);
-
-    let db = Connection::open(storage.database().path().join("engine.sqlite"))
-        .expect("fixture connection");
-    db.execute_batch(
-        "ALTER TABLE tasks DROP COLUMN report_task;
-         ALTER TABLE tasks DROP COLUMN work_continuation;
-         DROP TABLE inbox_titles;
-         DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 9;",
-    )
-    .expect("restore version nine schema with the allocator in place");
-    drop(db);
-
-    let mut store = Store::open(&storage).expect("migrate version nine");
-    let restored = row(&store, "first");
-    assert_eq!(restored.task, first);
-    assert_eq!(restored.version, 1);
-    assert_eq!(restored.number, Some(1));
-    assert_eq!(store.history("first", None, 1).expect("history").len(), 1);
-    let second = task("second", "fixture#second");
-    assert_eq!(store.create(&second, &event("admitted")).expect("admit"), 2);
-}
-
-#[test]
-fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
+fn a_new_work_instruction_persists_across_reopen() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("fixture store");
     let mut task = task("merge-recovery", "fixture#1");
     store.create(&task, &event("admitted")).unwrap();
-    drop(store);
-    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 10;")
-        .unwrap();
-    drop(db);
-
-    let mut store = Store::open(&storage).expect("migrate published schema");
-    let backup = std::fs::read_dir(storage.backup().path())
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("engine-before-v10-")
-        })
-        .expect("verified pre-upgrade backup");
-    let copy =
-        Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    assert_eq!(
-        copy.pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))
-            .unwrap(),
-        10
-    );
-    assert_eq!(
-        copy.query_row("SELECT id FROM tasks", [], |row| row.get::<_, String>(0))
-            .unwrap(),
-        "merge-recovery"
-    );
     let prior = row(&store, "merge-recovery");
-    assert_eq!(prior.task, task);
     let instruction = "Rebase the existing branch";
     task.command(
         Command::MoveWork {
@@ -1071,7 +747,7 @@ fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
     .unwrap();
     store.save_row(&prior, &task, &event("owner_move")).unwrap();
     drop(store);
-    let reopened = Store::open(&storage).expect("reopen migrated store");
+    let reopened = Store::open(&storage).expect("reopen the store");
     let current = row(&reopened, "merge-recovery");
     assert_eq!(current.version, prior.version + 1);
     assert_eq!(current.number, prior.number);
@@ -1079,35 +755,12 @@ fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
 }
 
 #[test]
-fn dependency_tables_open_from_the_previous_live_schema() {
+fn dependency_edges_survive_reopen() {
     let root = tempfile::tempdir().expect("scratch directory");
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("fixture store");
     let first = task("first", "fixture#first");
     assert_eq!(store.create(&first, &event("admitted")).unwrap(), 1);
-    drop(store);
-    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch(
-        "DROP TABLE task_dependencies; DROP TABLE task_prerequisite_waits;
-         DROP TABLE task_prerequisite_notices;
-         DROP TABLE project_tell_deliveries; DROP TABLE project_tell_requests;
-         DROP INDEX planning_usage_permission;
-         ALTER TABLE tasks DROP COLUMN report_task; DROP TABLE inbox_titles;
-         DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 9;",
-    )
-    .unwrap();
-    let version: i32 = db
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, 9);
-    drop(db);
-
-    let mut store = Store::open(&storage).expect("open previous schema directly");
-    assert_eq!(row(&store, "first").number, Some(1));
-    assert_eq!(
-        store.dependencies("first").unwrap(),
-        nucleus_store::Dependencies::default()
-    );
     let second = task("second", "fixture#second");
     assert_eq!(
         store
@@ -1484,83 +1137,22 @@ fn configure_refuses_a_stale_revision_and_preserves_retention_on_retry() {
 }
 
 #[test]
-fn settings_do_not_create_storage_until_the_configured_volume_is_verified() {
+fn saving_settings_creates_no_storage_roots() {
     let root = tempfile::tempdir().expect("scratch directory");
-    let file = SettingsFile::open(root.path()).expect("open empty fixture home");
+    let home = root.path().canonicalize().expect("canonical home");
+    let file = SettingsFile::open(&home).expect("open empty fixture home");
     assert_eq!(file.load().expect("defaults"), EngineSettings::default());
     assert!(matches!(file.storage(), Err(StorageError::Disabled)));
-    let matching = PinnedVolume::detect(root.path()).expect("mounted fixture volume");
-    for volume in [
-        PinnedVolume {
-            mount: root.path().join("missing-mount"),
-            volume_id: matching.volume_id.clone(),
-        },
-        PinnedVolume {
-            mount: matching.mount.clone(),
-            volume_id: "wrong-volume".into(),
-        },
-        PinnedVolume {
-            mount: root.path().into(),
-            volume_id: matching.volume_id.clone(),
-        },
-    ] {
-        let settings = EngineSettings {
-            enabled: true,
-            work_volume: Some(volume),
-            ..EngineSettings::default()
-        };
-        assert!(file.save(&settings).is_err());
-        assert_eq!(
-            std::fs::read_dir(root.path())
-                .expect("inspect untouched home")
-                .count(),
-            0
-        );
-    }
     let settings = EngineSettings {
         enabled: true,
-        work_volume: Some(matching),
         ..EngineSettings::default()
     };
     file.save(&settings).expect("publish versioned settings");
     assert_eq!(file.load().expect("read settings back"), settings);
-    let storage = file.storage().expect("load verified roots");
-    assert_eq!(storage.work().path(), root.path().join("work"));
+    let storage = file.storage().expect("resolve roots");
+    assert_eq!(storage.work().path(), home.join("work"));
     assert!(!storage.database().path().exists());
     assert!(!storage.scratch().path().exists());
-}
-
-#[test]
-fn pinned_work_and_scratch_roots_cannot_resolve_to_another_volume() {
-    let fixture = tempfile::tempdir().expect("fixture");
-    let home = fixture.path().canonicalize().expect("canonical home");
-    let file = SettingsFile::open(&home).expect("settings");
-    let config = EngineSettings {
-        enabled: true,
-        work_volume: Some(PinnedVolume::detect(&home).expect("fixture volume")),
-        ..EngineSettings::default()
-    };
-    for settings in [
-        EngineSettings {
-            work_root: Some("/dev/nucleus-outside".into()),
-            ..config.clone()
-        },
-        EngineSettings {
-            scratch_root: Some("/dev/nucleus-outside".into()),
-            ..config
-        },
-    ] {
-        assert!(matches!(
-            file.save(&settings),
-            Err(StorageError::OutsideVolume)
-        ));
-    }
-    assert!(
-        std::fs::read_dir(home)
-            .expect("untouched home")
-            .next()
-            .is_none()
-    );
 }
 
 #[test]
@@ -1647,165 +1239,148 @@ fn storage_settings_reject_a_symlink_without_publishing() {
     assert!(backups.verified.is_empty());
 }
 
-#[test]
-fn version_eleven_decodes_delivery_history_once() {
-    let root = tempfile::tempdir().unwrap();
-    let storage = fixture_storage(root.path());
-    let mut store = Store::open(&storage).unwrap();
-    for (id, result) in [
-        ("unknown", "held"),
-        ("live", "pending"),
-        ("sent", "accepted"),
-        ("preflight", "none"),
-    ] {
-        store.create(&task(id, id), &event("admitted")).unwrap();
-        let version = row(&store, id).version;
-        let mut append = |kind, detail: serde_json::Value| {
-            let mut entry = event(kind);
-            entry.detail = detail.to_string();
-            store.claim_task_effect(id, &entry, false).unwrap();
-        };
-        if matches!(result, "pending" | "accepted") {
-            append(
-                "native_turn_intent",
-                serde_json::json!({
-                    "version":version,"session":"runtime","command":"legacy","prompt":"original"
-                }),
-            );
-        }
-        if result == "accepted" {
-            append(
-                "native_turn_observed",
-                serde_json::json!({
-                    "version":version,"session":"runtime","command":"legacy"
-                }),
-            );
-        }
-        append(
-            "host_observation_blocked",
-            serde_json::json!({
-                "version":version,"session":"runtime/epoch","deliveryPending":result == "held"
-            }),
-        );
-    }
-    drop(store);
-    revert_parent_schema(&storage);
-
-    let store = Store::open(&storage).unwrap();
-    for (id, result) in [
-        ("unknown", None),
-        ("live", Some(nucleus_store::ParentResult::Pending)),
-        ("sent", Some(nucleus_store::ParentResult::Accepted)),
-        ("preflight", None),
-    ] {
-        let hold = store.current_parent_hold(id).unwrap();
-        assert_eq!(hold.as_ref().map(|delivery| delivery.result), result);
-        if let Some(hold) = hold {
-            assert_eq!(hold.legacy_prompt.as_deref(), Some("original"));
-        }
-    }
-    drop(store);
-    let reopened = Store::open(&storage).unwrap();
-    assert_eq!(
-        reopened
-            .current_parent_hold("live")
-            .unwrap()
-            .unwrap()
-            .command,
-        "legacy"
-    );
-}
-
-#[test]
-fn schema_twelve_preserves_existing_snooze_ownership() {
-    use nucleus_store::{RowSnooze, SnoozeOutcome};
-    let root = tempfile::tempdir().unwrap();
-    let storage = fixture_storage(root.path());
-    let mut store = Store::open(&storage).unwrap();
-    store
-        .create(&task("row", "row"), &event("admitted"))
-        .unwrap();
-    let receipt = RowSnooze {
-        episode: 1_000,
-        until_ms: 900_000,
-        previous_until_ms: None,
-        outcome: SnoozeOutcome::Observed,
-        clear_attempted_for: None,
-        ended: false,
-    };
-    store.save_row_snooze("row", "parent", &receipt).unwrap();
-    drop(store);
-    revert_parent_schema(&storage);
-    let migrated = Store::open(&storage).unwrap();
-    assert_eq!(migrated.row_snooze("row", "parent").unwrap(), Some(receipt));
-}
-
-fn revert_parent_schema(storage: &EngineStorage) {
+/// Load the rows a schema 14 engine wrote.
+fn schema_fourteen(storage: &EngineStorage) -> Connection {
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version=11;")
+    db.execute_batch(include_str!("fixtures/schema-14.sql"))
         .unwrap();
+    db
 }
 
-fn restore_v15_parent_tables(db: &Connection) {
-    db.execute_batch("DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries;")
-        .unwrap();
-    db.execute_batch(include_str!("../src/parent_delivery_v15.sql"))
-        .unwrap();
+fn stored_version(db: &Connection) -> i32 {
+    db.pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap()
+}
+
+fn prompt(delivery: &nucleus_store::ParentDelivery) -> String {
+    let wire: serde_json::Value = serde_json::from_str(&delivery.wire).unwrap();
+    wire["payload"]["text"].as_str().unwrap().into()
 }
 
 #[test]
-fn schema_sixteen_keeps_the_current_hold_apart_from_stored_refreshes() {
-    use nucleus_store::{ParentDelivery, ParentResult};
+fn a_database_older_than_schema_fourteen_is_refused_by_name_and_left_untouched() {
+    for version in [1, 13] {
+        let home = tempfile::tempdir().unwrap();
+        let storage = fixture_storage(home.path());
+        let db = schema_fourteen(&storage);
+        db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold")
+            .unwrap();
+        db.pragma_update(None, "user_version", version).unwrap();
+        drop(db);
+        let path = storage.database().path().join("engine.sqlite");
+        let before = std::fs::read(&path).unwrap();
+
+        let error = Store::open(&storage).err().expect("refused");
+
+        assert!(
+            matches!(error, StoreError::SchemaTooOld { version: found } if found == version),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "the engine database is schema {version}. This engine opens schema 14 or later"
+            )
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(!storage.backup().path().exists());
+    }
+}
+
+/// The row a manual refresh left behind. It stays stored and is never read.
+fn stored_refresh(db: &Connection) -> (String, i64, String) {
+    db.query_row(
+        "SELECT command, due_ms, result FROM parent_refresh_deliveries WHERE task_id='live'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .unwrap()
+}
+
+/// The ACP session bound before the upgrade, which no thread had claimed.
+fn assert_stored_session(store: &Store) {
+    let session = store.acp_session("live").unwrap().unwrap();
+    assert_eq!(
+        (session.reader, session.writer, session.controller),
+        ([1; 32], Some([2; 32]), [3; 32])
+    );
+    assert!(session.controller_thread.is_none());
+}
+
+#[test]
+fn a_schema_fourteen_database_upgrades_with_its_rows() {
+    use nucleus_store::ParentResult::{Accepted, Pending};
 
     let home = tempfile::tempdir().unwrap();
     let storage = fixture_storage(home.path());
-    let mut store = Store::open(&storage).unwrap();
-    for id in ["task", "unknown"] {
-        store.create(&task(id, id), &event("admitted")).unwrap();
-    }
-    let initial = row(&store, "task");
-    let version = store
-        .save_row(&initial, &initial.task, &event("role_changed"))
-        .unwrap();
-    drop(store);
+    drop(schema_fourteen(&storage));
 
-    let path = storage.database().path().join("engine.sqlite");
-    let wire = r#"{"binding":{"project_id":"example","worktree_path":"/fixture","branch":"task"},"method":"continue","payload":{"type":"message.dispatch","commandId":"current-hold","text":"Current prompt [hold]"},"provider":"fixture","checkpoint":{"after_run":"parent-run","recorded_at_ms":111,"short_turns":0,"preparing_launch":true}}"#;
-    seed_v15_parent_deliveries(&Connection::open(&path).unwrap(), version, wire);
+    let mut store = Store::open(&storage).expect("upgrade");
 
-    let store = Store::open(&storage).unwrap();
-    let hold = store.current_parent_hold("task").unwrap().unwrap();
-    assert_eq!(hold.version, initial.version);
-    assert_eq!(hold.command, "current-hold");
-    assert_eq!(hold.wire.as_deref(), Some(wire));
-    assert_eq!((hold.due_ms, hold.result), (123, ParentResult::Pending));
-    assert!(
-        store
-            .pending_parent_preparation("task", initial.version)
-            .unwrap()
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    assert_eq!(stored_version(&db), 17);
+    let live = row(&store, "live");
+    assert_eq!((live.version, live.number), (1, Some(1)));
+    assert_eq!(
+        live.task.merge_hold().unwrap().reason,
+        "Verify the candidate"
     );
-    assert!(!store.pending_parent_preparation("task", version).unwrap());
-    assert!(store.current_parent_hold("unknown").unwrap().is_none());
-    let replacement = ParentDelivery {
-        version,
+    assert_eq!(
+        store.completion_notices("done").unwrap(),
+        [nucleus_store::CompletionNotice {
+            watcher: None,
+            retry: false,
+        }]
+    );
+    assert_stored_session(&store);
+    assert!(store.watch_task("live", "watcher", 1).unwrap().unwrap().1);
+    assert_eq!(
+        store
+            .lane("synthetic", "delivery")
+            .unwrap()
+            .unwrap()
+            .version,
+        1
+    );
+
+    let hold = store.current_parent_hold("live").unwrap().unwrap();
+    assert_eq!(hold.command, "current-hold");
+    assert_eq!((hold.due_ms, hold.result), (200, Pending));
+    assert_eq!(prompt(&hold), "Starting reviewer");
+    assert!(store.pending_parent_preparation("live", 1).unwrap());
+    let refresh = ("current-refresh".to_owned(), 300, "accepted".to_owned());
+    assert_eq!(stored_refresh(&db), refresh);
+
+    let backup = std::fs::read_dir(storage.backup().path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("engine-before-v14-")
+        })
+        .expect("verified pre-upgrade backup");
+    let copy =
+        Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(stored_version(&copy), 14);
+
+    // Later hold writes leave the stored refresh alone.
+    let replacement = nucleus_store::ParentDelivery {
+        version: 1,
         command: "replacement".into(),
-        wire: None,
-        legacy_prompt: None,
+        wire: hold.wire.clone(),
         due_ms: 789,
-        result: ParentResult::Pending,
+        result: Pending,
     };
-    assert!(!store.freeze_parent_delivery("task", &hold).unwrap());
-    assert!(store.freeze_parent_delivery("task", &replacement).unwrap());
-    assert!(!store.freeze_parent_delivery("task", &replacement).unwrap());
+    assert!(!store.freeze_parent_delivery("live", &hold).unwrap());
+    assert!(store.freeze_parent_delivery("live", &replacement).unwrap());
+    assert!(!store.freeze_parent_delivery("live", &replacement).unwrap());
     assert!(matches!(
-        store.finish_parent_delivery("task", version, &hold, ParentResult::Accepted, 0),
+        store.finish_parent_delivery("live", 1, &hold, Accepted, 0),
         Err(StoreError::StaleTask)
     ));
-    assert_eq!(
-        store.current_parent_hold("task").unwrap().unwrap().command,
-        "replacement"
-    );
-    let db = Connection::open(path).unwrap();
+    assert_eq!(stored_refresh(&db), refresh);
     assert!(
         db.execute(
             "INSERT INTO parent_deliveries SELECT * FROM parent_deliveries",
@@ -1813,22 +1388,95 @@ fn schema_sixteen_keeps_the_current_hold_apart_from_stored_refreshes() {
         )
         .is_err()
     );
+    drop(store);
+    let reopened = Store::open(&storage).expect("reopen the upgraded store");
+    assert_eq!(
+        reopened
+            .current_parent_hold("live")
+            .unwrap()
+            .unwrap()
+            .command,
+        "replacement"
+    );
 }
 
-fn seed_v15_parent_deliveries(db: &Connection, version: i64, wire: &str) {
-    restore_v15_parent_tables(db);
-    db.pragma_update(None, "user_version", 15).unwrap();
-    db.execute(
-        "INSERT INTO parent_deliveries (task_id, version, command, refresh, runtime, wire, legacy_prompt, due_ms, result) VALUES
-         ('task', 1, 'older-hold', 0, NULL, NULL, NULL, 0, 'accepted'),
-         ('task', 1, 'older-refresh', 1, NULL, NULL, NULL, 0, 'accepted'),
-         ('task', 1, 'current-hold', 0, 'old-runtime', ?1, NULL, 123, 'held'),
-         ('task', ?2, '', 0, NULL, NULL, NULL, 0, 'held'),
-         ('task', ?2, 'current-refresh', 1, NULL, NULL, 'Original refresh', 456, 'accepted'),
-         ('unknown', 1, '', 0, NULL, NULL, NULL, 0, 'held')",
-        rusqlite::params![wire, version],
+#[test]
+fn a_schema_fifteen_database_keeps_its_notices_per_recipient() {
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let db = schema_fourteen(&storage);
+    db.execute_batch(
+        "DROP TABLE completion_notices;
+         CREATE TABLE completion_notices (
+            task_id TEXT NOT NULL REFERENCES tasks(id),
+            recipient TEXT NOT NULL,
+            retry INTEGER CHECK (retry IN (0,1)),
+            PRIMARY KEY (task_id, recipient)
+         ) STRICT;
+         INSERT INTO completion_notices VALUES ('done', '', 1), ('done', 'watcher', 0);
+         PRAGMA user_version = 15;",
     )
     .unwrap();
+
+    let store = Store::open(&storage).expect("upgrade");
+
+    assert_eq!(stored_version(&db), 17);
+    assert_eq!(
+        store.completion_notices("done").unwrap(),
+        [
+            nucleus_store::CompletionNotice {
+                watcher: None,
+                retry: true,
+            },
+            nucleus_store::CompletionNotice {
+                watcher: Some("watcher".into()),
+                retry: false,
+            },
+        ]
+    );
+    assert_eq!(
+        store.current_parent_hold("live").unwrap().unwrap().command,
+        "current-hold"
+    );
+    assert_stored_session(&store);
+}
+
+#[test]
+fn a_stored_delivery_without_a_frozen_wire_is_never_read_and_gives_way() {
+    use nucleus_store::{ParentDelivery, ParentResult};
+
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    drop(schema_fourteen(&storage));
+    let store = Store::open(&storage).expect("upgrade");
+    let command = "thread:nucleus-synthetic-hold-acp-0:nucleus";
+    assert!(store.current_parent_hold("unframed").unwrap().is_none());
+    assert!(!store.pending_parent_preparation("unframed", 1).unwrap());
+
+    // The same row as an earlier schema 16 engine carried it forward.
+    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    db.execute_batch("DELETE FROM parent_deliveries WHERE task_id='unframed'")
+        .unwrap();
+    db.execute(
+        "INSERT INTO parent_deliveries (task_id, version, command, legacy_prompt, due_ms, result)
+         VALUES ('unframed', 1, ?1, 'Starting worker', 400, 'pending')",
+        [command],
+    )
+    .unwrap();
+    assert!(store.current_parent_hold("unframed").unwrap().is_none());
+    assert!(!store.pending_parent_preparation("unframed", 1).unwrap());
+
+    let wire = store.current_parent_hold("live").unwrap().unwrap().wire;
+    let next = ParentDelivery {
+        version: 1,
+        command: command.into(),
+        wire,
+        due_ms: 500,
+        result: ParentResult::Pending,
+    };
+    assert!(store.freeze_parent_delivery("unframed", &next).unwrap());
+    let stored = store.current_parent_hold("unframed").unwrap().unwrap();
+    assert_eq!((stored.wire, stored.due_ms), (next.wire, 500));
 }
 
 #[test]
@@ -1982,105 +1630,4 @@ fn scheduled_backup_restores_the_live_rows_and_rotates_verified_utc_tiers() {
     capture(at + 6 * 3_600_000);
     assert_eq!(storage.scheduled_list().unwrap().verified.len(), 2);
     assert_eq!(fs::read(foreign).unwrap(), b"keep");
-}
-
-#[test]
-fn migrating_version_twelve_defaults_queue_priority_without_rewriting_rows() {
-    let root = tempfile::tempdir().expect("scratch directory");
-    let storage = fixture_storage(root.path());
-    let mut store = Store::open(&storage).expect("fixture store");
-    let legacy = task("legacy", "fixture#1");
-    let promoted = Task::new(
-        Identity {
-            id: "promoted".into(),
-            reference: "fixture#2".into(),
-            repository: legacy.identity().repository.clone(),
-            base: "main".into(),
-            entry: Entry::Brief,
-            origin_thread: None,
-        },
-        "---\nqueue:\n  complexity: low\n  priority: promoted\n---\nPromoted brief".into(),
-        None,
-    );
-    assert_eq!(
-        promoted.queue_priority(),
-        nucleus_core::QueuePriority::Promoted
-    );
-    store.create(&legacy, &event("admitted")).unwrap();
-    store.create(&promoted, &event("admitted")).unwrap();
-    let expected_rowid = store.admission_order("legacy").unwrap();
-    drop(store);
-
-    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    restore_v15_parent_tables(&db);
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; PRAGMA user_version = 12;")
-        .unwrap();
-    drop(db);
-
-    let store = Store::open(&storage).expect("migrate v12 to v13");
-    let restored = row(&store, "legacy");
-    assert_eq!(restored.task, legacy);
-    assert_eq!(restored.version, 1);
-    assert_eq!(store.admission_order("legacy").unwrap(), expected_rowid);
-    assert_eq!(
-        restored.task.queue_priority(),
-        nucleus_core::QueuePriority::Normal
-    );
-    assert_eq!(
-        store.active_ids(None, 10).unwrap(),
-        [
-            nucleus_store::TaskSeed {
-                id: "legacy".into(),
-                admission_order: Some(expected_rowid),
-                closeout: false,
-                queue_priority: nucleus_core::QueuePriority::Normal,
-                weight: nucleus_core::profiles::TaskWeight::Normal,
-            },
-            nucleus_store::TaskSeed {
-                id: "promoted".into(),
-                admission_order: Some(expected_rowid + 1),
-                closeout: false,
-                queue_priority: nucleus_core::QueuePriority::Normal,
-                weight: nucleus_core::profiles::TaskWeight::Normal,
-            },
-        ]
-    );
-}
-
-#[test]
-fn migrating_version_thirteen_keeps_existing_holds_and_stores_merge_holds() {
-    let root = tempfile::tempdir().unwrap();
-    let storage = fixture_storage(root.path());
-    let mut legacy = task("held", "fixture#1");
-    let operator = Authority::Operator {
-        actor: "operator".into(),
-    };
-    legacy
-        .command(
-            Command::Hold("Pause dispatch".into()),
-            &operator,
-            &observation(),
-        )
-        .unwrap();
-    let mut store = Store::open(&storage).unwrap();
-    store.create(&legacy, &event("admitted")).unwrap();
-    drop(store);
-    let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    restore_v15_parent_tables(&db);
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; PRAGMA user_version = 13;")
-        .unwrap();
-    drop(db);
-
-    let mut store = Store::open(&storage).unwrap();
-    let prior = row(&store, "held");
-    assert_eq!(prior.task, legacy);
-    legacy
-        .set_brief_merge_hold(Some("Verify the candidate"), &operator, 123)
-        .unwrap();
-    store
-        .save_row(&prior, &legacy, &event("brief_merge_hold_changed"))
-        .unwrap();
-    drop(store);
-    let reopened = Store::open(&storage).unwrap();
-    assert_eq!(row(&reopened, "held").task, legacy);
 }

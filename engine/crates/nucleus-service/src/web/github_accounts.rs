@@ -17,7 +17,6 @@ pub(super) fn routes(prefix: &str) -> Router<Api> {
         .route(prefix, get(view))
         .route(&format!("{prefix}/reviewer"), put(select))
         .route(&format!("{prefix}/sign-in"), post(start))
-        .route(&format!("{prefix}/import-reviewer"), post(import))
         .route(&format!("{prefix}/flows/{{id}}"), get(flow).delete(cancel))
         .route(&format!("{prefix}/flows/{{id}}/confirm"), post(confirm))
         .route(
@@ -42,12 +41,6 @@ struct Selection {
 #[serde(deny_unknown_fields)]
 struct Revision {
     revision: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Import {
-    organization: String,
 }
 
 enum AccountApiError {
@@ -78,10 +71,9 @@ impl IntoResponse for AccountApiError {
                     | AccountError::Saving
                     | AccountError::NotReady
                     | AccountError::WorkerUsesAccount => StatusCode::CONFLICT,
-                    AccountError::MissingAccount
-                    | AccountError::MissingFlow
-                    | AccountError::NoLegacyGrant => StatusCode::NOT_FOUND,
-                    AccountError::Organisation => StatusCode::BAD_REQUEST,
+                    AccountError::MissingAccount | AccountError::MissingFlow => {
+                        StatusCode::NOT_FOUND
+                    }
                     AccountError::Denied | AccountError::Expired => StatusCode::GONE,
                     _ => StatusCode::SERVICE_UNAVAILABLE,
                 };
@@ -131,20 +123,6 @@ async fn start(
     operator(&authority)?;
     body(input)?;
     Ok(Json(api.service.github_accounts.start_device()?))
-}
-
-async fn import(
-    State(api): State<Api>,
-    Extension(authority): Extension<Authority>,
-    input: Result<Json<Import>, JsonRejection>,
-) -> Result<Json<FlowView>, AccountApiError> {
-    operator(&authority)?;
-    let input = body(input)?;
-    Ok(Json(
-        api.service
-            .github_accounts
-            .start_import(input.organization)?,
-    ))
 }
 
 async fn flow(
