@@ -74,12 +74,7 @@ fn server(
         .route("/v1/tasks/fixture", get(async |State(f): State<Fixture>| ([(axum::http::header::CONNECTION, "close")], Json(json!({
             "identity":{"id":"fixture","reference":"fixture","repository":"example/fixture","base":"main","entry":"brief"},
             "phase":"working", "lifecycle":{"steps":[{"key":"working","label":"Working","state":"current","tone":"accent"}],"admittedAtMs":0,"transcript":{"cards":[],"completedReviews":0,"merged":false,"externalAcceptances":[]}},
-            "parentHold":match f.state.load(Ordering::Relaxed) {
-                4 => None,
-                5 => Some("successor"),
-                _ => Some("hold"),
-            },
-            "activeChild":f.state.load(Ordering::Relaxed) >= 4,
+            "parentHold":if f.state.load(Ordering::Relaxed) == 5 { "successor" } else { "hold" },
             "reference":format!("fixture#{}", f.state.load(Ordering::Relaxed))
         })))))
         .route("/v1/acp/inbox", get(async |State(f): State<Fixture>| ([(axum::http::header::CONNECTION, "close")], Json(json!({"pending":[{"field":format!("field{}", f.state.load(Ordering::Relaxed)),"question":"Continue?","choices":[{"id":"yes","label":"Yes"}],"offer":true}]})))))
@@ -203,7 +198,7 @@ async fn held_turn_reconnects_without_spinning() {
 }
 
 #[tokio::test]
-async fn a_successor_releases_a_carried_turn_even_during_child_activity() {
+async fn a_successor_prompt_releases_the_matching_hold() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
     let state = Arc::new(AtomicUsize::new(1));
@@ -226,10 +221,7 @@ async fn a_successor_releases_a_carried_turn_even_during_child_activity() {
     state.store(4, Ordering::Relaxed);
     stream.send(()).unwrap();
     shown(&mut frames, false, 4).await;
-    assert!(
-        !turn.is_finished(),
-        "child activity carries the authenticated hold"
-    );
+    assert!(!turn.is_finished(), "the exact prompt keeps the turn open");
     state.store(5, Ordering::Relaxed);
     stream.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(5), turn)

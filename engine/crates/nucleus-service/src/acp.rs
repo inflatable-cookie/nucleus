@@ -146,7 +146,8 @@ impl Service {
         let active_role = self.active_parent_role(task, &checkout);
         // Keep an attached turn through shell startup. New writes still require
         // the synchronized shell, and a stored prompt keeps its exact identity.
-        let restoring = state.registry_mode
+        let restoring = delivery.is_some()
+            && state.registry_mode
             && !self.host.projects_synchronized()
             && !crate::task_rows::visibility_roles(task).is_empty();
         let wanted = wants_parent_hold(
@@ -156,10 +157,8 @@ impl Service {
             active_role || restoring,
             crate::now_ms(),
         );
-        if !wanted {
-            return Ok((None, false));
-        }
-        let prompt = delivery.map(|record| {
+        let active_child = wanted && delivery.is_none() && active_role;
+        let prompt = delivery.filter(|_| wanted).map(|record| {
             frozen
                 .as_ref()
                 .and_then(FrozenParentWrite::prompt)
@@ -172,15 +171,7 @@ impl Service {
                     str::to_owned,
                 )
         });
-        // The compatibility carry applies to an attached turn without a stored
-        // prompt. A pre-wire refusal alone cannot keep that turn open.
-        let carry = prompt.is_none()
-            && (active_role
-                || !matches!(
-                    state.wait_detail(id),
-                    Some(crate::WaitDetail::BeforeSend(_))
-                ));
-        Ok((prompt, carry))
+        Ok((prompt, active_child))
     }
 
     pub(super) async fn deliver_parent(
@@ -455,9 +446,8 @@ impl Service {
             state.acp_refresh_requests.remove(id) == Some(row.version)
                 || state
                     .store
-                    .parent_deliveries(id, row.version)?
-                    .iter()
-                    .any(|value| value.refresh && value.result == ParentResult::Pending)
+                    .current_parent_refresh(id, row.version)?
+                    .is_some_and(|value| value.result == ParentResult::Pending)
         };
         if refresh && let Err(error) = self.refresh_acp_parent(row).await {
             if matches!(error, ServiceError::ParentNotSent { .. }) {
@@ -485,9 +475,7 @@ impl Service {
             .lock()
             .await
             .store
-            .parent_deliveries(id, row.version)?
-            .into_iter()
-            .find(|value| value.refresh);
+            .current_parent_refresh(id, row.version)?;
         if let Some(record) = &prior {
             if record.result == ParentResult::Accepted {
                 return Ok(false);
