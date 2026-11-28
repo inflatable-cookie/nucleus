@@ -110,7 +110,7 @@ async fn unlisted_done_threads_make_no_native_reads_after_restart() {
     })
     .await;
     service.host = host;
-    service.set_fixture_acp_provider(Some("fixture-acp"));
+    service.set_fixture_acp_provider("fixture-acp");
     let (mut row, _) = fixture_at_done(&service).await;
     assert_eq!(row.task.phase(), Phase::Done);
     service
@@ -136,7 +136,7 @@ async fn unlisted_done_threads_make_no_native_reads_after_restart() {
         assert_eq!(
             state
                 .store
-                .archive_due_ids(None, 8, true)
+                .archive_due_ids(None, 8)
                 .expect("pending archive"),
             ["reviewer"]
         );
@@ -162,7 +162,7 @@ async fn unlisted_done_threads_make_no_native_reads_after_restart() {
 #[tokio::test]
 async fn done_archive_wait_flows_into_the_shared_board_lifecycle() {
     let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
-    service.set_fixture_acp_provider(Some("fixture-acp"));
+    service.set_fixture_acp_provider("fixture-acp");
     let (done, _) = fixture_at_done(&service).await;
     let id = &done.task.identity().id;
     let cause = "The reviewer thread is still active in T3.";
@@ -191,4 +191,27 @@ async fn done_archive_wait_flows_into_the_shared_board_lifecycle() {
     );
     let next = json_body(get_as(&api, &format!("/v1/tasks/{id}/next"), &BOARD_KEY).await).await;
     assert_eq!(next["waitDetail"], cause);
+}
+
+#[tokio::test]
+async fn only_the_operator_key_authenticates_without_a_t3_caller() {
+    let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
+    let (reserved, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+    let task = Task::new(reserved.identity().clone(), "Synthetic change".into(), None);
+    seed_task(&service, &task).await;
+    let api = settings_api(&Arc::new(service));
+    for (key, expected) in [
+        (BOARD_KEY, StatusCode::OK),
+        (PLANNER_KEY, StatusCode::UNAUTHORIZED),
+    ] {
+        let request = Request::get("/v1/tasks/worker")
+            .header(HOST, LOCAL_HOST)
+            .header(AUTHORIZATION, format!("Bearer {}", hex::encode(key)))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            api.clone().oneshot(request).await.unwrap().status(),
+            expected
+        );
+    }
 }

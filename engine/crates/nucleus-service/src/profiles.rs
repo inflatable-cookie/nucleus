@@ -21,6 +21,9 @@ use crate::{Service, ServiceError, State, now_ms};
 #[cfg(test)]
 pub(crate) mod tests;
 
+/// The T3 runtime mode of a profile which names none.
+const RUNTIME_MODE: &str = "full-access";
+
 pub(super) struct SelectedLaunch {
     pub(super) intent: ProfileLaunch,
     pub(super) native: RoleProfile,
@@ -30,7 +33,6 @@ pub(super) struct SelectedLaunch {
 }
 
 pub(super) enum LaunchSelection {
-    Fixture,
     Profile(Box<SelectedLaunch>),
     Paused,
 }
@@ -91,17 +93,6 @@ impl SelectedLaunch {
 }
 
 impl Service {
-    pub(super) fn launch_profile<'a>(
-        &'a self,
-        role: Role,
-        selection: Option<&'a SelectedLaunch>,
-    ) -> Result<&'a RoleProfile, ServiceError> {
-        selection
-            .map(|selected| &selected.native)
-            .or_else(|| self.project.as_ref().map(|project| project.profile(role)))
-            .ok_or(ServiceError::ProfileConfiguration)
-    }
-
     pub(super) async fn select_launch(
         &self,
         task: &Task,
@@ -113,7 +104,7 @@ impl Service {
             return Err(ProfileLaunchError::OpaqueAuthor.into());
         }
         {
-            let mut state = self.state.lock().await;
+            let state = self.state.lock().await;
             let mode = state
                 .settings
                 .dispatch
@@ -123,17 +114,7 @@ impl Service {
                 return Ok(LaunchSelection::Paused);
             }
             if state.settings.profiles.is_none() {
-                let project = self
-                    .project
-                    .as_ref()
-                    .ok_or(ServiceError::ProfileConfiguration)?;
-                let group = &project.profile(role).instance_id;
-                if let Some(pause) = state.group_pause(group, now_ms())? {
-                    state.group_waits.insert(task.identity().id.clone(), pause);
-                    return Ok(LaunchSelection::Paused);
-                }
-                state.group_waits.remove(&task.identity().id);
-                return Ok(LaunchSelection::Fixture);
+                return Err(ServiceError::ProfileConfiguration);
             }
         }
         if role == Role::Reviewer
@@ -144,20 +125,7 @@ impl Service {
         }
         let catalog = host.profile_catalog().await?;
         let mut state = self.state.lock().await;
-        select_profile(
-            &mut state,
-            task,
-            observation,
-            role,
-            catalog,
-            self.profile_runtime_mode(role),
-        )
-    }
-
-    fn profile_runtime_mode(&self, role: Role) -> &str {
-        self.project.as_ref().map_or("full-access", |project| {
-            project.profile(role).runtime_mode.as_str()
-        })
+        select_profile(&mut state, task, observation, role, catalog)
     }
 
     pub(super) fn effective_profile_groups<'a>(
@@ -165,7 +133,6 @@ impl Service {
         profiles: &'a Profiles,
     ) -> BTreeMap<&'a str, String> {
         let catalog = self.host.cached_profile_catalog();
-        let modes = [Role::Worker, Role::Reviewer].map(|role| self.profile_runtime_mode(role));
         profiles
             .profiles
             .iter()
@@ -176,14 +143,7 @@ impl Service {
                     .or(profile.provider_instance_id.as_deref())
                     .map(str::to_owned)
                     .or_else(|| {
-                        let catalog = catalog.as_deref()?;
-                        // Registry launches share one default mode. A legacy project can use
-                        // different modes by role, so only present a single unambiguous group.
-                        let mut groups = modes.into_iter().filter_map(|mode| {
-                            profile_offer(catalog, profile, mode).map(|(_, group)| group)
-                        });
-                        let group = groups.next()?;
-                        groups.all(|other| other == group).then_some(group)
+                        profile_offer(catalog.as_deref()?, profile).map(|(_, group)| group)
                     })?;
                 Some((profile.selection.id.as_str(), group))
             })
@@ -194,12 +154,11 @@ impl Service {
 fn profile_offer(
     catalog: &ProfileCatalog,
     profile: &NamedProfile,
-    runtime_mode: &str,
 ) -> Option<(ProfileOffer, String)> {
     let offer = catalog.offer(
         &profile.selection,
         profile.provider_instance_id.as_deref(),
-        profile.mode_id.as_deref().unwrap_or(runtime_mode),
+        profile.mode_id.as_deref().unwrap_or(RUNTIME_MODE),
         &profile.feature_values,
     )?;
     let group = profile
@@ -216,7 +175,6 @@ fn select_profile(
     observation: &Observation,
     role: Role,
     catalog: &ProfileCatalog,
-    runtime_mode: &str,
 ) -> Result<LaunchSelection, ServiceError> {
     let profiles = state
         .settings
@@ -230,7 +188,7 @@ fn select_profile(
         if !profile.enabled || profile.selection.model.is_empty() {
             continue;
         }
-        let Some((offer, group)) = profile_offer(catalog, profile, runtime_mode) else {
+        let Some((offer, group)) = profile_offer(catalog, profile) else {
             continue;
         };
         let counts = state

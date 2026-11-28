@@ -6,42 +6,13 @@ use std::{
 
 use longhorn_git_workspace::{Git, GitCredential, GitFailure, GitFailureCode, GitPolicy};
 use longhorn_redact::{RedactionRules, Redactor};
-use nucleus_core::{Head, Identity, Role};
+use nucleus_core::{Head, Identity};
 use nucleus_forge::Branches;
-use nucleus_hosts::{Binding, HostError, RoleProfile};
+use nucleus_hosts::{Binding, HostError};
 use nucleus_store::{RepositorySettings, StorageError};
 use nucleus_work::{Checkout, WorkError};
 
 use crate::{Service, ServiceError, State, volume::Limit};
-
-/// The single-repository fixture configuration that tests build in memory.
-#[derive(Clone)]
-pub struct Project {
-    pub repository: String,
-    pub checkout: PathBuf,
-    pub base: String,
-    pub start: Head,
-    pub host_project: String,
-    pub worker: RoleProfile,
-    pub reviewer: RoleProfile,
-    /// The local T3 ACP provider running the Rust session agent.
-    pub acp_provider: Option<String>,
-    pub launch_budget: LaunchBudget,
-}
-
-#[derive(Clone)]
-pub struct LaunchBudget {
-    pub slots: u32,
-}
-
-impl Project {
-    pub(crate) const fn profile(&self, role: Role) -> &RoleProfile {
-        match role {
-            Role::Worker => &self.worker,
-            Role::Reviewer => &self.reviewer,
-        }
-    }
-}
 
 #[derive(Clone)]
 pub(super) struct ProjectRoute {
@@ -74,8 +45,9 @@ impl ProjectRoute {
 }
 
 impl Service {
-    pub(super) fn acp_provider(&self) -> Option<&str> {
-        self.registry_provider.as_deref()
+    /// The local T3 ACP provider running the Rust session agent.
+    pub(super) fn acp_provider(&self) -> &str {
+        &self.acp_provider
     }
 
     /// Every stored task is in the registry's scope when its ID is well formed.
@@ -177,32 +149,6 @@ impl Service {
         let root = route.checkout.to_str().ok_or(ServiceError::Project)?;
         self.host.check_project(&route.host_project, root).await?;
         Ok(())
-    }
-
-    /// The checkout registered in Projects settings, read as test values.
-    #[cfg(test)]
-    pub(super) fn fixture(&self) -> Project {
-        registered_fixture(&self.settings)
-    }
-
-    #[cfg(test)]
-    pub(super) fn set_fixture_acp_provider(&mut self, provider: Option<&str>) {
-        self.registry_provider = provider.map(str::to_owned);
-    }
-
-    #[cfg(test)]
-    pub(super) async fn check_project(&self) -> Result<(), ServiceError> {
-        let project = self.fixture();
-        let identity = Identity {
-            id: "fixture-binding".into(),
-            reference: String::new(),
-            repository: project.repository.clone(),
-            base: project.base.clone(),
-            entry: nucleus_core::Entry::Brief,
-            origin_thread: None,
-        };
-        let route = self.project_for(&identity).await?;
-        self.check_project_route(&identity, &route).await
     }
 }
 
@@ -452,45 +398,6 @@ impl GitPolicy for LocalGit {
     }
 }
 
-/// The first registered repository, read as the test project. Its profiles and
-/// budget are the fixture values, which the registry resolves from settings.
-#[cfg(test)]
-fn registered_fixture(settings: &nucleus_store::SettingsFile) -> Project {
-    let projects = settings
-        .read::<nucleus_store::Projects>()
-        .expect("registered projects")
-        .value;
-    let repository = projects
-        .projects
-        .values()
-        .flat_map(|project| project.repositories.iter())
-        .next()
-        .expect("one registered repository");
-    let start = crate::tests::git(&repository.path, &["rev-parse", "HEAD"])
-        .parse()
-        .expect("registered base head");
-    let profile = RoleProfile {
-        instance_id: "provider".into(),
-        model: "fixture".into(),
-        runtime_mode: "auto".into(),
-        options: Vec::new(),
-    };
-    Project {
-        repository: repository.origin.clone(),
-        checkout: repository.path.clone(),
-        base: repository.base.clone(),
-        start,
-        host_project: repository
-            .host_project
-            .clone()
-            .expect("registered T3 project"),
-        worker: profile.clone(),
-        reviewer: profile,
-        acp_provider: None,
-        launch_budget: LaunchBudget { slots: 1 },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -624,7 +531,7 @@ mod tests {
     #[tokio::test]
     async fn native_write_gate_requires_the_explicit_project_at_its_registered_checkout() {
         let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("forge"));
-        service.set_fixture_acp_provider(Some("fixture-acp"));
+        service.set_fixture_acp_provider("fixture-acp");
         let root = service.fixture().checkout.clone();
         let retargeted = Arc::new(AtomicBool::new(false));
         let moved = Arc::clone(&retargeted);

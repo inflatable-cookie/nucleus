@@ -76,7 +76,6 @@ pub use dependencies::{
     PrerequisiteWaitView,
 };
 pub use native_inbox::native_inbox_directory;
-pub use project::{LaunchBudget, Project};
 pub use ticket::ReportTicket;
 use web::ControllerScope;
 pub use web::{
@@ -199,7 +198,7 @@ pub enum ServiceError {
     Profile(#[from] nucleus_core::profiles::ProfileLaunchError),
     #[error("project dispatch requires a configured Profiles domain")]
     ProfileConfiguration,
-    #[error("set NUCLEUS_RUST_NATIVE_INBOX to 0 or 1 and configure a T3 ACP provider when enabled")]
+    #[error("set NUCLEUS_RUST_NATIVE_INBOX to 0 or 1")]
     InboxConfiguration,
     #[error("the Rust Inbox is unavailable")]
     InboxUnavailable { until: Instant },
@@ -232,8 +231,7 @@ pub struct Service {
     volume: volume::WorkVolume,
     git: project::LocalGit,
     settings: SettingsFile,
-    project: Option<Project>,
-    registry_provider: Option<String>,
+    acp_provider: String,
     host: T3,
     forge: GitHub,
     pub(crate) github_accounts: Arc<github_accounts::GitHubAccounts>,
@@ -390,7 +388,7 @@ impl Service {
         {
             runtime_settings.projects = Some(store.clean_removed_projects(&settings)?.value);
         }
-        native_inbox::supersede_process_decisions(&mut store, &runtime_settings, None)?;
+        native_inbox::supersede_process_decisions(&mut store, &runtime_settings)?;
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
         host.use_held_shell();
         let github_accounts = Arc::new(github_accounts::GitHubAccounts::new(settings.clone()));
@@ -399,7 +397,7 @@ impl Service {
             volume: volume::WorkVolume::new(),
             git,
             settings,
-            registry_provider: Some(acp_provider),
+            acp_provider,
             host,
             forge,
             _github_account_lifetime: github_accounts.lifetime(),
@@ -431,7 +429,6 @@ impl Service {
                 title_candidates: BTreeMap::new(),
                 held_calls: BTreeMap::new(),
             })),
-            project: None,
             project_writes: RwLock::new(()),
             pass_lock: Mutex::new(()),
             merges: checkout_update::Merges::default(),
@@ -457,43 +454,6 @@ impl Service {
             forge_retry_secs: AtomicU64::new(0),
             _profile: lock,
         })
-    }
-
-    /// Admit a brief through the legacy single-repository route.
-    ///
-    /// # Errors
-    /// Returns an error for malformed or duplicate input or a storage failure.
-    pub async fn admit(
-        &self,
-        id: String,
-        reference: String,
-        brief: String,
-        caller: &Authority,
-    ) -> Result<TaskRow, ServiceError> {
-        self.admit_to(None, id, reference, brief, caller).await
-    }
-
-    /// Admit a brief for a configured repository without contacting any host.
-    ///
-    /// # Errors
-    /// Returns an error for unbound, malformed or duplicate input or a storage failure.
-    pub async fn admit_to(
-        &self,
-        repository: Option<&str>,
-        id: String,
-        reference: String,
-        brief: String,
-        caller: &Authority,
-    ) -> Result<TaskRow, ServiceError> {
-        self.admit_in_scope(
-            repository,
-            id,
-            reference,
-            brief,
-            caller,
-            &ControllerScope::default(),
-        )
-        .await
     }
 
     async fn admit_in_scope(
@@ -644,12 +604,7 @@ impl Service {
                 return self.advance(row, host).await;
             }
             Box::pin(self.notify_completion(row)).await?;
-            if self.acp_provider().is_some()
-                || (task.phase() == Phase::Done && task.report_task().is_some())
-            {
-                return self.archive_done_in_pass(row, host).await;
-            }
-            return Ok(Action::Nothing);
+            return self.archive_done_in_pass(row, host).await;
         }
         let parent = self.reconcile_live_parent(row).await;
         if self.reconcile_prerequisites(row).await? {
@@ -743,7 +698,7 @@ impl Service {
             let inbox = self.native_inbox.as_ref();
             let watch = self.host.watch_threads(
                 &sender,
-                self.acp_provider(),
+                Some(self.acp_provider()),
                 inbox.map(|_| nucleus_hosts::INBOX_THREAD),
             );
             tokio::pin!(watch);
@@ -872,7 +827,7 @@ impl Service {
             .store
             .row(&identity.id)?
             .map_or_else(TaskWeight::default, |row| row.task.weight());
-        Ok(self.slot_block(state, &identity.id, weight)?.is_none())
+        Ok(slot_block(state, &identity.id, weight)?.is_none())
     }
 
     fn project_capacity(
@@ -893,36 +848,6 @@ impl Service {
             < project_slots)
     }
 
-    /// The global cap which keeps another run of this weight from starting.
-    fn slot_block(
-        &self,
-        state: &State,
-        id: &str,
-        weight: TaskWeight,
-    ) -> Result<Option<SlotBlock>, ServiceError> {
-        Ok(self
-            .slot_limits(state)
-            .blocks(state.store.occupied_slots(id)?, weight))
-    }
-
-    fn slot_limits(&self, state: &State) -> Slots {
-        state.settings.dispatch.as_ref().map_or_else(
-            || {
-                self.project.as_ref().map_or_else(
-                    || nucleus_store::DispatchSettings::default().slots(),
-                    |project| {
-                        let total = project.launch_budget.slots;
-                        Slots {
-                            heavy: total.min(5),
-                            total,
-                        }
-                    },
-                )
-            },
-            nucleus_store::DispatchSettings::slots,
-        )
-    }
-
     /// The label of a task which only its weight cap keeps from launching.
     fn slot_wait(&self, state: &State, task: &Task) -> Result<Option<String>, ServiceError> {
         let identity = task.identity();
@@ -932,7 +857,7 @@ impl Service {
             return Ok(None);
         }
         let Some(SlotBlock::Heavy { running, limit }) =
-            self.slot_block(state, &identity.id, task.weight())?
+            slot_block(state, &identity.id, task.weight())?
         else {
             return Ok(None);
         };
@@ -1143,8 +1068,7 @@ impl Service {
                 if !thread_tasks.is_empty() {
                     allowance_clock.checkpoint(store, now)?;
                 }
-                let housekeeping =
-                    schedule.seed(store, now, self.acp_provider().is_some(), capacity_waiters)?;
+                let housekeeping = schedule.seed(store, now, capacity_waiters)?;
                 let ready = if housekeeping {
                     None
                 } else {
@@ -1195,9 +1119,8 @@ impl Service {
             None
         };
         // A cancelled task shows an archive cause only for a failure which backs off.
-        let archive_due = (self.acp_provider().is_some() || current.task.report_task().is_some())
-            && (current.task.phase() == Phase::Done
-                || (current.task.phase() == Phase::Cancelled && retry_after.is_some()))
+        let archive_due = (current.task.phase() == Phase::Done
+            || (current.task.phase() == Phase::Cancelled && retry_after.is_some()))
             && current.task.run().is_none()
             && !matches!(result, Ok(Action::Nothing));
         let retired = state.retired_with_project(&current.task)?;
@@ -1712,7 +1635,7 @@ impl Service {
                     "report_ready requires a summary".into(),
                 ));
             }
-            self.verify_report_artifact(&state, &task, &delivery.artifact, true)?;
+            state.verify_report_artifact(&task, &delivery.artifact, true)?;
         }
         task.record_report(instance, credential, report)?;
         if let Some(Report::Work(pr)) = task.run().and_then(nucleus_core::Run::report) {
@@ -2561,7 +2484,7 @@ impl Service {
             .filter_map(|waiter| eligible(&waiter.3).map(|ready| (waiter, ready)))
             .peekable();
         candidates.peek()?;
-        let limits = self.slot_limits(state);
+        let limits = slot_limits(state);
         let occupied = state.store.occupied_slots("").ok()?;
         if occupied.total >= limits.total {
             return None;
@@ -2625,11 +2548,8 @@ impl Service {
             task.threads().get(role)
         });
         let mut threads: Vec<_> = thread.into_iter().map(str::to_owned).collect();
-        if self.acp_provider().is_some() {
-            let checkout =
-                checkout_path(self.storage.work().path(), &task.identity().repository, id);
-            threads.push(nucleus_hosts::parent_thread(&checkout));
-        }
+        let checkout = checkout_path(self.storage.work().path(), &task.identity().repository, id);
+        threads.push(nucleus_hosts::parent_thread(&checkout));
         if let Some(binding) = task.question_delivery() {
             threads.push(binding.thread.clone());
         }
@@ -2645,6 +2565,22 @@ impl Service {
             tracked.due = threads.iter().any(|due| due == thread);
         }
     }
+}
+
+/// The global cap which keeps another run of this weight from starting.
+fn slot_block(
+    state: &State,
+    id: &str,
+    weight: TaskWeight,
+) -> Result<Option<SlotBlock>, ServiceError> {
+    Ok(slot_limits(state).blocks(state.store.occupied_slots(id)?, weight))
+}
+
+fn slot_limits(state: &State) -> Slots {
+    state.settings.dispatch.as_ref().map_or_else(
+        || nucleus_store::DispatchSettings::default().slots(),
+        nucleus_store::DispatchSettings::slots,
+    )
 }
 
 fn active(task: &Task) -> bool {

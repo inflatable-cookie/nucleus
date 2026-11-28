@@ -75,9 +75,6 @@ impl NativeInbox {
             Some("1") => {}
             _ => return Err(ServiceError::InboxConfiguration),
         }
-        if service.acp_provider().is_none() {
-            return Err(ServiceError::InboxConfiguration);
-        }
         Self::open(service).map(Some)
     }
 
@@ -191,7 +188,7 @@ impl Service {
                 reply_run: None,
             });
         }
-        let decisions = pending(&state, self)?;
+        let decisions = pending(&state)?;
         let reply_run = self
             .inbox_reply_run(&observed)
             .filter(|run| {
@@ -239,7 +236,7 @@ impl Service {
                 until: Instant::now() + T3_RETRY_DELAY,
             });
         }
-        let decision = pending(&state, self)?
+        let decision = pending(&state)?
             .into_iter()
             .find(|decision| inbox_field(&decision.project_id, &decision.id) == answer.field)
             .ok_or(StoreError::PlanningConflict)?;
@@ -262,13 +259,12 @@ impl Service {
     }
 
     pub(super) async fn watch_inbox(&self) {
-        let (Some(inbox), Some(provider)) = (self.native_inbox.as_ref(), self.acp_provider())
-        else {
+        let Some(inbox) = self.native_inbox.as_ref() else {
             return;
         };
         let target = InboxTarget {
             root: &inbox.root,
-            provider,
+            provider: self.acp_provider(),
         };
         loop {
             self.host.wait_for_requests().await;
@@ -304,7 +300,7 @@ impl Service {
         self.storage.database().verify()?;
         let fields = {
             let state = self.state.lock().await;
-            pending(&state, self)?
+            pending(&state)?
                 .into_iter()
                 .map(|decision| inbox_field(&decision.project_id, &decision.id))
                 .collect()
@@ -416,9 +412,8 @@ impl Service {
 pub(super) fn supersede_process_decisions(
     store: &mut nucleus_store::Store,
     settings: &crate::web::RuntimeSettings,
-    fixture: Option<&crate::Project>,
 ) -> Result<(), StoreError> {
-    for project in settings.planning_projects(fixture) {
+    for project in settings.planning_projects() {
         for decision in store.decisions(project, true)? {
             if decision.is_process_custody() {
                 store.supersede_process_decision(project, &decision.id, engine_stamp())?;
@@ -428,9 +423,9 @@ pub(super) fn supersede_process_decisions(
     Ok(())
 }
 
-pub(super) fn pending(state: &State, service: &Service) -> Result<Vec<Decision>, StoreError> {
+pub(super) fn pending(state: &State) -> Result<Vec<Decision>, StoreError> {
     let mut decisions = Vec::new();
-    for project in state.settings.planning_projects(service.project.as_ref()) {
+    for project in state.settings.planning_projects() {
         decisions.extend(state.store.decisions(project, true)?);
     }
     Ok(decisions)

@@ -215,7 +215,7 @@ async fn retirement_requires_archive_or_deletion_evidence_for_omitted_roles() {
     let head = service.fixture().start.clone();
     let (forge, _forge) = publish_checkout_forge(head.clone()).await;
     service.forge = forge;
-    service.set_fixture_acp_provider(Some("fixture"));
+    service.set_fixture_acp_provider("fixture");
     let route = service.project_for(row.task.identity()).await.unwrap();
     let worktrees = service.worktrees();
     let checkout = worktrees

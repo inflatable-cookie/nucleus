@@ -592,10 +592,7 @@ impl Service {
             return Err(ServiceError::PlannerEnrollmentRefused(reason));
         }
         let planner = planner.ok_or(ServiceError::Input)?;
-        if self
-            .acp_provider()
-            .is_some_and(|provider| planner.provider_instance_id.as_deref() == Some(provider))
-        {
+        if planner.provider_instance_id.as_deref() == Some(self.acp_provider()) {
             return Err(ServiceError::PlannerEnrollmentRefused(
                 "Submit from a top-level T3 planner thread.",
             ));

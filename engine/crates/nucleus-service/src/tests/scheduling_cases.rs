@@ -8,7 +8,7 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
     })
     .await;
     service.host = host;
-    service.set_fixture_acp_provider(Some("fixture-acp"));
+    service.set_fixture_acp_provider("fixture-acp");
     service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
         heavy_slots: 1,
         total_slots: 1,
@@ -247,7 +247,7 @@ async fn recorded_role_send_time_does_not_extend_an_observation_outage() {
 #[tokio::test]
 async fn done_archive_keeps_its_cause_and_respects_host_deferral() {
     let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
-    service.set_fixture_acp_provider(Some("fixture-acp"));
+    service.set_fixture_acp_provider("fixture-acp");
     let (task, _, _) = reservation("archive", Entry::Brief, &service.fixture().start);
     let task = Task::new(task.identity().clone(), "Fixture".into(), None);
     let mut snapshot = serde_json::to_value(task).unwrap();

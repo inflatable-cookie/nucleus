@@ -97,7 +97,7 @@ async fn closeout_stops_a_finished_sessions_provider_helpers() {
         service.host.runtime_identity().is_some(),
         "fixture native runtime identity"
     );
-    service.set_fixture_acp_provider(Some("fixture"));
+    service.set_fixture_acp_provider("fixture");
     // Helper cleanup runs on a profile whose Dispatch was never configured.
     assert!(service.state.lock().await.settings.dispatch.is_none());
     let terminal = cancelled_cleanup_task(&service).await;

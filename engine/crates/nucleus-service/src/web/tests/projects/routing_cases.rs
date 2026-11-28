@@ -1099,7 +1099,7 @@ async fn a_removed_projects_finished_tasks_are_no_longer_scheduled() {
         finish_removal_task(&registry, id, leftover).await;
     }
     let scheduled = |state: &crate::State| {
-        let mut due = state.store.archive_due_ids(None, 32, true).unwrap();
+        let mut due = state.store.archive_due_ids(None, 32).unwrap();
         due.extend(
             state
                 .store

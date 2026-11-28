@@ -325,7 +325,7 @@ impl Service {
             || run.report().is_some()
             || report.project != project
             || report.lane != key
-            || !self.report_project_matches(&state, &row.task)
+            || !state.report_project_matches(&row.task)
         {
             return Err(CommandError::InvalidReportCredential.into());
         }
@@ -350,65 +350,6 @@ impl Service {
         Ok(lane)
     }
 
-    pub(super) fn report_project_matches(&self, state: &State, task: &Task) -> bool {
-        let Some(report) = task.report_task() else {
-            return false;
-        };
-        if let Some(project) = &self.project {
-            state.settings.planning_project_id(project) == report.project
-        } else {
-            state
-                .settings
-                .project_for_origin(&task.identity().repository)
-                .is_some_and(|(project, _, repo)| {
-                    project == report.project && repo.base == task.identity().base
-                })
-        }
-    }
-
-    pub(super) fn verify_report_artifact(
-        &self,
-        state: &State,
-        task: &Task,
-        artifact: &ReportArtifact,
-        latest_required: bool,
-    ) -> Result<(), ServiceError> {
-        let report = task.report_task().ok_or_else(|| {
-            ServiceError::ReportInput(
-                "report_ready is only allowed when the brief opts into queue.reportOnly: true"
-                    .into(),
-            )
-        })?;
-        if !self.report_project_matches(state, task) || artifact.key != report.lane {
-            return Err(ServiceError::ReportInput(format!(
-                "report_ready artifact must use the task's attached report lane {}",
-                report.lane
-            )));
-        }
-        let exact = state
-            .store
-            .lane_version(&report.project, &artifact.key, artifact.version)?;
-        let latest = state.store.lane(&report.project, &artifact.key)?;
-        let matches = |lane: &Lane| lane.artifact() == *artifact;
-        if exact.as_ref().is_some_and(matches)
-            && (!latest_required || latest.as_ref().is_some_and(matches))
-        {
-            return Ok(());
-        }
-        let stored = exact.map_or_else(
-            || format!("version {} is missing", artifact.version),
-            |lane| format!("stored v{} digest {}", lane.version, lane.artifact().digest),
-        );
-        let latest = latest.map_or_else(
-            || "the lane holds no document".into(),
-            |lane| format!("latest v{} digest {}", lane.version, lane.artifact().digest),
-        );
-        Err(ServiceError::ReportInput(format!(
-            "lane {} report names v{} digest {}; {stored}; {latest}. Re-read the lane and use its exact artifact",
-            artifact.key, artifact.version, artifact.digest
-        )))
-    }
-
     pub(super) async fn fence_report_completion<'a>(
         &'a self,
         state: StateGuard<'a>,
@@ -421,7 +362,7 @@ impl Service {
         if prior.version != acceptance.version {
             return Err(StoreError::StaleTask.into());
         }
-        self.verify_report_artifact(&state, &prior.task, &acceptance.artifact, false)?;
+        state.verify_report_artifact(&prior.task, &acceptance.artifact, false)?;
         drop(state);
         Box::pin(self.verify_report_completion(&prior.task)).await?;
         let state = self.state.lock().await;
@@ -436,7 +377,7 @@ impl Service {
         {
             return Err(ServiceError::AcpUnauthorized);
         }
-        self.verify_report_artifact(&state, &prior.task, &acceptance.artifact, false)?;
+        state.verify_report_artifact(&prior.task, &acceptance.artifact, false)?;
         if state.store.dependency_blocked(id)? {
             return Err(ServiceError::DependencyEdit(
                 "this task has unfinished prerequisites",
@@ -560,12 +501,7 @@ impl Service {
     ) -> Result<(String, Option<String>), ServiceError> {
         let Some(actor) = caller.actor() else {
             return match authority {
-                Authority::Planner { actor } => Ok((
-                    actor.clone(),
-                    self.project
-                        .as_ref()
-                        .map(|project| project.repository.clone()),
-                )),
+                Authority::Planner { actor } => Ok((actor.clone(), None)),
                 Authority::Operator { .. } => Err(ServiceError::WatchAgentRequired),
             };
         };
@@ -1039,6 +975,62 @@ impl Service {
             }
         }
         Ok(false)
+    }
+}
+
+impl State {
+    /// The task's registered repository and base still belong to the report's project.
+    pub(super) fn report_project_matches(&self, task: &Task) -> bool {
+        let Some(report) = task.report_task() else {
+            return false;
+        };
+        self.settings
+            .project_for_origin(&task.identity().repository)
+            .is_some_and(|(project, _, repo)| {
+                project == report.project && repo.base == task.identity().base
+            })
+    }
+
+    pub(super) fn verify_report_artifact(
+        &self,
+        task: &Task,
+        artifact: &ReportArtifact,
+        latest_required: bool,
+    ) -> Result<(), ServiceError> {
+        let report = task.report_task().ok_or_else(|| {
+            ServiceError::ReportInput(
+                "report_ready is only allowed when the brief opts into queue.reportOnly: true"
+                    .into(),
+            )
+        })?;
+        if !self.report_project_matches(task) || artifact.key != report.lane {
+            return Err(ServiceError::ReportInput(format!(
+                "report_ready artifact must use the task's attached report lane {}",
+                report.lane
+            )));
+        }
+        let exact = self
+            .store
+            .lane_version(&report.project, &artifact.key, artifact.version)?;
+        let latest = self.store.lane(&report.project, &artifact.key)?;
+        let matches = |lane: &Lane| lane.artifact() == *artifact;
+        if exact.as_ref().is_some_and(matches)
+            && (!latest_required || latest.as_ref().is_some_and(matches))
+        {
+            return Ok(());
+        }
+        let stored = exact.map_or_else(
+            || format!("version {} is missing", artifact.version),
+            |lane| format!("stored v{} digest {}", lane.version, lane.artifact().digest),
+        );
+        let latest = latest.map_or_else(
+            || "the lane holds no document".into(),
+            |lane| format!("latest v{} digest {}", lane.version, lane.artifact().digest),
+        );
+        Err(ServiceError::ReportInput(format!(
+            "lane {} report names v{} digest {}; {stored}; {latest}. Re-read the lane and use its exact artifact",
+            artifact.key, artifact.version, artifact.digest
+        )))
     }
 }
 

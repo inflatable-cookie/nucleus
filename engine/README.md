@@ -286,7 +286,7 @@ also check the open PR and clean checkout after native authorization.
 
 - Get a ticket with `POST /api/auth/websocket-ticket/rpc`, then open `/ws`
   with `orchestrationProtocol=2`. Use `server.getConfig` to check the configured
-  provider and model. Pre-register the single fixture project for milestone 1.
+  provider and model.
 - `orchestration.subscribeShell` can send repository enrichment snapshots before
   `synchronized`. These update repository metadata. Project binding and planner
   routing use the authoritative Shell snapshot.
@@ -331,9 +331,7 @@ also check the open PR and clean checkout after native authorization.
   requires a fresh open PR and clean checkout at that head. When it has moved,
   reconcile the old wire once, stop any settled delivery's live turn, and
   archive the thread before clearing the run. Read back the settled state
-  before releasing the checkout. The milestone 1 fixture can use standalone
-  threads. The host adapter prepares that launch wire, so the service uses the
-  same task and run model when the adapter parents a thread under an ACP session.
+  before releasing the checkout.
 - The role runs call a local authenticated report endpoint via an owner-only
   ticket outside the checkout. The prompt names the ticket path. The service
   verifies the task, role, current run, credential and requested review head.
@@ -666,8 +664,7 @@ Pass the registered T3 ACP provider for the Rust `nucleus acp` agent to
 `serve --acp-provider`. Configure the provider's
 `NUCLEUS_ACP_BINDINGS` to the service's binding directory. The scheduler supplies
 a read-only binding when no session has been minted. Keep an existing writable
-binding so the planner can use the task's commands. Standalone roles remain
-available for the milestone 1 fixture without this setting.
+binding so the planner can use the task's commands.
 
 The scheduler uses the host's `deliver_notice` operation for planner messages.
 T3 can first prepare a settled destination, then queue the frozen notice after
@@ -827,8 +824,8 @@ Limits, set the heavy, normal and light slots, the per-project default or an
 individual project’s override. Limits saves the changed fields against the Dispatch revision it
 read. A project’s slots cover all its routed repositories. New and amended briefs reject the retired
 `queue.preferredProfileId` key. Use `queue.profileRequests.worker` with a
-profile ID, reason and `required: true` for a required worker profile. A non-fixture
-launch uses the Profiles domain and the head of the verified local base.
+profile ID, reason and `required: true` for a required worker profile. Every
+launch uses the Profiles domain.
 
 Until the Profiles domain is configured, dispatch waits.
 

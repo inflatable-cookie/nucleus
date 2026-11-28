@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
     let (_home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
-    service.set_fixture_acp_provider(Some("fixture-acp"));
+    service.set_fixture_acp_provider("fixture-acp");
     let (mut first, merged) = fixture_at_done(&service).await;
     {
         let mut state = service.state.lock().await;
@@ -94,7 +94,7 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
 #[tokio::test]
 async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_trash() {
     let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-    service.set_fixture_acp_provider(Some("fixture-acp"));
+    service.set_fixture_acp_provider("fixture-acp");
     {
         let repo = &service.fixture().checkout;
         std::fs::write(repo.join(".gitignore"), "node_modules/\n").unwrap();
@@ -856,7 +856,7 @@ async fn acp_server_error_is_logged_with_timestamp() {
 async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_tasks() {
     for phase in ["done", "cancelled"] {
         let (_home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
-        service.set_fixture_acp_provider(Some("fixture-acp"));
+        service.set_fixture_acp_provider("fixture-acp");
         let (done, _) = fixture_at_done(&service).await;
         let id = done.task.identity().id.clone();
         service
@@ -927,7 +927,7 @@ async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_task
                 ..
             } = &mut *state;
             schedule
-                .seed(store, tokio::time::Instant::now(), true, capacity_waiters)
+                .seed(store, tokio::time::Instant::now(), capacity_waiters)
                 .unwrap();
             assert_eq!(schedule.due(&id), Some(due), "{phase}");
         }
@@ -950,7 +950,7 @@ async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_task
 #[tokio::test]
 async fn an_unmapped_error_shows_its_cause_backs_off_and_accepts_recheck() {
     let (_home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
-    service.set_fixture_acp_provider(Some("fixture-acp"));
+    service.set_fixture_acp_provider("fixture-acp");
     let project = service.fixture().clone();
     let (reserved, _, _) =
         crate::tests::reservation("wrong-branch", nucleus_core::Entry::Brief, &project.start);

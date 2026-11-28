@@ -96,12 +96,7 @@ pub(super) async fn notice_pass(service: &Service, task: &str) -> Vec<crate::Pas
         let now = tokio::time::Instant::now();
         // Cold fixtures discover persisted notices through the ordinary scheduler scan.
         schedule
-            .seed(
-                store,
-                now,
-                service.acp_provider().is_some(),
-                capacity_waiters,
-            )
+            .seed(store, now, capacity_waiters)
             .expect("seed the notice schedule");
         assert!(
             schedule.due(task).is_some_and(|due| due <= now),

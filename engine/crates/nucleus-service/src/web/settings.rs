@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use tokio::{task, time::Instant};
 
 use super::{Api, ApiError, body};
-use crate::{Project, Service, ServiceError};
+use crate::{Service, ServiceError};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -128,27 +128,6 @@ impl RuntimeSettings {
         })
     }
 
-    pub(crate) fn fixture_project(
-        &self,
-        fixture: &Project,
-    ) -> Option<(&str, &ProjectSettings, &RepositorySettings)> {
-        self.projects
-            .as_ref()?
-            .projects
-            .iter()
-            .find_map(|(id, project)| {
-                project
-                    .repositories
-                    .iter()
-                    .find(|repo| {
-                        repo.origin.eq_ignore_ascii_case(&fixture.repository)
-                            && repo.path == fixture.checkout
-                            && repo.base == fixture.base
-                    })
-                    .map(|repo| (id.as_str(), project, repo))
-            })
-    }
-
     pub(crate) fn project_for_origin(
         &self,
         origin: &str,
@@ -190,11 +169,6 @@ impl RuntimeSettings {
         (id == project_id && repo.host_project.is_some())
             .then_some(repo)
             .ok_or(ServiceError::Project)
-    }
-
-    pub(crate) fn planning_project_id<'a>(&'a self, binding: &'a Project) -> &'a str {
-        self.fixture_project(binding)
-            .map_or(binding.host_project.as_str(), |(id, _, _)| id)
     }
 
     pub(crate) fn resolve_planning_project(&self, selector: &str) -> Result<&str, ServiceError> {
@@ -248,19 +222,11 @@ impl RuntimeSettings {
         bound.next().is_none().then_some(origin.as_str())
     }
 
-    pub(crate) fn planning_projects<'a>(
-        &'a self,
-        binding: Option<&'a Project>,
-    ) -> impl Iterator<Item = &'a str> {
+    pub(crate) fn planning_projects(&self) -> impl Iterator<Item = &str> {
         // The registry belongs to this engine profile, which is connected to one host.
         self.projects
             .iter()
             .flat_map(|registry| registry.projects.keys().map(String::as_str))
-            .chain(
-                binding
-                    .filter(|_| self.projects.is_none())
-                    .map(|project| project.host_project.as_str()),
-            )
     }
 
     pub(crate) fn project_slots(&self, id: &str) -> u32 {
@@ -497,21 +463,7 @@ pub(super) async fn put(
             }
             Domain::Projects => {
                 let value = decode::<Projects>(value)?;
-                #[cfg(test)]
-                let fixture = service.project.is_some();
                 save_projects(&service, revision, move |current| {
-                    #[cfg(test)]
-                    if fixture {
-                        for repo in value
-                            .projects
-                            .values()
-                            .flat_map(|project| &project.repositories)
-                        {
-                            current.restore_origin(&repo.origin)?;
-                        }
-                        current.projects = value.projects;
-                        return Ok(());
-                    }
                     edit_project_details(current, value)
                 })
                 .await
@@ -615,9 +567,6 @@ pub(super) async fn preview_project_removal(
 ) -> Result<Json<ProjectRemoval>, ApiError> {
     require_operator(&authority)?;
     let service = &api.service;
-    if service.project.is_some() {
-        return Err(ServiceError::Project.into());
-    }
     service
         .storage
         .database()
@@ -650,7 +599,7 @@ pub(super) async fn remove_project(
     let ConfirmRemoval { digest, reason } = body(input)?;
     let reason = reason.trim().to_owned();
     let service = api.service;
-    if service.project.is_some() || reason.is_empty() || reason.chars().count() > 4000 {
+    if reason.is_empty() || reason.chars().count() > 4000 {
         return Err(ApiError::Invalid);
     }
     task::spawn(async move {

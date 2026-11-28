@@ -152,13 +152,9 @@ impl Service {
     /// Read the repository declaration from its chosen commit without running it.
     pub(super) async fn affected_tests(&self, task: &Task, root: PathBuf) -> bool {
         let git = self.git.clone();
-        let pinned = task
-            .report_task()
-            .map(|report| &report.planning_base)
-            .or_else(|| self.project.as_ref().map(|project| &project.start));
-        let tree = pinned.map_or_else(
+        let tree = task.report_task().map_or_else(
             || format!("refs/heads/{}", task.identity().base),
-            ToString::to_string,
+            |report| report.planning_base.to_string(),
         );
         tokio::task::spawn_blocking(move || {
             let git = Git::new(&git, Redactor::new([], RedactionRules::common()));
