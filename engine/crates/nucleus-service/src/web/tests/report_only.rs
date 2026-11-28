@@ -435,6 +435,10 @@ async fn report_only_ticket_revision_and_historical_owner_acceptance() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one archive lifecycle checks each retention gate"
+)]
 async fn report_only_archive_retains_dirty_or_unpublished_source() {
     let fixture = ReportFixture::new().await;
     fixture.admit().await;
