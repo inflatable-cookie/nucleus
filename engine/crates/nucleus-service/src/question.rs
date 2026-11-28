@@ -64,14 +64,8 @@ impl State {
         actor: &str,
     ) -> Result<(), ServiceError> {
         if self.registry_mode {
-            let authorized = self
-                .settings
-                .project_for_origin(&task.identity().repository)
-                .is_some_and(|(project, _, repo)| {
-                    repo.base == task.identity().base
-                        && self.live_planner_project(actor) == Some(project)
-                });
-            return authorized
+            return self
+                .verified_controller(actor)
                 .then_some(())
                 .ok_or(ServiceError::PlannerAuthorityRefused);
         }
@@ -128,17 +122,6 @@ impl Service {
         let Some(permit) = self.dispatch_gate(&row.task, target).await? else {
             return Ok(None);
         };
-        if self.project.is_none()
-            && !self
-                .state
-                .lock()
-                .await
-                .enrolled_planners
-                .get(&attempt.thread)
-                .is_some_and(|proof| authorization.matches_planner(&proof.identity))
-        {
-            return Ok(None);
-        }
         Ok(Some((authorization, permit)))
     }
 
@@ -330,13 +313,13 @@ impl Service {
         prefer_claim: bool,
     ) -> Result<Option<String>, ServiceError> {
         let route = self.project_for(task.identity()).await?;
-        if self.project.is_none() {
-            return self.registered_planner(task, &route, prefer_claim).await;
-        }
         if let Some(origin) = &task.identity().origin_thread
             && self.host.planner_routable(origin).await?
         {
             return Ok(Some(origin.clone()));
+        }
+        if self.project.is_none() {
+            return self.registered_planner(&route, prefer_claim).await;
         }
         for (rank, _, thread) in self.planner_candidates(task, &route).await? {
             if self
@@ -352,15 +335,13 @@ impl Service {
 
     async fn registered_planner(
         &self,
-        task: &Task,
         route: &ProjectRoute,
         prefer_claim: bool,
     ) -> Result<Option<String>, ServiceError> {
-        let origin = task.identity().origin_thread.as_deref();
         let Some(project) = route.project_id.as_deref() else {
             return Ok(None);
         };
-        let mut candidates = {
+        let candidates = {
             let state = self.state.lock().await;
             let mut candidates = state.planner_candidates_for(project);
             if prefer_claim {
@@ -374,13 +355,6 @@ impl Service {
             }
             candidates
         };
-        if let Some(index) = candidates
-            .iter()
-            .position(|candidate| Some(candidate.as_str()) == origin)
-        {
-            let original = candidates.remove(index);
-            candidates.insert(0, original);
-        }
         for actor in candidates {
             if self.check_registered_planner(&actor).await?
                 && self.state.lock().await.live_planner_project(&actor) == Some(project)
@@ -402,7 +376,7 @@ impl Service {
             let state = self.state.lock().await;
             state
                 .store
-                .routing_provenance(&task.identity().repository, &ids)?
+                .routing_provenance(Some(&task.identity().repository), &ids)?
         };
         let mut ranked = Vec::new();
         for thread in threads {

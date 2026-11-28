@@ -223,6 +223,10 @@ async fn dispatched_tasks_cannot_wait_on_each_other() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "keep the prerequisite wait and release in one fixture"
+)]
 async fn prerequisite_wait_releases_once_and_preserves_reserved_run() {
     let (_home, service) = fixture(GitHub::new("fixture").unwrap());
     let service = Arc::new(service);
@@ -251,6 +255,24 @@ async fn prerequisite_wait_releases_once_and_preserves_reserved_run() {
         StatusCode::OK
     );
     let parked = service.task("worker").await.unwrap();
+    {
+        let mut state = service.state.lock().await;
+        state
+            .observe_wait(&parked.task, Some(WaitReason::Prerequisite))
+            .unwrap();
+    }
+    let detail = json_body(get_as(&api, "/v1/tasks/worker", &BOARD_KEY).await).await;
+    let next = json_body(get_as(&api, "/v1/tasks/worker/next", &BOARD_KEY).await).await;
+    assert_eq!(detail["stateLabel"], "Waiting for #2");
+    assert_eq!(next["stateLabel"], detail["stateLabel"]);
+    assert_eq!(
+        next["waitDetail"],
+        "publish the prerequisite (nucleus-fixture#2)"
+    );
+    assert_eq!(
+        detail["dependencyStatus"]["prerequisiteWait"]["reason"],
+        "publish the prerequisite"
+    );
     assert_eq!(parked.task.run(), running.run());
     assert!(!service.reconcile_prerequisites(&parked).await.unwrap());
     assert!(service.dependencies_blocked(&parked).await.unwrap());

@@ -313,10 +313,8 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
     for (id, version) in versions {
         use nucleus_store::ParentResult::Pending;
         let hold = store.current_parent_hold(id).unwrap();
-        let refresh = store.current_parent_refresh(id, version).unwrap();
         let unsettled = hold
             .as_ref()
-            .or(refresh.as_ref())
             .filter(|record| record.result == Pending)
             .map(|record| record.command.as_str());
         let expected = match id {
@@ -327,14 +325,13 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
             | "refused"
             | "legacy_refused"
             | "failed" => Some("thread-hold-1"),
-            "refresh_pending" => Some("thread-refresh-1"),
             "later_send" => Some("thread-hold-3"),
             _ => None,
         };
         assert_eq!(unsettled, expected, "{id}");
         assert_eq!(
             store.pending_parent_preparation(id, version).unwrap(),
-            expected.is_some() && id != "refresh_pending",
+            expected.is_some(),
             "{id}"
         );
         assert!(!store.pending_parent_preparation(id, version + 1).unwrap());
@@ -1883,7 +1880,7 @@ fn restore_v15_parent_tables(db: &Connection) {
 }
 
 #[test]
-fn schema_sixteen_preserves_the_current_hold_and_refresh_independently() {
+fn schema_sixteen_keeps_the_current_hold_apart_from_stored_refreshes() {
     use nucleus_store::{ParentDelivery, ParentResult};
 
     let home = tempfile::tempdir().unwrap();
@@ -1919,27 +1916,9 @@ fn schema_sixteen_preserves_the_current_hold_and_refresh_independently() {
     );
     assert!(!store.pending_parent_preparation("task", version).unwrap());
     assert!(store.current_parent_hold("unknown").unwrap().is_none());
-    let refresh = store
-        .current_parent_refresh("task", version)
-        .unwrap()
-        .unwrap();
-    assert_eq!(refresh.command, "current-refresh");
-    assert_eq!(refresh.legacy_prompt.as_deref(), Some("Original refresh"));
-    assert_eq!(
-        (refresh.due_ms, refresh.result),
-        (456, ParentResult::Accepted)
-    );
-    assert!(
-        store
-            .current_parent_refresh("task", initial.version)
-            .unwrap()
-            .is_none()
-    );
-
     let replacement = ParentDelivery {
         version,
         command: "replacement".into(),
-        refresh: false,
         wire: None,
         legacy_prompt: None,
         due_ms: 789,
@@ -1956,15 +1935,6 @@ fn schema_sixteen_preserves_the_current_hold_and_refresh_independently() {
         store.current_parent_hold("task").unwrap().unwrap().command,
         "replacement"
     );
-    assert_eq!(
-        store
-            .current_parent_refresh("task", version)
-            .unwrap()
-            .unwrap()
-            .command,
-        refresh.command
-    );
-
     let db = Connection::open(path).unwrap();
     assert!(
         db.execute(

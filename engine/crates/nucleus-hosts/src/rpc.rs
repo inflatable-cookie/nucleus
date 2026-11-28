@@ -755,17 +755,6 @@ impl Rpc {
         )
     }
 
-    pub(crate) fn thread_row_with_revision(&self, id: &str) -> (Option<Arc<Value>>, Option<u64>) {
-        self.with_shell(|shell| {
-            shell.map_or((None, None), |shell| {
-                (
-                    shell.marker(id),
-                    shell.row_revision(id).map(|(revision, _)| revision),
-                )
-            })
-        })
-    }
-
     pub(crate) fn same_thread(&self, id: &str, fence: &ThreadFence) -> bool {
         self.with_shell(|shell| {
             (shell.is_some() || !self.uses_held_shell()) && self.fence_at(id, shell).matches(fence)

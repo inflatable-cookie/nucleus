@@ -53,7 +53,7 @@ mod settings;
 mod task_list;
 pub(crate) use board::Board;
 pub use board::{router_with_board, router_with_board_and_t3_callers};
-pub(crate) use settings::{CachedHost, ProjectMatchError, RuntimeSettings};
+pub(crate) use settings::{CachedHost, RuntimeSettings};
 use task_list::{ListCard, list};
 
 const DEFAULT_BODY_LIMIT: usize = 64 * 1024;
@@ -65,10 +65,10 @@ fn board_wait_detail(detail: &crate::WaitDetail) -> Option<&str> {
         crate::WaitDetail::BeforeSend(message) => *message,
         crate::WaitDetail::ConfirmingDelivery(message)
         | crate::WaitDetail::Observation(message) => Some(*message),
-        crate::WaitDetail::Blocked(message) | crate::WaitDetail::SlotCap(message) => {
-            Some(message.as_str())
-        }
-        crate::WaitDetail::OperatorSnoozed { .. } | crate::WaitDetail::Archive(_) => None,
+        crate::WaitDetail::Blocked(message)
+        | crate::WaitDetail::SlotCap(message)
+        | crate::WaitDetail::OperatorSnoozed { message, .. } => Some(message.as_str()),
+        crate::WaitDetail::Archive(_) | crate::WaitDetail::Prerequisites(_) => None,
     }
 }
 
@@ -135,35 +135,21 @@ impl ControllerScope {
         self.actor.as_deref()
     }
 
-    pub(crate) fn require(
-        &self,
-        state: &EngineState,
-        project_id: &str,
-    ) -> Result<(), ServiceError> {
-        if self
-            .actor()
-            .is_none_or(|actor| state.live_planner_project(actor) == Some(project_id))
-        {
-            Ok(())
-        } else {
-            Err(ServiceError::ControllerProject)
-        }
-    }
-
     pub(crate) fn task(
         &self,
         state: &EngineState,
         identity: &Identity,
     ) -> Result<(), ServiceError> {
-        if self.actor.is_some() {
-            let (id, _, repo) = state
+        if let Some(actor) = self.actor() {
+            if !state.verified_controller(actor) {
+                return Err(ServiceError::PlannerAuthorityRefused);
+            }
+            let (id, _, _) = state
                 .settings
                 .project_for_origin(&identity.repository)
-                .ok_or(ServiceError::ControllerProject)?;
-            self.require(state, id)?;
-            if repo.base != identity.base {
-                return Err(ServiceError::ControllerProject);
-            }
+                .filter(|(_, _, repo)| repo.base == identity.base)
+                .ok_or(ServiceError::Project)?;
+            state.settings.require_active_project(id)?;
         }
         Ok(())
     }
@@ -265,7 +251,6 @@ fn routes(
     let controller = Router::new()
         .route("/v1/tasks", get(list).post(admit))
         .route("/v1/tasks/{id}/acp", post(bind_acp))
-        .route("/v1/tasks/{id}/acp/refresh", post(refresh_acp))
         .route("/v1/tasks/{id}/next", get(next))
         .route("/v1/health", get(settings::health))
         .route("/v1/settings", get(settings::all))
@@ -535,7 +520,7 @@ async fn authorize(
     let supplied = credential(request.headers())?;
     let caller =
         request_controller(&api, &supplied, request.headers()).ok_or(ApiError::Unauthorized)?;
-    reauthorize_known(&api, &caller.scope).await?;
+    reauthorize_controller(&api, &caller.scope).await?;
     caller.extend(&mut request);
     Ok(next.run(request).await)
 }
@@ -572,29 +557,28 @@ fn request_controller(
     Some(ControllerEntry::t3(actor, key))
 }
 
-async fn reauthorize_known(api: &Api, scope: &ControllerScope) -> Result<(), ServiceError> {
+async fn reauthorize_controller(api: &Api, scope: &ControllerScope) -> Result<(), ServiceError> {
     let Some(actor) = scope.actor() else {
         return Ok(());
     };
-    {
-        let state = api.service.state.lock().await;
-        if state.live_planner_project(actor).is_some()
-            || state.settings.planner_route(actor).is_none()
-        {
-            return Ok(());
-        }
-    }
     scope
         .with_enrollment(|| async {
             let mut state = api.service.state.lock().await;
-            api.service
-                .planning_planner_project(&mut state, actor, None)
-                .map(|_| ())
+            api.service.require_controller(&mut state, actor)
         })
         .await
 }
 
-async fn controller_for_digest(api: &Api, digest: &[u8; 32]) -> Option<ControllerEntry> {
+async fn session_controller(
+    api: &Api,
+    session: &nucleus_store::AcpSession,
+) -> Option<ControllerEntry> {
+    let digest = &session.controller;
+    if let Some(thread) = &session.controller_thread {
+        let caller = ControllerEntry::t3(thread, api.t3_caller_key?);
+        return bool::from(caller.digest().ct_eq(digest)).then_some(caller);
+    }
+    // Sessions issued before the thread was stored can use the saved planner routes.
     if let Some(caller) = api
         .controllers
         .iter()
@@ -605,13 +589,18 @@ async fn controller_for_digest(api: &Api, digest: &[u8; 32]) -> Option<Controlle
     let key = api.t3_caller_key?;
     let state = api.service.state.lock().await;
     state
-        .settings
-        .projects
-        .as_ref()?
-        .projects
-        .values()
-        .flat_map(|project| &project.repositories)
-        .flat_map(|repo| repo.planner_threads.iter().map(String::as_str))
+        .enrolled_planners
+        .keys()
+        .map(String::as_str)
+        .chain(
+            state
+                .settings
+                .projects
+                .iter()
+                .flat_map(|registry| registry.projects.values())
+                .flat_map(|project| &project.repositories)
+                .flat_map(|repo| repo.planner_threads.iter().map(String::as_str)),
+        )
         .map(|actor| ControllerEntry::t3(actor, key))
         .find(|caller| bool::from(caller.digest().ct_eq(digest)))
 }
@@ -656,7 +645,7 @@ async fn authorize_task(
 ) -> Result<Response, ApiError> {
     let supplied = credential(request.headers())?;
     if let Some(caller) = request_controller(&api, &supplied, request.headers()) {
-        reauthorize_known(&api, &caller.scope).await?;
+        reauthorize_controller(&api, &caller.scope).await?;
         caller.extend(&mut request);
         return Ok(next.run(request).await);
     }
@@ -665,13 +654,14 @@ async fn authorize_task(
     } else {
         SessionAccess::Read
     };
-    let (id, digest) = api
+    let (id, session) = api
         .service
         .acp_credential(&selector, &supplied, access)
         .await
         .ok_or(ApiError::Unauthorized)?;
+    let digest = session.controller;
     let scope = if matches!(access, SessionAccess::Write) {
-        let caller = controller_for_digest(&api, &digest)
+        let caller = session_controller(&api, &session)
             .await
             .ok_or(ApiError::Unauthorized)?;
         caller.extend(&mut request);
@@ -682,11 +672,11 @@ async fn authorize_task(
         caller.scope
     } else {
         // Pilot readers are task-scoped independently of the current
-        // controller roster. Registry planner readers also carry project scope.
+        // controller roster. Registry readers also prove the issuing controller.
         let scope = if api.service.project.is_some() || digest == [0; 32] {
             ControllerScope::default()
         } else {
-            controller_for_digest(&api, &digest)
+            session_controller(&api, &session)
                 .await
                 .ok_or(ApiError::Unauthorized)?
                 .scope
@@ -698,7 +688,7 @@ async fn authorize_task(
         });
         scope
     };
-    reauthorize_known(&api, &scope).await?;
+    reauthorize_controller(&api, &scope).await?;
     if selector.contains('#') {
         // A task session proves its bound ID. Resolve the selector in its
         // controller's scope before handing that ID to the route.
@@ -734,19 +724,6 @@ async fn bind_acp(
         api.service
             .bind_acp(&id, controller, &authority, &scope, options.read_only)
             .await?,
-    ))
-}
-
-async fn refresh_acp(
-    State(api): State<Api>,
-    TaskPath(id): TaskPath,
-    Extension(authority): Extension<Authority>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    if !matches!(authority, Authority::Operator { .. }) {
-        return Err(ApiError::Unauthorized);
-    }
-    Ok(Json(
-        json!({"queued":api.service.queue_acp_refresh(&id).await?}),
     ))
 }
 
@@ -1390,6 +1367,8 @@ impl Summary {
 struct CardInputs {
     observed_wait: Option<crate::TaskWait>,
     dependencies_block: bool,
+    snooze: Option<crate::WaitDetail>,
+    state_label: String,
     attention: crate::attention::TaskAttention,
 }
 
@@ -1399,8 +1378,14 @@ impl CardInputs {
         state: &EngineState,
         dependencies_block: bool,
     ) -> Result<Self, ServiceError> {
+        let task = &row.task;
+        let observed_wait = state.waits.get(&task.identity().id).cloned();
+        let wait = state.effective_wait(task)?;
+        let detail = observed_wait.as_ref().and_then(|wait| wait.detail.as_ref());
         Ok(Self {
-            observed_wait: state.waits.get(&row.task.identity().id).cloned(),
+            state_label: state.display_state_label(task, wait, detail)?,
+            snooze: state.operator_snoozes.get(&task.identity().id).filter(|snooze| matches!(snooze, crate::WaitDetail::OperatorSnoozed { until, .. } if *until > crate::now_ms())).cloned(),
+            observed_wait,
             dependencies_block,
             attention: state.task_attention_with_dependencies(row, || Ok(dependencies_block))?,
         })
@@ -1451,32 +1436,14 @@ impl Card {
         let observed = inputs.observed_wait.as_ref();
         let reason = observed.and_then(|wait| wait.reason);
         let detail = observed.and_then(|wait| wait.detail.as_ref());
-        let wait = if inputs.dependencies_block && task.run().is_none() {
-            Some(WaitReason::Prerequisite)
-        } else {
-            reason.filter(|wait| *wait != WaitReason::Prerequisite || inputs.dependencies_block)
-        };
+        let wait = state.effective_wait(task)?;
         let times = state.store.board_times(id)?;
         let created_at_ms = times.admitted;
         let fixed = crate::titles::task_label_from_facts(task);
         let state_since_ms = times
             .since
             .filter(|_| fixed.is_some() || observed.is_some_and(|wait| wait.timed));
-        let state_label = match fixed {
-            Some(label) => label,
-            None => crate::titles::task_state_label(
-                task,
-                observed.map_or_else(
-                    || {
-                        (inputs.dependencies_block
-                            && crate::dependencies::checks_prerequisites(task))
-                        .then_some(WaitReason::Prerequisite)
-                    },
-                    |wait| wait.reason,
-                ),
-                detail,
-            ),
-        };
+        let state_label = inputs.state_label.clone();
         let archive_detail = match detail {
             Some(crate::WaitDetail::Archive(message)) if task.phase().is_terminal() => {
                 Some(message.as_str())
@@ -1498,8 +1465,15 @@ impl Card {
         let merge_hold = task
             .merge_hold()
             .filter(|_| wait == Some(WaitReason::MergeHold));
+        let prerequisite_detail = if wait == Some(WaitReason::Prerequisite) {
+            state.prerequisite_detail(task)?
+        } else {
+            None
+        };
         let wait_detail = archive_detail
+            .or(task.hold().map(|hold| hold.reason.as_str()))
             .or(merge_hold.map(|hold| hold.reason.as_str()))
+            .or(prerequisite_detail.as_deref())
             .or_else(|| {
                 if wait != reason
                     || task.hold().is_some()
@@ -1509,6 +1483,13 @@ impl Card {
                 }
                 board_wait_detail(detail?)
             });
+        let snooze = inputs.snooze.as_ref().and_then(board_wait_detail);
+        let wait_detail = match (wait_detail, snooze) {
+            (Some(reason), Some(snooze)) => Some(format!("{reason} {snooze}")),
+            (Some(reason), None) => Some(reason.to_owned()),
+            (None, Some(snooze)) => Some(snooze.to_owned()),
+            (None, None) => None,
+        };
         Ok(Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),
@@ -1521,7 +1502,7 @@ impl Card {
             lifecycle: crate::presentation::task_lifecycle(
                 task,
                 &state.store,
-                wait_detail.unwrap_or(&state_label),
+                wait_detail.as_deref().unwrap_or(&state_label),
                 wait,
                 created_at_ms,
                 transcript,
@@ -1531,7 +1512,7 @@ impl Card {
             latest_event_at_ms: times.latest_event,
             created_at_ms,
             wait,
-            wait_detail: wait_detail.map(str::to_owned),
+            wait_detail,
             question: task.question().cloned(),
             hold: task.hold().or(merge_hold).cloned(),
         })
@@ -1738,6 +1719,7 @@ fn service_error_status(error: &ServiceError) -> StatusCode {
             | nucleus_store::StoreError::DuplicateDecisionOptionLabel,
         )
         | ServiceError::Project
+        | ServiceError::ProjectRequired
         | ServiceError::UnboundCheckout { planner: false, .. }
         | ServiceError::Settings(
             nucleus_store::StorageError::InvalidSettings(_)
@@ -1749,9 +1731,7 @@ fn service_error_status(error: &ServiceError) -> StatusCode {
         ) => StatusCode::BAD_REQUEST,
         ServiceError::QuestionPlanner
         | ServiceError::AuthorDeclarationOperator
-        | ServiceError::TellPlannerRequired
         | ServiceError::WatchAgentRequired
-        | ServiceError::ControllerProject
         | ServiceError::UnboundCheckout { planner: true, .. }
         | ServiceError::PlannerEnrollmentRefused(_)
         | ServiceError::PlannerAuthorityRefused

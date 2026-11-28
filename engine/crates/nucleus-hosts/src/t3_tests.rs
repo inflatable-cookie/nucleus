@@ -1104,67 +1104,6 @@ async fn parent_unarchive_requires_current_archived_shell_evidence() {
 }
 
 #[tokio::test]
-async fn bounded_parent_refresh_keeps_the_held_custody_fence() {
-    let checkout = checkout_fixture();
-    let binding = binding(checkout.path());
-    let mut first = parent_snapshot(&binding, "completed", false);
-    first["hasMoreHistory"] = json!(true);
-    first["historyCursor"] = json!("older-turns");
-    first["turnItemsOmitLocalVisible"] = json!(true);
-    first["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:38:00Z");
-    let mut fresh = first.clone();
-    fresh["snapshotSequence"] = json!(18);
-    fresh["projection"]["thread"]["updatedAt"] = json!("2026-11-24T17:39:00Z");
-    let mut row = first["projection"]["thread"].clone();
-    row["latestRunId"] = json!(NATIVE_RUN);
-    row["status"] = json!("completed");
-    row["pendingBackgroundTasks"] = json!([]);
-    let read = "orchestration.subscribeThread";
-    let (host, native) = server(vec![
-        (read, Response::ParentSnapshot(first)),
-        (read, Response::ParentSnapshot(fresh)),
-        ("orchestration.dispatchCommand", Response::Success),
-    ])
-    .await;
-    host.rpc.use_held_shell();
-    host.rpc
-        .fixture_shell(&json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":16, "threads":[row], "projects":[]
-        }}));
-    let prepare = || host.prepare_parent_refresh(&binding, "fixture-acp");
-    let mut verified = Vec::new();
-    for _ in 0..2 {
-        verified.push(prepare().await.unwrap().unwrap());
-    }
-    row["pendingBackgroundTasks"] = json!([{"kind":"monitor","taskId":"fixture-monitor"}]);
-    host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
-    assert_repeat_custody_refusal(&host, verified).await;
-    row["pendingBackgroundTasks"] = json!([]);
-    row["updatedAt"] = json!("2026-11-24T17:39:00Z");
-    host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
-    host.write_parent(prepare().await.unwrap().unwrap(), |_| Ok(()))
-        .await
-        .unwrap();
-    assert_eq!(native.await.unwrap().len(), 3);
-}
-
-async fn assert_repeat_custody_refusal(host: &T3, verified: Vec<crate::ParentWrite>) {
-    let mut refusals = Vec::new();
-    for write in verified {
-        let Err(crate::ParentSendError::NotSent(error)) =
-            host.write_parent(write, |_| Ok(())).await
-        else {
-            panic!("new background work must refuse the write before the wire");
-        };
-        refusals.push(error.to_string());
-    }
-    assert_eq!(refusals[0], refusals[1]);
-    assert!(refusals[0].contains("pendingBackgroundTasks changed"));
-}
-
-#[tokio::test]
 async fn a_retained_read_cannot_infer_absence_when_the_held_shell_lists_the_thread() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());

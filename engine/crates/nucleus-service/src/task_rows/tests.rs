@@ -317,6 +317,14 @@ impl Fixture {
         self.service.host.fixture_project_shell(&shell, PROVIDER);
     }
 
+    // The held parent row, as a role send observes it.
+    fn held_row(&self) -> RowObservation {
+        RowObservation {
+            sequence: 1,
+            visibility: self.service.host.row_visibility_hint(&self.thread).unwrap(),
+        }
+    }
+
     async fn sync(&self) -> nucleus_hosts::HostCalls {
         self.publish_shell();
         self.sync_held().await
@@ -667,12 +675,7 @@ async fn a_hold_restores_an_operator_snooze_applied_after_preparation() {
     fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
     fixture.publish_shell();
 
-    assert!(
-        service
-            .deliver_parent(&row, write, None, false)
-            .await
-            .unwrap()
-    );
+    assert!(service.deliver_parent(&row, write, None).await.unwrap());
 
     let pending = pending_parent_snooze(service).await;
     assert_eq!(pending.command, command);
@@ -744,12 +747,7 @@ async fn send_snoozed_hold(fixture: &Fixture, task: &Task) -> TaskRow {
     fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
     fixture.publish_shell();
     let write = fixture.prepare_hold("Preparing the task thread.", None);
-    assert!(
-        service
-            .deliver_parent(&row, write, None, false)
-            .await
-            .unwrap()
-    );
+    assert!(service.deliver_parent(&row, write, None).await.unwrap());
     assert_eq!(fixture.commands(), ["message.dispatch"]);
     row
 }
@@ -843,10 +841,7 @@ async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
     let write = fixture.prepare_hold("Original task prompt", None);
     let command = write.command_id().unwrap().to_owned();
     fixture.native.lock().unwrap().next_reply = NextReply::Lost;
-    let error = service
-        .deliver_parent(&row, write, None, false)
-        .await
-        .unwrap_err();
+    let error = service.deliver_parent(&row, write, None).await.unwrap_err();
     assert!(matches!(error, ServiceError::ParentRetry { .. }));
     service
         .schedule_result(&row, &Err(error), Priority::Effect)
@@ -878,9 +873,7 @@ async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
         .host
         .fixture_project_shell(&json!({"projects":[],"threads":[]}), PROVIDER);
     assert!(matches!(
-        service
-            .deliver_parent(&row, refused, Some(original), false)
-            .await,
+        service.deliver_parent(&row, refused, Some(original)).await,
         Err(ServiceError::ParentRetry { .. })
     ));
     assert_eq!(fixture.commands().len(), 1);
@@ -889,7 +882,7 @@ async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
     let write = retry();
     assert!(
         service
-            .deliver_parent(&row, write, Some(original), false)
+            .deliver_parent(&row, write, Some(original))
             .await
             .unwrap()
     );
@@ -931,7 +924,7 @@ async fn a_rejected_hold_persists_its_replacement_before_retrying() {
     fixture.native.lock().unwrap().next_reply = NextReply::Rejected;
     let error = fixture
         .service
-        .deliver_parent(&row, write, None, false)
+        .deliver_parent(&row, write, None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -959,7 +952,7 @@ async fn a_rejected_hold_persists_its_replacement_before_retrying() {
     assert_eq!(fresh.command_id(), Some(replacement.command.as_str()));
     assert!(
         service
-            .deliver_parent(&row, fresh, Some(replacement), false)
+            .deliver_parent(&row, fresh, Some(replacement))
             .await
             .unwrap()
     );
@@ -1058,12 +1051,7 @@ async fn a_successor_prompt_releases_the_previous_acp_turn_and_anchors_the_reser
     let label = "Starting reviewer round 1";
     let old = fixture.prepare_hold(label, None);
     let old_prompt = old.freeze().prompt().unwrap().to_owned();
-    assert!(
-        service
-            .deliver_parent(&row, old, None, false)
-            .await
-            .unwrap()
-    );
+    assert!(service.deliver_parent(&row, old, None).await.unwrap());
 
     let (output, mut frames) = tokio::sync::mpsc::unbounded_channel();
     let cwd = PathBuf::from(&fixture.binding.worktree_path);
@@ -1197,14 +1185,14 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
         service.lookup(&state, ID).unwrap()
     };
     let board = fixture.board_task().await;
-    assert_eq!(board["stateLabel"], "Working · T3");
+    assert_eq!(board["stateLabel"], "Starting");
     assert!(board["waitDetail"].is_null());
     assert!(
         board["lifecycle"]["steps"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|step| step["note"] == "Working · T3")
+            .any(|step| step["note"] == "Starting")
     );
     let ready = Observed::Known(Host::Current {
         instance: launch.instance.clone(),
@@ -1221,7 +1209,7 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
         .unwrap();
     assert_eq!(
         crate::titles::task_state_label(&sent.task, Some(WaitReason::Starting), None),
-        "Working · starting"
+        "Working"
     );
     service.observe_role_state(&sent, &ready).await.unwrap();
     fixture.sync().await;
@@ -1309,7 +1297,7 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
         .await
         .unwrap();
     let card = fixture.board_task().await;
-    assert_eq!(card["stateLabel"], "Reviewing · capacity");
+    assert_eq!(card["stateLabel"], "Waiting for a slot");
     assert_eq!(card["attention"], "waiting");
     fixture
         .native
@@ -1549,10 +1537,6 @@ async fn an_actionable_row_retries_its_claimed_clear_with_the_same_command() {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "follow one row through owned, operator and cleared snoozes"
-)]
 async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze() {
     let pending = pending_task();
     let fixture = Fixture::new(&pending).await;
@@ -1573,30 +1557,15 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     };
     publish_shell();
     let fence = service.effect(&row).await.unwrap();
-    let prepare = || async {
-        let (write, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
-            service
-                .host
-                .prepare_parent_refresh(&fixture.binding, PROVIDER),
-        ))
-        .await;
-        assert_eq!(calls.get("orchestration.subscribeThread"), Some(&1));
-        write
+    let prepare = |label: &str| {
+        let command = format!("{}-hold-acp-0:{PROVIDER}~{label}", fixture.thread);
+        fixture.prepare_hold(label, Some(&command))
     };
-    let write = prepare().await.unwrap().unwrap();
-    let (reused, calls) = nucleus_hosts::T3::count_pass_calls(Box::pin(
-        service
-            .host
-            .prepare_parent_refresh(&fixture.binding, PROVIDER),
-    ))
-    .await;
-    assert!(reused.unwrap().is_some());
-    assert!(calls.is_empty());
+    let mut write = prepare("owned");
     fixture
         .service
         .visibility_time
         .store(1_893_456_002_000, std::sync::atomic::Ordering::Relaxed);
-    let mut write = write;
     write.allow_owned_snoozes(
         service
             .owned_delivery_snoozes(&row, &fixture.thread)
@@ -1604,7 +1573,7 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
             .unwrap(),
     );
     service
-        .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())
+        .check_parent_snooze(&row, write.binding(), fixture.held_row())
         .await
         .unwrap();
     service.host.write_parent(write, |_| Ok(())).await.unwrap();
@@ -1621,10 +1590,10 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
         native.settled_at = json!("2026-11-23T18:10:00Z");
     }
     publish_shell();
-    let snoozed_refresh = prepare().await.unwrap().unwrap();
+    let snoozed_hold = prepare("snoozed");
     assert!(
         service
-            .deliver_parent(&row, snoozed_refresh, None, true)
+            .deliver_parent(&row, snoozed_hold, None)
             .await
             .unwrap()
     );
@@ -1638,9 +1607,9 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
 
     fixture.native.lock().unwrap().until = Value::Null;
     publish_shell();
-    let write = prepare().await.unwrap().unwrap();
+    let write = prepare("awake");
     service
-        .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())
+        .check_parent_snooze(&row, write.binding(), fixture.held_row())
         .await
         .unwrap();
     let (sent, calls) =
@@ -1657,6 +1626,104 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     drop(fence);
 
     assert_terminal_forgets_snooze(&fixture).await;
+}
+
+#[tokio::test]
+async fn a_pass_leaves_a_stored_pending_row_refresh_unsent() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+        .unwrap();
+    // A held task prepares no launch, so any message here would be the refresh.
+    let operator = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let row = service
+        .command(ID, &operator, Command::Hold("Wait".into()))
+        .await
+        .unwrap();
+    // The row an earlier engine froze before it could confirm the send.
+    let command = format!("{}-refresh-1", fixture.thread);
+    let text = "Nucleus refreshes the current task row.";
+    let wire = json!({
+        "binding":fixture.binding, "method":"continue", "provider":PROVIDER,
+        "payload":{"type":"message.dispatch","commandId":command,"threadId":fixture.thread,
+            "messageId":"fixture-refresh-message","text":text,"attachments":[],
+            "createdBy":"user","creationSource":"server",
+            "dispatchMode":{"type":"queue_after_active"}},
+    })
+    .to_string();
+    let db = rusqlite::Connection::open(service.storage.database().path().join("engine.sqlite"))
+        .unwrap();
+    db.execute(
+        "INSERT INTO parent_refresh_deliveries (task_id,version,command,wire,due_ms,result)
+         VALUES (?1,?2,?3,?4,0,'pending')",
+        rusqlite::params![ID, row.version, command, wire],
+    )
+    .unwrap();
+    fixture.publish_shell_at(Some(1));
+
+    let result = Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await;
+
+    assert!(fixture.commands().is_empty(), "{result:?}");
+    let stored: (String, String) = db
+        .query_row(
+            "SELECT command, result FROM parent_refresh_deliveries WHERE task_id=?1",
+            [ID],
+            |stored| Ok((stored.get(0)?, stored.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(stored, (command, "pending".into()));
+}
+
+#[tokio::test]
+async fn a_pass_forgets_a_planner_notice_wait_it_does_not_renew() {
+    let task = pending_task();
+    let fixture = Fixture::new(&task).await;
+    let service = &fixture.service;
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+        .unwrap();
+    // A held task waits on no planner notice.
+    let operator = Authority::Operator {
+        actor: "fixture".into(),
+    };
+    let row = service
+        .command(ID, &operator, Command::Hold("Wait".into()))
+        .await
+        .unwrap();
+    service
+        .state
+        .lock()
+        .await
+        .planner_notice_waiters
+        .insert(ID.into());
+    fixture.publish_shell_at(Some(1));
+
+    let result = Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await;
+
+    assert!(
+        matches!(result, Ok(Action::Wait(WaitReason::Hold))),
+        "{result:?}"
+    );
+    assert!(
+        !service
+            .state
+            .lock()
+            .await
+            .planner_notice_waiters
+            .contains(ID)
+    );
 }
 
 #[tokio::test]
@@ -1695,12 +1762,7 @@ async fn launch_preparation_can_unarchive_before_recording_a_hold() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        service
-            .deliver_parent(&row, write, None, false)
-            .await
-            .unwrap()
-    );
+    assert!(service.deliver_parent(&row, write, None).await.unwrap());
     assert_eq!(fixture.commands(), ["thread.unarchive"]);
     assert!(
         service
@@ -1740,12 +1802,7 @@ async fn an_active_role_publishes_its_frozen_parent_prompt() {
     let write = fixture.prepare_hold(prompt, None);
     let frozen = write.freeze().prompt().unwrap().to_owned();
     let _fence = service.effect(&row).await.unwrap();
-    assert!(
-        service
-            .deliver_parent(&row, write, None, false)
-            .await
-            .unwrap()
-    );
+    assert!(service.deliver_parent(&row, write, None).await.unwrap());
     let change = changes.try_recv().unwrap();
     assert_eq!(change.task_id, ID);
     assert_eq!(change.version, row.version);
@@ -2353,6 +2410,179 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
 }
 
 #[tokio::test]
+async fn operator_snooze_alone_does_not_create_a_wait() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let (task, _, _) = reservation(ID, Entry::Brief, &service.fixture().start);
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.publish_shell();
+    let until = service
+        .host
+        .row_visibility_hint(&fixture.thread)
+        .unwrap()
+        .snoozed_until_ms
+        .unwrap();
+    {
+        let mut state = service.state.lock().await;
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
+        let row = service.lookup(&state, ID).unwrap();
+        service
+            .schedule_operator_snooze(
+                &mut state,
+                &row,
+                &fixture.thread,
+                until,
+                "Snoozed until 2099".into(),
+            )
+            .unwrap();
+        assert_eq!(state.effective_wait(&task).unwrap(), None);
+        service.desire_phase_title(&mut state, &task, row.number);
+        assert!(
+            state
+                .store
+                .pending_title(&fixture.thread)
+                .unwrap()
+                .unwrap()
+                .desired
+                .starts_with("Working:")
+        );
+    }
+    let card = fixture.board_task().await;
+    assert_eq!(card["stateLabel"], "Working");
+    assert!(card["wait"].is_null());
+    assert_eq!(card["waitDetail"], "Snoozed until 2099");
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "keep the snoozed prerequisite and hold in one real-row fixture"
+)]
+async fn operator_snooze_preserves_the_real_wait_on_each_surface() {
+    let mut task = pending_task();
+    let observation = nucleus_core::Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(nucleus_core::Workspace::Absent),
+    };
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    let fixture = Fixture::new(&task).await;
+    fixture.seed_prerequisite(&task).await;
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.publish_shell();
+    let service = &fixture.service;
+    let row = service.task(ID).await.unwrap();
+    let until = service
+        .host
+        .row_visibility_hint(&fixture.thread)
+        .unwrap()
+        .snoozed_until_ms
+        .unwrap();
+    {
+        let mut state = service.state.lock().await;
+        // A stale capacity observation must not hide the prerequisite.
+        state
+            .observe_wait(&task, Some(WaitReason::Capacity))
+            .unwrap();
+        service
+            .schedule_operator_snooze(
+                &mut state,
+                &row,
+                &fixture.thread,
+                until,
+                "Snoozed until 2099".into(),
+            )
+            .unwrap();
+        assert_eq!(
+            state.effective_wait(&task).unwrap(),
+            Some(WaitReason::Prerequisite)
+        );
+        service.desire_phase_title(&mut state, &task, row.number);
+        assert!(
+            state
+                .store
+                .pending_title(&fixture.thread)
+                .unwrap()
+                .unwrap()
+                .desired
+                .starts_with("Waiting for #1:")
+        );
+    }
+    assert_eq!(fixture.board_task().await["stateLabel"], "Waiting for #1");
+    let key = [2; 32];
+    let api = router(
+        Arc::clone(service),
+        [Controller {
+            credential: key,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+    );
+    let request = || {
+        Request::get("/v1/tasks/row/next")
+            .header("host", "127.0.0.1:9")
+            .header("authorization", format!("Bearer {}", hex::encode(key)))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let response = api.clone().oneshot(request()).await.unwrap();
+    let next: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(next["stateLabel"], "Waiting for #1");
+    assert!(
+        next["waitDetail"]
+            .as_str()
+            .unwrap()
+            .contains("Snoozed until 2099")
+    );
+    assert!(next["waitDetail"].as_str().unwrap().contains("#1"));
+
+    task.command(
+        Command::Hold("After fixture#192".into()),
+        &Authority::Planner {
+            actor: "planner".into(),
+        },
+        &observation,
+    )
+    .unwrap();
+    {
+        let mut state = service.state.lock().await;
+        service
+            .commit(&mut state, &row, &task, &event("fixture_hold"), None)
+            .unwrap();
+        service.desire_phase_title(&mut state, &task, row.number);
+        assert!(
+            state
+                .store
+                .pending_title(&fixture.thread)
+                .unwrap()
+                .unwrap()
+                .desired
+                .starts_with("Held by planner:")
+        );
+    }
+    assert_eq!(fixture.board_task().await["stateLabel"], "Held by planner");
+    let response = api.oneshot(request()).await.unwrap();
+    let next: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(next["stateLabel"], "Held by planner");
+    assert_eq!(next["hold"]["reason"], "After fixture#192");
+    assert!(
+        next["waitDetail"]
+            .as_str()
+            .unwrap()
+            .contains("Snoozed until 2099")
+    );
+}
+
+#[tokio::test]
 async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
     let mut fixture = Fixture::new(&pending_task()).await;
     let (task, _, _) = crate::tests::reserved_reviewer(ID, &fixture.service.fixture().start);
@@ -2367,7 +2597,6 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
     let hold = nucleus_store::ParentDelivery {
         version: row.version,
         command: write.command_id().unwrap().into(),
-        refresh: false,
         wire: Some(serde_json::to_string(write.freeze()).unwrap()),
         legacy_prompt: None,
         due_ms: 0,

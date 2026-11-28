@@ -45,7 +45,7 @@ const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
 #[test]
-fn operator_snooze_is_not_projected_as_board_wait_text() {
+fn operator_snooze_detail_preserves_its_deadline() {
     let detail = crate::WaitDetail::OperatorSnoozed {
         version: 1,
         thread: "thread:fixture".into(),
@@ -53,7 +53,32 @@ fn operator_snooze_is_not_projected_as_board_wait_text() {
         message: "You snoozed this thread until 00:00".into(),
     };
 
-    assert_eq!(board_wait_detail(&detail), None);
+    assert_eq!(
+        board_wait_detail(&detail),
+        Some("You snoozed this thread until 00:00")
+    );
+}
+
+#[tokio::test]
+async fn the_row_refresh_route_is_gone() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+    seed_task(&service, &task).await;
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+    );
+    let found = get_as(&api, "/v1/tasks/worker", &BOARD_KEY).await;
+    assert_eq!(found.status(), StatusCode::OK);
+    assert_eq!(
+        post_json(&api, "/v1/tasks/worker/acp/refresh", &BOARD_KEY, &json!({})).await,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]
@@ -136,7 +161,6 @@ async fn only_a_shell_active_role_gets_the_legacy_hint_without_a_hold() {
                     &nucleus_store::ParentDelivery {
                         version: row.version,
                         command: write.command_id().unwrap().into(),
-                        refresh: false,
                         wire: Some(serde_json::to_string(frozen).unwrap()),
                         legacy_prompt: None,
                         due_ms: 0,
@@ -505,7 +529,7 @@ fn assert_worker_detail(detail: &Value, list: &Value, thread: &str) {
     assert_eq!(lifecycle["steps"][1]["elapsedMs"], 831_000);
     assert!(lifecycle["steps"][1]["activeSinceMs"].is_null());
     assert_eq!(lifecycle["steps"][2]["roundLabel"], "Round 1");
-    assert_eq!(detail["stateLabel"], "Reviewing · capacity");
+    assert_eq!(detail["stateLabel"], "Waiting for a slot");
     assert_eq!(lifecycle["steps"][2]["note"], detail["stateLabel"]);
     assert_eq!(lifecycle["admittedAtMs"], detail["createdAtMs"]);
     assert!(lifecycle["steps"][2]["activeSinceMs"].is_null());

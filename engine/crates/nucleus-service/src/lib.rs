@@ -113,8 +113,8 @@ pub enum ServiceError {
     QueuePriorityUnavailable,
     #[error("The brief changed. Reopen Amend to edit the latest version.")]
     BriefConflict,
-    #[error("the controller cannot access this project")]
-    ControllerProject,
+    #[error("name a project to run this command, using its ID, name or repository")]
+    ProjectRequired,
     #[error("Nucleus is verifying this T3 planner and repository. Retry shortly.")]
     PlannerEnrollmentPending(watch::Receiver<()>),
     #[error("{0}")]
@@ -157,8 +157,6 @@ pub enum ServiceError {
     TellInput,
     #[error("This reply route is unavailable. Nothing was sent.")]
     TellReply,
-    #[error("tell requires a verified planner binding with a sending project")]
-    TellPlannerRequired,
     #[error("watching a task requires a verified planner thread or active run ticket")]
     WatchAgentRequired,
     #[error("no project named {0}. Use a registered project ID, name or repository.")]
@@ -297,6 +295,7 @@ enum WaitDetail {
     /// A capacity wait on a task weight cap; the text is its whole label.
     SlotCap(String),
     Archive(String),
+    Prerequisites(Vec<String>),
     OperatorSnoozed {
         version: i64,
         thread: String,
@@ -315,8 +314,8 @@ struct State {
     scheduler_error: Option<&'static str>,
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, TaskWait>,
+    operator_snoozes: BTreeMap<String, WaitDetail>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
-    acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: schedule::CapacityWaiters,
     group_waits: BTreeMap<String, profiles::GroupPause>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
@@ -486,8 +485,8 @@ impl Service {
                 scheduler_error: None,
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
+                operator_snoozes: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
-                acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: BTreeSet::new(),
                 group_waits: BTreeMap::new(),
                 observed_forge: BTreeMap::new(),
@@ -765,7 +764,12 @@ impl Service {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
         }
-        self.refresh_acp_if_requested(row).await?;
+        // This pass registers the task again if it still waits for a planner.
+        self.state
+            .lock()
+            .await
+            .planner_notice_waiters
+            .remove(&task.identity().id);
         let action = self.advance(row, host).await?;
         if matches!(
             action,
@@ -873,7 +877,7 @@ impl Service {
         let State {
             thread_tasks,
             schedule,
-            waits,
+            operator_snoozes,
             ..
         } = &mut *state;
         let now = Instant::now();
@@ -889,9 +893,15 @@ impl Service {
                 if tracked.role && prior != Some(&hint) {
                     self.title_wake.notify_one();
                 }
-                let still_snoozed = matches!(waits.get(id).and_then(|wait| wait.detail.as_ref()),
+                let still_snoozed = matches!(operator_snoozes.get(id),
                     Some(WaitDetail::OperatorSnoozed { thread, until, .. })
                     if thread != &hint.thread || (hint.snoozed_until() == Some(*until) && !hint.closed()));
+                if !still_snoozed
+                    && let Some(WaitDetail::OperatorSnoozed { version, .. }) =
+                        operator_snoozes.remove(id)
+                {
+                    self.publish(id, version);
+                }
                 if !still_snoozed && (tracked.due || tracked.role) && prior != Some(&hint) {
                     schedule.wake(id, now, Priority::Decision);
                     self.wake.notify_one();
@@ -1280,7 +1290,6 @@ impl Service {
                 && held.is_none()
                 && !active(&current.task)
                 && !state.forge_requested.contains(id)
-                && state.acp_refresh_requests.get(id) != Some(&current.version)
         {
             if state.observe_wait(&current.task, None)? {
                 self.title_wake.notify_one();
@@ -1492,17 +1501,20 @@ impl Service {
         state
             .schedule
             .defer_effect(id, Instant::now() + Duration::from_millis(delay));
-        let detail = operator.then(|| WaitDetail::OperatorSnoozed {
-            version: row.version,
-            thread: thread.into(),
-            until,
-            message,
-        });
-        if state.observe_wait_detail(&row.task, Some(WaitReason::HostUnknown), detail)? {
-            self.desire_title(state, &row.task, row.number);
-            self.title_wake.notify_one();
-            self.publish(id, row.version);
+        if operator {
+            state.operator_snoozes.insert(
+                id.clone(),
+                WaitDetail::OperatorSnoozed {
+                    version: row.version,
+                    thread: thread.into(),
+                    until,
+                    message,
+                },
+            );
+        } else {
+            state.operator_snoozes.remove(id);
         }
+        self.publish(id, row.version);
         Ok(())
     }
 
@@ -2622,6 +2634,7 @@ impl State {
         if task.phase().is_terminal() && task.run().is_none() {
             let changed = self.set_wait(id, None);
             self.waits.remove(id);
+            self.operator_snoozes.remove(id);
             return changed;
         }
         let changed = self.set_wait(id, reason);

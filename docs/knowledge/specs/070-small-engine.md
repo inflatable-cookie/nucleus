@@ -154,7 +154,7 @@ Later decisions carry their own attribution.
      - Thread reads are bounded and decide from T3's coverage fields. A full thread history is never requested.
      - Monitoring reuses a thread's last observation while its shell marker holds. Exact reads happen only for a due effect, an ambiguous reply or an ordered safety fence, and one read is shared across the steps of that effect.
      - Done thread housekeeping uses the synchronized shell. It makes no thread reads on ordinary ticks.
-     - Presentation writes (titles, snoozes, refreshes) happen only when the shown value differs. Readback is due-scheduled, never immediate, and never after a failed write.
+     - Presentation writes (titles, snoozes) happen only when the shown value differs. Readback is due-scheduled, never immediate, and never after a failed write.
      - One host budget covers every background worker. Safety probes and operator actions come before presentation. One failure deadline applies to every call and reconnect.
      - Rare reads (provider catalog, setup) happen on demand and are cached by revision, not refreshed per pass.
      - Each pass records its host calls by method, timeouts, and reads of terminal or archived threads.
@@ -162,9 +162,9 @@ Later decisions carry their own attribution.
    `hasMoreHistory` describes the history window. `turnItemsOmitLocalVisible`
    describes the compact timeline representation. Native run and request
    evidence keeps its meaning in either form. Settlement of an observed native
-   run, parent refresh and unarchive use a bound shell row at or after the
-   observed revision. The row must show no active turn, outstanding request or
-   pending background work. The live subscription omits archived rows. An
+   run and unarchive use a bound shell row at or after the observed revision.
+   The row must show no active turn, outstanding request or pending background
+   work. The live subscription omits archived rows. An
    exact bound archive that needs a quiet decision uses the archived shell on
    demand and discards its evidence if the live shell changes. Delivery follows
    the matching native run or the command receipt. A missing timeline item
@@ -224,9 +224,9 @@ Later decisions carry their own attribution.
 14. **Messages go by project, through the host adapter.** Tom: "we sometimes need to send a message from one planner to all the others".
     - New messages address a project, a list of projects or `all` planners. Rulings 40 and 41 below govern exact replies, claims and fallback delivery.
     - Nucleus resolves each project's current planner from the in-memory authority snapshot (ruling 11). It then hands the text to that planner's host adapter, whose one delivery operation queues a notice and never steers a running turn. T3's adapter un-settles a settled thread to deliver. An adapter for another ADE implements the same operation its own way, so a broadcast can reach planners in different ADEs at once.
-    - Each message names its sending project. Its recipient can reply directly to the sender for seven days (ruling 40).
+    - Each message names its sending thread and project, or “no project”. Its recipient can reply directly to the sender for seven days (ruling 40).
     - Each recipient's delivery is recorded (queued or delivered) so the sender can see who it reached.
-    - The Rust CLI takes `nucleus tell <project|all> <text>`, with repeated `--project <id-or-name>` for a list. IDs take precedence over names. A name shared by multiple projects requires an ID. The caller needs an existing verified planner binding for the sending project, and can address any active project. `all` snapshots the active project IDs for that request.
+    - The Rust CLI takes `nucleus tell <project|all> <text>`, with repeated `--project <id-or-name>` for a list. IDs take precedence over names. A name shared by multiple projects requires an ID. Any verified T3 thread can address an active project (ruling 65). `all` snapshots the active project IDs for that request.
     - A project address prefers the live claimed planner, then the most recently verified eligible planner. Both exclude the sending thread. When recipient proof is cold, the scheduler verifies saved candidates against the exact thread and checkout before admission records any deliveries. After an inconclusive check, that recipient is reported as having no live planner for this request. Other verified recipients proceed, and the saved binding remains available for a later check. A list or broadcast groups the resolved projects by exact thread and names each group's projects in one notice. Definitive rejection before delivery allows a fresh attempt. An uncertain send retains its exact binding for readback. Native queue acceptance stays queued until the receiving turn starts.
     - Messages allow 4,000 UTF-16 units. Project addresses allow 20 new messages per receiving project per hour. Each receiving thread can take 20 deliveries per hour across routes. A request that reached no recipients can be retried immediately. An identical retry with receipts returns the originals within the hour and while any delivery is outstanding. Repeated content from the same sending thread shares each recent or outstanding project receipt. Replies are scoped to their handle.
     - The task question stays the only blocking ask: one per task, answered by its planner.
@@ -290,13 +290,13 @@ Later decisions carry their own attribution.
     - Finished task threads archive independently of workspace cleanup. A retained checkout stays visible on the board and in Next.
     - Tom, 2026-11-24: "We'll need the generated project badge icons that match T3 (the screenshot shows a card from rust version and a card from TS version) along with task numbers". Each repository gets its own durable allocator. Seed it from the fenced TypeScript allocator before admitting into a migrated repository and backfill the three pilot tasks in admission order.
     - The task row shows `<State>: #N <brief title>`. Worker children use `#N: <brief title>` and reviewer children use `#N review: <brief title>`. T3 already shows the project. Use the assigned number without padding, and omit the number until it is assigned. Strip a trailing `worker` and fit the title to the host's limit at a word boundary. Update existing live task rows through the title receipt. Already-launched child titles keep their frozen value.
-    - Rust CLI task commands and task API paths accept `repo#N` wherever they took only an internal task ID. The engine uses its assigned numbers and the authenticated controller's scope. Bare `#N` requires a project with exactly one repository. When a slug matches multiple visible tasks, use `owner/repo#N`. Internal IDs remain valid.
+    - Rust CLI task commands and task API paths accept `repo#N` wherever they took only an internal task ID. The engine uses its assigned numbers across active projects. Bare `#N` requires a project with exactly one repository. When a slug matches multiple visible tasks, use `owner/repo#N`. Internal IDs remain valid.
     - The Inbox title shows decisions first. Its running count follows visible,
       unfinished Working rows with a child holding an active turn or positively observed
       background work, or a two-minute handover after the child ends,
       using the held shell. With neither decisions nor Working rows it reads “All quiet”.
     - Tom, 2026-11-25, on finished tasks reading "Starting" while closing: "it's pretty confusing. Can we improve the labels?" The label leads with the phase: Queued, Working, Reviewing, Changes, Merging, Closing, Done or Cancelled. Starting means only that a worker or reviewer launch is in flight. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
-    - Tom, 2026-11-25: ‘The "you snoozed this thread until…" messages need to go - these are working threads, not snoozed, and T3 already tells me how long a thread has been snoozed from in the UI if it is snoozed. this is just noise, and means I can't read what the task actually is! State labels should be 1 to 3 words, longer is an exception, this is WAY too long’. A row label uses at most three words, including the phase and an optional short cause, as in "Queued · capacity", "Reviewing · paused" (a capacity wait on a paused subscription group, ruling 51) or "Closing · GitHub". Snoozed rows keep the same current title. T3 displays the snooze deadline. A matching Nucleus receipt owns its horizon until the shell observes the clear.
+    - Keep row labels short. Queued labels retain a short cause; other waiting labels name the hold, prerequisite, slot, paused group or start. A snooze never supplies a wait label. The snooze deadline stays in the status detail and Next, while T3 also displays it. A matching Nucleus receipt owns its horizon until the shell observes the clear.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof, never gates task progress or archival, and confirms only when synchronized shell readback shows the desired title. A confirmed generation whose held shell still displays older wording is reopened under its existing command ID while preserving any newer generation, and an idle tick with matching or absent shell readback makes no native call.
     - One local attention projection feeds the board and `task.next`. A missing or cancelled prerequisite needs an owner edit.
     - **T3 task rows follow one rule.** Tom, 2026-11-25: "The logic doesn't need to be complicated - if an agent is running, put it in Working, otherwise Snooze it until it's done, then Archive. It needs a little bit of smoothing off so they don't jump between Working and Snoozed when transitioning states. It shouldn't need to be this complicated?" This replaces the attention-based row reconciliation and its special cases.
@@ -315,7 +315,7 @@ Later decisions carry their own attribution.
     - When an unknown T3 planner calls a planning command, the scheduler reads that exact thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.
     - Send to planner can also bind a matching T3 project when it starts a project's first planner ([Spec 071, decision 7](071-detail-views.md#decisions)).
     - Several verified planners can bind to the same project through any of its repositories. Projects settings retain those thread IDs with their native project and repository route. After restart or loss of host observation, the scheduler rechecks a candidate on demand against the exact current T3 identity and checkout before restoring authority. A positive read that the thread is gone, archived, a child or in a different native project removes the binding. Uncertain reads and checkout mismatches keep the record pending verification.
-    - Task commands accept any live planner binding for the project. A command missing PR-head evidence reads it within the request and checks the same task revision and caller before committing. If the proof times out or fails, the caller receives the cause. Nucleus does not queue the command for later replay. Notices try the task's origin first and fall back to another verified planner in the project after positive evidence rules the origin out. An unresolved origin read leaves delivery pending.
+    - Task commands accept any verified controller (ruling 65). A command missing PR-head evidence reads it within the request and checks the same task revision and caller before committing. If the proof times out or fails, the caller receives the cause. Nucleus does not queue the command for later replay. Notices try the task's origin first and fall back to another verified planner in the project after positive evidence rules the origin out. An unresolved origin read leaves delivery pending.
     - The remote and exact-root checks run automatically at registration. A mismatch refuses with a readable reason.
     - Limits edits slot counts in Dispatch. Planning edits lanes. Projects shows the live planners. Dispatch uses the verified repository route automatically.
     - During the transition, one global setting stops the TypeScript engine taking new work. Its existing tasks drain.
@@ -588,7 +588,7 @@ Later decisions carry their own attribution.
       send time. Handles issued before 2026-11-27 are `nreply_` plus random hex;
       new ones are `r` plus 8 random hex digits, unique among every issued handle
       (a collision is retried). Both forms resolve until they expire.
-    - The delivered text opens `From <sender's project name>` and ends with
+    - The delivered text opens `From <project name> (<thread ID>)` and ends with
       `Reply: nucleus reply <handle> 'your message'`. The text does not restate
       the reply rules: only the receiving thread can use the handle, it lasts
       seven days and falls back to the sender's project planner. Those rules
@@ -597,11 +597,9 @@ Later decisions carry their own attribution.
       expired or foreign handle sends nothing and reveals nothing about the
       sender.
     - A reply reaches exactly the sender's thread through the ordinary
-      delivery path, which observes the thread first. An archived or gone
-      sender is not revived. The reply then falls back to the sender's
-      project, as a fallback delivery under ruling 41 that names the original
-      sender as gone. This is the planner's reading of Tom's "we don't want
-      messages getting lost".
+      delivery path, which observes the thread first. If the sender is archived
+      or gone, the reply falls back to its project under ruling 41. The notice
+      says the sender is gone. With no sending project, delivery is refused.
     - A reply is itself a message with a new handle, so a conversation can
       continue. A per-recipient rate limit (the TypeScript limit was 20 an
       hour) keeps two agents from looping.
@@ -614,8 +612,8 @@ Later decisions carry their own attribution.
     it." On the planner's proposal to queue messages when no planner is live,
     Tom answered: "we don't want messages getting lost. If the planner is
     archived then you would _expect_ messages to go to the build thread".
-    - Running planner commands still needs no setup. Any thread in a project
-      checkout can plan and dispatch, as ruled on 2026-11-19.
+    - Running planner commands needs no claim. See ruling 65 for who can
+      plan, dispatch and send messages.
     - One command (planner reading: `nucleus planner.claim`) makes the calling
       thread the project's claimed planner. A project has at most one claimed
       planner. A new claim replaces the old one, and Nucleus tells the
@@ -765,7 +763,7 @@ Later decisions carry their own attribution.
 
 54. **Merge with merge commits; honour brief merge holds.** On 2026-11-26 a brief's `queue.mergeHold` was ignored and its PR was squash-merged. The project's release tag had to sit on the certified candidate commit, which was then not on main. The Rust port had dropped both TypeScript behaviours. Tom, asked to confirm merge commits: "It sounds like merge commits are the right choice for the reason this incident brings up - squashes change the commit". Nucleus merges with a merge commit, so the exact reviewed head is an ancestor of the base. Squash and rebase merges are not used. A brief's `queue.mergeHold: true` with a required `queue.mergeHoldReason` holds only the merge step until the owning planner or the operator releases it (Specs 040 and 058). Admission refuses unknown `queue` keys and names them. Amendments can keep or remove existing legacy keys and refuse any additions or changes to unknown keys by name.
 
-55. **Completion notices are opt-out and queue behind the planner's turn.** Tom, 2026-11-27: "Can we make task completion notifications opt-out rather than opt-in, and have them queue by default so they land when the planner has finished its turn?" This replaces ruling 42's opt-in. Every task sends its completion notice to the dispatching planner thread when it reaches Done or Cancelled, unless its brief sets `queue.notifyOriginOnCloseout: false`. A task admitted before this change follows the rule in force at its closeout, so it gets the notice too. The fallback, the one-notice-per-task rule, the uncertain-delivery rule and the notice text stay as ruling 42 has them. Notices go as a queued message (`queue_after_active`): T3 holds a notice until the planner's current turn ends and never steers it into a running turn, so it doesn't interrupt the planner.
+55. **Completion notices are opt-out and queue behind the planner's turn.** Tom, 2026-11-27: "Can we make task completion notifications opt-out rather than opt-in, and have them queue by default so they land when the planner has finished its turn?" This replaces ruling 42's opt-in. Every task sends its completion notice to the dispatching thread when it reaches Done or Cancelled, unless its brief sets `queue.notifyOriginOnCloseout: false`. A task admitted before this change follows the rule in force at its closeout, so it gets the notice too. The fallback, the one-notice-per-task rule, the uncertain-delivery rule and the notice text stay as ruling 42 has them. Notices go as a queued message (`queue_after_active`): T3 holds a notice until the planner's current turn ends and never steers it into a running turn, so it doesn't interrupt the planner.
     Report-only tasks keep their report notice. A report-only task whose report notice was already attempted gets no completion notice at Done or Cancelled, so the planner is never told twice. A report-only task cancelled before it reported still gets the completion notice, unless its brief opts out.
 
 56. **Any agent can watch a task for its completion.** Tom, 2026-11-27, asked whether a planner can subscribe to another task's completion after it has started: "Yeah, the latter case is what i'm after, a general subscription model for any agent to receive notifications of a task completing". Any agent thread can run `nucleus watch <task>` to receive that task's completion notice, whichever project the task belongs to, and `nucleus unwatch <task>` to stop. Watching is read-only, so it needs no access to the task's project beyond reading its reference and title. When the task reaches Done or Cancelled, every watcher gets the ruling 55 notice once, through the same queued delivery. A watcher that is also the dispatching thread gets one notice, not two. If a watcher's thread is archived or gone, its notice is dropped and recorded in the task's history. Tom, 2026-11-27: "if a watcher's thread has gone then it _should_ be dropped.. the point of this opt-in subscription is to allow interested parties to see when a task finishes, not as a general workflow mechanism. The thread's project planner probably won't be interested". This is the one exception to ruling 41's never-dropped rule. The dispatching thread's own notice (ruling 55) still falls back. Watching a task that has already finished returns its outcome at once and sends nothing. The watch ends when the task does.
@@ -1164,8 +1162,10 @@ four for report-only tasks. Each segment shows its step and recorded progress
 on hover. The strip's accessible name summarizes the steps, and task detail
 shows the labels, recorded durations and review round.
 
-List, detail, `next` and native task titles share the label. A blocking hold
-supplies the label. A hold that lets the
+List, detail, `next` and native task titles share the label. Outside the queue,
+a waiting task names its hold, first blocking prerequisite (with a count of others),
+capacity wait, paused subscription group, or starting state. A running role keeps
+the phase label. A blocking hold supplies the label. A hold that lets the
 current turn finish adds an asterisk when the phase is shown. The engine
 records a label change with the task update or scheduler wait that caused it.
 Unrelated updates and repeated observations leave the entry time intact. Reads
@@ -1178,16 +1178,15 @@ are current. Each request checks scope, prerequisite status, edit authority,
 lane sources and the next scheduled check against current state.
 
 The paired API mounts the same planning handlers as the controller API (plans,
-lanes, items, decisions) and the repository reassign action. The session response
-reports the engine's current project scope. On entry, the board reads scoped
-plans, items and decisions from the store to populate the menu counts. It caches
+lanes, items, decisions) and the repository reassign action. On entry, the board
+reads plans, items and decisions from the store to populate the menu counts. It caches
 the collections across views and identifies unreadable items, decisions and lane documents beside their healthy siblings. A malformed saved step withholds its project’s versioned plan so the board cannot edit a partial order. The board refreshes collections from engine events and stops
-requesting a denied project until the session or its scope changes. Settings
+requesting a denied project until the session changes. Settings
 needs no planning reads. Lane edits from the board and from an authenticated
 report worker both signal a planning change. Decision changes refresh Needs you
 independently of task activity. The paired board refreshes task cards on
 list-visible changes, and an open task also refreshes on changes to its detail.
-Profiles reads usage on entry and when recorded assignments or timed pauses change. The snapshot identifies malformed project or profile records and keeps their healthy siblings visible. Project diagnostics follow the paired scope. Settings reads
+Profiles reads usage on entry and when recorded assignments or timed pauses change. The snapshot identifies malformed project or profile records and keeps their healthy siblings visible. Settings reads
 backup health with storage, and the board derives project activity from the task
 list it already displays. Reconnects resync active views. Ages and running
 durations advance locally. Screens leave out
