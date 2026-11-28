@@ -33,7 +33,6 @@ const FLOW_WINDOW: Duration = Duration::from_secs(MAX_DEVICE_WAIT.as_secs() + 30
 const SERVICE_NAME: &str = "nucleus.github-accounts";
 // Public registration for Nucleus Agents. Device-issued grants refresh without a client secret.
 const GITHUB_APP_CLIENT_ID: &str = "Iv23liRsqJ59EsNDdtiu";
-type LegacyReader = fn(&str) -> Result<SecretString, AccountError>;
 
 #[derive(Debug, Error)]
 pub enum AccountError {
@@ -69,10 +68,6 @@ pub enum AccountError {
     Denied,
     #[error("GitHub sign-in did not finish. Start again.")]
     Failed,
-    #[error("Choose a valid GitHub organisation.")]
-    Organisation,
-    #[error("That organisation has no legacy reviewer credential.")]
-    NoLegacyGrant,
     #[error("The worker role still selects this account.")]
     WorkerUsesAccount,
 }
@@ -153,7 +148,6 @@ pub(crate) struct SettingsView {
     worker_account_id: Option<String>,
     reviewer_account_id: Option<String>,
     can_sign_in: bool,
-    can_import_reviewer: bool,
 }
 
 #[derive(Serialize)]
@@ -188,7 +182,6 @@ enum FlowStatus {
     Verified {
         account: GitHubAccount,
         grant: TokenGrant,
-        legacy: bool,
     },
     Saving(GitHubAccount),
     Failed(AccountError),
@@ -244,7 +237,6 @@ pub struct GitHubAccounts {
     store: Arc<dyn CredentialStore + Send + Sync>,
     storage_available: bool,
     client_id: Option<String>,
-    legacy: Option<LegacyReader>,
     transport: Transport,
     mutations: Mutex<()>,
     flow: Mutex<Option<Flow>>,
@@ -268,7 +260,6 @@ impl GitHubAccounts {
             store: Arc::new(KeyringCredentialStore::new(SERVICE_NAME)),
             storage_available: cfg!(any(target_os = "macos", target_os = "windows")),
             client_id: Some(GITHUB_APP_CLIENT_ID.to_owned()),
-            legacy: LEGACY_READER,
             transport: Transport::github(),
             mutations: Mutex::new(()),
             flow: Mutex::new(None),
@@ -287,7 +278,6 @@ impl GitHubAccounts {
             store: Arc::new(longhorn_core::MemoryCredentialStore::new()),
             storage_available: true,
             client_id: Some("fixture-app".to_owned()),
-            legacy: None,
             transport: Transport::loopback(origin),
             mutations: Mutex::new(()),
             flow: Mutex::new(None),
@@ -310,7 +300,6 @@ impl GitHubAccounts {
                 refresh_token: None,
                 refresh_expires_at: None,
             },
-            false,
         )?;
         Ok(())
     }
@@ -421,7 +410,6 @@ impl GitHubAccounts {
             worker_account_id: snapshot.value.worker_account_id,
             reviewer_account_id: snapshot.value.reviewer_account_id,
             can_sign_in: self.storage_available && self.client_id.is_some(),
-            can_import_reviewer: self.legacy.is_some(),
         })
     }
 
@@ -495,50 +483,20 @@ impl GitHubAccounts {
                     }
                 },
             )?;
-            accounts.verify_grant(grant, false, cancel)
-        })
-    }
-
-    pub(crate) fn start_import(
-        self: &Arc<Self>,
-        organisation: String,
-    ) -> Result<FlowView, AccountError> {
-        let reader = self.legacy.ok_or(AccountError::Unsupported)?;
-        if !(1..=39).contains(&organisation.len())
-            || !organisation.as_bytes()[0].is_ascii_alphanumeric()
-            || !organisation.as_bytes()[organisation.len() - 1].is_ascii_alphanumeric()
-            || !organisation
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        {
-            return Err(AccountError::Organisation);
-        }
-        self.start(move |accounts, _, cancel| {
-            let grant = TokenGrant {
-                access_token: reader(&organisation)?,
-                access_expires_at: None,
-                refresh_token: None,
-                refresh_expires_at: None,
-            };
-            accounts.verify_grant(grant, true, cancel)
+            accounts.verify_grant(grant, cancel)
         })
     }
 
     fn verify_grant(
         &self,
         grant: TokenGrant,
-        legacy: bool,
         cancel: &AtomicBool,
     ) -> Result<FlowStatus, AccountError> {
         if cancel.load(Ordering::Relaxed) {
             return Err(AccountError::MissingFlow);
         }
         let account = self.transport.validate_account(&grant.access_token)?;
-        Ok(FlowStatus::Verified {
-            account,
-            grant,
-            legacy,
-        })
+        Ok(FlowStatus::Verified { account, grant })
     }
 
     fn start(
@@ -641,8 +599,8 @@ impl GitHubAccounts {
         revision: String,
     ) -> Result<SettingsView, AccountError> {
         self.blocking(move |accounts| {
-            let (account, grant, legacy) = accounts.claim_confirmation(&id)?;
-            let result = accounts.save_verified(&revision, &account, &grant, legacy);
+            let (account, grant) = accounts.claim_confirmation(&id)?;
+            let result = accounts.save_verified(&revision, &account, &grant);
             let mut guard = lock(&accounts.flow);
             if let Some(flow) = guard.as_mut().filter(|flow| flow.id == id) {
                 if result.is_ok() {
@@ -650,11 +608,7 @@ impl GitHubAccounts {
                 } else if Instant::now() >= flow.until {
                     flow.expire();
                 } else {
-                    flow.status = FlowStatus::Verified {
-                        account,
-                        grant,
-                        legacy,
-                    };
+                    flow.status = FlowStatus::Verified { account, grant };
                 }
             }
             result
@@ -662,10 +616,7 @@ impl GitHubAccounts {
         .await
     }
 
-    fn claim_confirmation(
-        &self,
-        id: &str,
-    ) -> Result<(GitHubAccount, TokenGrant, bool), AccountError> {
+    fn claim_confirmation(&self, id: &str) -> Result<(GitHubAccount, TokenGrant), AccountError> {
         let mut guard = lock(&self.flow);
         let flow = guard
             .as_mut()
@@ -681,11 +632,7 @@ impl GitHubAccounts {
             _ => return Err(AccountError::NotReady),
         };
         match std::mem::replace(&mut flow.status, FlowStatus::Saving(account)) {
-            FlowStatus::Verified {
-                account,
-                grant,
-                legacy,
-            } => Ok((account, grant, legacy)),
+            FlowStatus::Verified { account, grant } => Ok((account, grant)),
             _ => Err(AccountError::NotReady),
         }
     }
@@ -695,7 +642,6 @@ impl GitHubAccounts {
         revision: &str,
         account: &GitHubAccount,
         grant: &TokenGrant,
-        legacy: bool,
     ) -> Result<SettingsView, AccountError> {
         let _guard = lock(&self.mutations);
         let mut saved = self.at_revision(revision)?;
@@ -703,17 +649,8 @@ impl GitHubAccounts {
         let slot = self.slot(account.numeric_id().ok_or(AccountError::Identity)?)?;
         let scope = self.scope(&slot);
         let previous = read_grant(&scope)?;
-        let replace = !legacy || previous.is_none();
-        if replace {
-            write_grant(&scope, grant)?;
-        }
+        write_grant(&scope, grant)?;
         let result = (|| {
-            if legacy {
-                let stored = read_grant(&scope)?.ok_or(AccountError::NoGrant)?;
-                if self.transport.validate_account(&stored.access_token)?.id() != id {
-                    return Err(AccountError::Identity);
-                }
-            }
             saved.accounts.retain(|existing| existing.id() != id);
             saved.accounts.push(account.clone());
             saved.reviewer_account_id = Some(id);
@@ -723,9 +660,9 @@ impl GitHubAccounts {
                     *value = saved;
                     Ok(())
                 })?;
-            Ok(snapshot)
+            Ok::<_, AccountError>(snapshot)
         })();
-        if result.is_err() && replace {
+        if result.is_err() {
             if let Some(previous) = previous {
                 write_grant(&scope, &previous)?;
             } else {
@@ -787,44 +724,4 @@ fn find_account<'a>(
         .iter()
         .find(|account| account.id() == id)
         .ok_or(AccountError::MissingAccount)
-}
-
-#[cfg(target_os = "macos")]
-const LEGACY_READER: Option<LegacyReader> = Some(read_macos_legacy);
-#[cfg(not(target_os = "macos"))]
-const LEGACY_READER: Option<LegacyReader> = None;
-
-#[cfg(target_os = "macos")]
-fn read_macos_legacy(organisation: &str) -> Result<SecretString, AccountError> {
-    // Longhorn consumer slots cannot address the original bare organisation key.
-    // Use the existing Security.framework dependency for this exact read only.
-    read_legacy(organisation, |service, account| {
-        match security_framework::passwords::get_generic_password(service, account) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(error) if error.code() == -25_300 => Ok(None), // errSecItemNotFound
-            Err(_) => Err(AccountError::Keychain),
-        }
-    })
-}
-
-#[cfg(any(test, target_os = "macos"))]
-fn read_legacy(
-    organisation: &str,
-    mut read: impl FnMut(&str, &str) -> Result<Option<Vec<u8>>, AccountError>,
-) -> Result<SecretString, AccountError> {
-    for service in ["nucleus.github-reviewer", "paseo-queue.github-reviewer"] {
-        if let Some(bytes) = read(service, organisation)? {
-            let token = String::from_utf8(bytes).map_err(|_| AccountError::Identity)?;
-            let secret = SecretString::from(token);
-            let trimmed = secret.expose_secret().trim();
-            if trimmed.is_empty() {
-                return Err(AccountError::Identity);
-            }
-            if trimmed.len() == secret.expose_secret().len() {
-                return Ok(secret);
-            }
-            return Ok(SecretString::from(trimmed.to_owned()));
-        }
-    }
-    Err(AccountError::NoLegacyGrant)
 }

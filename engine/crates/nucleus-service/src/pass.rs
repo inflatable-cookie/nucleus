@@ -169,7 +169,7 @@ fn parent_hold_write(
     prior: Option<&ParentDelivery>,
     preparing_launch: bool,
 ) -> Result<Option<nucleus_hosts::ParentWrite>, ServiceError> {
-    let frozen = prior.map(crate::acp::frozen_parent).transpose()?.flatten();
+    let frozen = prior.map(crate::acp::frozen_parent).transpose()?;
     let checkpoint = frozen.as_ref().and_then(FrozenParentWrite::checkpoint);
     let empty = ParentTurn::default();
     let turn = match &shell {
@@ -1696,21 +1696,6 @@ impl Service {
         {
             return Ok(Action::Wait(WaitReason::Prerequisite));
         }
-        if let Some(run) = task.run()
-            && nucleus_hosts::unpinned_worker_continuation(run)
-        {
-            let mut updated = task.clone();
-            if updated.discard_paused_reservation(&observation) {
-                let _fence = self.effect(row).await?;
-                let mut audit = event("host_send_not_sent");
-                audit.detail = serde_json::json!({
-                    "command": run.launch().instance, "reason": "continuation provider was not pinned",
-                }).to_string();
-                self.save(row, updated, &audit).await?;
-                self.clear_ticket(&task.identity().id, run).await;
-                return Ok(Action::Nothing);
-            }
-        }
         let role = task.run().ok_or(ServiceError::Input)?.launch().role;
         if role == Role::Reviewer {
             observation.forge = Observed::Known(self.read_forge(task, checkout).await?.0);
@@ -1802,11 +1787,6 @@ impl Service {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(SendAttempt::Deferred);
         }
-        let parent = authorization.parent_row().zip(self.acp_provider());
-        if let Some((parent, _)) = parent {
-            self.check_parent_snooze(row, authorization.binding(), parent)
-                .await?;
-        }
         let queued_parent = authorization.queued_parent().map(str::to_owned);
         let owned_parent_snoozes = if let Some(thread) = queued_parent.as_deref() {
             self.owned_delivery_snoozes(row, thread).await?
@@ -1839,12 +1819,6 @@ impl Service {
                 dispatch,
             )
         };
-        if let Some((_, provider)) = parent
-            && run.last_send_at_ms().is_none()
-            && let Err(error) = self.reflect_role_admission(&sent, checkout, provider).await
-        {
-            service_log!("{}: {error}", task.identity().id);
-        }
         let result = match host.send(dispatch).await? {
             SendOutcome::NotSent(error) => {
                 let mut audit = event("host_send_not_sent");

@@ -15,11 +15,6 @@ use sha2::{Digest, Sha256};
 pub const REFRESH_TASK_ROW: &str = "Nucleus refreshes the current task row.";
 /// One Inbox board attempt's budget across the native preview calls.
 pub const INBOX_PREVIEW_TIMEOUT: Duration = Duration::from_secs(20);
-/// The exact prompt from a native intent written before step labels were introduced.
-#[must_use]
-pub fn legacy_parent_hold_prompt(command: &str) -> String {
-    format!("Nucleus keeps this task thread open for its next role. [{command}]")
-}
 
 /// Owner-only connection details for one task session.
 #[derive(Serialize, Deserialize)]

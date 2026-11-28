@@ -126,15 +126,16 @@ rolls, update the stable target with the runtime and keep the provider's skill
 path. The engine embeds its run protocol when a provider has yet to discover
 the matching sections.
 
-Keep the matching release files for recovery. Schema upgrades follow the
+Keep the matching release files for recovery. The engine upgrades a schema 14
+or later database and refuses an older one by name. Schema upgrades follow the
 [forward-only recovery policy](../docs/knowledge/specs/070-small-engine.md#parent-delivery-storage-and-upgrade).
 Staging leaves running processes and launcher definitions untouched.
 
 ### Move an existing engine home
 
-Keep the current `--home` until the move is ready. The engine still reads and
-enforces an existing `workVolume` pin. An offline copy to the new home must
-clear that pin explicitly, after stopping the service and quiescing ACP sessions.
+Keep the current `--home` until the move is ready. Copy the profile offline,
+after stopping the service and quiescing ACP sessions. A profile that still
+stores a `workVolume` pin is refused by name; move it with an earlier release.
 Keep a restorable source and copy the durable state together, including SQLite
 sidecars if present, all configuration domains, backups, and private key files.
 Preserve the original permissions. If the old profile used separate platform
@@ -142,7 +143,8 @@ directories, collect each domain into the corresponding directory in the new
 home. Avoid moving roots that still hold active checkouts, sessions or report
 tickets. Keep their overrides through the move until those users settle.
 
-On the copied profile, run `nucleus configure --home /absolute/copied-home --enable --clear-legacy-volume`, with `--placement barge` if desired. Use `--reset-roots`
+On the copied profile, run `nucleus configure --home /absolute/copied-home --enable`,
+with `--placement barge` if desired. Use `--reset-roots`
 to remove old overrides and pass any overrides to keep in the same command.
 Refresh the owner-only serve and ACP launchers for the new absolute paths and
 scratch root. Verify the database and settings under the new home, then verify
@@ -443,7 +445,7 @@ the binding path and stable session ID. Start `nucleus acp` with
 binding directory so the agent finds the task by checkout. The service writes
 the binding outside the checkout with owner-only permissions. Worker and
 reviewer processes receive their own report credentials.
-The binding also names a private scratch directory on the pinned volume,
+The binding also names a private scratch directory under the scratch root,
 outside both the checkout and the run scratch scanned for custody.
 The agent moves there at startup and keeps the launch directory only to
 resolve the session. A held presentation turn never needs files in the checkout.
@@ -745,12 +747,12 @@ Remove inside the editor.
 | GitHub accounts | `config/github-accounts.json` | Verified account identities and account bindings for workers and reviewers. |
 | Projects | `state/projects.json` | Names, archival, repository routes, planner bindings and removal receipts. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and the environment key referring to its credential. |
-| Storage | `state/engine.json` | Enabled flag, placement, optional volume pin, root overrides and retention. |
+| Storage | `state/engine.json` | Enabled flag, placement, root overrides and retention. |
 
-Startup upgrades version 1 files in place. Longhorn verifies a pre-migration
-archive in the profile backup directory before atomically replacing each file.
-The engine logs discarded keys and names the file and field when validation
-fails. Restarting with version 2 files leaves them untouched.
+Startup refuses a version 1 file by name and leaves it untouched. It upgrades a
+version 2 Dispatch file in place after Longhorn verifies a pre-migration archive
+in the profile backup directory. Validation failures name the file and field.
+Restarting with current files leaves them untouched.
 
 Use `GET /v1/settings/{domain}` to read one domain. `PUT` takes its current
 `revision` and replacement `value`. The operator can save only one domain

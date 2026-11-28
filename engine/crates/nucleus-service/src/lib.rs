@@ -373,7 +373,7 @@ pub struct PassOutcome {
 }
 
 impl Service {
-    /// Open the enabled engine on its pinned volume with one fixture project.
+    /// Open the enabled engine on its configured storage with one fixture project.
     ///
     /// # Errors
     /// Returns an error if configuration, storage, or project scope is invalid.

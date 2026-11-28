@@ -1741,9 +1741,8 @@ fn service_error_status(error: &ServiceError) -> StatusCode {
         | ServiceError::UnboundCheckout { planner: false, .. }
         | ServiceError::Settings(
             nucleus_store::StorageError::InvalidSettings(_)
-            | nucleus_store::StorageError::MissingVolume
             | nucleus_store::StorageError::BargePlacement { .. }
-            | nucleus_store::StorageError::OutsideVolume
+            | nucleus_store::StorageError::OutsideRoot
             | nucleus_store::StorageError::Layout
             | nucleus_store::StorageError::ConfinedDirectory(_),
         ) => StatusCode::BAD_REQUEST,

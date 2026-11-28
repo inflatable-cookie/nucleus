@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ScrollView, Text, View } from "react-native";
 import { z } from "zod";
-import { Button, DropdownSelect, Field, LabelHelp, muted, row, type Colors } from "../controls";
+import { Button, DropdownSelect, LabelHelp, muted, row, type Colors } from "../controls";
 import { space } from "../design";
 import { errorText } from "../error-text";
 import { createRustBoardTransport, isRustHttpError } from "./rust-board";
@@ -20,7 +20,6 @@ const settingsView = z.strictObject({
   reviewerAccountId: z.string().nullable(),
   workerAccountId: z.string().nullable(),
   canSignIn: z.boolean(),
-  canImportReviewer: z.boolean(),
 });
 
 const flowId = z.string().min(1);
@@ -38,9 +37,7 @@ const flowView = z.discriminatedUnion("status", [
 ]);
 
 type Flow = z.infer<typeof flowView>;
-type AccountForm =
-  | { kind: "import" }
-  | { kind: "sign-out"; id: string; label: string; revision: string };
+type SignOut = { id: string; label: string; revision: string };
 const board = createRustBoardTransport();
 const settingsPath = "/settings/github-accounts";
 const flowPath = (id: string) => `${settingsPath}/flows/${encodeURIComponent(id)}`;
@@ -72,8 +69,7 @@ export function GitHubReviewerSettings({ c, inset }: { c: Colors; inset: number 
   const [activeFlow, setActiveFlow] = useState(() =>
     queryClient.getQueryData<string | null>(currentFlowKey) ?? null,
   );
-  const [form, setForm] = useState<AccountForm | null>(null);
-  const [organization, setOrganization] = useState("");
+  const [signingOut, setSigningOut] = useState<SignOut | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const settings = useQuery({
@@ -99,7 +95,7 @@ export function GitHubReviewerSettings({ c, inset }: { c: Colors; inset: number 
   const selected = state?.accounts.find((identity) => accountId(identity) === state.reviewerAccountId);
   const reconnect = selected && selected.presence !== "present";
   const unavailableFlow = isRustHttpError(progress.error, 404);
-  const locked = busy || activeFlow !== null || form !== null;
+  const locked = busy || activeFlow !== null || signingOut !== null;
   const canSignOut = selected !== undefined && accountId(selected) !== state?.workerAccountId;
 
   function showFlow(next: Flow) {
@@ -130,19 +126,6 @@ export function GitHubReviewerSettings({ c, inset }: { c: Colors; inset: number 
   function startReviewSignIn() {
     return perform(async () => {
       showFlow(await board.read(flowView, settingsPath + "/sign-in", json("POST", {})));
-    });
-  }
-
-  function lookupReviewer() {
-    return perform(async () => {
-      const next = await board.read(
-        flowView,
-        settingsPath + "/import-reviewer",
-        json("POST", { organization: organization.trim() }),
-      );
-      setForm(null);
-      setOrganization("");
-      showFlow(next);
     });
   }
 
@@ -187,7 +170,7 @@ export function GitHubReviewerSettings({ c, inset }: { c: Colors; inset: number 
         "POST",
         { revision },
       );
-      setForm(null);
+      setSigningOut(null);
     });
   }
 
@@ -228,19 +211,15 @@ export function GitHubReviewerSettings({ c, inset }: { c: Colors; inset: number 
             onChange={(id) => void chooseReviewer(state.revision, id)}
           />
           {!state.canSignIn && <Text style={muted(c)}>GitHub sign-in is unavailable.</Text>}
-          {form === null && activeFlow === null && (
+          {signingOut === null && activeFlow === null && (
             <View style={row}>
               {state.canSignIn && (
                 <Button c={c} text={reconnect ? "Reconnect" : "Sign in"} disabled={busy} onPress={() => void startReviewSignIn()} />
               )}
-              {state.canImportReviewer && (
-                <Button c={c} text="Import existing reviewer" disabled={busy} onPress={() => { setError(""); setForm({ kind: "import" }); }} />
-              )}
               {canSignOut && (
                 <Button c={c} text="Sign out" disabled={busy} onPress={() => {
                   setError("");
-                  setForm({
-                    kind: "sign-out",
+                  setSigningOut({
                     id: accountId(selected),
                     label: accountLabel(selected),
                     revision: state.revision,
@@ -249,20 +228,11 @@ export function GitHubReviewerSettings({ c, inset }: { c: Colors; inset: number 
               )}
             </View>
           )}
-          {form?.kind === "import" && (
-            <>
-              <Field c={c} label="Organization" value={organization} onChange={setOrganization} disabled={busy} />
-              <View style={row}>
-                <Button c={c} text="Look up reviewer" disabled={busy || !organization.trim()} onPress={() => void lookupReviewer()} />
-                <Button c={c} text="Cancel" disabled={busy} onPress={() => { setForm(null); setError(""); }} />
-              </View>
-            </>
-          )}
-          {form?.kind === "sign-out" && (
+          {signingOut && (
             <View style={row}>
-              <Text style={muted(c)}>Sign out of {form.label} and use Installed gh for reviews?</Text>
-              <Button c={c} text="Sign out" disabled={busy} onPress={() => void disconnectReviewer(form.revision, form.id)} />
-              <Button c={c} text="Cancel" disabled={busy} onPress={() => { setForm(null); setError(""); }} />
+              <Text style={muted(c)}>Sign out of {signingOut.label} and use Installed gh for reviews?</Text>
+              <Button c={c} text="Sign out" disabled={busy} onPress={() => void disconnectReviewer(signingOut.revision, signingOut.id)} />
+              <Button c={c} text="Cancel" disabled={busy} onPress={() => { setSigningOut(null); setError(""); }} />
             </View>
           )}
         </>

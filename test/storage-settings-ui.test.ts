@@ -41,7 +41,6 @@ const state = (
   overrides: Partial<WorkStorageState["overrides"]> = {},
 ): WorkStorageState => ({
   workRoot: ROOT,
-  workVolumeId: "volume-id",
   ...DEFAULTS,
   defaults: DEFAULTS,
   overrides: {

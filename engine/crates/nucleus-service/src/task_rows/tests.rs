@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -663,7 +663,7 @@ async fn a_hold_restores_an_operator_snooze_applied_after_preparation() {
     let stored = fixture.parent_record(&row).await;
     assert_eq!(stored.command, command);
     assert_eq!(stored.result, nucleus_store::ParentResult::Accepted);
-    let wire: Value = serde_json::from_str(stored.wire.as_deref().unwrap()).unwrap();
+    let wire: Value = serde_json::from_str(&stored.wire).unwrap();
     let native = fixture.native.lock().unwrap();
     let [hold, restore] = &native.commands[..] else {
         panic!("expected a hold followed by one snooze restoration");
@@ -1058,7 +1058,6 @@ async fn a_successor_prompt_releases_the_previous_acp_turn_and_anchors_the_reser
     ));
     let record = fixture.parent_record(&row).await;
     let new_prompt = crate::acp::frozen_parent(&record)
-        .unwrap()
         .unwrap()
         .prompt()
         .unwrap()
@@ -1552,10 +1551,6 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
             .await
             .unwrap(),
     );
-    service
-        .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())
-        .await
-        .unwrap();
     service.host.write_parent(write, |_| Ok(())).await.unwrap();
     assert_eq!(fixture.commands(), ["thread.snooze", "message.dispatch"]);
     drop(fence);
@@ -1588,10 +1583,6 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     fixture.native.lock().unwrap().until = Value::Null;
     publish_shell();
     let write = prepare().await.unwrap().unwrap();
-    service
-        .check_parent_snooze(&row, write.binding(), write.delivery_row().unwrap())
-        .await
-        .unwrap();
     let (sent, calls) =
         nucleus_hosts::T3::count_pass_calls(Box::pin(service.host.write_parent(write, |_| Ok(()))))
             .await;
@@ -1734,7 +1725,7 @@ async fn the_held_parent_follows_the_child_across_an_authenticated_report() {
     };
     service.reconcile_live_parent(&row).await.unwrap();
     let record = fixture.parent_record(&row).await;
-    let frozen = crate::acp::frozen_parent(&record).unwrap().unwrap();
+    let frozen = crate::acp::frozen_parent(&record).unwrap();
     let expected = (frozen.prompt().map(str::to_owned), false);
     let mut changes = service.changes();
     let pr = PullRequest {
@@ -1866,7 +1857,6 @@ async fn a_retained_role_waiting_on_background_work_keeps_one_hold_after_restart
             (
                 crate::acp::frozen_parent(&first)
                     .unwrap()
-                    .unwrap()
                     .prompt()
                     .map(str::to_owned),
                 false,
@@ -1888,11 +1878,7 @@ async fn a_retained_role_waiting_on_background_work_keeps_one_hold_after_restart
     let state = service.state.lock().await;
     assert_eq!(
         service.acp_turn_view(&state, &row).unwrap().0.as_deref(),
-        crate::acp::frozen_parent(&first)
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .prompt()
+        crate::acp::frozen_parent(&first).unwrap().prompt()
     );
     assert_eq!(fixture.commands(), ["message.dispatch"]);
 }
@@ -1957,7 +1943,6 @@ async fn short_holds_back_off_to_a_cap_and_resume_without_a_role_change() {
         assert_eq!(
             crate::acp::frozen_parent(&next)
                 .unwrap()
-                .unwrap()
                 .checkpoint()
                 .unwrap()
                 .short_turns,
@@ -1971,7 +1956,6 @@ async fn short_holds_back_off_to_a_cap_and_resume_without_a_role_change() {
     let record = fixture.parent_record(&row).await;
     assert_eq!(
         crate::acp::frozen_parent(&record)
-            .unwrap()
             .unwrap()
             .checkpoint()
             .unwrap()
@@ -2015,7 +1999,7 @@ async fn a_queued_run_waits_for_the_start_deadline_without_replacing_the_hold_af
     service.reconcile_live_parent(&row).await.unwrap();
     let second = fixture.parent_record(&row).await;
     assert_ne!(first.command, second.command);
-    let frozen = crate::acp::frozen_parent(&second).unwrap().unwrap();
+    let frozen = crate::acp::frozen_parent(&second).unwrap();
     assert_eq!(
         frozen.checkpoint().unwrap().after_run.as_deref(),
         Some("parent-run-0")
@@ -2145,17 +2129,6 @@ async fn active_child_keeps_ownership_until_the_shell_observes_the_clear() {
     let receipt = fixture.observed_snooze().await;
     assert_eq!(receipt.clear_attempted_for, Some(owned.until_ms));
     assert!(receipt.owns(prior.snoozed_until_ms));
-    service
-        .check_parent_snooze(
-            &row,
-            &fixture.binding,
-            RowObservation {
-                sequence: 1,
-                visibility: prior,
-            },
-        )
-        .await
-        .unwrap();
     {
         let mut state = service.state.lock().await;
         service
@@ -2302,8 +2275,7 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
         version: row.version,
         command: write.command_id().unwrap().into(),
         refresh: false,
-        wire: Some(serde_json::to_string(write.freeze()).unwrap()),
-        legacy_prompt: None,
+        wire: serde_json::to_string(write.freeze()).unwrap(),
         due_ms: 0,
         result: nucleus_store::ParentResult::Pending,
     };

@@ -1,11 +1,10 @@
 //! Reconcile native visibility independently of dispatch and API reads.
 
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
 use nucleus_core::{Role, Task, WaitReason};
 use nucleus_hosts::{
-    ParentSendError, RowChange, RowChildren, RowObservation, RowVisibility, SendOutcome,
-    SnoozeRestoration,
+    ParentSendError, RowChange, RowChildren, RowVisibility, SendOutcome, SnoozeRestoration,
 };
 use nucleus_store::{RowSnooze, SnoozeOutcome, TaskRow};
 
@@ -437,47 +436,6 @@ impl Service {
         match prior {
             Some(prior) => state.store.save_row_snooze(id, thread, prior)?,
             None => state.store.forget_row_snooze(id)?,
-        }
-        Ok(())
-    }
-
-    async fn snooze_for_delivery(
-        &self,
-        id: &str,
-        thread: &str,
-        visibility: RowVisibility,
-    ) -> Result<Option<RowSnooze>, ServiceError> {
-        let state = self.state.lock().await;
-        let receipt = state.store.row_snooze(id, thread)?;
-        if receipt
-            .as_ref()
-            .is_some_and(|prior| clear_observed(prior, visibility.snoozed_until_ms))
-            && self.host.row_visibility_hint(thread) == Some(visibility)
-        {
-            state.store.forget_row_snooze(id)?;
-            return Ok(None);
-        }
-        Ok(receipt)
-    }
-
-    pub(super) async fn check_parent_snooze(
-        &self,
-        row: &TaskRow,
-        binding: &nucleus_hosts::Binding,
-        observed: RowObservation,
-    ) -> Result<(), ServiceError> {
-        let thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
-        let id = &row.task.identity().id;
-        let visibility = observed.visibility;
-        let shown = visibility
-            .snoozed_until_ms
-            .filter(|&until| until > now_ms());
-        let receipt = self.snooze_for_delivery(id, &thread, visibility).await?;
-        let owned = receipt.filter(|receipt| receipt.owns(shown));
-        if let Some(until) = shown
-            && owned.is_none()
-        {
-            return Err(ServiceError::OperatorSnoozed { thread, until });
         }
         Ok(())
     }

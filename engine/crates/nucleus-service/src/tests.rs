@@ -20,7 +20,7 @@ use nucleus_hosts::{
     Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
     SendOutcome, StopProgress, TaskHost,
 };
-use nucleus_store::{EngineSettings, PinnedVolume};
+use nucleus_store::EngineSettings;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
@@ -40,13 +40,6 @@ pub(super) fn author_declaration() -> AuthorDeclaration {
 }
 
 pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
-    fixture_with_volume(forge, None)
-}
-
-pub(super) fn fixture_with_volume(
-    forge: GitHub,
-    work_volume: Option<PinnedVolume>,
-) -> (tempfile::TempDir, Service) {
     let home = tempfile::tempdir().expect("fixture volume directory");
     let root = home.path().canonicalize().expect("portable root");
     let checkout = root.join("repo");
@@ -69,7 +62,6 @@ pub(super) fn fixture_with_volume(
     settings
         .save(&EngineSettings {
             enabled: true,
-            work_volume,
             ..EngineSettings::default()
         })
         .expect("enable fixture");
