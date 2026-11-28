@@ -383,14 +383,6 @@ impl Projection {
         self.sequence
     }
 
-    pub(crate) fn matches_shell_revision(&self, row: &Value) -> bool {
-        row["updatedAt"].as_str() == self.thread.updated_at.as_deref()
-            && row["projectId"] == self.thread.project_id
-            && row["worktreePath"].as_str() == self.thread.worktree_path.as_deref()
-            && row["branch"].as_str() == self.thread.branch.as_deref()
-            && row["providerInstanceId"].as_str() == self.thread.provider_instance_id.as_deref()
-    }
-
     pub(crate) fn use_shell_failure(&mut self, row: &Value, same_revision: bool) {
         let shell = ShellCustody(row);
         // The shell retains the failed run's root error when a compact

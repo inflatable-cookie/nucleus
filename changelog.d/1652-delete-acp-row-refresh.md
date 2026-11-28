@@ -1,0 +1,1 @@
+- Removed the operator ACP row refresh (`POST /v1/tasks/{id}/acp/refresh`). A refresh still waiting in an existing database is not sent.

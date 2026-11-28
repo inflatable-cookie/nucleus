@@ -1,20 +1,15 @@
-use std::{
-    hash::{BuildHasher, RandomState},
-    path::Path,
-    sync::{Arc, OnceLock},
-};
+use std::{path::Path, sync::Arc};
 
-use nucleus_core::acp::{REFRESH_TASK_ROW, session_id};
+use nucleus_core::acp::session_id;
 use nucleus_core::{Role, Task};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Binding, HostError, RowChildren, RowObservation, T3, clock_ms,
+    Binding, HostError, RowChildren, T3, clock_ms,
     launch::Method,
     message_id,
-    projection::Projection,
     rpc::{Read, Reply, Rpc, ShellRevision, ThreadFence, closed_row},
     task_row::timestamp_ms,
     thread_snapshots::{ShellCustody, ThreadRead, ThreadSnapshots, belongs_to, row_activity},
@@ -129,7 +124,6 @@ pub struct ArchiveWrite {
 pub struct ParentWrite {
     wire: FrozenParentWrite,
     unarchive_fence: Option<ThreadFence>,
-    delivery: Option<Box<ParentDelivery>>,
     owned_snoozes: Vec<u64>,
     turn: Option<ParentTurn>,
 }
@@ -219,11 +213,6 @@ impl FrozenParentWrite {
     }
 }
 
-struct ParentDelivery {
-    row: RowObservation,
-    shell: Arc<Value>,
-}
-
 impl ParentWrite {
     fn new(binding: &Binding, provider: &str, method: Method, payload: Value) -> Self {
         Self {
@@ -235,7 +224,6 @@ impl ParentWrite {
                 checkpoint: None,
             },
             unarchive_fence: None,
-            delivery: None,
             owned_snoozes: Vec::new(),
             turn: None,
         }
@@ -503,59 +491,6 @@ impl T3 {
         };
         guard.with_quiet_shell(|| ())?;
         Ok(guard)
-    }
-
-    fn check_quiet_parent(&self, binding: &Binding, parent: &str) -> Result<(), HostError> {
-        self.rpc.with_shell(|shell| {
-            check_live_threads(
-                shell.ok_or(HostError::Uncertain)?,
-                binding,
-                parent,
-                &[parent],
-            )
-        })
-    }
-
-    /// Prepare a refresh of an existing, idle, unarchived task row.
-    ///
-    /// # Errors
-    /// Returns an error when the row's identity or idle evidence is invalid.
-    pub async fn prepare_parent_refresh(
-        &self,
-        binding: &Binding,
-        provider: &str,
-    ) -> Result<Option<ParentWrite>, HostError> {
-        let thread = parent_thread(Path::new(&binding.worktree_path));
-        let (projection, fence) = self.observe_parent(binding, &thread).await?;
-        let Some(projection) = projection else {
-            return Ok(None);
-        };
-        projection.require_parent_provider(provider)?;
-        let Some(row) = projection.row_observation()? else {
-            return Ok(None);
-        };
-        let Some(shell) = fence.row.filter(|listed| {
-            projection.matches_shell_revision(listed)
-                && self.quiet_row_at(&thread, projection.sequence(), |row| row == listed.as_ref())
-                && crate::task_row::visibility(listed).ok() == Some(row.visibility)
-        }) else {
-            return Ok(None);
-        };
-        self.check_quiet_parent(binding, &thread)?;
-        let command = format!("{thread}-refresh-{}", row.sequence);
-        let mut write = ParentWrite::new(
-            binding,
-            provider,
-            Method::Continue,
-            json!({
-                "type":"message.dispatch", "commandId":command, "threadId":thread,
-                "messageId":message_id(&command), "text":REFRESH_TASK_ROW, "attachments":[],
-                "createdBy":"user", "creationSource":"server",
-                "dispatchMode":{"type":"queue_after_active"},
-            }),
-        );
-        write.delivery = Some(Box::new(ParentDelivery { row, shell }));
-        Ok(Some(write))
     }
 
     /// Choose an idle, unarchived thread from the synchronized shell.
@@ -893,19 +828,6 @@ impl T3 {
         })
     }
 
-    async fn observe_parent(
-        &self,
-        binding: &Binding,
-        thread: &str,
-    ) -> Result<(Option<Projection>, ThreadFence), HostError> {
-        let policy = if self.rpc.uses_held_shell() {
-            ThreadRead::Observation
-        } else {
-            ThreadRead::Exact
-        };
-        self.observe_thread(binding, thread, policy).await
-    }
-
     /// Send a verified parent effect and require the native sequence for any turn.
     ///
     /// # Errors
@@ -957,11 +879,6 @@ impl T3 {
                             || !parent_row_matches(&row, &write.wire.binding, provider))
                     {
                         return Err(HostError::Binding);
-                    }
-                    if let (Some(delivery), Some(thread)) = (&write.delivery, thread_id.as_deref())
-                    {
-                        self.check_delivery_shell(thread, delivery)?;
-                        self.check_quiet_parent(&write.wire.binding, thread)?;
                     }
                     if let Some(before) = &write.turn {
                         let thread = thread_id.as_deref().ok_or(HostError::Binding)?;
@@ -1077,36 +994,6 @@ impl T3 {
             }
             _ => Ok(SnoozeRestoration::Pending),
         }
-    }
-
-    fn check_delivery_shell(
-        &self,
-        thread: &str,
-        delivery: &ParentDelivery,
-    ) -> Result<(), HostError> {
-        let (row, observed) = self.rpc.thread_row_with_revision(thread);
-        let refuse = |predicate| HostError::ParentPreflight {
-            predicate,
-            prepared: delivery.row.sequence,
-            observed,
-        };
-        let prior = &delivery.shell;
-        let row = row.ok_or_else(|| refuse("held shell lost the parent after verification"))?;
-        let (before, after) = (ShellCustody(prior), ShellCustody(&row));
-        if let Some(field) = before.changed_field(&after) {
-            static DIAGNOSTIC_HASH: OnceLock<RandomState> = OnceLock::new();
-            let digest = DIAGNOSTIC_HASH.get_or_init(RandomState::new);
-            return Err(HostError::ParentShellChanged {
-                field,
-                prepared: delivery.row.sequence,
-                observed,
-                before: digest.hash_one(prior.get(field).map(Value::to_string)),
-                after: digest.hash_one(row.get(field).map(Value::to_string)),
-                activity_before: before.activity(),
-                activity_now: after.activity(),
-            });
-        }
-        Ok(())
     }
 }
 

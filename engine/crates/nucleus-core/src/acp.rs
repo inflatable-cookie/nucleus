@@ -11,8 +11,6 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// A scheduler-owned refresh of the current row, without a held turn.
-pub const REFRESH_TASK_ROW: &str = "Nucleus refreshes the current task row.";
 /// One Inbox board attempt's budget across the native preview calls.
 pub const INBOX_PREVIEW_TIMEOUT: Duration = Duration::from_secs(20);
 

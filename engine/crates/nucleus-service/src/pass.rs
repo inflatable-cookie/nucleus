@@ -1510,7 +1510,7 @@ impl Service {
         };
         self.ensure_parent_reader(&row.task.identity().id, checkout.path())
             .await?;
-        self.deliver_parent(row, write, prior, false).await?;
+        self.deliver_parent(row, write, prior).await?;
         self.recheck_effect(row, WaitReason::HostUnknown).await;
         Ok(())
     }

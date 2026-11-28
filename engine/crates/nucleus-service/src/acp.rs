@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{ControllerScope, Service, ServiceError, State, pass::DispatchTarget};
+use crate::{ControllerScope, Service, ServiceError, State};
 use nucleus_core::{
     Authority, Phase, Task, WaitReason,
     acp::{Binding, InboxBinding, session_id},
@@ -165,10 +165,9 @@ impl Service {
         row: &TaskRow,
         mut write: ParentWrite,
         prior: Option<ParentDelivery>,
-        refresh: bool,
     ) -> Result<bool, ServiceError> {
-        let existing = prior
-            .filter(|record| record.command == write.command_id().unwrap_or_default() || refresh);
+        let existing =
+            prior.filter(|record| record.command == write.command_id().unwrap_or_default());
         let preparing = write
             .freeze()
             .checkpoint()
@@ -194,24 +193,18 @@ impl Service {
         // Record the wire and deadline before sending. A restart or transport
         // error can replay this exact command against T3's durable receipt.
         let attempt = if write.starts_turn() {
-            Some(
-                self.begin_parent_delivery(row, &write, refresh, existing)
-                    .await?,
-            )
+            Some(self.begin_parent_delivery(row, &write, existing).await?)
         } else {
             None
         };
         let result = self
-            .write_parent_with_snooze(row, &command, write, refresh, preparing)
+            .write_parent_with_snooze(row, &command, write, preparing)
             .await?;
         match (result, attempt) {
             (Ok(()), record) => {
                 if let Some((record, _)) = record {
-                    let start_deadline = if refresh {
-                        0
-                    } else {
-                        ms(crate::now_ms().saturating_add(PARENT_START_TIMEOUT_MS))
-                    };
+                    let start_deadline =
+                        ms(crate::now_ms().saturating_add(PARENT_START_TIMEOUT_MS));
                     self.finish_parent_delivery(
                         row,
                         &record,
@@ -274,7 +267,6 @@ impl Service {
         row: &TaskRow,
         command: &str,
         write: ParentWrite,
-        refresh: bool,
         preparing: bool,
     ) -> Result<Result<(), ParentSendError>, ServiceError> {
         let id = &row.task.identity().id;
@@ -284,22 +276,18 @@ impl Service {
         let result = self
             .host
             .write_parent(write, |snooze| {
-                if refresh && snooze.is_none() {
-                    return Ok(());
-                }
                 let state = self.state.try_lock().map_err(|_| HostError::Uncertain)?;
                 let dispatch = state.dispatch_mode();
-                if !refresh
-                    && (!self.lookup(&state, id).is_ok_and(|fresh| fresh == *row)
-                        || dispatch == DispatchMode::Stopped
-                        || starts_turn
-                            && !wants_parent_hold(
-                                row,
-                                dispatch,
-                                preparing && dispatch.allows_launch(row.task.first_launch()),
-                                self.active_parent_role(&row.task, &checkout),
-                                crate::now_ms(),
-                            ))
+                if !self.lookup(&state, id).is_ok_and(|fresh| fresh == *row)
+                    || dispatch == DispatchMode::Stopped
+                    || starts_turn
+                        && !wants_parent_hold(
+                            row,
+                            dispatch,
+                            preparing && dispatch.allows_launch(row.task.first_launch()),
+                            self.active_parent_role(&row.task, &checkout),
+                            crate::now_ms(),
+                        )
                 {
                     return Err(HostError::Uncertain);
                 }
@@ -334,7 +322,6 @@ impl Service {
         &self,
         row: &TaskRow,
         write: &ParentWrite,
-        refresh: bool,
         existing: Option<ParentDelivery>,
     ) -> Result<(ParentDelivery, FrozenParentWrite), ServiceError> {
         let id = &row.task.identity().id;
@@ -352,7 +339,6 @@ impl Service {
             let record = ParentDelivery {
                 version: row.version,
                 command,
-                refresh,
                 wire,
                 due_ms,
                 result: ParentResult::Pending,
@@ -360,7 +346,7 @@ impl Service {
             if !state.store.freeze_parent_delivery(id, &record)? {
                 return Err(StoreError::StaleTask.into());
             }
-            if !refresh && row.task.run().is_none() {
+            if row.task.run().is_none() {
                 state.observe_wait(&row.task, Some(WaitReason::Starting))?;
                 self.publish(id, row.version);
             } else {
@@ -394,95 +380,6 @@ impl Service {
             reason: reason.to_string(),
             retry_at: self.host.request_retry_at(),
         }
-    }
-
-    pub(super) async fn queue_acp_refresh(&self, id: &str) -> Result<bool, ServiceError> {
-        let mut state = self.state.lock().await;
-        let row = self.lookup(&state, id)?;
-        if row.task.phase().is_terminal() || row.task.run().is_some() {
-            return Ok(false);
-        }
-        state.acp_refresh_requests.insert(id.into(), row.version);
-        self.wake_task(
-            &mut state,
-            id,
-            row.version,
-            crate::schedule::Priority::Effect,
-        );
-        Ok(true)
-    }
-
-    pub(super) async fn refresh_acp_if_requested(&self, row: &TaskRow) -> Result<(), ServiceError> {
-        let id = &row.task.identity().id;
-        let refresh = {
-            let mut state = self.state.lock().await;
-            state.planner_notice_waiters.remove(id);
-            state.acp_refresh_requests.remove(id) == Some(row.version)
-                || state
-                    .store
-                    .current_parent_refresh(id, row.version)?
-                    .is_some_and(|value| value.result == ParentResult::Pending)
-        };
-        if refresh && let Err(error) = self.refresh_acp_parent(row).await {
-            if matches!(error, ServiceError::ParentNotSent { .. }) {
-                let mut state = self.state.lock().await;
-                if self.lookup(&state, id)?.version == row.version {
-                    state.acp_refresh_requests.insert(id.into(), row.version);
-                }
-            }
-            return Err(error);
-        }
-        Ok(())
-    }
-
-    pub(super) async fn refresh_acp_parent(&self, row: &TaskRow) -> Result<bool, ServiceError> {
-        let task = &row.task;
-        if task.phase().is_terminal() || task.run().is_some() {
-            return Ok(false);
-        }
-        let _fence = self.effect(row).await?;
-        let provider = self.acp_provider().ok_or(ServiceError::AcpBinding)?;
-        let identity = task.identity();
-        let id = &identity.id;
-        let prior = self
-            .state
-            .lock()
-            .await
-            .store
-            .current_parent_refresh(id, row.version)?;
-        if let Some(record) = &prior {
-            if record.result == ParentResult::Accepted {
-                return Ok(false);
-            }
-            parent_due(record)?;
-        }
-        let route = self.project_for(identity).await?;
-        let work = self.worktrees();
-        let checkout = work.registered(&route.checkout, &identity.repository, id)?;
-        let binding = route.binding(&checkout)?;
-        let Some(write) = self
-            .host
-            .prepare_parent_refresh(&binding, provider)
-            .await
-            .map_err(|error| self.parent_not_sent(error))?
-        else {
-            return Ok(false);
-        };
-        let Some(_permit) = self
-            .dispatch_gate(
-                task,
-                DispatchTarget::Run {
-                    frozen: write.binding(),
-                    checkout: &checkout,
-                    launch: false,
-                },
-            )
-            .await?
-        else {
-            return Ok(false);
-        };
-        self.ensure_parent_reader(id, checkout.path()).await?;
-        self.deliver_parent(row, write, prior, true).await
     }
 
     pub(super) async fn bind_acp(

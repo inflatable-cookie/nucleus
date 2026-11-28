@@ -265,7 +265,6 @@ fn routes(
     let controller = Router::new()
         .route("/v1/tasks", get(list).post(admit))
         .route("/v1/tasks/{id}/acp", post(bind_acp))
-        .route("/v1/tasks/{id}/acp/refresh", post(refresh_acp))
         .route("/v1/tasks/{id}/next", get(next))
         .route("/v1/health", get(settings::health))
         .route("/v1/settings", get(settings::all))
@@ -734,19 +733,6 @@ async fn bind_acp(
         api.service
             .bind_acp(&id, controller, &authority, &scope, options.read_only)
             .await?,
-    ))
-}
-
-async fn refresh_acp(
-    State(api): State<Api>,
-    TaskPath(id): TaskPath,
-    Extension(authority): Extension<Authority>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    if !matches!(authority, Authority::Operator { .. }) {
-        return Err(ApiError::Unauthorized);
-    }
-    Ok(Json(
-        json!({"queued":api.service.queue_acp_refresh(&id).await?}),
     ))
 }
 

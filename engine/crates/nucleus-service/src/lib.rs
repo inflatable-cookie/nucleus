@@ -316,7 +316,6 @@ struct State {
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
-    acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: schedule::CapacityWaiters,
     group_waits: BTreeMap<String, profiles::GroupPause>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
@@ -487,7 +486,6 @@ impl Service {
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
-                acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: BTreeSet::new(),
                 group_waits: BTreeMap::new(),
                 observed_forge: BTreeMap::new(),
@@ -765,7 +763,12 @@ impl Service {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
         }
-        self.refresh_acp_if_requested(row).await?;
+        // This pass registers the task again if it still waits for a planner.
+        self.state
+            .lock()
+            .await
+            .planner_notice_waiters
+            .remove(&task.identity().id);
         let action = self.advance(row, host).await?;
         if matches!(
             action,
@@ -1280,7 +1283,6 @@ impl Service {
                 && held.is_none()
                 && !active(&current.task)
                 && !state.forge_requested.contains(id)
-                && state.acp_refresh_requests.get(id) != Some(&current.version)
         {
             if state.observe_wait(&current.task, None)? {
                 self.title_wake.notify_one();

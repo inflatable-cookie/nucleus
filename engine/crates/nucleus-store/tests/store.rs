@@ -1296,6 +1296,16 @@ fn a_database_older_than_schema_fourteen_is_refused_by_name_and_left_untouched()
     }
 }
 
+/// The row a manual refresh left behind. It stays stored and is never read.
+fn stored_refresh(db: &Connection) -> (String, i64, String) {
+    db.query_row(
+        "SELECT command, due_ms, result FROM parent_refresh_deliveries WHERE task_id='live'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .unwrap()
+}
+
 #[test]
 fn a_schema_fourteen_database_upgrades_with_its_rows() {
     use nucleus_store::ParentResult::{Accepted, Pending};
@@ -1336,10 +1346,8 @@ fn a_schema_fourteen_database_upgrades_with_its_rows() {
     assert_eq!((hold.due_ms, hold.result), (200, Pending));
     assert_eq!(prompt(&hold), "Starting reviewer");
     assert!(store.pending_parent_preparation("live", 1).unwrap());
-    let refresh = store.current_parent_refresh("live", 1).unwrap().unwrap();
-    assert_eq!(refresh.command, "current-refresh");
-    assert_eq!((refresh.due_ms, refresh.result), (300, Accepted));
-    assert_eq!(prompt(&refresh), "Nucleus refreshes the current task row.");
+    let refresh = ("current-refresh".to_owned(), 300, "accepted".to_owned());
+    assert_eq!(stored_refresh(&db), refresh);
 
     let backup = std::fs::read_dir(storage.backup().path())
         .unwrap()
@@ -1355,11 +1363,10 @@ fn a_schema_fourteen_database_upgrades_with_its_rows() {
         Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     assert_eq!(stored_version(&copy), 14);
 
-    // The upgraded hold and refresh stay independent under later writes.
+    // Later hold writes leave the stored refresh alone.
     let replacement = nucleus_store::ParentDelivery {
         version: 1,
         command: "replacement".into(),
-        refresh: false,
         wire: hold.wire.clone(),
         due_ms: 789,
         result: Pending,
@@ -1371,14 +1378,7 @@ fn a_schema_fourteen_database_upgrades_with_its_rows() {
         store.finish_parent_delivery("live", 1, &hold, Accepted, 0),
         Err(StoreError::StaleTask)
     ));
-    assert_eq!(
-        store
-            .current_parent_refresh("live", 1)
-            .unwrap()
-            .unwrap()
-            .command,
-        refresh.command
-    );
+    assert_eq!(stored_refresh(&db), refresh);
     assert!(
         db.execute(
             "INSERT INTO parent_deliveries SELECT * FROM parent_deliveries",
@@ -1454,30 +1454,19 @@ fn a_stored_delivery_without_a_frozen_wire_is_never_read_and_gives_way() {
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
     db.execute_batch("DELETE FROM parent_deliveries WHERE task_id='unframed'")
         .unwrap();
-    for table in ["parent_deliveries", "parent_refresh_deliveries"] {
-        db.execute(
-            &format!(
-                "INSERT INTO {table} (task_id, version, command, legacy_prompt, due_ms, result)
-                 VALUES ('unframed', 1, ?1, 'Starting worker', 400, 'pending')"
-            ),
-            [command],
-        )
-        .unwrap();
-    }
+    db.execute(
+        "INSERT INTO parent_deliveries (task_id, version, command, legacy_prompt, due_ms, result)
+         VALUES ('unframed', 1, ?1, 'Starting worker', 400, 'pending')",
+        [command],
+    )
+    .unwrap();
     assert!(store.current_parent_hold("unframed").unwrap().is_none());
-    assert!(
-        store
-            .current_parent_refresh("unframed", 1)
-            .unwrap()
-            .is_none()
-    );
     assert!(!store.pending_parent_preparation("unframed", 1).unwrap());
 
     let wire = store.current_parent_hold("live").unwrap().unwrap().wire;
     let next = ParentDelivery {
         version: 1,
         command: command.into(),
-        refresh: false,
         wire,
         due_ms: 500,
         result: ParentResult::Pending,
