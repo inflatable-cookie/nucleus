@@ -6,7 +6,14 @@ async fn failed_snooze_waits_for_later_shell_evidence() {
     let fixture = Fixture::new(&pending).await;
     {
         let mut state = fixture.service.state.lock().await;
-        state.store.create(&pending, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &pending,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         fixture.service.desire_title(&mut state, &pending, None);
     }
     fixture.native.lock().unwrap().next_reply = NextReply::Lost;
@@ -57,7 +64,14 @@ async fn a_delivered_parent_message_supersedes_an_unconfirmed_snooze_once() {
         .store(1_893_456_000_000, std::sync::atomic::Ordering::Relaxed);
     {
         let mut state = service.state.lock().await;
-        state.store.create(&pending, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &pending,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.desire_title(&mut state, &pending, None);
     }
     fixture.sync().await;
@@ -96,7 +110,14 @@ async fn board_and_native_row_distinguish_a_recheck_from_an_owner_action() {
             ID.into(),
             (run.instance.clone(), RunState::IdleWithoutTerminalRun),
         );
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.desire_title(&mut state, &task, None);
         service.lookup(&state, ID).unwrap()
     };
@@ -148,7 +169,14 @@ async fn a_hold_restores_an_operator_snooze_applied_after_preparation() {
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     fixture.publish_shell();
@@ -304,7 +332,14 @@ async fn retained_role_continues_while_both_rows_are_snoozed() {
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
@@ -432,7 +467,11 @@ async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
         let mut state = service.state.lock().await;
         state
             .store
-            .create(&pending_task(), &event("fixture"))
+            .create_with_facts(
+                &pending_task(),
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .unwrap();
         service.lookup(&state, ID).unwrap()
     };
@@ -511,7 +550,14 @@ async fn a_rejected_hold_persists_its_replacement_before_retrying() {
     let mut fixture = Fixture::new(&task).await;
     let row = {
         let mut state = fixture.service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         fixture.service.lookup(&state, ID).unwrap()
     };
     fixture.publish_shell();
@@ -604,7 +650,14 @@ async fn a_successor_prompt_releases_the_previous_acp_turn_and_anchors_the_reser
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     let deadline = crate::acp::run_hold_deadline(&row).unwrap();
@@ -770,7 +823,14 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
     fixture.child(&launch.thread, false);
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&worker, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &worker,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         state.set_wait(ID, Some(WaitReason::HostUnknown));
         service.desire_title(&mut state, &worker, None);
         service.lookup(&state, ID).unwrap()
@@ -849,7 +909,14 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
     fixture.child(worker, false);
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("run_reserved")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("run_reserved"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.desire_title(&mut state, &task, None);
         service.lookup(&state, ID).unwrap()
     };

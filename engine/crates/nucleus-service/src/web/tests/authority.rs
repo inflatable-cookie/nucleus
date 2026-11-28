@@ -141,9 +141,7 @@ async fn unlisted_done_threads_make_no_native_reads_after_restart() {
             ["reviewer"]
         );
         for kind in ["role_threads_archived", "display_note"] {
-            row.version = state
-                .store
-                .save_row(&row, &row.task, &event(kind))
+            row.version = crate::tests::save_row(&mut state.store, &row, &row.task, &event(kind))
                 .expect("append history");
         }
         seed_cancelled_notice(&service, &mut state, &row.task);

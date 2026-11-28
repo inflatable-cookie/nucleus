@@ -91,7 +91,7 @@ fn start(
     input: &str,
 ) -> CallbackCredential {
     let bearer = task
-        .reserve_launch(
+        .reserve_grouped_launch(
             obs,
             LaunchInputs {
                 scratch: None,
@@ -100,6 +100,8 @@ fn start(
                 input: input.into(),
             },
             &SEED,
+            None,
+            "fixture-group".into(),
         )
         .expect("reserve launch");
     assert_eq!(task.run().expect("bound run").launch().role, role);
@@ -325,21 +327,14 @@ fn a_replaced_head_never_inherits_approval_and_keeps_the_reviewer() {
     assert_eq!(
         decide(
             &task,
-            &retained(new_head.clone(), "other", RetainedThread::Idle)
+            &retained(new_head.clone(), "other", RetainedThread::Queueable)
         ),
         Action::Wait(WaitReason::HostUnknown)
     );
     assert_eq!(
         decide(
             &task,
-            &retained(new_head.clone(), "reviewer", RetainedThread::Busy)
-        ),
-        Action::Wait(WaitReason::RetainedThreadBusy)
-    );
-    assert_eq!(
-        decide(
-            &task,
-            &retained(new_head.clone(), "reviewer", RetainedThread::Idle)
+            &retained(new_head.clone(), "reviewer", RetainedThread::Queueable)
         ),
         Action::Launch {
             role: Role::Reviewer,
@@ -399,7 +394,7 @@ fn discarding_an_unsent_review_keeps_only_an_established_thread() {
         .expect("revoke");
     let ended = host(&task, open.clone(), RunState::Ended);
     assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Reviewing));
-    let idle = retained(open, "established", RetainedThread::Idle);
+    let idle = retained(open, "established", RetainedThread::Queueable);
     start(
         &mut task,
         &idle,
@@ -457,7 +452,7 @@ fn changes_continue_the_worker_and_require_a_new_head() {
         },
     );
     assert_eq!(task.reconcile(&review), Action::Advance(Phase::Working));
-    let worker = retained(review.clone(), "worker", RetainedThread::Idle);
+    let worker = retained(review.clone(), "worker", RetainedThread::Queueable);
     assert_eq!(
         decide(&task, &worker),
         Action::Launch {
@@ -535,7 +530,7 @@ fn three_confirmed_failures_open_one_question_and_retry_reuses_the_thread() {
     let rejected = host(&task, obs.clone(), RunState::Rejected);
     assert_eq!(task.reconcile(&rejected), Action::Relaunch(Role::Worker));
     assert_eq!(task.attempts(), 1);
-    let idle = retained(obs.clone(), "worker", RetainedThread::Idle);
+    let idle = retained(obs.clone(), "worker", RetainedThread::Queueable);
     start(&mut task, &idle, Role::Worker, "worker", "work-2");
     task.record_send(&instance(&task), 2).unwrap();
     let rejected = host(&task, obs.clone(), RunState::Rejected);
@@ -591,7 +586,7 @@ fn provider_limits_use_the_role_attempt_budget_and_survive_reopen() {
         );
         task = serde_json::from_value(serde_json::to_value(&task).unwrap()).unwrap();
         assert_eq!(task.threads().last_provider_limit.as_deref(), Some(cause));
-        obs = retained(obs, "worker", RetainedThread::Idle);
+        obs = retained(obs, "worker", RetainedThread::Queueable);
     }
     assert_eq!(task.attempts(), 3);
 }
@@ -624,7 +619,11 @@ fn the_first_pr_seen_between_worker_runs_resets_the_next_launch() {
     assert_eq!(task.reconcile(&ended), Action::Relaunch(Role::Worker));
     assert_eq!(task.attempts(), 1);
 
-    let first_pr = retained(open('a', CheckState::Ready), "worker", RetainedThread::Idle);
+    let first_pr = retained(
+        open('a', CheckState::Ready),
+        "worker",
+        RetainedThread::Queueable,
+    );
     assert_eq!(task.reconcile(&first_pr), Action::Advance(Phase::Working));
     assert_eq!(task.attempts(), 0);
     assert_eq!(task.pull_request(), Some(&pr('a')));
@@ -652,7 +651,7 @@ fn revocation_is_reconciled_without_a_person_even_after_cancellation() {
         task.record_send(&instance(&task), 2).unwrap();
         let failed = host(&task, obs.clone(), RunState::Gone);
         task.reconcile(&failed);
-        let idle = retained(obs.clone(), "worker", RetainedThread::Idle);
+        let idle = retained(obs.clone(), "worker", RetainedThread::Queueable);
         let bearer = start(&mut task, &idle, Role::Worker, "worker", "work-2");
         let old_instance = instance(&task);
         task.command(command, &planner(), &obs).expect("revoke");
@@ -949,7 +948,7 @@ fn restoring_a_review_entry_rejects_planner_acceptance() {
 fn a_forge_outage_does_not_charge_a_failure_and_new_heads_retire_retry_questions() {
     let mut task = task(Entry::ReviewEntry);
     let old_head = open('a', CheckState::Ready);
-    let idle = retained(old_head.clone(), "reviewer", RetainedThread::Idle);
+    let idle = retained(old_head.clone(), "reviewer", RetainedThread::Queueable);
     start(
         &mut task,
         &old_head,
@@ -1206,7 +1205,7 @@ fn a_reservation_after_move_cannot_restore_the_old_bearer() {
     let saved = serde_json::to_string(&task).expect("encode");
     let mut task: Task = serde_json::from_str(&saved).expect("restore counter");
 
-    let idle = retained(obs, "worker", RetainedThread::Idle);
+    let idle = retained(obs, "worker", RetainedThread::Queueable);
     let fresh = start(&mut task, &idle, Role::Worker, "worker", "same wire inputs");
     let current = instance(&task);
     assert_eq!(task.run().expect("bound").launch().label, prepared.label);
@@ -1280,7 +1279,7 @@ fn confirmed_merge_recovery_continues_the_worker_and_requires_a_published_revisi
         assert!(task.question().is_none());
         assert!(task.verdict().is_none());
 
-        let idle = retained(blocked.clone(), "worker", RetainedThread::Idle);
+        let idle = retained(blocked.clone(), "worker", RetainedThread::Queueable);
         let credential = start(
             &mut task,
             &idle,
@@ -1338,7 +1337,7 @@ fn a_legacy_merge_blocked_answer_uses_the_code_owner_continuation() {
     assert_eq!(task.phase(), Phase::Working);
     assert_eq!(task.work_instruction(), Some(instruction));
     assert!(task.question().is_none());
-    let idle = retained(blocked, "worker", RetainedThread::Idle);
+    let idle = retained(blocked, "worker", RetainedThread::Queueable);
     assert_eq!(
         decide(&task, &idle),
         Action::Launch {

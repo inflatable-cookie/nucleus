@@ -923,7 +923,7 @@ impl ReportFixture {
                 .map_or(Observed::Unknown, |thread| {
                     Observed::Known(Host::Retained {
                         thread: thread.into(),
-                        state: RetainedThread::Idle,
+                        state: RetainedThread::Queueable,
                     })
                 }),
             forge: Observed::Unknown,
@@ -973,7 +973,7 @@ impl ReportFixture {
             assert!(prompt.contains(instruction));
         }
         let credential = task
-            .reserve_launch(
+            .reserve_grouped_launch(
                 &observation,
                 LaunchInputs {
                     scratch: None,
@@ -982,6 +982,8 @@ impl ReportFixture {
                     input: prompt,
                 },
                 &[42; 32],
+                None,
+                "fixture-group".into(),
             )
             .expect("worker launch");
         let instance = task.run().expect("run").launch().instance.clone();

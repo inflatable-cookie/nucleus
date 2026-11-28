@@ -43,7 +43,11 @@ async fn cancelled_cleanup_task(service: &Service) -> TaskRow {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let id = &task.identity().id;
     service
@@ -113,7 +117,7 @@ async fn settled_cleanup_task(service: &Service, home: &Path, legacy: bool) -> (
     let mut task = Task::new(template.identity().clone(), "Scoped fixture".into(), None);
     task.reconcile(&observation);
     let credential = task
-        .reserve_launch(
+        .reserve_grouped_launch(
             &observation,
             LaunchInputs {
                 thread: "worker".into(),
@@ -122,6 +126,8 @@ async fn settled_cleanup_task(service: &Service, home: &Path, legacy: bool) -> (
                 scratch: Some(scratch.clone()),
             },
             &[9; 32],
+            None,
+            "fixture-group".into(),
         )
         .unwrap();
     let instance = task.run().unwrap().launch().instance.clone();
@@ -154,7 +160,7 @@ async fn settled_cleanup_task(service: &Service, home: &Path, legacy: bool) -> (
         .create(&reviewer_scratch)
         .unwrap();
     let key = task
-        .reserve_launch(
+        .reserve_grouped_launch(
             &observation,
             LaunchInputs {
                 thread: "reviewer".into(),
@@ -163,6 +169,8 @@ async fn settled_cleanup_task(service: &Service, home: &Path, legacy: bool) -> (
                 scratch: Some(reviewer_scratch),
             },
             &[9; 32],
+            None,
+            "fixture-group".into(),
         )
         .unwrap();
     settle_both_reviewers(&mut task, &mut observation, &head, key.as_bytes(), &scratch);
@@ -184,7 +192,11 @@ async fn settled_cleanup_task(service: &Service, home: &Path, legacy: bool) -> (
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let row = service.task(id).await.unwrap();
     assert!(row.task.run().is_none());
@@ -893,7 +905,11 @@ async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() 
             .lock()
             .await
             .store
-            .create(&task, &event("admitted"))
+            .create_with_facts(
+                &task,
+                &event("admitted"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("seed");
         let row = service.task(id).await.expect("row");
         let checkout = worktrees
@@ -973,7 +989,11 @@ async fn a_running_review_waits_for_its_deadline_without_reading_the_forge() {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .expect("seed");
     let binding = service.binding(&checkout).expect("binding");
     let native_reads = Arc::new(AtomicUsize::new(0));
@@ -1121,7 +1141,11 @@ async fn review_recovers_its_checkout_before_creating_a_reservation() {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("seed");
         let row = service.task("reviewer").await.expect("reviewing row");
         assert_eq!(row.task.phase(), Phase::Reviewing);
@@ -1217,7 +1241,11 @@ async fn an_edit_during_native_authorization_cannot_send_the_review() {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .expect("seed");
     let row = service.task("reviewer").await.expect("original row");
     let result = service
@@ -1305,7 +1333,11 @@ async fn an_interrupt_requires_the_current_fixture_project_root() {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("seed");
         let row = service.task("reviewer").await.expect("revoked row");
         let result =
@@ -1584,13 +1616,18 @@ async fn seed_reserved_role_launch(
         })
         .unwrap();
     let thread = inputs.thread.clone();
-    task.reserve_launch(&observation, inputs, &[4; 32]).unwrap();
+    task.reserve_grouped_launch(&observation, inputs, &[4; 32], None, "fixture-group".into())
+        .unwrap();
     service
         .state
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     (service.task(id).await.unwrap(), thread)
 }

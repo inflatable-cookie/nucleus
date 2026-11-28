@@ -139,7 +139,6 @@ const WAIT_WORDS: Record<string, string> = {
   host_observation_blocked: "Open the task thread to check",
   starting: "Starting the run",
   idle_without_terminal_run: "Waiting for the run to finish its turn",
-  retained_thread_busy: "Waiting for the thread to be free",
   permission: "Waiting for a permission answer",
   usage_permission: "Waiting for a usage decision",
   input: "Waiting for input",

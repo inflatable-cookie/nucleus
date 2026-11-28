@@ -977,7 +977,7 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
         .lock()
         .await
         .store
-        .add_item(
+        .add_item_with_author_project(
             &project,
             "historic".into(),
             ItemKind::Lead,
@@ -986,6 +986,7 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
                 body: "---\nqueue:\n  complexity: low\n---\nA historic brief.".into(),
                 lanes: vec![],
             },
+            None,
             WriteAt {
                 actor: "imported",
                 at_ms: 1,

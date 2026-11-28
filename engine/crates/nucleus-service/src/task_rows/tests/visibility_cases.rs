@@ -143,7 +143,14 @@ async fn a_planner_question_stays_visible_regardless_of_child_activity() {
     );
     {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         state
             .observe_wait(&task, Some(WaitReason::Question))
             .unwrap();
@@ -169,7 +176,14 @@ async fn an_actionable_row_retries_its_claimed_clear_with_the_same_command() {
     let service = &fixture.service;
     {
         let mut state = service.state.lock().await;
-        state.store.create(&pending, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &pending,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.desire_title(&mut state, &pending, None);
     }
     fixture.sync().await;
@@ -213,7 +227,14 @@ async fn pre_delivery_wakes_owned_and_settled_rows_and_preserves_operator_snooze
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&pending, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &pending,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.desire_title(&mut state, &pending, None);
         service.lookup(&state, ID).unwrap()
     };
@@ -302,7 +323,11 @@ async fn a_pass_leaves_a_stored_pending_row_refresh_unsent() {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     // A held task prepares no launch, so any message here would be the refresh.
     let operator = Authority::Operator {
@@ -356,7 +381,11 @@ async fn a_pass_forgets_a_planner_notice_wait_it_does_not_renew() {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     // A held task waits on no planner notice.
     let operator = Authority::Operator {
@@ -402,7 +431,14 @@ async fn launch_preparation_can_unarchive_before_recording_a_hold() {
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     let archive = json!({
@@ -451,7 +487,14 @@ async fn an_active_role_publishes_its_frozen_parent_prompt() {
     fixture.publish_shell();
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
 
@@ -501,7 +544,14 @@ async fn the_held_parent_follows_the_child_across_an_authenticated_report() {
     fixture.publish_shell();
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     service.reconcile_live_parent(&row).await.unwrap();
@@ -961,7 +1011,14 @@ async fn operator_snooze_alone_does_not_create_a_wait() {
     fixture.publish_shell();
     {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         let row = service.lookup(&state, ID).unwrap();
         assert_eq!(state.effective_wait(&task).unwrap(), None);
         service.desire_phase_title(&mut state, &task, row.number);
@@ -1191,7 +1248,14 @@ async fn a_handover_publishes_permission_and_planner_titles_immediately() {
     fixture.publish_shell();
 
     let mut state = service.state.lock().await;
-    state.store.create(&task, &event("fixture")).unwrap();
+    state
+        .store
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
+        .unwrap();
     let row = service.lookup(&state, ID).unwrap();
     assert!(service.role_window(&fixture.thread, &task).2.is_some());
     let pending_title =

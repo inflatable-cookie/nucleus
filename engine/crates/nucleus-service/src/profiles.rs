@@ -253,8 +253,6 @@ fn select_profile(
         .iter()
         .map(|(profile, _, efforts, _, counts, pause)| Candidate {
             profile,
-            enabled: true,
-            available: true,
             group_available: pause.is_none(),
             supported_efforts: efforts,
             counts: counts.unwrap_or_default(),
@@ -274,12 +272,7 @@ fn select_profile(
         None
     };
     let choose = |candidates: &[Candidate<'_>]| {
-        let policy = LaunchPolicy {
-            usage,
-            candidates,
-            // Admission and brief changes are authenticated controller writes.
-            planner_brief: true,
-        };
+        let policy = LaunchPolicy { usage, candidates };
         sample.map_or_else(
             || decide_profile_launch(task, observation, &policy),
             |sample| decide_weighted_launch(task, observation, &policy, sample),

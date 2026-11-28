@@ -84,8 +84,8 @@ use rpc::{CallError, Read, Reply, Rpc, ThreadFence, ThreadReply, closed_row};
 use runtime::ServerRuntime;
 use serde_json::{Value, json};
 pub use task_row::{
-    DeliverySnooze, RowChange, RowChildren, RowObservation, RowVisibility, SnoozeRestoration,
-    SnoozeUpdate, snooze_deadline,
+    DeliverySnooze, RowChange, RowChildren, RowVisibility, SnoozeRestoration, SnoozeUpdate,
+    snooze_deadline,
 };
 use thread_snapshots::{ShellCustody, ThreadRead, row_activity};
 pub use title_shell::TitleTarget;

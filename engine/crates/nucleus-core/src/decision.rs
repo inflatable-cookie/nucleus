@@ -33,11 +33,8 @@ pub enum Host {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetainedThread {
-    /// A complete observation of the exact thread shows no active or pending turn.
-    Idle,
     /// This retained role can receive a pinned continuation through the native queue.
     Queueable,
-    Busy,
     /// Host-authoritative absence or a tombstone for the exact thread ID.
     Gone,
 }
@@ -154,7 +151,6 @@ pub enum WaitReason {
     Permission,
     UsagePermission,
     Input,
-    RetainedThreadBusy,
     Stopping,
     ForgeUnknown,
     ReviewPublicationBlocked,
@@ -619,14 +615,13 @@ fn launch(task: &Task, observation: &Observation, role: Role) -> Signal {
     };
     match &observation.host {
         Observed::Known(Host::Retained { thread, state }) if thread == retained => match state {
-            RetainedThread::Idle | RetainedThread::Queueable => Signal::Start(
+            RetainedThread::Queueable => Signal::Start(
                 role,
                 Launch::Continue {
                     thread: thread.clone(),
                 },
             ),
             RetainedThread::Gone => Signal::Start(role, Launch::Create),
-            RetainedThread::Busy => Signal::Wait(WaitReason::RetainedThreadBusy),
         },
         _ => Signal::Wait(WaitReason::HostUnknown),
     }

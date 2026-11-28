@@ -7,10 +7,13 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
     let (mut first, merged) = fixture_at_done(&service).await;
     {
         let mut state = service.state.lock().await;
-        first.version = state
-            .store
-            .save_row(&first, &first.task, &event("role_threads_archived"))
-            .expect("first receipt");
+        first.version = crate::tests::save_row(
+            &mut state.store,
+            &first,
+            &first.task,
+            &event("role_threads_archived"),
+        )
+        .expect("first receipt");
     }
     let second = reopen_and_finish_review(&service, &first, &merged).await;
     let child = second
@@ -956,7 +959,14 @@ async fn an_unmapped_error_shows_its_cause_backs_off_and_accepts_recheck() {
     {
         let mut state = service.state.lock().await;
         state.settings.profiles = Some(Arc::new(nucleus_store::Profiles::default()));
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
     }
     let id = "wrong-branch";
     crate::tests::git(&project.checkout, &["switch", "-c", "other"]);

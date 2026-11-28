@@ -53,7 +53,7 @@ async fn only_a_shell_active_role_gets_the_legacy_hint_without_a_hold() {
     {
         let mut state = service.state.lock().await;
         let row = service.lookup(&state, "worker").unwrap();
-        state.store.save_row(&row, &task, &event("sent")).unwrap();
+        crate::tests::save_row(&mut state.store, &row, &task, &event("sent")).unwrap();
     }
     let checkout = nucleus_work::checkout_path(
         service.storage.work().path(),
@@ -467,6 +467,10 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture trace covers a complete lifecycle"
+)]
 async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
     let (_home, service) = registry_fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let head = service.fixture().start.clone();
@@ -523,9 +527,9 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
         .expect("persist move");
     observation.host = Observed::Known(Host::Retained {
         thread: first.thread.clone(),
-        state: RetainedThread::Idle,
+        state: RetainedThread::Queueable,
     });
-    task.reserve_launch(
+    task.reserve_grouped_launch(
         &observation,
         LaunchInputs {
             scratch: None,
@@ -534,6 +538,8 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
             started_at: 3,
         },
         &[4; 32],
+        None,
+        "fixture-group".into(),
     )
     .expect("reserve second review");
     row = service

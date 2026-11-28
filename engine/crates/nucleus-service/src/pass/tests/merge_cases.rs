@@ -228,7 +228,11 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let advance = async |service: &Service| {
         let row = service.task("worker").await.unwrap();
@@ -352,7 +356,11 @@ async fn stopped_dispatch_waits_then_merges_the_approved_head() {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let merged = Arc::new(AtomicBool::new(false));
     let puts = Arc::new(AtomicUsize::new(0));
@@ -458,7 +466,11 @@ async fn merge_writes_wait_until_the_forge_confirms_the_next_fact() {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("seed merge");
         let host = service.host.pass(service.storage.scratch().path());
         let row = service.task("reviewer").await.expect("old approval");
@@ -510,7 +522,11 @@ async fn external_merge_at_the_refused_head_requires_verified_source_acceptance(
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .unwrap();
 
         let merged = Arc::new(AtomicBool::new(false));
@@ -613,7 +629,11 @@ async fn a_forge_outage_defers_other_tasks_without_sending_a_request() {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("seed");
     }
     let started = tokio::time::Instant::now();
@@ -706,7 +726,11 @@ async fn prepared_and_revoked_reviews_recheck_the_actual_forge_and_checkout() {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("fixture row");
         let row = service
             .task(&task.identity().id)

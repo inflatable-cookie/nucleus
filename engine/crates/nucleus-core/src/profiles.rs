@@ -163,8 +163,6 @@ pub struct RotationCounts {
 #[derive(Debug, Clone, Copy)]
 pub struct Candidate<'a> {
     pub profile: &'a Profile,
-    pub enabled: bool,
-    pub available: bool,
     pub group_available: bool,
     pub supported_efforts: &'a [Effort],
     pub counts: RotationCounts,
@@ -176,11 +174,9 @@ impl Candidate<'_> {
     }
 
     fn usable_if_unpaused(self, effort: Option<Effort>) -> bool {
-        self.enabled
-            && self.available
-            && effort
-                .or(self.profile.effort)
-                .is_none_or(|value| self.supported_efforts.contains(&value))
+        effort
+            .or(self.profile.effort)
+            .is_none_or(|value| self.supported_efforts.contains(&value))
     }
 }
 

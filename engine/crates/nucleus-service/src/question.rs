@@ -680,7 +680,7 @@ mod tests {
             );
             let launch = reserved.run().unwrap().launch();
             let credential = task
-                .reserve_launch(
+                .reserve_grouped_launch(
                     &observation,
                     nucleus_core::LaunchInputs {
                         thread: launch.thread.clone(),
@@ -689,6 +689,8 @@ mod tests {
                         scratch: launch.scratch.clone(),
                     },
                     &[3; 32],
+                    None,
+                    "fixture-group".into(),
                 )
                 .unwrap();
             (task, credential)
@@ -715,7 +717,11 @@ mod tests {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .expect("seed question");
         service.task("notice").await.expect("first row")
     }

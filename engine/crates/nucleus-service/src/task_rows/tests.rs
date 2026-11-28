@@ -281,7 +281,14 @@ impl Fixture {
         );
         {
             let mut state = self.service.state.lock().await;
-            state.store.create(&dependency, &event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    &dependency,
+                    &event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
             state
                 .store
                 .create_with_facts(
@@ -585,7 +592,14 @@ async fn send_snoozed_hold(fixture: &Fixture, task: &Task) -> TaskRow {
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
@@ -619,7 +633,14 @@ async fn instant_parent_fixture() -> (Fixture, TaskRow) {
     let service = &fixture.service;
     let row = {
         let mut state = service.state.lock().await;
-        state.store.create(&task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         service.lookup(&state, ID).unwrap()
     };
     task.record_send(&launch.instance, 2).unwrap();
@@ -675,7 +696,14 @@ async fn instant_parent_fixture() -> (Fixture, TaskRow) {
 async fn create_visibility_row(fixture: &Fixture, task: &Task) -> TaskRow {
     let row = {
         let mut state = fixture.service.state.lock().await;
-        state.store.create(task, &event("fixture")).unwrap();
+        state
+            .store
+            .create_with_facts(
+                task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
         fixture.service.desire_title(&mut state, task, None);
         fixture.service.lookup(&state, ID).unwrap()
     };

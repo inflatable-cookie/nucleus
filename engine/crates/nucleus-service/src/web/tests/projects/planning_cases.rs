@@ -766,7 +766,7 @@ async fn ticket_caller_watches_across_projects_and_receives_completion_notice() 
     let mut runner_task = runner.task.clone();
     let _ = runner_task.reconcile(&observation);
     let bearer = runner_task
-        .reserve_launch(
+        .reserve_grouped_launch(
             &observation,
             LaunchInputs {
                 scratch: None,
@@ -775,6 +775,8 @@ async fn ticket_caller_watches_across_projects_and_receives_completion_notice() 
                 input: "fixture-only wire".into(),
             },
             &credential,
+            None,
+            "fixture-group".into(),
         )
         .unwrap();
     let instance = runner_task.run().unwrap().launch().instance.clone();

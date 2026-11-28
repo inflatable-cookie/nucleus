@@ -101,7 +101,7 @@ async fn assert_working_transition(service: &Service) {
             json!({"from":"working", "to":"reviewing"})
         );
         assert_eq!(
-            state.store.get("worker").unwrap().unwrap().phase(),
+            state.store.row("worker").unwrap().unwrap().task.phase(),
             Phase::Reviewing
         );
     }
@@ -387,7 +387,11 @@ async fn seed_task(service: &Service, task: &Task) {
         .lock()
         .await
         .store
-        .create(task, &event("fixture"))
+        .create_with_facts(
+            task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .expect("seed task");
 }
 
@@ -588,7 +592,14 @@ fn seed_cancelled_notice(service: &Service, state: &mut EngineState, done: &Task
         "---\nqueue:\n  notifyOriginOnCloseout: false\n---\n# Synthetic cancelled task".into(),
         None,
     );
-    state.store.create(&cancelled, &event("fixture")).unwrap();
+    state
+        .store
+        .create_with_facts(
+            &cancelled,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
+        .unwrap();
     let before = service.lookup(state, "cancelled").unwrap();
     let waiting = state
         .store
@@ -873,7 +884,7 @@ async fn reopen_and_finish_review(
     }
     let instance = task.next_launch_instance().expect("new launch");
     let credential = task
-        .reserve_launch(
+        .reserve_grouped_launch(
             &observation,
             LaunchInputs {
                 scratch: None,
@@ -882,6 +893,8 @@ async fn reopen_and_finish_review(
                 input: "fixture-only wire".into(),
             },
             &[4; 32],
+            None,
+            "fixture-group".into(),
         )
         .expect("reserve new child");
     task.record_send(&instance, 3).expect("send marker");
@@ -1382,7 +1395,14 @@ pub(crate) async fn browser_request(
 async fn exhaust_legacy_allowance(service: &Service) -> (nucleus_store::TaskRow, u64) {
     let (task, _, _) = reservation("legacy", Entry::Brief, &service.fixture().start);
     let mut state = service.state.lock().await;
-    state.store.create(&task, &event("fixture")).unwrap();
+    state
+        .store
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
+        .unwrap();
     state.allowance_clock = crate::allowance::Clock::new(3_600_000);
     assert_eq!(state.allowance_view(&task).unwrap().used_ms, 0);
     state
@@ -1441,7 +1461,7 @@ async fn run_routed_report(
 ) -> nucleus_store::TaskRow {
     let mut updated = row.task.clone();
     let key = updated
-        .reserve_launch(
+        .reserve_grouped_launch(
             obs,
             LaunchInputs {
                 scratch: None,
@@ -1450,6 +1470,8 @@ async fn run_routed_report(
                 input: format!("input-{seed}"),
             },
             &[seed; 32],
+            None,
+            "fixture-group".into(),
         )
         .unwrap();
     let id = updated.run().unwrap().launch().instance.clone();
@@ -1515,7 +1537,11 @@ async fn start_full_cycle_task(
         .lock()
         .await
         .store
-        .create(&queued, &at_event("admitted", 1_000))
+        .create_with_facts(
+            &queued,
+            &at_event("admitted", 1_000),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .expect("admit queued");
     let row = service.task("full-cycle").await.unwrap();
     let obs_work = Observation {
@@ -1594,7 +1620,7 @@ async fn finish_full_cycle_task(
         }),
         host: Observed::Known(Host::Retained {
             thread: "thread-w1".into(),
-            state: RetainedThread::Idle,
+            state: RetainedThread::Queueable,
         }),
         workspace: Observed::Known(nucleus_core::Workspace::Clean(head2.clone())),
     };
@@ -1625,7 +1651,7 @@ async fn finish_full_cycle_task(
         }),
         host: Observed::Known(Host::Retained {
             thread: "thread-r1".into(),
-            state: RetainedThread::Idle,
+            state: RetainedThread::Queueable,
         }),
         workspace: Observed::Known(nucleus_core::Workspace::Clean(head2.clone())),
     };
@@ -1803,7 +1829,11 @@ async fn seed_pre_1601_task(service: &Service, head: &nucleus_core::Head) {
         .lock()
         .await
         .store
-        .create(&legacy, &at_event("admitted", 1_000))
+        .create_with_facts(
+            &legacy,
+            &at_event("admitted", 1_000),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     insert_legacy_events(service, &legacy_instance, head);
 }
@@ -1866,7 +1896,11 @@ async fn seed_outcome_runs(service: &Service, head: &nucleus_core::Head) {
         let mut state = service.state.lock().await;
         state
             .store
-            .create(&outcomes_task, &at_event("admitted", 19_000))
+            .create_with_facts(
+                &outcomes_task,
+                &at_event("admitted", 19_000),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
             .unwrap();
         let row = service.lookup(&state, "outcomes").unwrap();
         let send_audit = crate::presentation::decorate(
@@ -1879,10 +1913,7 @@ async fn seed_outcome_runs(service: &Service, head: &nucleus_core::Head) {
             &at_event("host_send", 20_000),
             &state.store,
         );
-        state
-            .store
-            .save_row(&row, &outcomes_task, &send_audit)
-            .unwrap();
+        crate::tests::save_row(&mut state.store, &row, &outcomes_task, &send_audit).unwrap();
     }
     let row = service.task("outcomes").await.unwrap();
     let limit_obs = Observation {
@@ -1915,7 +1946,7 @@ async fn seed_question_and_failed_runs(
 ) {
     let mut with_r2 = row.task.clone();
     let r2_key = with_r2
-        .reserve_launch(
+        .reserve_grouped_launch(
             &obs_absent_host(head),
             LaunchInputs {
                 scratch: None,
@@ -1924,6 +1955,8 @@ async fn seed_question_and_failed_runs(
                 input: "work-2".into(),
             },
             &[7; 32],
+            None,
+            "fixture-group".into(),
         )
         .unwrap();
     let r2 = with_r2.run().unwrap().launch().instance.clone();
@@ -1987,7 +2020,7 @@ async fn seed_failed_run(
 ) {
     let mut with_r3 = row.task.clone();
     with_r3
-        .reserve_launch(
+        .reserve_grouped_launch(
             &obs_absent_host(head),
             LaunchInputs {
                 scratch: None,
@@ -1996,6 +2029,8 @@ async fn seed_failed_run(
                 input: "work-3".into(),
             },
             &[8; 32],
+            None,
+            "fixture-group".into(),
         )
         .unwrap();
     let r3 = with_r3.run().unwrap().launch().instance.clone();
@@ -2027,7 +2062,7 @@ fn obs_absent_host(head: &nucleus_core::Head) -> Observation {
         forge: Observed::Known(Forge::Absent),
         host: Observed::Known(Host::Retained {
             thread: "thread:outcomes".into(),
-            state: RetainedThread::Idle,
+            state: RetainedThread::Queueable,
         }),
         workspace: Observed::Known(nucleus_core::Workspace::Clean(head.clone())),
     }
