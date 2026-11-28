@@ -40,7 +40,7 @@ fn answer_decision(
     input: DecisionAnswerInput,
     stamp: WriteAt<'_>,
 ) -> Result<Decision, StoreError> {
-    let (decision, _) = store.answer_decision_with_notice(project, id, input, stamp, None)?;
+    let (decision, _) = store.answer_decision_with_notice(project, id, input, stamp, None, None)?;
     Ok(decision)
 }
 

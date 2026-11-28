@@ -30,7 +30,7 @@ use tokio::{
     time::Instant,
 };
 
-use crate::{Service, ServiceError, State, now_ms};
+use crate::{Service, ServiceError, State, now_ms, planning::DecisionAnswerSource};
 
 use self::commands::InboxReply;
 
@@ -256,7 +256,7 @@ impl Service {
                 based_on_option_id: None,
                 note: None,
             },
-            &authority,
+            DecisionAnswerSource::Operator(&authority),
         )?;
         Ok(())
     }
@@ -380,9 +380,8 @@ impl Service {
             return Ok(waiting);
         };
         let reason = answer
-            .input
-            .note
-            .filter(|note| !note.trim().is_empty())
+            .relayed
+            .or_else(|| answer.input.note.filter(|note| !note.trim().is_empty()))
             .unwrap_or_else(|| "Accept merge in Nucleus Inbox".into());
         self.apply_operator_answer(
             row,

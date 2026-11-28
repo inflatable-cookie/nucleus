@@ -60,7 +60,7 @@ async fn legacy_process_decisions_are_closed_as_superseded_without_a_census() {
         note: None,
     };
     let (recorded, _) = store
-        .answer_decision_with_notice(project, answered, answer, engine_stamp(), None)
+        .answer_decision_with_notice(project, answered, answer, engine_stamp(), None, None)
         .unwrap();
     assert!(recorded.answer.is_some());
     for _ in 0..2 {
@@ -1130,6 +1130,12 @@ impl DecisionNoticeFixture {
     }
 
     async fn t3_post(&self, actor: &str, path: &str, body: Value) -> Value {
+        let response = self.t3_request(actor, path, body).await;
+        assert!(response.status().is_success(), "{}", response.status());
+        json_body(response).await
+    }
+
+    async fn t3_request(&self, actor: &str, path: &str, body: Value) -> axum::response::Response {
         use tower::ServiceExt as _;
         let request = axum::http::Request::builder()
             .method(Method::POST)
@@ -1140,9 +1146,7 @@ impl DecisionNoticeFixture {
             .header("content-type", "application/json")
             .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
-        let response = self.api.clone().oneshot(request).await.unwrap();
-        assert!(response.status().is_success(), "{}", response.status());
-        json_body(response).await
+        self.api.clone().oneshot(request).await.unwrap()
     }
 
     async fn assert_gate_rejects_free_text(&self, project: &str, decision_id: &str) {
@@ -1216,6 +1220,137 @@ fn decision_input(question: &str) -> DecisionInput {
             },
         ],
     }
+}
+
+#[tokio::test]
+async fn asking_planner_can_relay_a_chat_answer_without_echoing_it() {
+    use axum::http::StatusCode;
+
+    let fixture = DecisionNoticeFixture::open().await;
+    fixture.enroll("alpha-planner").await;
+    fixture.enroll("next-planner").await;
+    let project = fixture.project_id("alpha-planner").await;
+    let decisions = format!("/v1/planning/{project}/decisions");
+    let created = fixture
+        .t3_post(
+            "alpha-planner",
+            &decisions,
+            serde_json::to_value(decision_input("Ship this release?")).unwrap(),
+        )
+        .await;
+    let id = created["id"].as_str().unwrap();
+    let path = format!("{decisions}/{id}/answer");
+    let key = fixture.service.native_inbox.as_ref().unwrap().credential;
+    let snapshot = fixture.service.inbox_snapshot(&key).await.unwrap();
+    assert_eq!(snapshot.pending[0].field, inbox_field(&project, id));
+
+    let quote = "Ship after checks.\n  Keep the current version number. ";
+    let relay = json!({"answer":"Ship after checks", "relayed": quote});
+    for (actor, input, status) in [
+        ("next-planner", relay.clone(), StatusCode::FORBIDDEN),
+        (
+            "alpha-planner",
+            json!({"optionId":"ship"}),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "alpha-planner",
+            json!({"optionId":"ship", "relayed":"  "}),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        assert_eq!(
+            fixture.t3_request(actor, &path, input).await.status(),
+            status
+        );
+    }
+    let decision = fixture.t3_post("alpha-planner", &path, relay).await;
+    assert_eq!(decision["answer"]["relayed"], quote);
+    assert_eq!(decision["answer"]["answer"], "Ship after checks");
+    assert_eq!(
+        decision["answer"]["author"],
+        "operator, relayed by planner alpha-planner from chat"
+    );
+    assert!(
+        fixture
+            .service
+            .inbox_snapshot(&key)
+            .await
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+    assert!(!fixture.has_pending_tell().await);
+
+    let state = fixture.service.state.lock().await;
+    let stored = state
+        .store
+        .decision(&project, id)
+        .unwrap()
+        .unwrap()
+        .answer
+        .unwrap();
+    assert_eq!(stored.relayed.as_deref(), Some(quote));
+    assert_eq!(
+        stored.author,
+        decision["answer"]["author"].as_str().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn an_origin_planner_can_relay_an_exact_gate_option() {
+    use axum::http::StatusCode;
+
+    let fixture = DecisionNoticeFixture::open().await;
+    fixture.enroll("alpha-planner").await;
+    fixture.enroll("next-planner").await;
+    let project = fixture.project_id("alpha-planner").await;
+    fixture.service.state.lock().await.settings.dispatch = Some(DispatchSettings {
+        usage: nucleus_core::profiles::UsageLevel::Low,
+        ..DispatchSettings::default()
+    });
+    let id = "relay-task";
+    fixture.t3_post(
+        "alpha-planner",
+        "/v1/planning/tasks",
+        json!({"id":id, "reference":id, "brief":"---\nqueue:\n  complexity: high\n---\nGated work."}),
+    ).await;
+    let row = fixture.service.task(id).await.unwrap();
+    let path = format!("/v1/planning/{project}/decisions/usage-permission-{id}/answer");
+    fixture.service.state.lock().await.schedule.park(id);
+    let quote = "Yes, run it at Low.";
+    let exact = json!({"optionId":USAGE_APPROVE,"relayed":quote});
+    assert_eq!(
+        fixture
+            .t3_request("next-planner", &path, exact.clone())
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fixture
+            .t3_request(
+                "alpha-planner",
+                &path,
+                json!({"answer":quote,"relayed":quote})
+            )
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let decision = fixture.t3_post("alpha-planner", &path, exact).await;
+    assert_eq!(decision["answer"]["optionId"], USAGE_APPROVE);
+    assert_eq!(decision["answer"]["relayed"], quote);
+    assert!(!fixture.has_pending_tell().await);
+    let mut state = fixture.service.state.lock().await;
+    assert!(state.schedule.due(id).is_some());
+    assert_eq!(
+        fixture
+            .service
+            .usage_permission_wait(&mut state, &row)
+            .unwrap(),
+        None
+    );
 }
 
 async fn check_inbox_and_replay(fixture: &DecisionNoticeFixture, project: &str) {
@@ -1383,7 +1518,9 @@ async fn check_task_linked_wake_and_notify(fixture: &DecisionNoticeFixture, proj
     assert!(text.contains("Approve at Low usage (approve)"));
 }
 
-async fn check_task_question_wake_and_notify(fixture: &DecisionNoticeFixture, project: &str) {
+async fn open_external_merge_decision(
+    fixture: &DecisionNoticeFixture,
+) -> (TaskRow, nucleus_core::Observed<nucleus_core::Forge>) {
     use nucleus_core::{Entry, Forge, Observation, Observed, PullRequest, Task};
 
     let head: nucleus_core::Head = "a".repeat(40).parse().unwrap();
@@ -1403,9 +1540,10 @@ async fn check_task_question_wake_and_notify(fixture: &DecisionNoticeFixture, pr
         "Review the fixture".into(),
         Some(pr.clone()),
     );
+    let forge = Observed::Known(Forge::Merged { pr, commit: head });
     assert!(matches!(
         task.reconcile(&Observation {
-            forge: Observed::Known(Forge::Merged { pr, commit: head }),
+            forge: forge.clone(),
             host: Observed::Unknown,
             workspace: Observed::Unknown,
         }),
@@ -1425,6 +1563,58 @@ async fn check_task_question_wake_and_notify(fixture: &DecisionNoticeFixture, pr
         .unwrap();
     let row = fixture.service.task("review-entry-task").await.unwrap();
     fixture.service.native_task_decision(&row).await.unwrap();
+    (row, forge)
+}
+
+#[tokio::test]
+async fn relayed_merge_acceptance_uses_the_ordinary_exact_head_gate() {
+    let fixture = DecisionNoticeFixture::open().await;
+    fixture.enroll("next-planner").await;
+    let project = fixture.project_id("next-planner").await;
+    let (row, forge) = open_external_merge_decision(&fixture).await;
+    let quote = "I checked the merge. Accept it.";
+    fixture
+        .t3_post(
+            "next-planner",
+            &format!("/v1/planning/{project}/decisions/task-review-entry-task-1/answer"),
+            json!({"optionId":ACCEPT,"relayed":quote}),
+        )
+        .await;
+    assert!(!fixture.has_pending_tell().await);
+    fixture.service.native_task_decision(&row).await.unwrap();
+    assert!(
+        fixture
+            .service
+            .task("review-entry-task")
+            .await
+            .unwrap()
+            .task
+            .verdict()
+            .is_none()
+    );
+
+    fixture
+        .service
+        .observe_commands(&row, &forge)
+        .await
+        .unwrap();
+    fixture.service.native_task_decision(&row).await.unwrap();
+    let current = fixture.service.task("review-entry-task").await.unwrap();
+    let Some(nucleus_core::Verdict::Accepted { head, acceptance }) = current.task.verdict() else {
+        panic!("the observed external merge should be accepted");
+    };
+    assert_eq!(Some(head), row.task.operator_question());
+    assert_eq!(acceptance.reason, quote);
+    assert_eq!(
+        acceptance.authority,
+        Authority::Operator {
+            actor: "operator, relayed by planner next-planner from chat".into(),
+        }
+    );
+}
+
+async fn check_task_question_wake_and_notify(fixture: &DecisionNoticeFixture, project: &str) {
+    open_external_merge_decision(fixture).await;
     fixture
         .service
         .state

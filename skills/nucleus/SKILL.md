@@ -116,6 +116,11 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   and repeat `--option` for each choice. Keep the context, consequences and
   recommendation with the question. `decision.list --pending` reads open
   decisions. Inbox requests and operator decisions belong to the operator.
+  If Tom answers a decision you raised in chat, use
+  `decision.answer PROJECT ID OPTION --relayed "<his exact words>"`.
+  Record only what he said. For a gate decision on a task you dispatched,
+  record the exact option he chose. Ordinary decisions also accept
+  `--answer TEXT` in place of `OPTION`.
   Any verified thread can send an informational notice with `tell PROJECT TEXT`
   or `tell all TEXT`. Run `nucleus planner.claim` from the project's checkout
   to receive its messages. Replacing a claim notifies the previous planner.

@@ -1364,6 +1364,7 @@ mod tests {
                     },
                     stamp("operator", 1),
                     None,
+                    None,
                 )
                 .unwrap();
         }
