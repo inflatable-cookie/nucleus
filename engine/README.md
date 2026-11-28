@@ -525,9 +525,9 @@ clients can restart it.
 `serve` runs as a thin parent and an engine child. The child holds the profile
 lock and the port. The parent forwards SIGINT, SIGTERM and SIGHUP, waits for
 the child and logs its exit code or signal, uptime and peak resident memory.
-It then exits with the same code or signal, using 128 plus the number for a
-signal it handles itself. Signal either process to stop the engine. A SIGKILL
-of the parent alone leaves the engine running without an exit record.
+It then exits with the same code, or dies by the same signal. Signal either
+process to stop the engine. A SIGKILL of the parent alone leaves the engine
+running without an exit record.
 
 Once the engine holds the profile lock, it records the run before initializing
 the service. The next start reports the last log time, how the previous run

@@ -25,6 +25,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 rustix = { version = "1", features = ["fs", "process"] }
 serde = "1.0"
 serde_json = "1.0"
+signal-hook = { version = "0.4", default-features = false }
 tempfile = "3"
 time = "0.3.47"
 tokio = { version = "1", features = ["macros", "net", "process", "rt-multi-thread", "signal", "time"] }
