@@ -62,7 +62,7 @@ async fn after_changes(service: &Service, head: &Head) -> (TaskRow, Observation)
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
         .unwrap();
     service
         .report(
@@ -104,7 +104,7 @@ async fn revision(summary: &str, kind: Revision) {
     let host = service.host.fixture_pass();
     observation.host = Observed::Known(Host::Retained {
         thread: "thread:revision".into(),
-        state: RetainedThread::Idle,
+        state: RetainedThread::Queueable,
     });
     let Action::Launch { role, via } = decide(&row.task, &observation) else {
         panic!("expected the retained worker to resume");
@@ -235,7 +235,7 @@ async fn reviewer_prompt(
 ) -> String {
     observation.host = Observed::Known(Host::Retained {
         thread: "thread:reviewer".into(),
-        state: RetainedThread::Idle,
+        state: RetainedThread::Queueable,
     });
     let Action::Launch { role, via } = decide(&row.task, &observation) else {
         panic!("expected a new reviewer round");

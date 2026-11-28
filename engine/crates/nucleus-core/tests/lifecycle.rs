@@ -467,7 +467,10 @@ fn changes_continue_the_worker_and_allow_review_at_the_same_head() {
     let ended = host(&task, review.clone(), RunState::Ended);
     assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Reviewing));
     assert_eq!(
-        decide(&task, &retained(review, "reviewer", RetainedThread::Idle)),
+        decide(
+            &task,
+            &retained(review, "reviewer", RetainedThread::Queueable)
+        ),
         Action::Launch {
             role: Role::Reviewer,
             via: Launch::Continue {
