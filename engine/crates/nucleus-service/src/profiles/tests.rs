@@ -232,6 +232,232 @@ async fn configured_profiles_participate_in_work_review_and_groups() {
     forge_server.abort();
 }
 
+#[tokio::test]
+async fn review_entry_routes_attested_authors_through_review_and_first_revision() {
+    let (_home, mut service) = fixture(nucleus_forge::GitHub::new("fixture").unwrap());
+    let pr = PullRequest {
+        url: format!("https://github.com/{REPOSITORY}/pull/1"),
+        head: service.fixture().start.clone(),
+    };
+    let pull = forge_pull(&pr.head);
+    let checks = forge_checks(&pr.head);
+    let (forge, forge_server) = serve_forge(
+        Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async { Json(pull) }),
+            )
+            .route("/graphql", post(move || async { Json(checks) })),
+    )
+    .await;
+    service.forge = forge;
+    let native = Arc::new(Mutex::new(NativeRuns::default()));
+    let root = service.fixture().checkout.clone();
+    let (host, native_server) = crate::tests::native_fixture({
+        let native = Arc::clone(&native);
+        move |request| native_response(request, &root, &mut native.lock().unwrap())
+    })
+    .await;
+    service.host = host;
+    let profiles: Profiles = serde_json::from_value(json!({"profiles": [
+        {"name":"Overlap", "selection":{"id":"overlap", "provider":"codex", "model":"first", "capability":"mechanical"}},
+        {"name":"Different", "selection":{"id":"different", "provider":"codex", "model":"second", "capability":"mechanical"}}
+    ]})).unwrap();
+    service.state.lock().await.settings.profiles = Some(Arc::new(profiles.clone()));
+    let id = "attested-review";
+    let row = admit_attested_fixture(&service, id, &pr).await;
+    assert!(native.lock().unwrap().launches.is_empty());
+    let mut observation = Observation {
+        forge: Observed::Known(Forge::Open {
+            pr: pr.clone(),
+            checks: CheckState::Ready,
+        }),
+        host: Observed::Unknown,
+        workspace: Observed::Known(Workspace::Clean(pr.head.clone())),
+    };
+    let host = service.host.fixture_pass();
+    let LaunchSelection::Profile(selected) = service
+        .select_launch(&row.task, &observation, Role::Reviewer, &host)
+        .await
+        .unwrap()
+    else {
+        panic!("expected the initial reviewer");
+    };
+    assert_eq!(selected.intent.profile().id, "different");
+    service.state.lock().await.settings.profiles = Some(Arc::new(Profiles {
+        profiles: vec![profiles.profiles[0].clone()],
+        ..profiles
+    }));
+    let reviewer = send_review_entry_role(&service, &row, Role::Reviewer).await;
+    let reviewer_run = reviewer.task.run().unwrap().launch();
+    assert!(
+        reviewer_run
+            .input
+            .contains("Review shares first with the author: no other usable reviewer")
+    );
+    assert!(
+        reviewer_run
+            .input
+            .contains("Declared author models: fixture/FIRST")
+    );
+    settle_review_entry_fixture(&service, &reviewer, &mut observation, &pr).await;
+    let row = service.task(id).await.unwrap();
+    let worker = send_review_entry_role(&service, &row, Role::Worker).await;
+    assert_eq!(worker.task.pull_request(), Some(&pr));
+    assert_eq!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .last_shared_model(id)
+            .unwrap()
+            .as_deref(),
+        Some("Worker shares first with the reviewer: required worker profile")
+    );
+    assert_eq!(native.lock().unwrap().launches.len(), 2);
+    native_server.abort();
+    forge_server.abort();
+}
+
+async fn admit_attested_fixture(service: &Service, id: &str, pr: &PullRequest) -> TaskRow {
+    let mut declaration = nucleus_core::AuthorDeclaration {
+        models: vec!["fixture/FIRST".into()],
+        github_author: "unverified-author".into(),
+        authoring_system: "fixture".into(),
+        attested_by: "operator".into(),
+        provenance: "Verified the fixture's authoring records.".into(),
+    };
+    assert!(matches!(
+        admit_review_entry(service, "wrong-author", pr, Some(declaration.clone())).await,
+        Err(ServiceError::AuthorDeclaration(_))
+    ));
+    let missing = admit_review_entry(service, "missing-author", pr, None)
+        .await
+        .unwrap();
+    assert!(matches!(
+        Box::pin(service.advance(&missing, &service.host.fixture_pass())).await,
+        Err(ServiceError::Profile(ProfileLaunchError::OpaqueAuthor))
+    ));
+    assert!(
+        service
+            .task("missing-author")
+            .await
+            .unwrap()
+            .task
+            .run()
+            .is_none()
+    );
+
+    declaration.github_author = "fixture-author".into();
+    let admitted = admit_review_entry(service, id, pr, Some(declaration))
+        .await
+        .unwrap();
+    let row = service.task(id).await.unwrap();
+    assert_eq!(row.task.review_author(), admitted.task.review_author());
+    assert!(row.task.threads().get(Role::Worker).is_none());
+    row
+}
+
+async fn admit_review_entry(
+    service: &Service,
+    id: &str,
+    pr: &PullRequest,
+    declaration: Option<nucleus_core::AuthorDeclaration>,
+) -> Result<TaskRow, ServiceError> {
+    let checkout = service.worktrees();
+    checkout
+        .checkout(&service.fixture().checkout, REPOSITORY, id)
+        .unwrap()
+        .allocate(&pr.head)
+        .unwrap();
+    service.add_planned_task(
+        None,
+        crate::planning::TaskAdmission {
+            id: Some(id.into()),
+            reference: None,
+            repository: None,
+            brief: "---\nqueue: {complexity: low, profileRequests: {worker: {profileId: overlap, reason: fixture, required: true}}}\n---\nReview the fixture.".into(),
+            review: Some(pr.clone()),
+            author_declaration: declaration,
+            planning_commit: None,
+        },
+        &Authority::Operator { actor: "operator".into() },
+        &crate::ControllerScope::default(),
+    ).await
+}
+
+async fn send_review_entry_role(service: &Service, row: &TaskRow, role: Role) -> TaskRow {
+    let host = service.host.fixture_pass();
+    assert_eq!(
+        Box::pin(service.advance(row, &host)).await.unwrap(),
+        Action::Launch {
+            role,
+            via: Launch::Create
+        }
+    );
+    let id = &row.task.identity().id;
+    let reserved = service.task(id).await.unwrap();
+    assert_eq!(
+        Box::pin(service.advance(&reserved, &host)).await.unwrap(),
+        Action::Launch {
+            role,
+            via: Launch::SendPrepared
+        }
+    );
+    let sending = service.task(id).await.unwrap();
+    let run = sending.task.run().unwrap();
+    assert!(run.last_send_at_ms().is_some());
+    assert_eq!(run.launch().profile().unwrap().id, "overlap");
+    sending
+}
+
+async fn settle_review_entry_fixture(
+    service: &Service,
+    row: &TaskRow,
+    observation: &mut Observation,
+    pr: &PullRequest,
+) {
+    let id = &row.task.identity().id;
+    let instance = &row.task.run().unwrap().launch().instance;
+    let ticket: crate::ticket::ReportTicket = serde_json::from_reader(
+        std::fs::File::open(crate::ticket::path(service.storage.scratch(), instance)).unwrap(),
+    )
+    .unwrap();
+    service
+        .report(
+            id,
+            instance,
+            &ticket.credential,
+            Report::Review {
+                head: pr.head.clone(),
+                decision: Review::Changes,
+                summary: "Fix the spelling.".into(),
+                finding_titles: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let reported = service.task(id).await.unwrap();
+    let mut settled = reported.task.clone();
+    observation.host = Observed::Known(Host::Current {
+        instance: instance.clone(),
+        state: RunState::Ended,
+    });
+    assert_eq!(
+        settled.reconcile(observation),
+        Action::Advance(Phase::Working)
+    );
+    service
+        .save(
+            &reported,
+            settled,
+            &crate::event("fixture_review_published"),
+        )
+        .await
+        .unwrap();
+}
+
 #[test]
 fn an_unknown_reset_pauses_for_a_day_from_the_failure() {
     let mut limit = ProviderLimit {
@@ -701,7 +927,6 @@ fn finish_profile_run(
                 counts: RotationCounts::default(),
             }],
             planner_brief: true,
-            author_models: &[],
         },
     )
     .unwrap()

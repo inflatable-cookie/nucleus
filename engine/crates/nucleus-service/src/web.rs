@@ -1705,77 +1705,78 @@ impl IntoResponse for ApiError {
                 StatusCode::FORBIDDEN,
                 "revoking board sessions requires an operator".into(),
             ),
-            Self::Service(error) => {
-                let status = match error {
-                    ServiceError::Missing
-                    | ServiceError::TellUnknownProject(_)
-                    | ServiceError::RepositoryOwner { .. }
-                    | ServiceError::TaskReferenceMissing
-                    | ServiceError::Store(nucleus_store::StoreError::PlanningMissing) => {
-                        StatusCode::NOT_FOUND
-                    }
-                    ServiceError::Input
-                    | ServiceError::TellReply
-                    | ServiceError::TellInput
-                    | ServiceError::TellAmbiguousProject(_)
-                    | ServiceError::TellArchivedProject(_)
-                    | ServiceError::ReportInput(_)
-                    | ServiceError::ComplexityRequired
-                    | ServiceError::BriefTooLarge { .. }
-                    | ServiceError::BriefPolicy(_)
-                    | ServiceError::DependencyInput(_)
-                    | ServiceError::TaskReferenceAmbiguous
-                    | ServiceError::TaskReferenceNeedsRepository
-                    | ServiceError::Store(
-                        nucleus_store::StoreError::PlanningInput
-                        | nucleus_store::StoreError::DuplicateDecisionOptionLabel,
-                    )
-                    | ServiceError::Project
-                    | ServiceError::UnboundCheckout { planner: false, .. }
-                    | ServiceError::Settings(
-                        nucleus_store::StorageError::InvalidSettings(_)
-                        | nucleus_store::StorageError::MissingVolume
-                        | nucleus_store::StorageError::BargePlacement { .. }
-                        | nucleus_store::StorageError::OutsideVolume
-                        | nucleus_store::StorageError::Layout
-                        | nucleus_store::StorageError::ConfinedDirectory(_),
-                    ) => StatusCode::BAD_REQUEST,
-                    ServiceError::QuestionPlanner
-                    | ServiceError::TellPlannerRequired
-                    | ServiceError::WatchAgentRequired
-                    | ServiceError::ControllerProject
-                    | ServiceError::UnboundCheckout { planner: true, .. }
-                    | ServiceError::PlannerEnrollmentRefused(_)
-                    | ServiceError::PlannerAuthorityRefused
-                    | ServiceError::AnswerInInbox
-                    | ServiceError::DecisionOperator => StatusCode::FORBIDDEN,
-                    ServiceError::AcpUnauthorized => StatusCode::UNAUTHORIZED,
-                    ServiceError::Store(nucleus_store::StoreError::TellRateLimit(_)) => {
-                        StatusCode::TOO_MANY_REQUESTS
-                    }
-                    ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
-                    | ServiceError::Core(_)
-                    | ServiceError::QuestionUnassigned
-                    | ServiceError::RecheckUnavailable
-                    | ServiceError::QueuePriorityUnavailable
-                    | ServiceError::EffectInProgress
-                    | ServiceError::BriefConflict
-                    | ServiceError::ReportOpenPullRequest
-                    | ServiceError::ReportWorkerBusy
-                    | ServiceError::DependencyEdit(_)
-                    | ServiceError::Store(
-                        nucleus_store::StoreError::StaleTask
-                        | nucleus_store::StoreError::DependencyCycle { .. }
-                        | nucleus_store::StoreError::AllowanceNotExhausted
-                        | nucleus_store::StoreError::NumbersNeedSeed
-                        | nucleus_store::StoreError::PlanningConflict,
-                    ) => StatusCode::CONFLICT,
-                    _ => StatusCode::SERVICE_UNAVAILABLE,
-                };
-                (status, error.to_string())
-            }
+            Self::Service(error) => (service_error_status(&error), error.to_string()),
         };
         (status, Json(json!({"error": message}))).into_response()
+    }
+}
+
+fn service_error_status(error: &ServiceError) -> StatusCode {
+    match error {
+        ServiceError::Missing
+        | ServiceError::TellUnknownProject(_)
+        | ServiceError::RepositoryOwner { .. }
+        | ServiceError::TaskReferenceMissing
+        | ServiceError::Store(nucleus_store::StoreError::PlanningMissing) => StatusCode::NOT_FOUND,
+        ServiceError::Input
+        | ServiceError::AuthorDeclaration(_)
+        | ServiceError::TellReply
+        | ServiceError::TellInput
+        | ServiceError::TellAmbiguousProject(_)
+        | ServiceError::TellArchivedProject(_)
+        | ServiceError::ReportInput(_)
+        | ServiceError::ComplexityRequired
+        | ServiceError::BriefTooLarge { .. }
+        | ServiceError::BriefPolicy(_)
+        | ServiceError::DependencyInput(_)
+        | ServiceError::TaskReferenceAmbiguous
+        | ServiceError::TaskReferenceNeedsRepository
+        | ServiceError::Store(
+            nucleus_store::StoreError::PlanningInput
+            | nucleus_store::StoreError::DuplicateDecisionOptionLabel,
+        )
+        | ServiceError::Project
+        | ServiceError::UnboundCheckout { planner: false, .. }
+        | ServiceError::Settings(
+            nucleus_store::StorageError::InvalidSettings(_)
+            | nucleus_store::StorageError::MissingVolume
+            | nucleus_store::StorageError::BargePlacement { .. }
+            | nucleus_store::StorageError::OutsideVolume
+            | nucleus_store::StorageError::Layout
+            | nucleus_store::StorageError::ConfinedDirectory(_),
+        ) => StatusCode::BAD_REQUEST,
+        ServiceError::QuestionPlanner
+        | ServiceError::AuthorDeclarationOperator
+        | ServiceError::TellPlannerRequired
+        | ServiceError::WatchAgentRequired
+        | ServiceError::ControllerProject
+        | ServiceError::UnboundCheckout { planner: true, .. }
+        | ServiceError::PlannerEnrollmentRefused(_)
+        | ServiceError::PlannerAuthorityRefused
+        | ServiceError::AnswerInInbox
+        | ServiceError::DecisionOperator => StatusCode::FORBIDDEN,
+        ServiceError::AcpUnauthorized => StatusCode::UNAUTHORIZED,
+        ServiceError::Store(nucleus_store::StoreError::TellRateLimit(_)) => {
+            StatusCode::TOO_MANY_REQUESTS
+        }
+        ServiceError::Settings(nucleus_store::StorageError::SettingsConflict)
+        | ServiceError::Core(_)
+        | ServiceError::QuestionUnassigned
+        | ServiceError::RecheckUnavailable
+        | ServiceError::QueuePriorityUnavailable
+        | ServiceError::EffectInProgress
+        | ServiceError::BriefConflict
+        | ServiceError::ReportOpenPullRequest
+        | ServiceError::ReportWorkerBusy
+        | ServiceError::DependencyEdit(_)
+        | ServiceError::Store(
+            nucleus_store::StoreError::StaleTask
+            | nucleus_store::StoreError::DependencyCycle { .. }
+            | nucleus_store::StoreError::AllowanceNotExhausted
+            | nucleus_store::StoreError::NumbersNeedSeed
+            | nucleus_store::StoreError::PlanningConflict,
+        ) => StatusCode::CONFLICT,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
     }
 }
 

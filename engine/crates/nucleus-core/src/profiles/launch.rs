@@ -19,8 +19,6 @@ pub struct LaunchPolicy<'a> {
     /// The service authenticates the brief at admission and amendment.
     /// Text in the brief cannot establish that authority by itself.
     pub planner_brief: bool,
-    /// Additional known contributors, including author models for a review entry.
-    pub author_models: &'a [&'a str],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,7 +239,7 @@ fn select_launch(
     let complexity = brief.complexity.unwrap_or_default();
     let reselect = reselection_target(task, role, &brief, policy.usage);
     let demand = demand(task, observation, role, &brief, policy.usage, reselect);
-    let other_models = other_role_models(task, role, policy.author_models)?;
+    let other_models = other_role_models(task, role)?;
     let overlaps = |profile: &Profile| {
         model_key(&profile.model).is_some_and(|model| other_models.contains(&model))
     };
@@ -621,17 +619,16 @@ fn retain_or_rotate<'a>(
     })
 }
 
-fn other_role_models(
-    task: &Task,
-    role: Role,
-    authors: &[&str],
-) -> Result<Vec<String>, ProfileLaunchError> {
+fn other_role_models(task: &Task, role: Role) -> Result<Vec<String>, ProfileLaunchError> {
     let threads = task.threads();
-    if task.identity().entry == Entry::ReviewEntry
-        && (authors.is_empty() || authors.iter().any(|model| model_key(model).is_none()))
-    {
-        return Err(ProfileLaunchError::OpaqueAuthor);
-    }
+    let authors = if task.identity().entry == Entry::ReviewEntry {
+        task.review_author()
+            .ok_or(ProfileLaunchError::OpaqueAuthor)?
+            .models
+            .as_slice()
+    } else {
+        &[]
+    };
     match role {
         Role::Worker => Ok(threads
             .profile(Role::Reviewer)
@@ -647,7 +644,7 @@ fn other_role_models(
             }
             let mut models = authors
                 .iter()
-                .copied()
+                .map(String::as_str)
                 .chain(retained)
                 .map(|model| model_key(model).ok_or(ProfileLaunchError::OpaqueAuthor))
                 .collect::<Result<Vec<_>, _>>()?;

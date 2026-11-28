@@ -265,6 +265,17 @@ impl Prompt<'_> {
             if let Some(message) = self.shared_model {
                 let _ = writeln!(text, "{message}");
             }
+            if let Some(author) = task.review_author() {
+                let _ = writeln!(
+                    text,
+                    "Declared external author: {} ({})\nDeclared author models: {}\nAttested by: {}\nProvenance: {}",
+                    author.github_author,
+                    author.authoring_system,
+                    author.models.join(", "),
+                    author.attested_by,
+                    author.provenance
+                );
+            }
             let worker = task.threads();
             let author = worker.profile(Role::Worker);
             let _ = writeln!(

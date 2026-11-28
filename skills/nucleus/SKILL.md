@@ -64,8 +64,10 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   remove an existing legacy key. Adding a key or changing its value requires
   a supported key.
 
-  For review entry, add `--review PR_URL HEAD` with the named PR and exact full
-  head. Choose the repository explicitly when the project or brief needs it.
+  For review entry, use `--review PR_URL HEAD` with the exact full head. The
+  operator supplies `--author-declaration FILE` to enable dispatch. The JSON
+  object contains `models`, `githubAuthor`, `authoringSystem`, `attestedBy` and
+  `provenance`. Choose the repository explicitly when required.
   For milestone QA, add these fields under `queue` alongside `complexity`.
 
   ```yaml

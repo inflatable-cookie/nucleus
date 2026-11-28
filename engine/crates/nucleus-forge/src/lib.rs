@@ -650,6 +650,30 @@ impl GitHub {
         .await
     }
 
+    /// Verify the declared GitHub author against the exact open PR head.
+    ///
+    /// # Errors
+    /// Returns an error if GitHub cannot verify the pull request identity.
+    pub async fn matches_review_author(
+        &self,
+        target: &PullTarget,
+        head: &Head,
+        login: &str,
+    ) -> Result<bool, ForgeError> {
+        let pull = self.pull(target).await?;
+        Ok(pull.state == PullState::Open
+            && !pull.merged
+            && pull.head.sha == *head
+            && pull
+                .head
+                .repo
+                .as_ref()
+                .is_some_and(|repo| target.branches.matches_repository(&repo.full_name))
+            && pull
+                .user
+                .is_some_and(|user| user.login.eq_ignore_ascii_case(login)))
+    }
+
     async fn pull(&self, target: &PullTarget) -> Result<Pull, ForgeError> {
         let url = format!("{}/{}", self.origin, target.path());
         let pull: Pull = self.get(url).await?;

@@ -407,40 +407,23 @@ Prompts identify imported provenance, and reviews use the usual exact-head
 and reporting requirements. An agent that contributed to the work cannot
 review it.
 
-Normalization is part of that one rule: a blank or whitespace-only model, or a
-final component of `unknown` or `default`, is opaque. A provider-qualified
-`provider/unknown` therefore names no concrete model even though review-entry
-admission accepts it as a declaration.
+Models are concrete provider/model names. Nucleus compares the final part
+case-insensitively and refuses opaque names such as `provider/unknown`.
 
-Absence of a Nucleus authoring worker is not an unknown author. A workerless
-review-entry task's current author is its recorded evidence — the declared
-models plus every observed later external author and recorded executor model —
-so a reader whose model differs from all of them continues from an
-authenticated checkpoint through ordinary `restart role=reviewer`, and a fresh
-reviewer may be selected and verified the same way. Absence never manufactures
-a worker, model or profile.
+For the Rust engine, the operator can pass `--author-declaration FILE` with
+`nucleus task.add --review PR_URL HEAD`, or send the same JSON object as
+`authorDeclaration` in task admission. The object has `models`, `githubAuthor`,
+`authoringSystem`, `attestedBy` and `provenance`. Admission verifies the open PR's
+head and GitHub login, then stores the declaration on the task. The first
+review uses that head. An authenticated worker report can establish a revised
+head, and future reviews compare both the external and Nucleus author models.
+A head without either source of evidence cannot start a role.
 
-Unknown, and therefore refused at every boundary before any model is compared:
-no recorded author at all; a task with a Nucleus author whose current model is
-unrecorded; any declared, recorded or observed model that normalizes to opaque;
-a later external revision whose receipt carries no source observation; and a
-distinct bound revision contributor whose model was never recorded. An
-authored task with no recorded current model is unknown even when earlier
-external authors are known, and a revision run bound to the task's own recorded
-author adds no author of its own. A known collision also refuses, except
-through the existing owner-route waiver: a required reviewer named by `route`
-may share the current author's model, and for a workerless entry the recorded
-external authors are that current author, so the same marked request waives
-them while an unmarked or optional request and any opaque model stay excluded.
-A revision run's author is the task's current or retired Nucleus author, whose
-model the task row records, so the verdict boundary sees every recorded
-revision contributor without reading runs.
-
-On authenticated `changes_required` for the current reviewer/head, wait for its
-actual release, then use the normal worker pool, scope, subscription and
-availability gates to select the first revision worker. Exclude the retained
-reviewer's model. If no worker is eligible, retain the task and findings without
-creating another workspace or weakening independence. Record one durable revision
+On authenticated `changes_required` for the current reviewer and head, wait
+for the reviewer to release the run. Select a revision worker through the
+normal pool and availability gates. Prefer a different model from the
+retained reviewer's and record any overlap under
+[Spec 070 ruling 64](070-small-engine.md#rulings). Record one durable revision
 run/agent intent, bind its reporting credentials and launch in the exact same
 workspace/branch/PR. Confirmed creation binds the task's worker agent/profile/model
 fields, never its coordinator identity. PR lookup uses immutable review-entry

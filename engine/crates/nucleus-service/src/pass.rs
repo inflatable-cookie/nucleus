@@ -1965,6 +1965,13 @@ impl Service {
                         replay_policy(Some(head), &fresh)
                             .filter(|&superseded| !superseded || run.revoked())
                     } else {
+                        if identity.entry == nucleus_core::Entry::ReviewEntry
+                            && (task.review_author().is_none()
+                                || !matches!(self.read_forge(task, checkout).await?.0,
+                                    Forge::Open { pr, .. } if task.pull_request() == Some(&pr)))
+                        {
+                            return Ok(None);
+                        }
                         (self.observe_checkout(checkout).await? != Workspace::Absent)
                             .then_some(false)
                     }

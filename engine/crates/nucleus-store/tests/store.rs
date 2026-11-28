@@ -1188,6 +1188,14 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
             });
             observation.workspace = Observed::Known(Workspace::Clean(pr.head.clone()));
             Task::new(identity, "Review the greeting".into(), Some(pr))
+                .with_author_declaration(nucleus_core::AuthorDeclaration {
+                    models: vec!["fixture/author-model".into()],
+                    github_author: "fixture-author".into(),
+                    authoring_system: "fixture".into(),
+                    attested_by: "operator".into(),
+                    provenance: "Fixture evidence.".into(),
+                })
+                .unwrap()
         }
     };
     let _ = task.reconcile(&observation);
@@ -1215,7 +1223,6 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
             counts,
         }],
         planner_brief: true,
-        author_models: &["fixture-author-model"],
     };
     let intent = if counts == RotationCounts::default() {
         decide_weighted_launch(&task, &observation, &policy, 42)

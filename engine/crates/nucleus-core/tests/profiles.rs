@@ -285,7 +285,6 @@ fn history_free_selection_uses_weights_inside_the_eligible_bracket() {
         usage: Normal,
         candidates: &candidates,
         planner_brief: true,
-        author_models: &[],
     };
     let task = working("Add a greeting.");
     let observation = unbound();
@@ -325,7 +324,6 @@ fn select(
             usage,
             candidates: pool,
             planner_brief: true,
-            author_models: &[],
         },
     )
 }
@@ -494,7 +492,6 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                     usage,
                     candidates: &[candidate(&frontier)],
                     planner_brief: true,
-                    author_models: &[],
                 }
             ),
             Err(ProfileLaunchError::NoEligibleProfile {
@@ -517,7 +514,6 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                 usage,
                 candidates: &pool,
                 planner_brief: false,
-                author_models: &[],
             },
         )
         .unwrap()
@@ -539,7 +535,6 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                     usage,
                     candidates: &unavailable,
                     planner_brief: true,
-                    author_models: &[],
                 }
             ),
             Err(ProfileLaunchError::RequiredProfileUnavailable {
@@ -767,7 +762,6 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
                 usage: Maximum,
                 candidates: &[],
                 planner_brief: false,
-                author_models: &[],
             }
         )
         .unwrap()
@@ -1166,32 +1160,56 @@ fn review_entry_prefers_a_different_model_and_requires_known_authors() {
     let entry = task("Review this pull request.", Entry::ReviewEntry);
     let author = profile("author", Mechanical);
     let reviewer = profile("reviewer", Mechanical);
+    let observation = open('a');
     let pool = [candidate(&author), candidate(&reviewer)];
-    let mut policy = LaunchPolicy {
-        usage: Normal,
-        candidates: &pool,
-        planner_brief: true,
-        author_models: &["vendor/MODEL-AUTHOR"],
+    assert!(matches!(
+        select(&entry, &observation, Normal, &pool),
+        Err(ProfileLaunchError::OpaqueAuthor)
+    ));
+    let mut declaration = nucleus_core::AuthorDeclaration {
+        models: vec!["vendor/unknown".into()],
+        github_author: "fixture-author".into(),
+        authoring_system: "fixture".into(),
+        attested_by: "operator".into(),
+        provenance: "Reviewed the fixture evidence.".into(),
     };
-    let selection = decide_profile_launch(&entry, &open('a'), &policy)
-        .unwrap()
-        .unwrap();
-    assert_eq!(selection.profile(), &reviewer);
-    policy.candidates = &pool[..1];
-    assert_eq!(
-        decide_profile_launch(&entry, &open('a'), &policy)
-            .unwrap()
-            .unwrap()
-            .profile(),
-        &author
+    assert!(
+        entry
+            .clone()
+            .with_author_declaration(declaration.clone())
+            .is_none()
     );
-    for authors in [&[][..], &["vendor/unknown"][..]] {
-        policy.author_models = authors;
-        assert!(matches!(
-            decide_profile_launch(&entry, &open('a'), &policy),
-            Err(ProfileLaunchError::OpaqueAuthor)
-        ));
-    }
+    declaration.models = vec!["vendor/MODEL-AUTHOR".into()];
+    let entry = entry.with_author_declaration(declaration).unwrap();
+    assert_eq!(
+        pick(&entry, &observation, Normal, &pool).profile(),
+        &reviewer
+    );
+    let shared = pick(&entry, &observation, Normal, &pool[..1]);
+    assert_eq!(shared.profile(), &author);
+    assert!(shared.shared_model().is_some());
+    let mut revised = entry.clone();
+    review_changes(&mut revised, &observation, &author);
+    let intent = pick(&revised, &observation, Normal, &pool[..1]);
+    let (instance, bearer) = reserve(&mut revised, &observation, intent, "revision");
+    revised.record_send(&instance, 2).unwrap();
+    revised
+        .record_report(&instance, bearer.as_bytes(), Report::Work(pr('b').into()))
+        .unwrap();
+    assert_eq!(
+        revised.reconcile(&current(open('b'), &instance, RunState::Ended)),
+        Action::Advance(Phase::Reviewing)
+    );
+    let restored: Task = serde_json::from_value(serde_json::to_value(&revised).unwrap()).unwrap();
+    let retry = role_thread(open('b'), "reviewer-1", RetainedThread::Gone);
+    assert_eq!(pick(&restored, &retry, Normal, &pool).profile(), &reviewer);
+    let moved = open('b');
+    let mut entry = entry;
+    assert_eq!(entry.reconcile(&moved), Action::Advance(Phase::Reviewing));
+    assert!(matches!(
+        select(&entry, &moved, Normal, &pool),
+        Err(ProfileLaunchError::OpaqueAuthor)
+    ));
 }
 
 #[test]
@@ -1389,7 +1407,6 @@ fn an_instructed_worker_continuation_keeps_its_profile_over_a_new_request() {
         usage: Normal,
         candidates: &pool,
         planner_brief: true,
-        author_models: &[],
     };
     assert!(matches!(
         decide_profile_launch(&task, &observation, &policy),
