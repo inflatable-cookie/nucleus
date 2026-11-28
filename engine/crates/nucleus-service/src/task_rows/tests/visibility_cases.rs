@@ -97,20 +97,11 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     fixture.sync().await;
     assert_eq!(
         fixture.commands(),
-        [
-            "thread.snooze",
-            "thread.unsnooze",
-            "thread.snooze",
-            "thread.unsnooze"
-        ]
+        ["thread.snooze", "thread.unsnooze", "thread.snooze"]
     );
 }
 
-#[tokio::test]
-async fn a_planner_question_stays_visible_regardless_of_child_activity() {
-    let fixture = Fixture::new(&pending_task()).await;
-    let service = &fixture.service;
-    let head = &service.fixture().start;
+fn planner_question_task(head: &nucleus_core::Head) -> (Task, String, nucleus_core::Observation) {
     let (mut task, credential, mut observation) = reservation(ID, Entry::ReviewEntry, head);
     let run = task.run().unwrap().launch().clone();
     task.record_send(&run.instance, 1).unwrap();
@@ -141,6 +132,15 @@ async fn a_planner_question_stays_visible_regardless_of_child_activity() {
         task.reconcile(&observation),
         Action::Ask(Question::Repair(Repair::MergeBlocked))
     );
+    (task, run.thread, observation)
+}
+
+#[tokio::test]
+async fn a_planner_question_snoozes_once_idle_and_a_person_question_stays_visible() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let head = &service.fixture().start;
+    let (task, thread, observation) = planner_question_task(head);
     {
         let mut state = service.state.lock().await;
         state
@@ -160,13 +160,79 @@ async fn a_planner_question_stays_visible_regardless_of_child_activity() {
     assert_eq!(card["phase"], "merging");
     assert_eq!(card["attention"], "waiting");
     assert_eq!(card["stateLabel"], "Merging · planner");
-    fixture.child(&run.thread, true);
+    service
+        .visibility_time
+        .store(1_893_456_000_000, std::sync::atomic::Ordering::Relaxed);
+    fixture.child(&thread, true);
     fixture.sync().await;
     assert!(fixture.commands().is_empty());
-    fixture.child(&run.thread, false);
-    fixture.sync().await;
+    fixture.child(&thread, false);
+    fixture.native.lock().unwrap().child.as_mut().unwrap()["latestRunCompletedAt"] =
+        json!("2030-01-01T00:00:00Z");
     fixture.sync().await;
     assert!(fixture.commands().is_empty());
+    fixture.elapse_visibility_ms(HANDOVER_MS);
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    fixture.sync().await;
+    fixture.observed_snooze().await;
+
+    // A Nucleus send wakes the snoozed planner-question row; it snoozes again once idle.
+    let row = service.task(ID).await.unwrap();
+    let write = fixture.prepare_hold("Waiting on planner", None);
+    assert!(service.deliver_parent(&row, write, None).await.unwrap());
+    fixture.elapse_visibility_ms(2_000);
+    let calls = fixture.sync().await;
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
+    assert_eq!(
+        fixture.commands(),
+        ["thread.snooze", "message.dispatch", "thread.snooze"]
+    );
+    assert!(fixture.sync().await.is_empty());
+    fixture.observed_snooze().await;
+
+    // A person's open question (external-merge acceptance on review-entry) brings the row back.
+    let row = service.task(ID).await.unwrap();
+    let mut asked = row.task.clone();
+    let merged = nucleus_core::Observation {
+        forge: Observed::Known(Forge::Merged {
+            pr: asked.pull_request().unwrap().clone(),
+            commit: head.clone(),
+        }),
+        ..observation
+    };
+    asked
+        .command(
+            Command::Answer(nucleus_core::Answer::Work("Check merge".into())),
+            &Authority::Planner {
+                actor: "planner".into(),
+            },
+            &merged,
+        )
+        .unwrap();
+    assert_eq!(
+        asked.reconcile(&merged),
+        Action::Ask(Question::Accept { head: head.clone() })
+    );
+    assert!(asked.operator_question().is_some());
+    {
+        let mut state = service.state.lock().await;
+        service
+            .commit(&mut state, &row, &asked, &event("operator_question"), None)
+            .unwrap();
+    }
+    fixture.sync().await;
+    assert_eq!(
+        fixture.commands(),
+        [
+            "thread.snooze",
+            "message.dispatch",
+            "thread.snooze",
+            "thread.unsnooze"
+        ]
+    );
+    assert!(fixture.sync().await.is_empty());
+    assert!(fixture.native.lock().unwrap().until.is_null());
 }
 
 #[tokio::test]
@@ -1315,4 +1381,159 @@ async fn a_child_starting_after_planning_prevents_the_parent_snooze() {
     ));
     assert!(!calls.contains_key("orchestration.dispatchCommand"));
     assert!(fixture.commands().is_empty());
+}
+
+#[tokio::test]
+async fn a_send_followed_by_a_planner_hold_snoozes_once_the_waiting_window_passes() {
+    let pending = pending_task();
+    let fixture = Fixture::new(&pending).await;
+    let service = &fixture.service;
+    let clock = 1_893_456_000_000;
+    service
+        .visibility_time
+        .store(clock, std::sync::atomic::Ordering::Relaxed);
+    let row = {
+        let mut state = service.state.lock().await;
+        state
+            .store
+            .create_with_facts(&pending, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
+        service.desire_title(&mut state, &pending, None);
+        service.lookup(&state, ID).unwrap()
+    };
+    // First snooze is written; leave its receipt Unknown (shell not yet reconciled).
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    fixture.publish_shell();
+    // A Nucleus send wakes the snoozed row, then the planner holds the task right away.
+    let write = fixture.prepare_hold("Starting task", None);
+    assert!(service.deliver_parent(&row, write, None).await.unwrap());
+    assert!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .next_delivery_snooze()
+            .unwrap()
+            .is_none()
+    );
+    let mut held = row.task.clone();
+    held.command(
+        Command::Hold("Wait for follow-up".into()),
+        &Authority::Planner {
+            actor: "planner".into(),
+        },
+        &nucleus_core::Observation {
+            host: Observed::Unknown,
+            forge: Observed::Unknown,
+            workspace: Observed::Unknown,
+        },
+    )
+    .unwrap();
+    {
+        let mut state = service.state.lock().await;
+        service
+            .commit(&mut state, &row, &held, &event("held"), None)
+            .unwrap();
+    }
+    // Simulate a child that just finished at T0+1s so the two-minute Waiting window applies,
+    // and clear latestUserMessageAt to prove lastSnoozeWakeAt alone suffices.
+    fixture.child("worker", false);
+    {
+        let mut native = fixture.native.lock().unwrap();
+        native.message_at = Value::Null;
+        native.child.as_mut().unwrap()["latestRunCompletedAt"] = json!("2030-01-01T00:00:01Z");
+    }
+    fixture.elapse_visibility_ms(2_000);
+    assert!(fixture.sync().await.is_empty());
+    assert!(fixture.native.lock().unwrap().until.is_null());
+
+    // Once the two-minute Waiting window passes, one thread.snooze hides the row again.
+    fixture.elapse_visibility_ms(HANDOVER_MS);
+    let calls = fixture.sync().await;
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
+    assert_eq!(
+        fixture.commands(),
+        ["thread.snooze", "message.dispatch", "thread.snooze"]
+    );
+    assert!(fixture.sync().await.is_empty());
+    fixture.observed_snooze().await;
+}
+
+#[tokio::test]
+async fn prerequisite_wait_snoozes_after_a_send_and_waiting_window() {
+    let pending = pending_task();
+    let fixture = Fixture::new(&pending).await;
+    let service = &fixture.service;
+    let clock = 1_893_456_000_000;
+    service
+        .visibility_time
+        .store(clock, std::sync::atomic::Ordering::Relaxed);
+    fixture.seed_prerequisite(&pending).await;
+    let row = service.task(ID).await.unwrap();
+    // Leave the first snooze receipt Unknown before the send clears it, and omit
+    // latestUserMessageAt so this reproduces the stuck-visible wake shape.
+    fixture.sync().await;
+    assert_eq!(fixture.commands(), ["thread.snooze"]);
+    fixture.publish_shell();
+
+    let write = fixture.prepare_hold("Waiting on prerequisite", None);
+    assert!(service.deliver_parent(&row, write, None).await.unwrap());
+    fixture.child("worker", false);
+    {
+        let mut native = fixture.native.lock().unwrap();
+        native.message_at = Value::Null;
+        native.child.as_mut().unwrap()["latestRunCompletedAt"] = json!("2030-01-01T00:00:01Z");
+    }
+    fixture.elapse_visibility_ms(2_000);
+    assert!(fixture.sync().await.is_empty());
+
+    fixture.elapse_visibility_ms(HANDOVER_MS);
+    let calls = fixture.sync().await;
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
+    assert_eq!(
+        fixture.commands(),
+        ["thread.snooze", "message.dispatch", "thread.snooze"]
+    );
+    assert!(fixture.sync().await.is_empty());
+    fixture.observed_snooze().await;
+}
+
+#[tokio::test]
+async fn a_finished_done_task_row_is_archived_during_row_reconciliation() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let head = &service.fixture().start;
+    let (mut task, mut observation) = crate::tests::code_task_at_merge(ID, head);
+    observation.forge = Observed::Known(Forge::Merged {
+        pr: task.pull_request().unwrap().clone(),
+        commit: head.clone(),
+    });
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Closing)
+    );
+    observation.workspace = Observed::Known(nucleus_core::Workspace::Absent);
+    assert!(task.finish_close(&observation));
+    assert_eq!(task.phase(), Phase::Done);
+    {
+        let mut state = service.state.lock().await;
+        state
+            .store
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
+            .unwrap();
+        service.desire_title(&mut state, &task, None);
+    }
+    {
+        let mut native = fixture.native.lock().unwrap();
+        native.until = Value::Null;
+        native.wake_at = json!("2030-01-01T00:00:01Z");
+    }
+    let calls = fixture.sync().await;
+    assert_eq!(calls.get("orchestration.dispatchCommand"), Some(&1));
+    assert!(!calls.contains_key("orchestration.subscribeThread"));
+    assert_eq!(fixture.commands(), ["thread.archive"]);
+    assert!(!fixture.native.lock().unwrap().archived_at.is_null());
+    assert!(fixture.sync().await.is_empty());
 }

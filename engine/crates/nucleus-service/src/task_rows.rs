@@ -86,8 +86,8 @@ fn plan_row(
         if prior.outcome == SnoozeOutcome::Refused && !prior.ended {
             return Plan::Idle(None);
         }
-        if prior.outcome == SnoozeOutcome::Unknown && (!prior.ended || prior.until_ms > now) {
-            return Plan::Idle(prior.ended.then_some(prior.until_ms));
+        if prior.outcome == SnoozeOutcome::Unknown && !prior.ended {
+            return Plan::Idle(None);
         }
         if let Some(until) = snoozed
             && prior.clear_attempted_for == Some(until)
@@ -137,6 +137,7 @@ pub(super) struct DeliverySnoozeJournal<'a> {
     service: &'a Service,
     task: Option<&'a str>,
     settlement: Option<SnoozeUpdate>,
+    woke_owned: bool,
 }
 
 impl DeliverySnoozeJournal<'_> {
@@ -165,15 +166,17 @@ impl DeliverySnoozeJournal<'_> {
         let Some(SnoozeUpdate::Record(command, intent)) = update else {
             return Ok(());
         };
-        let save = || -> Result<(), nucleus_store::StoreError> {
+        let save = || -> Result<bool, nucleus_store::StoreError> {
             let store = &state.store;
             let owner = store.task_with_title_thread(&intent.thread)?;
             if let Some(task) = owner.as_deref().or(self.task)
-                && store
-                    .row_snooze(task, &intent.thread)?
-                    .is_some_and(|receipt| receipt.owns(Some(intent.until_ms)))
+                && let Some(mut receipt) = store.row_snooze(task, &intent.thread)?
+                && receipt.owns(Some(intent.until_ms))
             {
-                return Ok(());
+                if confirm_snooze(&mut receipt, Some(intent.until_ms)) {
+                    store.save_row_snooze(task, &intent.thread, &receipt)?;
+                }
+                return Ok(true);
             }
             store.record_delivery_snooze(
                 &command,
@@ -181,12 +184,15 @@ impl DeliverySnoozeJournal<'_> {
                 &intent,
                 intent.until_ms,
                 now_ms(),
-            )
+            )?;
+            Ok(false)
         };
-        save().map_err(|error| {
+        let woke_owned = save().map_err(|error| {
             service_log!("operator snooze: {error}");
             HostError::Uncertain
-        })
+        })?;
+        self.woke_owned |= woke_owned;
+        Ok(())
     }
 
     pub(super) async fn settle(self) {
@@ -197,9 +203,10 @@ impl DeliverySnoozeJournal<'_> {
         };
         let state = self.service.state.lock().await;
         let result = match settlement {
-            SnoozeUpdate::Accepted(command, sequence) => {
-                state.store.accept_delivery_snooze(&command, sequence)
-            }
+            SnoozeUpdate::Accepted(command, sequence) => state
+                .store
+                .accept_delivery_snooze(&command, sequence)
+                .map(|changed| changed || self.woke_owned),
             SnoozeUpdate::Discard(command) => state
                 .store
                 .finish_delivery_snooze(&command, None)
@@ -274,6 +281,7 @@ impl Service {
             service: self,
             task,
             settlement: None,
+            woke_owned: false,
         }
     }
 
@@ -416,7 +424,11 @@ impl Service {
         let (row, prior, plan, ended, deadline) = {
             let mut state = self.state.lock().await;
             let row = self.lookup(&state, id)?;
-            if row.task.phase().is_terminal() || state.store.delivery_snooze_pending(thread)? {
+            if row.task.phase().is_terminal() {
+                drop(state);
+                return self.reconcile_terminal_row(&row, retry).await;
+            }
+            if state.store.delivery_snooze_pending(thread)? {
                 return Ok(None);
             }
             let prior = state.store.row_snooze(id, thread)?;
@@ -500,6 +512,40 @@ impl Service {
         ))
     }
 
+    async fn reconcile_terminal_row(
+        &self,
+        row: &TaskRow,
+        retry: Option<u64>,
+    ) -> Result<Option<u64>, ServiceError> {
+        let task = &row.task;
+        if task.run().is_some() || task.hold().is_some() {
+            return Ok(None);
+        }
+        {
+            let state = self.state.lock().await;
+            if state.retired_with_project(task)?
+                || state.dispatch_mode() != nucleus_store::DispatchMode::Running
+            {
+                return Ok(None);
+            }
+        }
+        let _projects = self.project_writes.read().await;
+        let route = self.project_for(task.identity()).await?;
+        match self.prepare_terminal_archive(task, &route)? {
+            nucleus_hosts::DoneArchive::Finished => Ok(None),
+            nucleus_hosts::DoneArchive::Wait(_) => Ok(retry),
+            nucleus_hosts::DoneArchive::Write(write) => {
+                let running = || {
+                    self.state.try_lock().is_ok_and(|state| {
+                        state.dispatch_mode() == nucleus_store::DispatchMode::Running
+                    })
+                };
+                self.host.write_archive(write, running).await?;
+                Ok(retry)
+            }
+        }
+    }
+
     async fn finish_visibility_write(
         &self,
         id: &str,
@@ -551,13 +597,14 @@ pub(super) fn visibility_roles(task: &Task) -> Vec<&str> {
 }
 
 fn row_question(state: &State, task: &Task) -> Result<bool, ServiceError> {
-    Ok((task.operator_decline().is_none()
-        && (task.operator_question().is_some() || task.question().is_some()))
-        || matches!(
-            state.wait_reason(&task.identity().id),
-            Some(WaitReason::Permission | WaitReason::Input)
-        )
-        || state.has_open_usage_decision(task)?)
+    Ok(
+        (task.operator_decline().is_none() && task.operator_question().is_some())
+            || matches!(
+                state.wait_reason(&task.identity().id),
+                Some(WaitReason::Permission | WaitReason::Input)
+            )
+            || state.has_open_usage_decision(task)?,
+    )
 }
 
 fn earliest(left: Option<u64>, right: Option<u64>) -> Option<u64> {

@@ -70,7 +70,9 @@ struct NativeRow {
     title: Option<String>,
     until: Value,
     message_at: Value,
+    wake_at: Value,
     settled_at: Value,
+    archived_at: Value,
     commands: Vec<Value>,
     next_reply: NextReply,
     child: Option<Value>,
@@ -208,7 +210,8 @@ impl Fixture {
                             "exit":{"_tag":"Failure","cause":[]}});
                     }
                     match payload["type"].as_str().unwrap() {
-                        "thread.unarchive" => {}
+                        "thread.archive" => row.archived_at = json!("2030-01-01T00:05:00Z"),
+                        "thread.unarchive" => row.archived_at = Value::Null,
                         "thread.metadata.update" => row.title = Some(payload["title"].as_str().unwrap().into()),
                         "thread.snooze" => row.until = payload["snoozedUntil"].clone(),
                         "thread.unsnooze" => {
@@ -222,6 +225,9 @@ impl Fixture {
                             }
                             row.delivered_messages.push(json!({"id":payload["messageId"]}));
                             row.settled_at = Value::Null;
+                            if !row.until.is_null() {
+                                row.wake_at = json!("2030-01-01T00:00:01Z");
+                            }
                             row.until = Value::Null;
                             row.message_at = json!("2030-01-01T00:00:01Z");
                             if row.instant_holds {
@@ -314,7 +320,9 @@ impl Fixture {
             "projects":[{"id":self.binding.project_id,"workspaceRoot":self.service.fixture().checkout}],
             "threads":[{"id":self.thread,"projectId":self.binding.project_id,"providerInstanceId":PROVIDER,
                 "worktreePath":self.binding.worktree_path,"branch":self.binding.branch,
-                "title":row.title.as_deref().unwrap_or("Fixture"),"latestUserMessageAt":row.message_at,"snoozedUntil":row.until,"settledAt":row.settled_at,
+                "title":row.title.as_deref().unwrap_or("Fixture"),"latestUserMessageAt":row.message_at,
+                "lastSnoozeWakeAt":row.wake_at,"snoozedUntil":row.until,"settledAt":row.settled_at,
+                "archivedAt":row.archived_at,"deletedAt":null,"updatedAt":"2030-01-01T00:00:00Z",
                 "modelSelection":{"instanceId":PROVIDER,"model":"nucleus"},
                 "status":"idle","activeRunId":null,"pendingRuntimeRequest":null,"pendingBackgroundTasks":[]}]
         });
@@ -751,8 +759,12 @@ async fn assert_terminal_forgets_snooze(fixture: &Fixture) {
                 .is_none()
         );
     }
+    let calls = fixture.sync().await;
+    assert_eq!(calls, [("orchestration.dispatchCommand", 1)].into());
+    let mut expected = before;
+    expected.push("thread.archive".into());
+    assert_eq!(fixture.commands(), expected);
     assert!(fixture.sync().await.is_empty());
-    assert_eq!(fixture.commands(), before);
 }
 
 fn plan_row(
@@ -832,7 +844,23 @@ fn renewing_uses_a_new_horizon_and_uncertain_or_refused_writes_stay_observation_
         Plan::Record(_)
     ));
     assert_eq!(
-        plan_row(TaskAttention::Waiting, manual, Some(renewal), boundary + 1),
+        plan_row(
+            TaskAttention::Waiting,
+            manual,
+            Some(renewal.clone()),
+            boundary + 1
+        ),
         Plan::Idle(manual.snoozed_until_ms)
     );
+    let mut ended_unknown = renewal;
+    ended_unknown.ended = true;
+    assert!(matches!(
+        plan_row(
+            TaskAttention::Waiting,
+            awake,
+            Some(ended_unknown),
+            boundary + 1
+        ),
+        Plan::Write(RowChange::SnoozeUntil(_), _)
+    ));
 }
