@@ -216,10 +216,12 @@ and [review decisions](../../../engine/crates/nucleus-core/src/decision.rs).
 
 ### Mechanical integration without repeated content review
 
-The engine uses GitHub mergeability and required checks at the approved PR
-head. The review stays with that head while its required checks settle. A new
-head invalidates the old result for merging. There is no Nucleus integration
-turn. See [Spec 070 ruling 13](../specs/070-small-engine.md#rulings) and the
+The engine uses GitHub mergeability and checks at the approved PR head: GitHub's
+required checks when the pull request marks any required, or every check
+reported on that head when none are marked required. The review stays with that
+head while its gating checks settle. A new head invalidates the old result for
+merging. There is no Nucleus integration turn. See
+[Spec 070 rulings 13 and 69](../specs/070-small-engine.md#rulings) and the
 [forge adapter](../../../engine/crates/nucleus-forge/src/lib.rs).
 
 ## Merge and closeout
@@ -227,9 +229,11 @@ turn. See [Spec 070 ruling 13](../specs/070-small-engine.md#rulings) and the
 ### Merge gates
 
 Merge uses the exact head last reviewed and approved, or exact-head acceptance
-recorded by the authorized person. GitHub supplies the expected-head check
-and required CI decision. A result that might have merged is reconciled by
-observing the actual PR and merge commit before any further effect. Keep the
+recorded by the authorized person. GitHub supplies the expected-head check and
+CI check rollup: required checks gate when any are marked required, and every
+reported check on that head gates when none are marked required (a pull request
+with no reported checks merges). A result that might have merged is reconciled
+by observing the actual PR and merge commit before any further effect. Keep the
 observed head, merge commit and reason with the task's outcome. See
 [command authority](../../../engine/crates/nucleus-core/src/command.rs) and
 [merge scheduling](../../../engine/crates/nucleus-service/src/pass.rs).

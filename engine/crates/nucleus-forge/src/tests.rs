@@ -825,6 +825,188 @@ async fn merge_gate_blocks_github_required_failure_and_allows_non_required_failu
 }
 
 #[tokio::test]
+async fn fallback_merge_gate_blocks_failing_and_waits_on_pending_checks() {
+    let target = branches().target(PR_URL).expect("target");
+
+    // No required checks and one failing (FAILURE, CANCELLED, TIMED_OUT or failing StatusContext):
+    // blocks merge without sending PUT /merge and returns the failing check names.
+    for (merge_state, nodes, expected_names) in [
+        (
+            "UNSTABLE",
+            json!([
+                {"__typename": "CheckRun", "name": "web", "conclusion": "FAILURE", "isRequired": false},
+                {"__typename": "CheckRun", "name": "lint", "conclusion": "SUCCESS", "isRequired": false}
+            ]),
+            vec!["web".to_owned()],
+        ),
+        (
+            "UNSTABLE",
+            json!([
+                {"__typename": "CheckRun", "name": "build", "conclusion": "CANCELLED", "isRequired": false},
+                {"__typename": "CheckRun", "name": "e2e", "conclusion": "TIMED_OUT", "isRequired": false},
+                {"__typename": "StatusContext", "context": "deploy-preview", "state": "FAILURE", "isRequired": false}
+            ]),
+            vec![
+                "build".to_owned(),
+                "deploy-preview".to_owned(),
+                "e2e".to_owned(),
+            ],
+        ),
+    ] {
+        let mut response = checks('a', "FAILURE");
+        let wire = &mut response["data"]["repository"]["pullRequest"];
+        wire["mergeStateStatus"] = json!(merge_state);
+        wire["statusCheckRollup"]["contexts"] = json!({
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": nodes,
+        });
+        let (forge, calls) = server(vec![Some(pull('a', false)), Some(response)]);
+        let attempt = forge
+            .merge(&task_with_approval(), &target)
+            .await
+            .expect("observe blocked fallback merge");
+        assert_eq!(attempt.write, MergeWrite::Skipped);
+        assert!(matches!(
+            attempt.observed,
+            Ok(Forge::Open {
+                checks: CheckState::FailedRequired(ref names),
+                ..
+            }) if names == &expected_names
+        ));
+        assert!(
+            calls
+                .join()
+                .expect("HTTP requests")
+                .iter()
+                .all(|r| !r.method_and_path.starts_with("PUT "))
+        );
+    }
+
+    // No required checks and one pending/queued: waits without sending PUT /merge.
+    for (rollup_state, node) in [
+        (
+            "PENDING",
+            json!({"__typename": "CheckRun", "name": "web", "conclusion": null, "isRequired": false}),
+        ),
+        (
+            "EXPECTED",
+            json!({"__typename": "StatusContext", "context": "ci", "state": "PENDING", "isRequired": false}),
+        ),
+    ] {
+        let mut response = checks('a', rollup_state);
+        let wire = &mut response["data"]["repository"]["pullRequest"];
+        wire["mergeStateStatus"] = json!("CLEAN");
+        wire["statusCheckRollup"]["contexts"] = json!({
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": [
+                {"__typename": "CheckRun", "name": "lint", "conclusion": "SUCCESS", "isRequired": false},
+                node
+            ],
+        });
+        let (forge, calls) = server(vec![Some(pull('a', false)), Some(response)]);
+        let attempt = forge
+            .merge(&task_with_approval(), &target)
+            .await
+            .expect("observe pending fallback merge");
+        assert_eq!(attempt.write, MergeWrite::Skipped);
+        assert!(matches!(
+            attempt.observed,
+            Ok(Forge::Open {
+                checks: CheckState::Pending,
+                ..
+            })
+        ));
+        assert!(
+            calls
+                .join()
+                .expect("HTTP requests")
+                .iter()
+                .all(|r| !r.method_and_path.starts_with("PUT "))
+        );
+    }
+}
+
+#[tokio::test]
+async fn fallback_merge_gate_merges_passing_skipped_or_absent_checks_and_holds_incomplete() {
+    let target = branches().target(PR_URL).expect("target");
+
+    // No required checks and all passing, skipped or neutral: merges.
+    // No checks at all (null rollup or empty nodes): merges.
+    for rollup in [
+        json!({
+            "state": "SUCCESS",
+            "contexts": {
+                "pageInfo": {"hasNextPage": false, "endCursor": null},
+                "nodes": [
+                    {"__typename": "CheckRun", "name": "test", "conclusion": "SUCCESS", "isRequired": false},
+                    {"__typename": "CheckRun", "name": "docs", "conclusion": "SKIPPED", "isRequired": false},
+                    {"__typename": "CheckRun", "name": "info", "conclusion": "NEUTRAL", "isRequired": false},
+                    {"__typename": "StatusContext", "context": "deploy", "state": "SUCCESS", "isRequired": false}
+                ],
+            }
+        }),
+        json!({
+            "state": "SUCCESS",
+            "contexts": {
+                "pageInfo": {"hasNextPage": false, "endCursor": null},
+                "nodes": [],
+            }
+        }),
+        Value::Null,
+    ] {
+        let mut response = checks('a', "SUCCESS");
+        response["data"]["repository"]["pullRequest"]["statusCheckRollup"] = rollup;
+        let (forge, calls) = server(vec![
+            Some(pull('a', false)),
+            Some(response),
+            Some(pull('a', false)),
+            Some(json!({"merged": true, "sha": sha('f')})),
+            Some(pull('a', true)),
+        ]);
+        let attempt = forge
+            .merge(&task_with_approval(), &target)
+            .await
+            .expect("merge with passing/skipped or absent checks");
+        assert_eq!(attempt.write, MergeWrite::Merged { commit: sha('f') });
+        assert!(matches!(attempt.observed, Ok(Forge::Merged { .. })));
+        let requests = calls.join().expect("HTTP requests");
+        assert!(requests[3].method_and_path.starts_with("PUT "));
+        assert_eq!(requests[3].body.as_ref().unwrap()["sha"], json!(sha('a')));
+    }
+
+    // Incomplete inventory with no required check seen yet stays Unknown instead of assuming fallback.
+    let mut incomplete = checks('a', "FAILURE");
+    let wire = &mut incomplete["data"]["repository"]["pullRequest"];
+    wire["mergeStateStatus"] = json!("UNSTABLE");
+    wire["statusCheckRollup"]["contexts"] = json!({
+        "pageInfo": {"hasNextPage": true, "endCursor": null},
+        "nodes": [
+            {"__typename": "CheckRun", "name": "optional", "conclusion": "FAILURE", "isRequired": false}
+        ],
+    });
+    let (forge, calls) = server(vec![Some(pull('a', false)), Some(incomplete)]);
+    let attempt = forge
+        .merge(&task_with_approval(), &target)
+        .await
+        .expect("incomplete fallback stays unknown");
+    assert_eq!(attempt.write, MergeWrite::Skipped);
+    assert!(matches!(
+        attempt.observed,
+        Ok(Forge::Open {
+            checks: CheckState::Unknown,
+            ..
+        })
+    ));
+    assert!(
+        calls
+            .join()
+            .expect("HTTP requests")
+            .iter()
+            .all(|r| !r.method_and_path.starts_with("PUT "))
+    );
+}
+
+#[tokio::test]
 async fn classifies_only_positive_rebase_or_required_failure_evidence() {
     let ci = |conclusion: Option<&str>, required| json!({"__typename":"CheckRun","name":"Build / release","conclusion":conclusion,"isRequired":required});
     let lint =
@@ -860,6 +1042,17 @@ async fn classifies_only_positive_rebase_or_required_failure_evidence() {
             "BLOCKED",
             "FAILURE",
             json!([ci(Some("FAILURE"), false)]),
+            false,
+            CheckState::FailedRequired(vec!["Build / release".into()]),
+        ),
+        (
+            "MERGEABLE",
+            "BLOCKED",
+            "FAILURE",
+            json!([
+                ci(Some("SUCCESS"), true),
+                {"__typename": "CheckRun", "name": "optional", "conclusion": "FAILURE", "isRequired": false}
+            ]),
             false,
             CheckState::Blocked,
         ),

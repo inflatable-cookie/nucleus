@@ -784,29 +784,57 @@ async fn merge_gate_uses_only_github_required_checks() {
     let mut pull = forge_pull(&head);
     pull["head"]["ref"] = json!("ns-worker");
 
-    let check = |name, conclusion, required| json!({"__typename":"CheckRun","name":name,"conclusion":conclusion,"isRequired":required});
+    let check = |name, conclusion: Option<&str>, required| json!({"__typename":"CheckRun","name":name,"conclusion":conclusion,"isRequired":required});
     let rollup = |state, has_next, nodes| json!({"state":state,"contexts":{"pageInfo":{"hasNextPage":has_next,"endCursor":null},"nodes":nodes}});
+    let ci_fail = check("CI", Some("FAILURE"), true);
+    let ci_ok = check("CI", Some("SUCCESS"), true);
+    let opt_fail = check("optional-lint", Some("FAILURE"), false);
+    let web_fail = check("web", Some("FAILURE"), false);
+    let web_pending = check("web", None, false);
+    let web_ok = check("web", Some("SUCCESS"), false);
+    let lint_ok = check("lint", Some("SUCCESS"), false);
+    let docs_skip = check("docs", Some("SKIPPED"), false);
+    let info_neutral = check("info", Some("NEUTRAL"), false);
     let cases = [
         (
             "BLOCKED",
-            rollup("FAILURE", false, json!([check("CI", "FAILURE", true)])),
+            rollup("FAILURE", false, json!([ci_fail])),
             CheckState::FailedRequired(vec!["CI".into()]),
         ),
         (
             "UNSTABLE",
-            rollup(
-                "FAILURE",
-                false,
-                json!([
-                    check("CI", "SUCCESS", true),
-                    check("optional-lint", "FAILURE", false)
-                ]),
-            ),
+            rollup("FAILURE", false, json!([ci_ok, opt_fail])),
             CheckState::Ready,
         ),
         (
             "CLEAN",
             rollup("SUCCESS", true, json!([])),
+            CheckState::Unknown,
+        ),
+        (
+            "UNSTABLE",
+            rollup("FAILURE", false, json!([web_fail.clone(), lint_ok.clone()])),
+            CheckState::FailedRequired(vec!["web".into()]),
+        ),
+        (
+            "CLEAN",
+            rollup("PENDING", false, json!([web_pending, lint_ok])),
+            CheckState::Pending,
+        ),
+        (
+            "CLEAN",
+            rollup("SUCCESS", false, json!([web_ok, docs_skip, info_neutral])),
+            CheckState::Ready,
+        ),
+        ("CLEAN", serde_json::Value::Null, CheckState::Ready),
+        (
+            "CLEAN",
+            rollup("SUCCESS", false, json!([])),
+            CheckState::Ready,
+        ),
+        (
+            "UNSTABLE",
+            rollup("FAILURE", true, json!([web_fail])),
             CheckState::Unknown,
         ),
     ];
@@ -839,6 +867,101 @@ async fn merge_gate_uses_only_github_required_checks() {
         );
         server.abort();
     }
+}
+
+#[tokio::test]
+async fn fallback_merge_gate_waits_pending_and_returns_failing_to_worker() {
+    let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
+    let project = service.fixture().clone();
+    let head = project.start.clone();
+    let (task, _) = code_task_at_merge("worker", &head);
+    service
+        .worktrees()
+        .checkout(&project.checkout, REPOSITORY, "worker")
+        .unwrap()
+        .allocate(&head)
+        .unwrap();
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
+        .unwrap();
+
+    let mut pull = forge_pull(&head);
+    pull["head"]["ref"] = json!("ns-worker");
+    let check = |name, conclusion: Option<&str>| json!({"__typename":"CheckRun","name":name,"conclusion":conclusion,"isRequired":false});
+    let cases = [
+        (
+            "CLEAN",
+            "PENDING",
+            json!([check("web", None)]),
+            Action::Wait(WaitReason::ChecksPending),
+        ),
+        (
+            "UNSTABLE",
+            "FAILURE",
+            json!([
+                check("web", Some("FAILURE")),
+                check("lint", Some("SUCCESS"))
+            ]),
+            Action::Advance(Phase::Working),
+        ),
+    ];
+    for (merge_state, rollup_state, nodes, expected) in cases {
+        let puts = Arc::new(AtomicUsize::new(0));
+        let mut reply = forge_checks(&head);
+        let pr = &mut reply["data"]["repository"]["pullRequest"];
+        pr["mergeStateStatus"] = json!(merge_state);
+        pr["statusCheckRollup"] = json!({
+            "state": rollup_state,
+            "contexts": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": nodes},
+        });
+        let pull_wire = pull.clone();
+        let merge_puts = Arc::clone(&puts);
+        let (forge, server) = serve_forge(
+            Router::new()
+                .route(
+                    &format!("/repos/{REPOSITORY}/pulls/1"),
+                    get(move || async move { Json(pull_wire) }),
+                )
+                .route("/graphql", post(move || async move { Json(reply) }))
+                .route(
+                    &format!("/repos/{REPOSITORY}/pulls/1/merge"),
+                    put(move || async move {
+                        merge_puts.fetch_add(1, Ordering::Relaxed);
+                        StatusCode::FORBIDDEN
+                    }),
+                ),
+        )
+        .await;
+        service.forge = forge;
+        let row = service.task("worker").await.unwrap();
+        assert_eq!(
+            service
+                .advance(&row, &service.host.fixture_pass())
+                .await
+                .unwrap(),
+            expected
+        );
+        assert_eq!(puts.load(Ordering::Relaxed), 0);
+        server.abort();
+    }
+    let returned = service.task("worker").await.unwrap();
+    assert_eq!(returned.task.phase(), Phase::Working);
+    let instruction = returned
+        .task
+        .work_instruction()
+        .expect("worker continuation for failed check");
+    assert!(
+        instruction.contains("web"),
+        "expected failing check name in continuation: {instruction}"
+    );
 }
 
 #[tokio::test]
