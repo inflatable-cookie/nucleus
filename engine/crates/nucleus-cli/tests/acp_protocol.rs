@@ -22,7 +22,7 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::stream;
-use nucleus_core::acp::{Binding, InboxBinding, legacy_parent_hold_prompt};
+use nucleus_core::acp::{Binding, InboxBinding};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
@@ -32,6 +32,7 @@ use tokio::{
 };
 
 const SESSION: &str = "fixture-session";
+const HOLD_PROMPT: &str = "Starting worker [fixture-hold]";
 const INSTANCE: &str = "task-fixture-run-1";
 
 struct AgentIo {
@@ -419,7 +420,7 @@ async fn view(
                 "url":"https://github.com/example/fixture/pull/7","head":format!("{:040x}",1)
             })),
             "parentHold": match state {
-                0 | 2 | 8 => Some(legacy_parent_hold_prompt("fixture-hold")),
+                0 | 2 | 8 => Some(HOLD_PROMPT.to_owned()),
                 10 => Some("Starting reviewer round 1".to_owned()),
                 _ => None,
             },
@@ -554,9 +555,11 @@ async fn a_slow_close_releases_the_parent_and_reattach_renders_the_finish() {
     assert_eq!(opened["result"]["sessionId"], SESSION);
     assert_scratch_cwd(&agent, home.path()).await;
     agent.update("plan").await;
-    agent.send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
+    agent
+        .send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
         "params":{"sessionId":SESSION,"prompt":[{"type":"text",
-            "text":format!("Envelope\n<user_request>{}</user_request>", legacy_parent_hold_prompt("fixture-hold"))}]}})).await;
+            "text":format!("Envelope\n<user_request>{HOLD_PROMPT}</user_request>")}]}}))
+        .await;
     tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
         .await
         .expect("deployment's scheduler hold stays open after reload");
@@ -638,12 +641,12 @@ async fn unverified_prompts_refresh_and_a_prerequisite_wait_releases_the_turn() 
             .await;
         assert_eq!(reply["result"]["stopReason"], "end_turn");
     }
-    // Both a prerequisite wait and the legacy active-child hint lack the exact prompt.
+    // Both a prerequisite wait and the active-child hint lack the exact prompt.
     for (id, state) in [(4, 5), (5, 1)] {
         fixture.state.store(0, Ordering::Relaxed);
         agent
             .send(json!({"jsonrpc":"2.0","id":id,"method":"session/prompt",
-            "params":{"sessionId":SESSION,"prompt":legacy_parent_hold_prompt("fixture-hold")}}))
+            "params":{"sessionId":SESSION,"prompt":HOLD_PROMPT}}))
             .await;
         tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
             .await
@@ -670,7 +673,7 @@ async fn a_missed_report_wake_releases_the_old_turn_on_the_next_task_change() {
     agent.update("plan").await;
     agent
         .send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
-        "params":{"sessionId":SESSION,"prompt":legacy_parent_hold_prompt("fixture-hold")}}))
+        "params":{"sessionId":SESSION,"prompt":HOLD_PROMPT}}))
         .await;
     fixture.stream_ready.notified().await;
     fixture.state.store(2, Ordering::Relaxed);
@@ -708,7 +711,7 @@ async fn the_current_prompt_keeps_the_hold_through_pause_and_a_read_failure() {
     agent.update("plan").await;
     agent
         .send(json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
-        "params":{"sessionId":SESSION,"prompt":legacy_parent_hold_prompt("fixture-hold")}}))
+        "params":{"sessionId":SESSION,"prompt":HOLD_PROMPT}}))
         .await;
     tokio::time::timeout(Duration::from_secs(10), fixture.stream_ready.notified())
         .await

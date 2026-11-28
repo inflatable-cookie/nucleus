@@ -860,42 +860,6 @@ impl Service {
         }
     }
 
-    /// Try the existing title receipt while the role admission holds both fences.
-    pub(super) async fn reflect_role_admission(
-        &self,
-        row: &TaskRow,
-        checkout: &nucleus_work::Checkout<'_>,
-        provider: &str,
-    ) -> Result<(), ServiceError> {
-        let identity = row.task.identity();
-        let binding = self.project_for(identity).await?.binding(checkout)?;
-        let Some(target) = checkout
-            .repository()
-            .to_str()
-            .and_then(|root| self.host.title_target(&binding, provider, root))
-        else {
-            return Ok(());
-        };
-        let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-        let receipt = {
-            let state = self.state.lock().await;
-            state
-                .store
-                .title_state(target.thread())?
-                .and_then(|stored| {
-                    reconcile_stored_title(&state, Some(&target), stored).transpose()
-                })
-                .transpose()?
-        };
-        if let Some(receipt) = receipt.filter(|receipt| receipt.retry_at <= now) {
-            let result = self
-                .write_task_title_target(target, &identity.id, &receipt)
-                .await;
-            self.finish_title(&receipt, now, result).await?;
-        }
-        Ok(())
-    }
-
     async fn title_current(
         &self,
         expected: &TaskRow,

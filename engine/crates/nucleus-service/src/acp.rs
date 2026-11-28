@@ -75,14 +75,8 @@ fn retry_ms() -> i64 {
 
 pub(super) const PARENT_START_TIMEOUT_MS: u64 = 30_000;
 
-pub(super) fn frozen_parent(
-    record: &ParentDelivery,
-) -> Result<Option<FrozenParentWrite>, StoreError> {
-    Ok(record
-        .wire
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()?)
+pub(super) fn frozen_parent(record: &ParentDelivery) -> Result<FrozenParentWrite, StoreError> {
+    Ok(serde_json::from_str(&record.wire)?)
 }
 
 pub(super) fn wants_parent_hold(
@@ -128,7 +122,7 @@ impl Service {
             id,
         );
         let delivery = state.store.current_parent_hold(id)?;
-        let frozen = delivery.as_ref().map(frozen_parent).transpose()?.flatten();
+        let frozen = delivery.as_ref().map(frozen_parent).transpose()?;
         // Delegation needs a live run and node before its role reservation can be frozen.
         let preparing = delivery.as_ref().is_some_and(|record| {
             record.version == row.version
@@ -158,19 +152,11 @@ impl Service {
             crate::now_ms(),
         );
         let active_child = wanted && delivery.is_none() && active_role;
-        let prompt = delivery.filter(|_| wanted).map(|record| {
-            frozen
-                .as_ref()
-                .and_then(FrozenParentWrite::prompt)
-                .map_or_else(
-                    || {
-                        record.legacy_prompt.unwrap_or_else(|| {
-                            nucleus_core::acp::legacy_parent_hold_prompt(&record.command)
-                        })
-                    },
-                    str::to_owned,
-                )
-        });
+        let prompt = frozen
+            .as_ref()
+            .filter(|_| wanted)
+            .and_then(FrozenParentWrite::prompt)
+            .map(str::to_owned);
         Ok((prompt, active_child))
     }
 
@@ -191,14 +177,7 @@ impl Service {
                 return Ok(false);
             }
             parent_due(record)?;
-            if let Some(wire) = &record.wire {
-                write.use_frozen(serde_json::from_str(wire).map_err(StoreError::from)?)?;
-            } else if write.starts_turn() {
-                let prompt = record.legacy_prompt.clone().unwrap_or_else(|| {
-                    nucleus_core::acp::legacy_parent_hold_prompt(&record.command)
-                });
-                write.use_legacy_intent(&record.command, &prompt)?;
-            }
+            write.use_frozen(frozen_parent(record)?)?;
         }
         let command = write.command_id().ok_or(ServiceError::Input)?.to_owned();
         if existing
@@ -331,8 +310,7 @@ impl Service {
             let record = ParentDelivery {
                 version: row.version,
                 command,
-                wire: Some(wire),
-                legacy_prompt: None,
+                wire,
                 due_ms,
                 result: ParentResult::Pending,
             };

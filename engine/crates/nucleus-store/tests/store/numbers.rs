@@ -7,7 +7,7 @@ fn task_in(id: &str, repository: &str) -> Task {
 }
 
 #[test]
-fn a_restored_unnumbered_repository_fences_admission_without_changing_runs() {
+fn an_unnumbered_repository_fences_admission_without_changing_runs() {
     let root = tempfile::tempdir().expect("scratch");
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("open");
@@ -23,10 +23,8 @@ fn a_restored_unnumbered_repository_fences_admission_without_changing_runs() {
     drop(store);
 
     let db = Connection::open(storage.database().path().join("engine.sqlite")).expect("fixture");
-    db.execute_batch(
-        "DROP TABLE task_numbers; DROP TABLE task_number_counters; DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 8;",
-    )
-    .expect("recreate version eight");
+    db.execute_batch("DELETE FROM task_numbers; DELETE FROM task_number_counters;")
+        .expect("remove the numbering");
     let snapshot = || {
         db.query_row(
             "SELECT reference, run, threads, version FROM tasks WHERE id = 'active'",
@@ -43,7 +41,7 @@ fn a_restored_unnumbered_repository_fences_admission_without_changing_runs() {
         .expect("read frozen task bytes")
     };
     let before = snapshot();
-    let mut store = Store::open(&storage).expect("migrate");
+    let mut store = Store::open(&storage).expect("reopen");
     let execution = row(&store, "active");
     assert_eq!(execution.number, None);
     let new = task("new", "new");

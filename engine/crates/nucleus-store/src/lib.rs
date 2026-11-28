@@ -54,10 +54,12 @@ pub use tells::{
 };
 pub use titles::{StoredTitle, TitleReceipt};
 pub use usage::{ProfileUsage, SubscriptionPause, UsageWindow};
-pub use volume::{PinnedVolume, StorageDirectory};
+pub use volume::StorageDirectory;
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
 const SCHEMA_VERSION: i32 = 17;
+/// The oldest schema this engine upgrades (Spec 070 ruling 59).
+const OLDEST_UPGRADABLE_SCHEMA: i32 = 14;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation, queue_priority, merge_hold";
@@ -89,10 +91,12 @@ pub enum StoreError {
     Storage(#[from] StorageError),
     #[error("unsupported engine database (application {application}, version {version})")]
     Incompatible { application: i32, version: i32 },
+    #[error(
+        "the engine database is schema {version}. This engine opens schema {OLDEST_UPGRADABLE_SCHEMA} or later"
+    )]
+    SchemaTooOld { version: i32 },
     #[error("could not verify the pre-upgrade engine database backup")]
     UpgradeBackup,
-    #[error("the report-task migration found a missing database reference")]
-    ReportMigrationReferences,
     #[error("stored task failed integrity validation")]
     UnreadableTask(Box<UnreadableTask>),
     #[error("task identity is immutable")]
@@ -299,9 +303,6 @@ impl Store {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW | flags,
         )?;
         connection.busy_timeout(Duration::from_secs(5))?;
-        // Schema migration replaces the tasks parent table. Every caller
-        // enables enforcement again before doing any application writes.
-        connection.pragma_update(None, "foreign_keys", false)?;
         Ok(connection)
     }
 
@@ -332,8 +333,11 @@ impl Store {
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (APPLICATION_ID, SCHEMA_VERSION) => {}
-            (APPLICATION_ID, 1..SCHEMA_VERSION) => {
+            (APPLICATION_ID, OLDEST_UPGRADABLE_SCHEMA..SCHEMA_VERSION) => {
                 Self::upgrade_schema(tx, path, backup, version)?;
+            }
+            (APPLICATION_ID, 1..OLDEST_UPGRADABLE_SCHEMA) => {
+                return Err(StoreError::SchemaTooOld { version });
             }
             _ => {
                 return Err(StoreError::Incompatible {
@@ -343,7 +347,7 @@ impl Store {
             }
         }
         // This independent table is additive to every supported task schema.
-        usage::prepare_pauses(tx)?;
+        tx.execute(usage::PAUSES, [])?;
         tx.execute(LEGACY_PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
         task_rows::prepare(tx)?;
@@ -375,13 +379,6 @@ impl Store {
             thread TEXT PRIMARY KEY, archived_ms INTEGER NOT NULL, attempts INTEGER NOT NULL
         ) STRICT;",
         )?;
-        if !tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='planning_record_clocks')",
-            [],
-            |r| r.get::<_, bool>(0),
-        )? {
-            tx.execute_batch(include_str!("planning/clocks.sql"))?;
-        }
         tx.execute(board_state::SCHEMA, [])?;
         Ok(())
     }
@@ -393,71 +390,8 @@ impl Store {
         version: i32,
     ) -> Result<(), StoreError> {
         Self::backup_before_upgrade(path, backup, version)?;
-        if version == 1 {
-            tx.execute(
-                "ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)",
-                [],
-            )?;
-            tx.execute("ALTER TABLE tasks ADD COLUMN origin_thread TEXT", [])?;
-        }
-        if version < 3 {
-            tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
-        }
-        if version < 4 {
-            tx.execute(ACP_SESSIONS, [])?;
-        }
-        if version < 5 {
-            tx.execute_batch(usage::SCHEMA)?;
-        }
-        if version < 6 {
-            tx.execute(inbox::SCHEMA, [])?;
-        }
-        if version < 7 {
-            tx.execute(titles::SCHEMA, [])?;
-        }
-        if version < 8 {
-            tx.execute_batch(planning::SCHEMA)?;
-        }
-        if version < 9 {
-            tx.execute_batch(numbers::SCHEMA)?;
-        }
-        if version < 10 {
-            Self::migrate_report_tasks(tx)?;
-        } else if version < 13 {
-            if version == 10 {
-                tx.execute(
-                    "ALTER TABLE tasks ADD COLUMN work_continuation TEXT CHECK (json_valid(work_continuation))",
-                    [],
-                )?;
-            }
-            tx.execute(
-                "ALTER TABLE tasks ADD COLUMN queue_priority TEXT NOT NULL DEFAULT 'normal' CHECK (queue_priority IN ('normal','promoted'))",
-                [],
-            )?;
-        }
-        if version < 12 {
-            tx.execute_batch(include_str!("parent_delivery_v15.sql"))?;
-            tx.execute_batch(include_str!("parent_delivery_legacy.sql"))?;
-        }
-        // Earlier schemas rebuild tasks from TASK_SCHEMA above.
-        if (10..14).contains(&version) {
-            tx.execute(
-                "ALTER TABLE tasks ADD COLUMN merge_hold TEXT CHECK (json_valid(merge_hold))",
-                [],
-            )?;
-        }
-        if version < 15
-            && tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='completion_notices')",
-                [],
-                |r| r.get::<_, bool>(0),
-            )?
-            && !tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('completion_notices') WHERE name='recipient')",
-                [],
-                |r| r.get::<_, bool>(0),
-            )?
-        {
+        // Schema 15 keys completion notices by recipient.
+        if version < 15 {
             tx.execute_batch(
                 "CREATE TABLE completion_notices_v15 (
                     task_id TEXT NOT NULL REFERENCES tasks(id),
@@ -474,13 +408,11 @@ impl Store {
         if version < 16 {
             parent_delivery::migrate(tx)?;
         }
-        if version >= 4
-            && !tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('acp_sessions') WHERE name='controller_thread')",
-                [],
-                |row| row.get::<_, bool>(0),
-            )?
-        {
+        if !tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('acp_sessions') WHERE name='controller_thread')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )? {
             tx.execute("ALTER TABLE acp_sessions ADD COLUMN controller_thread TEXT", [])?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -551,30 +483,6 @@ impl Store {
         }
         backup.as_file().sync_all().map_err(StorageError::from)?;
         Ok(backup)
-    }
-
-    // Rebuild with the expanded phase constraint. Foreign keys are checked
-    // after the table has its original name again, inside the migration transaction.
-    fn migrate_report_tasks(tx: &Transaction<'_>) -> Result<(), StoreError> {
-        // Keep the source projection fixed to the schema before report tasks.
-        const OLD_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, version";
-        tx.execute_batch(&TASK_SCHEMA.replacen("CREATE TABLE tasks", "CREATE TABLE tasks_v10", 1))?;
-        tx.execute_batch(&format!(
-            "INSERT INTO tasks_v10 ({OLD_COLUMNS}) SELECT {OLD_COLUMNS} FROM tasks;
-             DROP TABLE tasks;
-             ALTER TABLE tasks_v10 RENAME TO tasks;
-             CREATE INDEX active_tasks ON tasks (id)
-                 WHERE phase NOT IN ('done','cancelled') OR run IS NOT NULL;"
-        ))?;
-        tx.execute(OCCUPIED_SLOTS_INDEX, [])?;
-        if tx
-            .query_row("PRAGMA foreign_key_check", [], |_| Ok(()))
-            .optional()?
-            .is_some()
-        {
-            return Err(StoreError::ReportMigrationReferences);
-        }
-        Ok(())
     }
 
     /// Look up one task by its engine ID.
@@ -1900,13 +1808,7 @@ mod completion_notice_tests {
     }
 
     #[test]
-    fn upgrading_schema_15_and_16_preserves_existing_acp_credentials() {
-        for version in [15, 16] {
-            assert_acp_upgrade(version);
-        }
-    }
-
-    fn assert_acp_upgrade(version: i32) {
+    fn upgrading_schema_16_preserves_existing_acp_credentials() {
         let (home, mut store) = fixture();
         store
             .create(
@@ -1931,13 +1833,7 @@ mod completion_notice_tests {
         let db = rusqlite::Connection::open(root.join("data/databases/engine.sqlite")).unwrap();
         db.execute("ALTER TABLE acp_sessions DROP COLUMN controller_thread", [])
             .unwrap();
-        if version == 15 {
-            db.execute_batch("DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries;")
-                .unwrap();
-            db.execute_batch(include_str!("parent_delivery_v15.sql"))
-                .unwrap();
-        }
-        db.pragma_update(None, "user_version", version).unwrap();
+        db.pragma_update(None, "user_version", 16).unwrap();
         drop(db);
 
         let reopened = crate::settings::test_store(&root);
@@ -1946,42 +1842,5 @@ mod completion_notice_tests {
         assert_eq!(session.writer, Some([2; 32]));
         assert_eq!(session.controller, [3; 32]);
         assert!(session.controller_thread.is_none());
-    }
-
-    #[test]
-    fn upgrading_schema_14_migrates_completion_notices_per_recipient() {
-        let (home, mut store) = fixture();
-        store
-            .create(
-                &Task::new(identity("watched"), PLAIN.into(), None),
-                &event("admitted"),
-            )
-            .unwrap();
-        settle(&mut store, "watched", "done");
-        drop(store);
-
-        let root = home.path().canonicalize().unwrap().join("engine");
-        let db = rusqlite::Connection::open(root.join("data/databases/engine.sqlite")).unwrap();
-        db.execute_batch("DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries;")
-            .unwrap();
-        db.execute_batch(include_str!("parent_delivery_v15.sql"))
-            .unwrap();
-        db.execute_batch(
-            "CREATE TABLE completion_notices_v14 (task_id TEXT PRIMARY KEY REFERENCES tasks(id), retry INTEGER CHECK (retry IN (0,1))) STRICT;
-             INSERT INTO completion_notices_v14 (task_id, retry) SELECT task_id, retry FROM completion_notices WHERE recipient = '' AND retry IS NOT NULL;
-             DROP TABLE completion_notices;
-             ALTER TABLE completion_notices_v14 RENAME TO completion_notices;
-             PRAGMA user_version = 14;",
-        )
-        .unwrap();
-        drop(db);
-        let reopened = crate::settings::test_store(&root);
-        assert_eq!(
-            reopened.completion_notices("watched").unwrap(),
-            vec![crate::CompletionNotice {
-                watcher: None,
-                retry: false,
-            }]
-        );
     }
 }

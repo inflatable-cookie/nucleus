@@ -24,26 +24,10 @@ CREATE TABLE profile_assignment_totals (
 ) STRICT;
 CREATE INDEX profile_assignment_group ON profile_assignment_totals (group_id);";
 
-pub(super) fn prepare_pauses(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute(
-        "CREATE TABLE IF NOT EXISTS provider_pauses (
-            group_id TEXT PRIMARY KEY, until_ms INTEGER NOT NULL CHECK (until_ms > 0),
-            fallback_until_ms INTEGER
-        ) STRICT",
-        [],
-    )?;
-    let has_origin: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('provider_pauses') WHERE name='fallback_until_ms')",
-        [], |row| row.get(0),
-    )?;
-    if !has_origin {
-        connection.execute(
-            "ALTER TABLE provider_pauses ADD COLUMN fallback_until_ms INTEGER",
-            [],
-        )?;
-    }
-    Ok(())
-}
+pub(super) const PAUSES: &str = "CREATE TABLE IF NOT EXISTS provider_pauses (
+  group_id TEXT PRIMARY KEY, until_ms INTEGER NOT NULL CHECK (until_ms > 0),
+  fallback_until_ms INTEGER
+) STRICT";
 
 /// A subscription deadline and whether it estimates an unknown provider reset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
