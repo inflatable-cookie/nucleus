@@ -805,21 +805,19 @@ service and installed CLI the same machine-local
 key. The CLI takes the caller from T3's environment. The planner runs
 `nucleus task.add` or `nucleus item.promote <id>` from its T3 thread.
 
-On first contact a planner request starts or joins one verification and waits up to
-three seconds. A slower check continues in the background and the caller can retry. The scheduler reads the exact active top-level thread, uses the registered
-project root from the synchronized T3 shell, then checks both GitHub remotes
-and the local default branch via
-`refs/remotes/origin/HEAD`. It saves the Projects route and planner binding
-together. The waiting request uses that binding to continue.
-The service logs the result of each check. While a check runs, a shell event
-can revoke its proof if the caller's identity changes or the thread closes.
-A healthy shell stream keeps the proof across run activity. After a disconnect,
-a registered planner’s next task read or write requests one fresh check. If verification fails, the
-request returns the reason, such as a missing checkout or a remote mismatch.
-Further admissions, task commands and settings reads use local state. Each
-verified planner has its own project binding. A closed thread loses its cached
-authority. Task notices address the original planner and fall back to a live
-verified planner in the same project when the origin is gone.
+On first contact, a T3 request starts or joins one verification and waits up
+to three seconds. A slower check continues in the background and the caller
+can retry. The scheduler verifies the exact active top-level thread. In a
+Git checkout it checks the registered T3 root, both GitHub remotes and the
+local default branch via `refs/remotes/origin/HEAD` before saving its project
+and planner binding. In a scratch folder a verified thread needs no binding.
+
+Verified threads may plan, dispatch and send messages across projects. Name the
+project or task reference when working outside the thread's own project. Task
+completion notices and message replies address the exact originating thread.
+A healthy T3 shell stream keeps the proof across run activity. A closure or
+loss of host observation revokes the cached proof. The next request verifies
+the thread again.
 
 New project IDs are `repo-` followed by the lowercase hex SHA-256 of the
 canonical lowercase GitHub slug. Use the same ID for offline planning imports,

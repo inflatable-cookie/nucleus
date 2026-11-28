@@ -1141,14 +1141,14 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
         service.lookup(&state, ID).unwrap()
     };
     let board = fixture.board_task().await;
-    assert_eq!(board["stateLabel"], "Working · T3");
+    assert_eq!(board["stateLabel"], "Starting");
     assert!(board["waitDetail"].is_null());
     assert!(
         board["lifecycle"]["steps"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|step| step["note"] == "Working · T3")
+            .any(|step| step["note"] == "Starting")
     );
     let ready = Observed::Known(Host::Current {
         instance: launch.instance.clone(),
@@ -1165,7 +1165,7 @@ async fn a_reserved_role_waiting_to_send_keeps_the_parent_snoozed() {
         .unwrap();
     assert_eq!(
         crate::titles::task_state_label(&sent.task, Some(WaitReason::Starting), None),
-        "Working · starting"
+        "Working"
     );
     service.observe_role_state(&sent, &ready).await.unwrap();
     fixture.sync().await;
@@ -1250,7 +1250,7 @@ async fn a_reserved_reviewer_without_a_native_thread_allows_the_capacity_snooze(
         .await
         .unwrap();
     let card = fixture.board_task().await;
-    assert_eq!(card["stateLabel"], "Reviewing · capacity");
+    assert_eq!(card["stateLabel"], "Waiting for a slot");
     assert_eq!(card["attention"], "waiting");
     fixture
         .native
@@ -2309,6 +2309,176 @@ async fn background_work_keeps_the_row_visible_and_clears_an_owned_snooze() {
             .row_snooze(ID, &fixture.thread)
             .unwrap()
             .is_none()
+    );
+}
+
+#[tokio::test]
+async fn operator_snooze_alone_does_not_create_a_wait() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let (task, _, _) = reservation(ID, Entry::Brief, &service.fixture().start);
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.publish_shell();
+    let until = service
+        .host
+        .row_visibility_hint(&fixture.thread)
+        .unwrap()
+        .snoozed_until_ms
+        .unwrap();
+    {
+        let mut state = service.state.lock().await;
+        state.store.create(&task, &event("fixture")).unwrap();
+        let row = service.lookup(&state, ID).unwrap();
+        service
+            .schedule_operator_snooze(
+                &mut state,
+                &row,
+                &fixture.thread,
+                until,
+                "Snoozed until 2099".into(),
+            )
+            .unwrap();
+        assert_eq!(state.effective_wait(&task).unwrap(), None);
+        service.desire_phase_title(&mut state, &task, row.number);
+        assert!(
+            state
+                .store
+                .pending_title(&fixture.thread)
+                .unwrap()
+                .unwrap()
+                .desired
+                .starts_with("Working:")
+        );
+    }
+    let card = fixture.board_task().await;
+    assert_eq!(card["stateLabel"], "Working");
+    assert!(card["wait"].is_null());
+    assert_eq!(card["waitDetail"], "Snoozed until 2099");
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "keep the snoozed prerequisite and hold in one real-row fixture"
+)]
+async fn operator_snooze_preserves_the_real_wait_on_each_surface() {
+    let mut task = pending_task();
+    let observation = nucleus_core::Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(nucleus_core::Workspace::Absent),
+    };
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    let fixture = Fixture::new(&task).await;
+    fixture.seed_prerequisite(&task).await;
+    fixture.native.lock().unwrap().until = json!(OPERATOR_SNOOZE);
+    fixture.publish_shell();
+    let service = &fixture.service;
+    let row = service.task(ID).await.unwrap();
+    let until = service
+        .host
+        .row_visibility_hint(&fixture.thread)
+        .unwrap()
+        .snoozed_until_ms
+        .unwrap();
+    {
+        let mut state = service.state.lock().await;
+        // A stale capacity observation must not hide the prerequisite.
+        state
+            .observe_wait(&task, Some(WaitReason::Capacity))
+            .unwrap();
+        service
+            .schedule_operator_snooze(
+                &mut state,
+                &row,
+                &fixture.thread,
+                until,
+                "Snoozed until 2099".into(),
+            )
+            .unwrap();
+        assert_eq!(
+            state.effective_wait(&task).unwrap(),
+            Some(WaitReason::Prerequisite)
+        );
+        service.desire_phase_title(&mut state, &task, row.number);
+        assert!(
+            state
+                .store
+                .pending_title(&fixture.thread)
+                .unwrap()
+                .unwrap()
+                .desired
+                .starts_with("Waiting for #1:")
+        );
+    }
+    assert_eq!(fixture.board_task().await["stateLabel"], "Waiting for #1");
+    let key = [2; 32];
+    let api = router(
+        Arc::clone(service),
+        [Controller {
+            credential: key,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+    );
+    let request = || {
+        Request::get("/v1/tasks/row/next")
+            .header("host", "127.0.0.1:9")
+            .header("authorization", format!("Bearer {}", hex::encode(key)))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let response = api.clone().oneshot(request()).await.unwrap();
+    let next: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(next["stateLabel"], "Waiting for #1");
+    assert!(
+        next["waitDetail"]
+            .as_str()
+            .unwrap()
+            .contains("Snoozed until 2099")
+    );
+    assert!(next["waitDetail"].as_str().unwrap().contains("#1"));
+
+    task.command(
+        Command::Hold("After fixture#192".into()),
+        &Authority::Planner {
+            actor: "planner".into(),
+        },
+        &observation,
+    )
+    .unwrap();
+    {
+        let mut state = service.state.lock().await;
+        service
+            .commit(&mut state, &row, &task, &event("fixture_hold"), None)
+            .unwrap();
+        service.desire_phase_title(&mut state, &task, row.number);
+        assert!(
+            state
+                .store
+                .pending_title(&fixture.thread)
+                .unwrap()
+                .unwrap()
+                .desired
+                .starts_with("Held by planner:")
+        );
+    }
+    assert_eq!(fixture.board_task().await["stateLabel"], "Held by planner");
+    let response = api.oneshot(request()).await.unwrap();
+    let next: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(next["stateLabel"], "Held by planner");
+    assert_eq!(next["hold"]["reason"], "After fixture#192");
+    assert!(
+        next["waitDetail"]
+            .as_str()
+            .unwrap()
+            .contains("Snoozed until 2099")
     );
 }
 

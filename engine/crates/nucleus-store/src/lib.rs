@@ -57,7 +57,7 @@ pub use usage::{ProfileUsage, SubscriptionPause, UsageWindow};
 pub use volume::StorageDirectory;
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 16;
+const SCHEMA_VERSION: i32 = 17;
 /// The oldest schema this engine upgrades (Spec 070 ruling 59).
 const OLDEST_UPGRADABLE_SCHEMA: i32 = 14;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
@@ -81,7 +81,8 @@ const ACP_SESSIONS: &str = "CREATE TABLE acp_sessions (
   task_id TEXT PRIMARY KEY REFERENCES tasks(id),
   reader BLOB NOT NULL CHECK (length(reader) = 32),
   writer BLOB CHECK (length(writer) = 32),
-  controller BLOB NOT NULL CHECK (length(controller) = 32)
+  controller BLOB NOT NULL CHECK (length(controller) = 32),
+  controller_thread TEXT
 ) STRICT";
 
 #[derive(Debug, thiserror::Error)]
@@ -238,6 +239,8 @@ pub struct AcpSession {
     pub reader: [u8; 32],
     pub writer: Option<[u8; 32]>,
     pub controller: [u8; 32],
+    /// The issuing T3 thread, when the session was bound by one.
+    pub controller_thread: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,7 +405,16 @@ impl Store {
                 ALTER TABLE completion_notices_v15 RENAME TO completion_notices;",
             )?;
         }
-        parent_delivery::migrate(tx)?;
+        if version < 16 {
+            parent_delivery::migrate(tx)?;
+        }
+        if !tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('acp_sessions') WHERE name='controller_thread')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )? {
+            tx.execute("ALTER TABLE acp_sessions ADD COLUMN controller_thread TEXT", [])?;
+        }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
@@ -880,16 +892,16 @@ impl Store {
     /// Returns an error if task identities or their retained roles cannot be read.
     pub fn routing_provenance(
         &self,
-        repository: &str,
+        repository: Option<&str>,
         candidates: &[&str],
     ) -> Result<BTreeMap<String, ThreadProvenance>, StoreError> {
         let mut query = self.connection.prepare_cached(
             "WITH provenance(thread, is_task_role) AS (
-               SELECT origin_thread, 0 FROM tasks WHERE repository = ?1
+               SELECT origin_thread, 0 FROM tasks WHERE (?1 IS NULL OR repository = ?1)
                UNION ALL
-               SELECT json_extract(threads, '$.worker'), 1 FROM tasks WHERE repository = ?1
+               SELECT json_extract(threads, '$.worker'), 1 FROM tasks WHERE (?1 IS NULL OR repository = ?1)
                UNION ALL
-               SELECT json_extract(threads, '$.reviewer'), 1 FROM tasks WHERE repository = ?1
+               SELECT json_extract(threads, '$.reviewer'), 1 FROM tasks WHERE (?1 IS NULL OR repository = ?1)
              )
              SELECT thread, max(is_task_role)
                FROM provenance JOIN json_each(?2) AS candidate ON candidate.value = thread
@@ -1289,10 +1301,11 @@ impl Store {
     /// Returns an error if the task is missing or the session cannot be saved.
     pub fn bind_acp(&self, id: &str, session: &AcpSession) -> Result<(), StoreError> {
         self.connection.execute(
-            "INSERT INTO acp_sessions (task_id, reader, writer, controller)
-             VALUES (?1, ?2, ?3, ?4) ON CONFLICT(task_id) DO UPDATE
-               SET reader = excluded.reader, writer = excluded.writer, controller = excluded.controller",
-            params![id, session.reader, session.writer, session.controller],
+            "INSERT INTO acp_sessions (task_id, reader, writer, controller, controller_thread)
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(task_id) DO UPDATE
+               SET reader = excluded.reader, writer = excluded.writer,
+                   controller = excluded.controller, controller_thread = excluded.controller_thread",
+            params![id, session.reader, session.writer, session.controller, session.controller_thread],
         )?;
         Ok(())
     }
@@ -1305,13 +1318,14 @@ impl Store {
         Ok(self
             .connection
             .query_row(
-                "SELECT reader, writer, controller FROM acp_sessions WHERE task_id = ?1",
+                "SELECT reader, writer, controller, controller_thread FROM acp_sessions WHERE task_id = ?1",
                 [id],
                 |row| {
                     Ok(AcpSession {
                         reader: row.get(0)?,
                         writer: row.get(1)?,
                         controller: row.get(2)?,
+                        controller_thread: row.get(3)?,
                     })
                 },
             )
@@ -1791,5 +1805,42 @@ mod completion_notice_tests {
                 retry: false,
             }]
         );
+    }
+
+    #[test]
+    fn upgrading_schema_16_preserves_existing_acp_credentials() {
+        let (home, mut store) = fixture();
+        store
+            .create(
+                &Task::new(identity("legacy-session"), PLAIN.into(), None),
+                &event("admitted"),
+            )
+            .unwrap();
+        store
+            .bind_acp(
+                "legacy-session",
+                &super::AcpSession {
+                    reader: [1; 32],
+                    writer: Some([2; 32]),
+                    controller: [3; 32],
+                    controller_thread: None,
+                },
+            )
+            .unwrap();
+        drop(store);
+
+        let root = home.path().canonicalize().unwrap().join("engine");
+        let db = rusqlite::Connection::open(root.join("data/databases/engine.sqlite")).unwrap();
+        db.execute("ALTER TABLE acp_sessions DROP COLUMN controller_thread", [])
+            .unwrap();
+        db.pragma_update(None, "user_version", 16).unwrap();
+        drop(db);
+
+        let reopened = crate::settings::test_store(&root);
+        let session = reopened.acp_session("legacy-session").unwrap().unwrap();
+        assert_eq!(session.reader, [1; 32]);
+        assert_eq!(session.writer, Some([2; 32]));
+        assert_eq!(session.controller, [3; 32]);
+        assert!(session.controller_thread.is_none());
     }
 }

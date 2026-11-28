@@ -1295,7 +1295,7 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
             let wait = &state.waits[id];
             assert_eq!(
                 crate::titles::task_state_label(&next.task, wait.reason, wait.detail.as_ref()),
-                "Reviewing · paused"
+                "Paused · review"
             );
             assert!(matches!(
                 &wait.detail,

@@ -45,7 +45,7 @@ const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
 #[test]
-fn operator_snooze_is_not_projected_as_board_wait_text() {
+fn operator_snooze_detail_preserves_its_deadline() {
     let detail = crate::WaitDetail::OperatorSnoozed {
         version: 1,
         thread: "thread:fixture".into(),
@@ -53,7 +53,10 @@ fn operator_snooze_is_not_projected_as_board_wait_text() {
         message: "You snoozed this thread until 00:00".into(),
     };
 
-    assert_eq!(board_wait_detail(&detail), None);
+    assert_eq!(
+        board_wait_detail(&detail),
+        Some("You snoozed this thread until 00:00")
+    );
 }
 
 #[tokio::test]
@@ -525,7 +528,7 @@ fn assert_worker_detail(detail: &Value, list: &Value, thread: &str) {
     assert_eq!(lifecycle["steps"][1]["elapsedMs"], 831_000);
     assert!(lifecycle["steps"][1]["activeSinceMs"].is_null());
     assert_eq!(lifecycle["steps"][2]["roundLabel"], "Round 1");
-    assert_eq!(detail["stateLabel"], "Reviewing · capacity");
+    assert_eq!(detail["stateLabel"], "Waiting for a slot");
     assert_eq!(lifecycle["steps"][2]["note"], detail["stateLabel"]);
     assert_eq!(lifecycle["admittedAtMs"], detail["createdAtMs"]);
     assert!(lifecycle["steps"][2]["activeSinceMs"].is_null());

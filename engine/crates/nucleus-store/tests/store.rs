@@ -1306,6 +1306,16 @@ fn stored_refresh(db: &Connection) -> (String, i64, String) {
     .unwrap()
 }
 
+/// The ACP session bound before the upgrade, which no thread had claimed.
+fn assert_stored_session(store: &Store) {
+    let session = store.acp_session("live").unwrap().unwrap();
+    assert_eq!(
+        (session.reader, session.writer, session.controller),
+        ([1; 32], Some([2; 32]), [3; 32])
+    );
+    assert!(session.controller_thread.is_none());
+}
+
 #[test]
 fn a_schema_fourteen_database_upgrades_with_its_rows() {
     use nucleus_store::ParentResult::{Accepted, Pending};
@@ -1317,7 +1327,7 @@ fn a_schema_fourteen_database_upgrades_with_its_rows() {
     let mut store = Store::open(&storage).expect("upgrade");
 
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    assert_eq!(stored_version(&db), 16);
+    assert_eq!(stored_version(&db), 17);
     let live = row(&store, "live");
     assert_eq!((live.version, live.number), (1, Some(1)));
     assert_eq!(
@@ -1331,6 +1341,7 @@ fn a_schema_fourteen_database_upgrades_with_its_rows() {
             retry: false,
         }]
     );
+    assert_stored_session(&store);
     assert!(store.watch_task("live", "watcher", 1).unwrap().unwrap().1);
     assert_eq!(
         store
@@ -1418,7 +1429,7 @@ fn a_schema_fifteen_database_keeps_its_notices_per_recipient() {
 
     let store = Store::open(&storage).expect("upgrade");
 
-    assert_eq!(stored_version(&db), 16);
+    assert_eq!(stored_version(&db), 17);
     assert_eq!(
         store.completion_notices("done").unwrap(),
         [
@@ -1436,6 +1447,7 @@ fn a_schema_fifteen_database_keeps_its_notices_per_recipient() {
         store.current_parent_hold("live").unwrap().unwrap().command,
         "current-hold"
     );
+    assert_stored_session(&store);
 }
 
 #[test]

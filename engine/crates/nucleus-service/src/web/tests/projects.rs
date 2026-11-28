@@ -19,6 +19,8 @@ const BETA_REPO: &str = "example/second";
 const PROJECTS: &str = "/v1/settings/projects";
 const T3_KEY: [u8; 32] = [8; 32];
 const TELL: &str = "/v1/planning/tell";
+const SCRATCH_AGENT: &str = "scratch-agent";
+const BRIEF: &str = "---\nqueue:\n  complexity: low\n---\n# Synthetic brief";
 
 #[derive(Default)]
 pub(super) struct NoticeFixture {
@@ -54,6 +56,7 @@ impl NoticeFixture {
                 "beta-planner" => "beta-native",
                 "missing-root" => "missing-native",
                 "standalone-agent" => "external-native",
+                SCRATCH_AGENT => "scratch-native",
                 _ => "alpha-native",
             });
         let provider = launched
@@ -295,11 +298,14 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
     let moved = Arc::new(AtomicBool::new(false));
     let moved_root = Arc::clone(&moved);
     let missing = alpha_path.with_file_name("missing");
+    let scratch = alpha_path.with_file_name("scratch");
+    std::fs::create_dir(&scratch).expect("synthetic scratch folder");
     let default_model = json!({"instanceId": "codex", "model": "gpt-5"});
     let snapshot = json!({"projects": [
         {"id": "alpha-native", "workspaceRoot": alpha_path, "title": "Exact T3 Alpha", "defaultModelSelection": default_model},
         {"id": "beta-native", "workspaceRoot": beta_path, "defaultModelSelection": default_model},
         {"id": "missing-native", "workspaceRoot": missing},
+        {"id": "scratch-native", "workspaceRoot": scratch},
     ], "threads": []});
     let archived = Arc::new(AtomicBool::new(false));
     let closed = Arc::clone(&archived);
@@ -341,6 +347,7 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
                     {"id": "alpha-native", "workspaceRoot": alpha, "title": "Exact T3 Alpha", "defaultModelSelection": {"instanceId": "codex", "model": "gpt-5"}},
                     {"id": "beta-native", "workspaceRoot": beta_path, "defaultModelSelection": {"instanceId": "codex", "model": "gpt-5"}},
                     {"id": "missing-native", "workspaceRoot": missing},
+                    {"id": "scratch-native", "workspaceRoot": scratch},
                 ]}})
             }
             Some("server.getConfig") => {
@@ -539,7 +546,7 @@ async fn submit(api: &Router, actor: &str, id: &str, repo: Option<&str>) -> Resp
 }
 
 #[tokio::test]
-async fn first_contact_enrolls_two_exact_routes_inline_and_scoped_reads() {
+async fn first_contact_enrolls_two_routes_and_allows_cross_project_task_commands() {
     let registry = registry().await;
     let api = &registry.api;
     let created = registry
@@ -553,29 +560,50 @@ async fn first_contact_enrolls_two_exact_routes_inline_and_scoped_reads() {
     assert_eq!(alpha.identity().base, "main");
     assert_eq!(beta.identity().repository, BETA_REPO);
     assert_eq!(beta.identity().base, "trunk");
-    assert_eq!(
-        submit(api, "alpha-planner", "cross-project", Some(BETA_REPO))
-            .await
-            .status(),
-        StatusCode::FORBIDDEN
-    );
-    let owned = json_body(
+    let created = caller_request(
+        api,
+        Method::POST,
+        "/v1/planning/second/tasks",
+        "alpha-planner",
+        json!({"id": "cross-project", "brief": BRIEF}),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = json_body(created).await;
+    assert_eq!(created["identity"]["repository"], BETA_REPO);
+    assert_eq!(created["identity"]["origin_thread"], "alpha-planner");
+    let reference = created["reference"].as_str().unwrap().replace('#', "%23");
+    let path = format!("/v1/tasks/{reference}");
+    let next = caller_request(
+        api,
+        Method::GET,
+        &format!("{path}/next"),
+        "alpha-planner",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(next.status(), StatusCode::OK);
+    let amended = format!("{BRIEF} amended");
+    for command in [json!({"amend": amended}), json!({"move": "working"})] {
+        let response = caller_request(
+            api,
+            Method::POST,
+            &format!("{path}/commands"),
+            "alpha-planner",
+            command,
+        )
+        .await;
+        let status = response.status();
+        assert_eq!(status, StatusCode::OK, "{}", json_body(response).await);
+    }
+    let updated = registry.service.task("cross-project").await.unwrap();
+    assert_eq!(updated.task.brief().text, amended);
+    assert_eq!(updated.task.phase(), Phase::Working);
+    let visible = json_body(
         caller_request(api, Method::GET, "/v1/tasks", "alpha-planner", Value::Null).await,
     )
     .await;
-    assert_eq!(owned.as_array().expect("Alpha's tasks").len(), 1);
-    assert_eq!(owned[0]["identity"]["id"], "first");
-    for (method, url) in [
-        (Method::GET, "/v1/tasks/second"),
-        (Method::POST, "/v1/tasks/second/commands"),
-    ] {
-        assert_eq!(
-            caller_request(api, method, url, "alpha-planner", json!("cancel"))
-                .await
-                .status(),
-            StatusCode::FORBIDDEN
-        );
-    }
+    assert_eq!(visible.as_array().expect("both projects' tasks").len(), 3);
     let mint = json_body(
         caller_request(
             api,
@@ -606,6 +634,166 @@ async fn first_contact_enrolls_two_exact_routes_inline_and_scoped_reads() {
         registry.reads.load(Ordering::Relaxed),
         2,
         "one exact scheduler read per first contact"
+    );
+}
+
+#[tokio::test]
+async fn scratch_thread_dispatches_to_two_projects_and_receives_their_completion_notices() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    let admit = |project, id| {
+        caller_request(
+            &registry.api,
+            Method::POST,
+            project,
+            SCRATCH_AGENT,
+            json!({"id": id, "brief": BRIEF}),
+        )
+    };
+    let ready = registry
+        .inline_command(
+            SCRATCH_AGENT,
+            admit("/v1/planning/nucleus-fixture/tasks", "scratch-alpha"),
+        )
+        .await;
+    assert_eq!(ready.status(), StatusCode::CREATED);
+    assert_eq!(
+        admit("/v1/planning/second/tasks", "scratch-beta")
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .settings
+            .planner_route(SCRATCH_AGENT)
+            .is_none()
+    );
+
+    // Origin delivery survives loss of the process-local controller proof.
+    let registry = registry.reopen();
+    for (id, repo) in [("scratch-alpha", ALPHA_REPO), ("scratch-beta", BETA_REPO)] {
+        settle_phase(&registry.service, id, "cancelled", None).await;
+        let row = registry.service.task(id).await.unwrap();
+        assert_eq!(row.task.identity().repository, repo);
+        assert_eq!(
+            row.task.identity().origin_thread.as_deref(),
+            Some(SCRATCH_AGENT)
+        );
+        registry.service.notify_completion(&row).await.unwrap();
+        registry.service.notify_completion(&row).await.unwrap();
+    }
+    let notices = registry.notices.lock().unwrap();
+    assert_eq!(notices.sends.len(), 2);
+    for send in &notices.sends {
+        assert_eq!(send["threadId"], SCRATCH_AGENT);
+        assert_eq!(send["dispatchMode"]["type"], "queue_after_active");
+        assert!(send["text"].as_str().unwrap().contains("was cancelled"));
+    }
+}
+
+#[tokio::test]
+async fn scratch_thread_must_name_an_active_target_and_cannot_claim_or_edit_settings() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll("beta-planner").await;
+    claim(&registry, "alpha-planner").await;
+    registry.enroll(SCRATCH_AGENT).await;
+
+    for (path, repository, status, error) in [
+        (
+            "/v1/planning-current/tasks",
+            None,
+            StatusCode::BAD_REQUEST,
+            "name a project",
+        ),
+        (
+            "/v1/planning-current/tasks?project=example%2Funknown",
+            None,
+            StatusCode::NOT_FOUND,
+            "no project named example/unknown",
+        ),
+        (
+            "/v1/planning/second/tasks",
+            Some("example/unknown"),
+            StatusCode::NOT_FOUND,
+            "no project named example/unknown",
+        ),
+    ] {
+        let response = caller_request(
+            &registry.api,
+            Method::POST,
+            path,
+            SCRATCH_AGENT,
+            json!({"brief": BRIEF, "repository": repository}),
+        )
+        .await;
+        assert_eq!(response.status(), status);
+        assert!(
+            json_body(response).await["error"]
+                .as_str()
+                .unwrap()
+                .contains(error)
+        );
+    }
+    let claim_refused = caller_request(
+        &registry.api,
+        Method::POST,
+        "/v1/planning/claim",
+        SCRATCH_AGENT,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(claim_refused.status(), StatusCode::FORBIDDEN);
+    let settings_refused = caller_request(
+        &registry.api,
+        Method::PUT,
+        PROJECTS,
+        SCRATCH_AGENT,
+        json!({"revision":"", "value":{}}),
+    )
+    .await;
+    assert_eq!(settings_refused.status(), StatusCode::FORBIDDEN);
+
+    let settings = &registry.service.settings;
+    let current = settings.read::<nucleus_store::Projects>().unwrap();
+    let (alpha, beta) = planner_projects(&registry).await;
+    assert_eq!(
+        current.value.projects[&alpha]
+            .planner_claim
+            .as_ref()
+            .unwrap()
+            .thread,
+        "alpha-planner"
+    );
+    assert!(current.value.projects[&beta].planner_claim.is_none());
+    let (updated, _) = settings
+        .edit(
+            &current.revision,
+            |projects: &mut nucleus_store::Projects| {
+                projects.projects.get_mut(&beta).unwrap().archived = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+    registry.service.state.lock().await.settings.projects = Some(updated.value);
+    let archived = caller_request(
+        &registry.api,
+        Method::POST,
+        "/v1/planning/second/tasks",
+        SCRATCH_AGENT,
+        json!({"brief": BRIEF}),
+    )
+    .await;
+    assert_eq!(archived.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(archived).await["error"],
+        ServiceError::TellArchivedProject(beta).to_string()
     );
 }
 
@@ -694,22 +882,93 @@ async fn planning_uses_the_verified_callers_project_for_reads_and_writes() {
     assert_eq!(task.status(), StatusCode::CREATED);
     assert_eq!(json_body(task).await["identity"]["repository"], ALPHA_REPO);
 
-    registry.enroll("beta-planner").await;
-    let other = "/v1/planning-current/items?project=second";
-    let forbidden = read(other).await;
-    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
-    assert_eq!(
-        json_body(forbidden).await["error"],
-        ServiceError::ControllerProject.to_string()
-    );
-    assert_eq!(
-        json_body(get_as(api, other, &BOARD_KEY).await).await,
-        json!([])
-    );
     assert_eq!(
         get_as(api, ITEMS, &BOARD_KEY).await.status(),
         StatusCode::BAD_REQUEST
     );
+    assert_eq!(registry.reads.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn cross_project_planning_writes_use_the_named_projects_checkout() {
+    let registry = registry().await;
+    let api = &registry.api;
+    let actor = "alpha-planner";
+    registry.enroll(actor).await;
+    let read = |path| caller_request(api, Method::GET, path, actor, Value::Null);
+    registry.enroll("beta-planner").await;
+    let other = "/v1/planning-current/items?project=second";
+    assert_eq!(json_body(read(other).await).await, json!([]));
+    let written = caller_request(
+        api,
+        Method::POST,
+        other,
+        actor,
+        json!({
+            "kind":"papercut", "title":"Beta item", "body":"Written from Alpha."
+        }),
+    )
+    .await;
+    assert_eq!(written.status(), StatusCode::CREATED);
+    let written = json_body(written).await;
+    assert_eq!(written["author"], actor);
+    assert_eq!(
+        json_body(get_as(api, other, &BOARD_KEY).await).await,
+        json!([written])
+    );
+    assert_eq!(
+        json_body(read("/v1/planning-current/items").await).await,
+        json!([])
+    );
+
+    // Only Beta's checkout declares affected tests. An Alpha caller's promotion
+    // still reads that declaration from Beta's default branch.
+    let beta_checkout = {
+        let state = registry.service.state.lock().await;
+        state
+            .settings
+            .project_for_origin(BETA_REPO)
+            .unwrap()
+            .2
+            .path
+            .clone()
+    };
+    std::fs::write(
+        beta_checkout.join("effigy.toml"),
+        "[tasks]\n\"test:affected\" = \"true\"\n",
+    )
+    .unwrap();
+    git(&beta_checkout, &["add", "effigy.toml"]);
+    git(
+        &beta_checkout,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "Declare affected tests",
+        ],
+    );
+    let promotion = caller_request(
+        api,
+        Method::POST,
+        &format!(
+            "/v1/planning/second/items/{}/promote",
+            written["id"].as_str().unwrap()
+        ),
+        actor,
+        json!({"complexity":"low"}),
+    )
+    .await;
+    assert_eq!(promotion.status(), StatusCode::CREATED);
+    let id = json_body(promotion).await["identity"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let next = json_body(read(&format!("/v1/tasks/{id}/next")).await).await;
+    assert_eq!(next["allowance"]["limitMs"], 120 * 60 * 1000, "{next}");
     assert_eq!(registry.reads.load(Ordering::Relaxed), 2);
 }
 
@@ -742,10 +1001,22 @@ async fn planning_records_need_a_live_binding_but_not_a_cached_checkout() {
         "The registered T3 checkout changed or is unavailable. Retry shortly."
     );
     assert_eq!(registry.reads.load(Ordering::Relaxed), 1);
+
+    // A new thread belonging to the registered native project still needs
+    // the checkout proof when that project's root moves to a non-Git folder.
+    let new_caller = "next-planner";
+    let refused = registry
+        .inline_command(new_caller, submit(api, new_caller, "new-planner", None))
+        .await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        json_body(refused).await["error"],
+        "The checkout registered in T3 is not a Git worktree."
+    );
 }
 
 #[tokio::test]
-async fn colliding_repository_names_require_the_owner_and_preserve_planner_scope() {
+async fn colliding_repository_names_require_the_owner_for_all_controllers() {
     let registry = registry_with_options("example/nucleus-fixture", false).await;
     registry.enroll("alpha-planner").await;
     registry.enroll("beta-planner").await;
@@ -778,11 +1049,11 @@ async fn colliding_repository_names_require_the_owner_and_preserve_planner_scope
             .contains("ambiguous")
     );
     let foreign = read("/v1/planning-current/items?project=example%2Fnucleus-fixture").await;
-    assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+    assert_eq!(foreign.status(), StatusCode::OK);
 }
 
 #[tokio::test]
-async fn public_task_references_follow_the_authenticated_project_scope() {
+async fn public_task_references_default_to_the_callers_project() {
     let registry = registry_with_options("example/nucleus-fixture", false).await;
     let api = &registry.api;
     let alpha = "alpha-planner";
@@ -795,45 +1066,46 @@ async fn public_task_references_follow_the_authenticated_project_scope() {
     let read = |path| caller_request(api, Method::GET, path, alpha, Value::Null);
     let detail = json_body(read("/v1/tasks/first").await).await;
     assert_eq!(detail["identity"]["id"], "first");
-    for path in ["/v1/tasks/nucleus-fixture%23001", "/v1/tasks/%231"] {
+    for path in [
+        "/v1/tasks/inflatable-cookie%2Fnucleus-fixture%23001",
+        "/v1/tasks/%231",
+    ] {
         assert_eq!(json_body(read(path).await).await, detail);
     }
-    for (by_id, by_reference) in [
-        ("/v1/tasks/first/next", "/v1/tasks/nucleus-fixture%231/next"),
-        (
-            "/v1/tasks/first/history",
-            "/v1/tasks/nucleus-fixture%231/history",
-        ),
+    for (by_ref, by_id) in [
+        ("/v1/tasks/%231/next", "/v1/tasks/first/next"),
+        ("/v1/tasks/%231/history", "/v1/tasks/first/history"),
     ] {
         assert_eq!(
-            json_body(read(by_reference).await).await,
+            json_body(read(by_ref).await).await,
             json_body(read(by_id).await).await
         );
     }
-    for path in [
-        "/v1/tasks/nucleus-fixture%2399",
-        "/v1/tasks/example%2Fnucleus-fixture%231",
+    let missing = read("/v1/tasks/nucleus-fixture%2399").await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        json_body(missing).await["error"],
+        "task reference was not found"
+    );
+
+    let unqualified = "/v1/tasks/nucleus-fixture%231";
+    for ambiguous in [
+        read(unqualified).await,
+        get_as(api, unqualified, &BOARD_KEY).await,
     ] {
-        let response = read(path).await;
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(ambiguous.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
-            json_body(response).await["error"],
-            "task reference was not found"
+            json_body(ambiguous).await["error"],
+            ServiceError::TaskReferenceAmbiguous.to_string()
         );
     }
-    let ambiguous = get_as(api, "/v1/tasks/nucleus-fixture%231", &BOARD_KEY).await;
-    assert_eq!(ambiguous.status(), StatusCode::BAD_REQUEST);
-    assert!(
-        json_body(ambiguous).await["error"]
-            .as_str()
-            .expect("error")
-            .contains("ambiguous")
-    );
     let qualified = "/v1/tasks/inflatable-cookie%2Fnucleus-fixture%231";
     assert_eq!(
         json_body(get_as(api, qualified, &BOARD_KEY).await).await,
         detail
     );
+    let beta_detail = json_body(read("/v1/tasks/example%2Fnucleus-fixture%231").await).await;
+    assert_eq!(beta_detail["identity"]["id"], "second");
     assert_eq!(
         caller_request(
             api,
@@ -964,7 +1236,7 @@ async fn imported_container_scopes_commands_and_slots_across_exact_native_routes
 }
 
 #[tokio::test]
-async fn paired_board_reports_the_same_planner_scope_as_planning_routes() {
+async fn paired_board_gives_verified_planners_access_to_both_projects() {
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
     registry.enroll("beta-planner").await;
@@ -994,33 +1266,22 @@ async fn paired_board_reports_the_same_planner_scope_as_planning_routes() {
     assert_eq!(operator_view["canEditSettings"], true);
     assert_eq!(operator_view["planningProjects"], Value::Null);
     assert_eq!(planner_view["canEditSettings"], false);
-    assert_eq!(planner_view["planningProjects"], json!([alpha]));
+    assert_eq!(planner_view["planningProjects"], Value::Null);
     assert_ne!(operator_view["id"], planner_view["id"]);
     assert_eq!(
         planner_view,
         json_body(read("/api/engine/session", &planner).await).await
     );
     for collection in ["plan", "items", "decisions"] {
-        let allowed = format!("/api/engine/planning/{alpha}/{collection}");
-        let restricted = format!("/api/engine/planning/{beta}/{collection}");
-        assert_eq!(
-            browser_request(&api, Method::GET, &allowed, Some(&planner), None)
-                .await
-                .status(),
-            StatusCode::OK
-        );
-        assert_eq!(
-            browser_request(&api, Method::GET, &restricted, Some(&planner), None)
-                .await
-                .status(),
-            StatusCode::FORBIDDEN
-        );
-        assert_eq!(
-            browser_request(&api, Method::GET, &restricted, Some(&operator), None)
-                .await
-                .status(),
-            StatusCode::OK
-        );
+        for project in [&alpha, &beta] {
+            let path = format!("/api/engine/planning/{project}/{collection}");
+            assert_eq!(
+                browser_request(&api, Method::GET, &path, Some(&planner), None)
+                    .await
+                    .status(),
+                StatusCode::OK,
+            );
+        }
     }
     for path in [
         "/api/engine/settings/profiles",
@@ -1428,11 +1689,16 @@ async fn planners_coexist_and_archive_revokes_only_the_closed_binding() {
         .unwrap()
         .unwrap();
     registry.archived.store(true, Ordering::Relaxed);
-    let archived = nucleus_hosts::ThreadHint::fixture(&json!({
-        "kind": "thread.removed", "threadId": "alpha-planner",
-    }))
-    .expect("archive event");
-    registry.service.wake_from_host(archived).await;
+    let archived = json!({
+        "kind": "thread.updated", "sequence": 17,
+        "thread": {"id": "alpha-planner", "projectId": "alpha-native",
+            "archivedAt": "2026-11-23T18:10:00Z"},
+    });
+    registry.service.host.fixture_shell_delta(&archived);
+    registry
+        .service
+        .wake_from_host(nucleus_hosts::ThreadHint::fixture(&archived).expect("archive event"))
+        .await;
     assert_eq!(
         caller_request(api, Method::GET, detail, "alpha-planner", Value::Null)
             .await
@@ -2138,14 +2404,17 @@ async fn project_tell_routes_to_verified_same_and_cross_project_planners() {
 }
 
 #[tokio::test]
-async fn project_tell_refuses_unverified_and_ambiguous_requests_without_host_reads() {
+async fn project_tell_verifies_callers_and_refuses_ambiguous_requests_without_host_reads() {
     let registry = registry().await;
     let actor = "alpha-planner";
-    let reads = registry.reads.load(Ordering::Relaxed);
-    let unverified = registry.tell(actor, json!("all"), "test").await;
+    let unknown_actor = "unknown-caller";
+    let unverified = registry
+        .inline_command(
+            unknown_actor,
+            registry.tell(unknown_actor, json!("all"), "test"),
+        )
+        .await;
     assert_eq!(unverified.status(), StatusCode::FORBIDDEN);
-    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
-    assert!(registry.service.take_enrollment().await.is_none());
     registry.enroll(actor).await;
     registry.enroll("beta-planner").await;
     let reads = registry.reads.load(Ordering::Relaxed);
@@ -3289,6 +3558,84 @@ fn received_notice(registry: &Registry) -> (String, String, String) {
 }
 
 #[tokio::test]
+async fn scratch_thread_broadcasts_and_receives_exact_replies_after_restart() {
+    let registry = registry().await;
+    for planner in ["alpha-planner", "beta-planner"] {
+        registry.enroll(planner).await;
+        claim(&registry, planner).await;
+    }
+    let sent = registry
+        .inline_command(
+            SCRATCH_AGENT,
+            registry.tell(SCRATCH_AGENT, json!("all"), "Sweep complete"),
+        )
+        .await;
+    assert_eq!(sent.status(), StatusCode::OK);
+    let deliveries = json_body(sent).await["deliveries"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(deliveries.len(), 2);
+    assert!(
+        deliveries
+            .iter()
+            .all(|delivery| delivery["fromProject"] == "no project")
+    );
+    registry.notices.lock().unwrap().started = true;
+    let mut routes = Vec::new();
+    for _ in 0..2 {
+        registry.advance_tell().await.unwrap();
+        let (thread, text, handle) = received_notice(&registry);
+        assert!(
+            text.starts_with("From no project (scratch-agent)\n\n"),
+            "{text}"
+        );
+        assert!(text.contains("Sweep complete"));
+        routes.push((thread, handle));
+    }
+    for _ in 0..2 {
+        registry.advance_tell().await.unwrap();
+    }
+    assert_eq!(
+        routes
+            .iter()
+            .map(|(thread, _)| thread.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["alpha-planner", "beta-planner"])
+    );
+
+    let registry = registry.reopen();
+    for (planner, handle) in routes {
+        let response = registry
+            .inline_command(
+                &planner,
+                registry.tell(
+                    &planner,
+                    json!({"reply": handle}),
+                    &format!("Reply from {planner}"),
+                ),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        registry.advance_tell().await.unwrap();
+        let (thread, text, _) = received_notice(&registry);
+        assert_eq!(thread, SCRATCH_AGENT);
+        assert!(text.contains(&format!("({planner})")));
+        registry.advance_tell().await.unwrap();
+    }
+    assert!(
+        registry
+            .service
+            .state
+            .lock()
+            .await
+            .settings
+            .planner_route(SCRATCH_AGENT)
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn project_tell_claim_and_reply_keep_distinct_addresses_across_restart() {
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
@@ -3310,7 +3657,7 @@ async fn project_tell_claim_and_reply_keep_distinct_addresses_across_restart() {
             .name
             .clone()
     };
-    assert!(text.starts_with(&format!("From {sender_project}\n\n")));
+    assert!(text.starts_with(&format!("From {sender_project} (beta-planner)\n\n")));
     registry.notices.lock().unwrap().started = true;
     registry.advance_tell().await.unwrap();
 
@@ -3365,7 +3712,10 @@ async fn project_tell_claim_and_reply_keep_distinct_addresses_across_restart() {
             .is_none()
     );
     let follow = registry
-        .tell("beta-planner", json!({"reply": next_handle}), "Follow-up")
+        .inline_command(
+            "beta-planner",
+            registry.tell("beta-planner", json!({"reply": next_handle}), "Follow-up"),
+        )
         .await;
     assert_eq!(follow.status(), StatusCode::OK);
     registry.advance_tell().await.unwrap();
@@ -3400,18 +3750,11 @@ async fn project_tell_reply_to_gone_sender_falls_back_after_restart() {
             .status(),
         StatusCode::OK
     );
-    // An outstanding proof keeps the reply addressed to the original thread.
-    {
-        let mut state = registry.service.state.lock().await;
-        registry
-            .service
-            .request_enrollment(&mut state, "alpha-planner");
-    }
+    // An uncertain exact read keeps the reply addressed to the original thread.
+    registry.notices.lock().unwrap().uncertain_planner = true;
     assert!(registry.advance_tell().await.is_err());
-    let actor = registry.service.take_enrollment().await.unwrap();
-    assert_eq!(actor, "alpha-planner");
+    registry.notices.lock().unwrap().uncertain_planner = false;
     registry.archived.store(true, Ordering::Relaxed);
-    registry.service.complete_enrollment(&actor).await;
     let pending = registry
         .service
         .state
@@ -3428,7 +3771,7 @@ async fn project_tell_reply_to_gone_sender_falls_back_after_restart() {
     registry.advance_tell().await.unwrap();
     let (thread, text, new_handle) = received_notice(&registry);
     assert_eq!(thread, "next-planner");
-    assert!(text.contains("Fallback: the sender (a planner of Exact T3 Alpha) is gone."));
+    assert!(text.contains("Fallback: the sender from Exact T3 Alpha is gone."));
     assert!(!text.contains("alpha-planner"));
     assert!(text.contains("After closure"));
     assert_ne!(handle, new_handle);
@@ -5565,18 +5908,19 @@ async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
     let watched =
         json_body(watch_via(&registry.api, "standalone-agent", &target_ref, "watch").await).await;
     assert_eq!(watched["watching"], true);
-    assert_eq!(
-        caller_request(
-            &registry.api,
-            Method::GET,
-            "/v1/tasks/alpha-task/next",
+    let next = registry
+        .inline_command(
             "standalone-agent",
-            Value::Null,
+            caller_request(
+                &registry.api,
+                Method::GET,
+                "/v1/tasks/alpha-task/next",
+                "standalone-agent",
+                Value::Null,
+            ),
         )
-        .await
-        .status(),
-        StatusCode::FORBIDDEN
-    );
+        .await;
+    assert_eq!(next.status(), StatusCode::OK);
     let status = json_body(
         caller_request(
             &registry.api,
@@ -5615,7 +5959,7 @@ async fn non_planner_t3_thread_watches_inspects_status_and_receives_notice() {
 }
 
 #[tokio::test]
-async fn cross_project_planner_reads_scoped_watchers_without_next_details() {
+async fn cross_project_planner_can_read_next_and_scoped_watcher_status() {
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
     registry.enroll("beta-planner").await;
@@ -5646,7 +5990,7 @@ async fn cross_project_planner_reads_scoped_watchers_without_next_details() {
         )
         .await
         .status(),
-        StatusCode::FORBIDDEN
+        StatusCode::OK
     );
     assert_eq!(
         caller_request(
@@ -5658,7 +6002,7 @@ async fn cross_project_planner_reads_scoped_watchers_without_next_details() {
         )
         .await
         .status(),
-        StatusCode::NOT_FOUND
+        StatusCode::OK
     );
     let scoped = json_body(
         caller_request(
@@ -5813,10 +6157,10 @@ async fn acp_keys(api: &Router, path: &str, actor: &str) -> (String, String) {
     )
 }
 
-async fn assert_board_reauthorized(board: &Router, cookie: &str, alpha: &str, task_id: &str) {
+async fn assert_board_reauthorized(board: &Router, cookie: &str, task_id: &str) {
     let session = board_get(board, "/api/engine/session", cookie).await;
     assert_eq!(session.status(), StatusCode::OK);
-    assert_eq!(json_body(session).await["planningProjects"], json!([alpha]));
+    assert_eq!(json_body(session).await["planningProjects"], Value::Null);
     let tasks = board_get(board, "/api/engine/tasks", cookie).await;
     assert_eq!(tasks.status(), StatusCode::OK);
     let list = json_body(tasks).await;
@@ -5893,14 +6237,6 @@ async fn assert_acp_reauthorized(
 async fn planner_paired_board_and_acp_sessions_reauthorize_after_stream_drop_and_restart() {
     let registry = registry().await;
     registry.enroll("alpha-planner").await;
-    let alpha = registry
-        .service
-        .state
-        .lock()
-        .await
-        .live_planner_project("alpha-planner")
-        .expect("alpha")
-        .to_owned();
     let task_id = "reauth-task";
     let admitted = submit(&registry.api, "alpha-planner", task_id, None).await;
     assert_eq!(admitted.status(), StatusCode::CREATED);
@@ -5913,7 +6249,7 @@ async fn planner_paired_board_and_acp_sessions_reauthorize_after_stream_drop_and
     let board = registry_board_api(&registry);
     let cookie = pair_planner_board(&board, "alpha-planner").await;
 
-    // Stream drop: ACP read, ACP write and board sessions each reauthorize project scope.
+    // Stream drop: ACP read, ACP write and board sessions each reauthorize the calling thread.
     let worker = spawn_enrollments(&registry.service);
     assert_acp_reauthorized(
         &registry.service,
@@ -5931,16 +6267,16 @@ async fn planner_paired_board_and_acp_sessions_reauthorize_after_stream_drop_and
         .await
         .enrolled_planners
         .clear();
-    assert_board_reauthorized(&board, &cookie, &alpha, task_id).await;
+    assert_board_reauthorized(&board, &cookie, task_id).await;
 
-    // Restart: persisted board cookie and ACP read/write sessions reauthorize planner scope.
+    // Restart: persisted board cookie and ACP read/write sessions reauthorize the calling thread.
     worker.abort();
     let _ = worker.await;
     drop(board);
     let restarted = registry.reopen();
     let worker = spawn_enrollments(&restarted.service);
     let restarted_board = registry_board_api(&restarted);
-    assert_board_reauthorized(&restarted_board, &cookie, &alpha, task_id).await;
+    assert_board_reauthorized(&restarted_board, &cookie, task_id).await;
     assert_acp_reauthorized(
         &restarted.service,
         &restarted.api,
@@ -5951,6 +6287,94 @@ async fn planner_paired_board_and_acp_sessions_reauthorize_after_stream_drop_and
     )
     .await;
     worker.abort();
+}
+
+#[tokio::test]
+async fn scratch_acp_session_reauthorizes_after_proof_loss_and_restart() {
+    let registry = registry().await;
+    registry.enroll("alpha-planner").await;
+    registry.enroll(SCRATCH_AGENT).await;
+    // The session issuer differs from the task's origin.
+    let id = "scratch-acp";
+    registry.task("alpha-planner", id).await;
+    let (read_key, write_key) =
+        acp_keys(&registry.api, &format!("/v1/tasks/{id}/acp"), SCRATCH_AGENT).await;
+
+    let worker = spawn_enrollments(&registry.service);
+    assert_acp_reauthorized(
+        &registry.service,
+        &registry.api,
+        id,
+        &read_key,
+        &write_key,
+        json!({"hold": "Reauthorized scratch controller"}),
+    )
+    .await;
+    worker.abort();
+    let _ = worker.await;
+    assert!(
+        registry
+            .service
+            .task(id)
+            .await
+            .unwrap()
+            .task
+            .hold()
+            .is_some()
+    );
+
+    let registry = registry.reopen();
+    let worker = spawn_enrollments(&registry.service);
+    assert_acp_reauthorized(
+        &registry.service,
+        &registry.api,
+        id,
+        &read_key,
+        &write_key,
+        json!("release"),
+    )
+    .await;
+    worker.abort();
+    let _ = worker.await;
+    assert!(
+        registry
+            .service
+            .task(id)
+            .await
+            .unwrap()
+            .task
+            .hold()
+            .is_none()
+    );
+
+    {
+        let mut state = registry.service.state.lock().await;
+        assert!(state.settings.planner_route(SCRATCH_AGENT).is_none());
+        state.enrolled_planners.clear();
+    }
+    registry
+        .notices
+        .lock()
+        .unwrap()
+        .missing_threads
+        .insert(SCRATCH_AGENT.into());
+    let denied = registry
+        .inline_command(
+            SCRATCH_AGENT,
+            acp_call(
+                &registry.api,
+                Method::POST,
+                "/v1/tasks/scratch-acp/commands",
+                &write_key,
+                Some(json!("cancel")),
+            ),
+        )
+        .await;
+    assert_eq!(denied, StatusCode::FORBIDDEN);
+    assert_eq!(
+        registry.service.task(id).await.unwrap().task.phase(),
+        Phase::Queued
+    );
 }
 
 async fn reject_ticket_503_host(repo_root: &Path) -> (T3, tokio::task::JoinHandle<()>) {
