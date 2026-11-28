@@ -14,7 +14,7 @@ use crate::{Binding, HostError, ProviderLimit, thread_snapshots::ShellCustody};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MissingReceipt {
     Fresh,
-    LegacyContinuation,
+    RevokedContinuation,
     Queue,
 }
 

@@ -62,8 +62,7 @@ const dispatch = z
     usage,
     usageUntilMs: integer.nullable(),
     heavySlots: integer,
-    normalSlots: integer,
-    lightSlots: integer,
+    totalSlots: integer,
     projectDefaultSlots: integer,
     projectSlotOverrides: z.record(z.string(), integer),
     mode: dispatchMode.default("running"),
@@ -102,11 +101,6 @@ const hosts = z.object({ t3: host.nullable() }).loose();
 const storage = z
   .object({
     enabled: z.boolean(),
-    // Ruling 19 (2026-11-24): an opt-in Barge placement replaces the pinned volume.
-    workVolume: z
-      .object({ volumeId: z.string(), mount: z.string() })
-      .nullable()
-      .optional(),
     placement: z.enum(["internal", "barge"]).optional(),
     buildsRoot: z.string().nullable().optional(),
     workRoot: z.string().nullable(),

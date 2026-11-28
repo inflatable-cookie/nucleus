@@ -21,8 +21,7 @@ impl ParentResult {
 pub struct ParentDelivery {
     pub version: i64,
     pub command: String,
-    pub wire: Option<String>,
-    pub legacy_prompt: Option<String>,
+    pub wire: String,
     pub due_ms: i64,
     pub result: ParentResult,
 }
@@ -39,8 +38,8 @@ pub(super) fn migrate(tx: &Transaction<'_>) -> rusqlite::Result<()> {
         };
         tx.execute(
             &format!(
-                "INSERT INTO {table} (task_id, version, command, wire, legacy_prompt, due_ms, result)
-                 SELECT task_id, version, command, wire, legacy_prompt, due_ms,
+                "INSERT INTO {table} (task_id, version, command, wire, due_ms, result)
+                 SELECT task_id, version, command, wire, due_ms,
                         CASE result WHEN 'accepted' THEN 'accepted' ELSE 'pending' END
                  FROM parent_deliveries_v15 WHERE ordinal IN (
                      SELECT max(ordinal) FROM parent_deliveries_v15
@@ -54,7 +53,7 @@ pub(super) fn migrate(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 }
 
 fn delivery(row: &Row<'_>) -> rusqlite::Result<ParentDelivery> {
-    let result = match row.get_ref(5)?.as_str()? {
+    let result = match row.get_ref(4)?.as_str()? {
         "pending" => ParentResult::Pending,
         "accepted" => ParentResult::Accepted,
         _ => return Err(rusqlite::Error::InvalidQuery),
@@ -63,8 +62,7 @@ fn delivery(row: &Row<'_>) -> rusqlite::Result<ParentDelivery> {
         version: row.get(0)?,
         command: row.get(1)?,
         wire: row.get(2)?,
-        legacy_prompt: row.get(3)?,
-        due_ms: row.get(4)?,
+        due_ms: row.get(3)?,
         result,
     })
 }
@@ -78,8 +76,8 @@ impl Store {
         Ok(self
             .connection
             .prepare_cached(
-                "SELECT version, command, wire, legacy_prompt, due_ms, result
-                 FROM parent_deliveries WHERE task_id=?1",
+                "SELECT version, command, wire, due_ms, result
+                 FROM parent_deliveries WHERE task_id=?1 AND wire IS NOT NULL",
             )?
             .query_row([task], delivery)
             .optional()?)
@@ -92,7 +90,7 @@ impl Store {
     pub fn pending_parent_preparation(&self, task: &str, version: i64) -> Result<bool, StoreError> {
         Ok(self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM parent_deliveries
-             WHERE task_id=?1 AND version=?2 AND result='pending'
+             WHERE task_id=?1 AND version=?2 AND result='pending' AND wire IS NOT NULL
                AND coalesce(json_extract(wire, '$.checkpoint.preparing_launch'), 1))",
             params![task, version],
             |row| row.get(0),
@@ -113,9 +111,10 @@ impl Store {
              SELECT id,version,?3,?4,?5,'pending' FROM tasks WHERE id=?1 AND version=?2
              ON CONFLICT(task_id) DO UPDATE SET
                  version=excluded.version, command=excluded.command, wire=excluded.wire,
-                 due_ms=excluded.due_ms, legacy_prompt=NULL, result='pending'
+                 due_ms=excluded.due_ms, result='pending'
              WHERE parent_deliveries.version<>excluded.version
-                OR parent_deliveries.command<>excluded.command",
+                OR parent_deliveries.command<>excluded.command
+                OR parent_deliveries.wire IS NULL",
             params![task, value.version, value.command, value.wire, value.due_ms],
         )? == 1)
     }
@@ -135,7 +134,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         let count = self.connection.execute(
             "UPDATE parent_deliveries
-             SET command=?5, wire=?6, due_ms=?7, legacy_prompt=NULL, result='pending'
+             SET command=?5, wire=?6, due_ms=?7, result='pending'
              WHERE task_id=?1 AND version=?2 AND command=?3 AND result<>'accepted'
                AND EXISTS (SELECT 1 FROM tasks WHERE id=?1 AND version=?4)",
             params![

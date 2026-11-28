@@ -32,14 +32,6 @@ fn fixture_account() -> GitHubAccount {
     }
 }
 
-fn fixture_legacy(organisation: &str) -> Result<SecretString, AccountError> {
-    if organisation == "fixture-org" {
-        Ok(SecretString::from("fixture-legacy".to_owned()))
-    } else {
-        Err(AccountError::NoLegacyGrant)
-    }
-}
-
 async fn flow_status(accounts: &GitHubAccounts, id: &str, status: &str) -> Value {
     timeout(Duration::from_secs(12), async {
         loop {
@@ -155,58 +147,52 @@ async fn verifies_confirms_refreshes_and_unlinks_the_device_account() {
 }
 
 #[tokio::test]
-async fn imports_only_after_confirmation_and_preserves_an_existing_grant() {
+async fn confirmation_needs_the_current_revision_and_is_exclusive() {
     let (_root, settings) = fixture_settings();
-    let server = FixtureServer::spawn(vec![FixtureRoute::new(
-        "/user",
-        200,
-        r#"{"id":1234,"login":"fixture-reviewer"}"#,
-    )])
+    let server = FixtureServer::spawn(vec![
+        device_code(),
+        FixtureRoute::new(
+            TOKEN,
+            200,
+            r#"{"access_token":"fixture-access","refresh_token":"fixture-refresh","expires_in":3600}"#,
+        ),
+        FixtureRoute::new("/user", 200, r#"{"id":1234,"login":"fixture-reviewer"}"#),
+    ])
     .expect("loopback");
-    let mut accounts = GitHubAccounts::with_fixture(settings.clone(), &server.base_url());
-    accounts.legacy = Some(fixture_legacy);
-    accounts
-        .seed_reviewer_fixture(&fixture_account(), "fixture-existing")
-        .expect("seed reviewer");
-    let accounts = Arc::new(accounts);
-    let before = accounts.view().await.expect("settings");
-    let id = accounts
-        .start_import("fixture-org".into())
-        .expect("start")
-        .id;
+    let accounts = Arc::new(GitHubAccounts::with_fixture(
+        settings.clone(),
+        &server.base_url(),
+    ));
+    let revision = accounts.view().await.expect("settings").revision;
+    let id = accounts.start_device().expect("start").id;
     flow_status(&accounts, &id, "confirm").await;
     assert!(matches!(
         accounts.confirm(id.clone(), "stale".into()).await,
         Err(AccountError::Conflict)
     ));
-    let imported = accounts
-        .confirm(id, before.revision)
+    assert!(
+        read_grant(&accounts.scope(&accounts.slot(1234).expect("slot")))
+            .expect("read")
+            .is_none()
+    );
+    let (account, grant) = accounts.claim_confirmation(&id).expect("one claim");
+    assert!(matches!(
+        accounts.claim_confirmation(&id),
+        Err(AccountError::Saving)
+    ));
+    assert!(matches!(accounts.cancel(&id), Err(AccountError::Saving)));
+    assert_eq!(
+        serde_json::to_value(accounts.flow_view(&id).expect("status")).expect("DTO")["status"],
+        "confirm"
+    );
+    let this = Arc::clone(&accounts);
+    let saved = accounts
+        .blocking(move |_| this.save_verified(&revision, &account, &grant))
         .await
-        .expect("confirm");
-    assert_eq!(
-        imported.reviewer_account_id.as_deref(),
-        Some("github.com:1234")
-    );
-    let requests = server.requests();
-    assert_eq!(
-        requests[0].header("authorization"),
-        Some("Bearer fixture-legacy")
-    );
-    assert_eq!(
-        requests[1].header("authorization"),
-        Some("Bearer fixture-existing")
-    );
-    assert_eq!(
-        accounts
-            .reviewer_credential()
-            .await
-            .expect("available")
-            .expect("selected")
-            .access_token(),
-        "fixture-existing",
-    );
+        .expect("save");
+    let saved = serde_json::to_value(saved).expect("public settings");
     settings
-        .edit::<GitHubAccountSettings>(&imported.revision, |value| {
+        .edit::<GitHubAccountSettings>(saved["revision"].as_str().expect("revision"), |value| {
             value.worker_account_id = value.reviewer_account_id.clone();
             Ok(())
         })
@@ -296,80 +282,4 @@ async fn a_locked_selected_account_never_uses_installed_gh() {
         accounts.reviewer_credential().await,
         Err(AccountError::Keychain)
     ));
-}
-
-#[tokio::test]
-async fn a_legacy_copy_is_verified_before_settings_commit_and_confirmation_is_exclusive() {
-    let (_root, settings) = fixture_settings();
-    let server = FixtureServer::spawn(vec![FixtureRoute::script(
-        "/user",
-        vec![
-            (200, r#"{"id":1234,"login":"fixture-reviewer"}"#.into()),
-            (200, r#"{"id":5678,"login":"fixture-other"}"#.into()),
-        ],
-    )])
-    .expect("loopback");
-    let mut accounts = GitHubAccounts::with_fixture(settings.clone(), &server.base_url());
-    accounts.legacy = Some(fixture_legacy);
-    let accounts = Arc::new(accounts);
-    let revision = accounts.view().await.expect("settings").revision;
-    let id = accounts
-        .start_import("fixture-org".into())
-        .expect("start")
-        .id;
-    flow_status(&accounts, &id, "confirm").await;
-    let (account, grant, legacy) = accounts.claim_confirmation(&id).expect("one claim");
-    assert!(matches!(
-        accounts.claim_confirmation(&id),
-        Err(AccountError::Saving)
-    ));
-    assert!(matches!(accounts.cancel(&id), Err(AccountError::Saving)));
-    assert_eq!(
-        serde_json::to_value(accounts.flow_view(&id).expect("status")).expect("DTO")["status"],
-        "confirm"
-    );
-    let this = Arc::clone(&accounts);
-    assert!(matches!(
-        accounts
-            .blocking(move |_| this.save_verified(&revision, &account, &grant, legacy))
-            .await,
-        Err(AccountError::Identity)
-    ));
-    assert!(
-        accounts
-            .reviewer_credential()
-            .await
-            .expect("same settings")
-            .is_none()
-    );
-    assert!(
-        read_grant(&accounts.scope(&accounts.slot(1234).expect("slot")))
-            .expect("read")
-            .is_none()
-    );
-}
-
-#[test]
-fn legacy_only_falls_back_for_an_absent_current_item() {
-    let mut services = Vec::new();
-    let recovered = read_legacy("fixture-org", |service, org| {
-        assert_eq!(org, "fixture-org");
-        services.push(service.to_owned());
-        Ok((service == "paseo-queue.github-reviewer").then(|| b"fixture-legacy".to_vec()))
-    })
-    .expect("older slot");
-    assert_eq!(recovered.expose_secret(), "fixture-legacy");
-    assert_eq!(
-        services,
-        ["nucleus.github-reviewer", "paseo-queue.github-reviewer"]
-    );
-    let mut count = 0;
-    assert!(matches!(
-        read_legacy("fixture-org", |_, _| {
-            count += 1;
-            Err(AccountError::Keychain)
-        }),
-        Err(AccountError::Keychain)
-    ));
-    assert_eq!(count, 1);
 }

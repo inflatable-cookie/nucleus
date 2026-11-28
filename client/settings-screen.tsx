@@ -9,7 +9,11 @@ export {
 } from "./settings-profile-helpers";
 import React, { useEffect, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { replaceEqualDeep, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  replaceEqualDeep,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useRpc, type BoardSurfaceProps } from "./shell";
 import {
   ActionButton,
@@ -49,6 +53,7 @@ import { DispatchLimits, type PendingOverrideRemovalPhase } from "./limits";
 import { HostsPanel } from "./hosts-settings";
 import { ProjectsSection } from "./projects-settings";
 import { GitHubReviewerSettings } from "./web/github-reviewer-settings";
+import { DevicesSettings } from "./web/device-pairing";
 /** A board from a service that predates Spec 052 carries no dispatch routing policy. */
 
 /**
@@ -98,15 +103,20 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     enabled: settingsTab === "profiles",
   });
   const profileUsage = profileUsageQuery.data;
-  const profileState = state && profileUsage ? {
-    ...state,
-    ...profileUsage,
-    availability: [
-      ...state.availability,
-      ...profileUsage.availability.filter(({ group }) =>
-        !state.availability.some((entry) => entry.group === group)),
-    ],
-  } : state;
+  const profileState =
+    state && profileUsage
+      ? {
+          ...state,
+          ...profileUsage,
+          availability: [
+            ...state.availability,
+            ...profileUsage.availability.filter(
+              ({ group }) =>
+                !state.availability.some((entry) => entry.group === group),
+            ),
+          ],
+        }
+      : state;
   const repositoriesQuery = useQuery({
     queryKey: ["nucleus", "repositories"],
     queryFn: () => fetchRepositories({}),
@@ -157,7 +167,9 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const catalogQuery = useQuery({
     queryKey: ["nucleus", "profile-vocabulary", ""],
     queryFn: () => fetchCatalog({}),
-    enabled: settingsTab === "capacity" && Boolean(capacityStateQuery.data?.plannerModel),
+    enabled:
+      settingsTab === "capacity" &&
+      Boolean(capacityStateQuery.data?.plannerModel),
     staleTime: 30_000,
   });
   // Settings → Hosts (nucleus#1325): the catalogue with status and dependents, refreshed while open.
@@ -173,12 +185,18 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     .sort((a, b) => b.at.localeCompare(a.at))[0];
   const rustBackups = storageQuery.data?.backups;
   const newestBackupAt =
-    rustBackups?.newestAt ?? state?.backup?.newestSnapshotAt ?? listedNewest?.at ?? null;
+    rustBackups?.newestAt ??
+    state?.backup?.newestSnapshotAt ??
+    listedNewest?.at ??
+    null;
   const backupAgeMs = newestBackupAt
     ? Date.now() - Date.parse(newestBackupAt)
     : Infinity;
   const backupStale = backupAgeMs > BACKUP_STALE_AFTER_MS;
-  const backupError = (rustBackups?.issues ?? 0) > 0 ? "Some backups could not be verified." : null;
+  const backupError =
+    (rustBackups?.issues ?? 0) > 0
+      ? "Some backups could not be verified."
+      : null;
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState<{
@@ -310,17 +328,19 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
           c={c}
           label="Settings sections"
           nowrap
-          tabs={settingsViews.map((view) => ({
-            id: view.id,
-            text: view.short,
-            label: view.label,
-          })).filter(
-            // Rust engine (Spec 070 rulings 16 and 17): no Telemetry, backups live in Storage.
-            (tab) =>
-              tab.id !== "backups" &&
-              tab.id !== "telemetry" &&
-              (tab.id !== "github-accounts" || canManageGitHub),
-          )}
+          tabs={settingsViews
+            .map((view) => ({
+              id: view.id,
+              text: view.short,
+              label: view.label,
+            }))
+            .filter(
+              // Rust engine (Spec 070 rulings 16 and 17): no Telemetry, backups live in Storage.
+              (tab) =>
+                tab.id !== "backups" &&
+                tab.id !== "telemetry" &&
+                (tab.id !== "github-accounts" || canManageGitHub),
+            )}
           value={settingsTab}
           onChange={setSettingsTab}
         />
@@ -374,15 +394,20 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                     group: entry.group.trim(),
                   });
                   const saved = await setProfile({ ...expected, groupChanged });
-                  const confirmed = groupChanged === false && saved.entry
-                    ? { ...saved.entry, group: expected.group }
-                    : saved.entry;
+                  const confirmed =
+                    groupChanged === false && saved.entry
+                      ? { ...saved.entry, group: expected.group }
+                      : saved.entry;
                   if (replaceEqualDeep(expected, confirmed) !== expected)
-                    throw new Error("The service could not confirm the profile settings it stored.");
+                    throw new Error(
+                      "The service could not confirm the profile settings it stored.",
+                    );
                   setProfileSaveError((current) =>
                     current?.profileId === entry.profileId ? null : current,
                   );
-                  void queryClient.invalidateQueries({ queryKey: BOARD_STATE_KEY });
+                  void queryClient.invalidateQueries({
+                    queryKey: BOARD_STATE_KEY,
+                  });
                 } catch (error) {
                   setProfileSaveError({
                     profileId: entry.profileId,
@@ -545,6 +570,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
           {settingsTab === "github-accounts" && canManageGitHub && (
             <GitHubReviewerSettings c={c} inset={inset} />
           )}
+          {settingsTab === "devices" && <DevicesSettings c={c} inset={inset} />}
           {settingsTab === "telemetry" && (
             <SettingsTelemetry c={c} compact={compact} />
           )}

@@ -1,18 +1,18 @@
 use std::{
+    cmp::Reverse,
     collections::{BTreeMap, BTreeSet},
     time::Duration,
 };
 
-use nucleus_core::{Phase, QueuePriority, WaitReason, profiles::TaskWeight};
+use nucleus_core::{Phase, QueuePriority, WaitReason};
 use nucleus_hosts::T3_RETRY_DELAY;
 use nucleus_store::Store;
 use tokio::time::Instant;
 
 use crate::ServiceError;
 
-/// Capacity waiters in the order they take a free slot: the heaviest first,
-/// then promoted tasks, then admission order.
-pub(crate) type CapacityWaiters = BTreeSet<(TaskWeight, QueuePriority, i64, String)>;
+/// Capacity waiters in order: heavy first, then promoted, then admission order.
+pub(crate) type CapacityWaiters = BTreeSet<(Reverse<bool>, QueuePriority, i64, String)>;
 
 const SCAN_PAGE: u32 = 32;
 pub(crate) const PASS_BATCH: usize = 8;
@@ -320,13 +320,23 @@ impl Schedule {
         for seed in waiting {
             self.wake(&seed.id, now, Priority::Decision);
             if let Some(admitted) = seed.admission_order {
-                capacity_waiters.insert((seed.weight, seed.queue_priority, admitted, seed.id));
+                capacity_waiters.insert((
+                    Reverse(seed.weight.is_heavy()),
+                    seed.queue_priority,
+                    admitted,
+                    seed.id,
+                ));
             }
         }
         for seed in ids {
             self.tasks.entry(seed.id.clone()).or_insert_with(|| {
                 if let Some(admitted) = seed.admission_order {
-                    capacity_waiters.insert((seed.weight, seed.queue_priority, admitted, seed.id));
+                    capacity_waiters.insert((
+                        Reverse(seed.weight.is_heavy()),
+                        seed.queue_priority,
+                        admitted,
+                        seed.id,
+                    ));
                 }
                 let mut pending = Pending::default();
                 let priority = if seed.closeout {
@@ -513,7 +523,7 @@ mod tests {
                 seed.id
             );
             assert!(capacity_waiters.contains(&(
-                seed.weight,
+                Reverse(seed.weight.is_heavy()),
                 seed.queue_priority,
                 seed.admission_order.expect("admission order"),
                 seed.id,

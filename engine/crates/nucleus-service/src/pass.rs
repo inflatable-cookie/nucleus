@@ -169,7 +169,7 @@ fn parent_hold_write(
     prior: Option<&ParentDelivery>,
     preparing_launch: bool,
 ) -> Result<Option<nucleus_hosts::ParentWrite>, ServiceError> {
-    let frozen = prior.map(crate::acp::frozen_parent).transpose()?.flatten();
+    let frozen = prior.map(crate::acp::frozen_parent).transpose()?;
     let checkpoint = frozen.as_ref().and_then(FrozenParentWrite::checkpoint);
     let empty = ParentTurn::default();
     let turn = match &shell {
@@ -1696,21 +1696,6 @@ impl Service {
         {
             return Ok(Action::Wait(WaitReason::Prerequisite));
         }
-        if let Some(run) = task.run()
-            && nucleus_hosts::unpinned_worker_continuation(run)
-        {
-            let mut updated = task.clone();
-            if updated.discard_paused_reservation(&observation) {
-                let _fence = self.effect(row).await?;
-                let mut audit = event("host_send_not_sent");
-                audit.detail = serde_json::json!({
-                    "command": run.launch().instance, "reason": "continuation provider was not pinned",
-                }).to_string();
-                self.save(row, updated, &audit).await?;
-                self.clear_ticket(&task.identity().id, run).await;
-                return Ok(Action::Nothing);
-            }
-        }
         let role = task.run().ok_or(ServiceError::Input)?.launch().role;
         if role == Role::Reviewer {
             observation.forge = Observed::Known(self.read_forge(task, checkout).await?.0);
@@ -1799,7 +1784,6 @@ impl Service {
             return Ok(SendAttempt::Deferred);
         }
         let archive = permit.superseded;
-        let reflect_admission = authorization.reflect_admission();
         self.storage.database().verify()?;
         let (mut sent, dispatch) = {
             let mut state = self.state.lock().await;
@@ -1824,13 +1808,6 @@ impl Service {
                 dispatch,
             )
         };
-        if reflect_admission
-            && let Some(provider) = self.acp_provider()
-            && run.last_send_at_ms().is_none()
-            && let Err(error) = self.reflect_role_admission(&sent, checkout, provider).await
-        {
-            service_log!("{}: {error}", task.identity().id);
-        }
         let mut journal = self.delivery_snooze_journal(Some(&task.identity().id));
         let result = host.send(dispatch, |update| journal.record(update)).await;
         journal.settle().await;

@@ -4,6 +4,7 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import { mount, useNativeStubs } from "./support/render";
+import { waitFor } from "./support/budgets";
 import { formatLocalDateTime } from "../shared/date-time";
 import type {
   CapacityAuthorityState,
@@ -61,10 +62,9 @@ const change = (
     ),
   } as CapacityAuthorityValues,
 });
-const SLOTS = { heavySlots: 5, normalSlots: 22, lightSlots: 5 };
-const HEAVY = "Heavy dispatch limit (slots, 0–4294967295)";
-const NORMAL = "Normal dispatch limit (slots, 0–4294967295)";
-const LIGHT = "Light dispatch limit (slots, 0–4294967295)";
+const SLOTS = { heavySlots: 5, totalSlots: 32 };
+const HEAVY = "Heavy dispatch limit (slots, 0–32)";
+const totalControl = (min: number) => `Total dispatch limit (slots, ${min}–4294967295)`;
 const authority = (
   overrides: {
     effective?: Partial<CapacityAuthorityState["effective"]>;
@@ -193,36 +193,56 @@ test("the planner model saves its model and thinking level at the displayed revi
   }
 });
 
-test("each weight has its own slot count beside their total, and an edit saves itself", async () => {
+test("Heavy and Total edits autosave together at the displayed revision", async () => {
   const saves: CapacityInput[] = [];
   const { ui, done } = await mountLimits({
     saveCapacity: async (input: CapacityInput) => { saves.push(input); },
   });
   try {
-    for (const [label, slots] of [[HEAVY, "5"], [NORMAL, "22"], [LIGHT, "5"]] as const)
-      assert.equal(ui.get(label).props.value, slots);
-    assert.match(ui.text(), /Heavy[^]*Normal[^]*Light/);
-    assert.match(ui.text(), /Total 32/);
-    assert.equal(ui.query(/Global dispatch limit/), undefined);
+    assert.equal(ui.get(HEAVY).props.value, "5");
+    assert.equal(ui.get(totalControl(5)).props.value, "32");
+    assert.equal(ui.query(/(Normal|Light) dispatch limit/), undefined);
     assert.match(
       ui.get("Task slots help").props.accessibilityHint,
-      /Light tasks can use any slot, normal tasks normal or heavy slots, and heavy tasks only heavy slots\. The heaviest waiting task takes a freed slot\./,
+      /Heavy tasks are limited to Heavy\. All other tasks can use any free slot up to Total\. The heaviest waiting task that fits takes a freed slot\./,
     );
     // Two edits inside one debounce save together, with no button.
     ui.press(`Increase ${HEAVY}`);
-    ui.press(`Decrease ${LIGHT}`);
+    ui.press(`Decrease ${totalControl(6)}`);
     await settle(() => /In force 5 slots/.test(ui.text()));
-    assert.match(ui.text(), /Total 32/, "the total reads what is in force");
-    ui.get(LIGHT).props.onSubmitEditing();
-    await settle(() => saves.length > 0);
-    assert.deepEqual(saves, [{ revision: "shown", heavySlots: 6, lightSlots: 4 }]);
+    assert.match(ui.text(), /In force 32 slots/);
+    await waitFor(() => saves.length === 1);
+    assert.deepEqual(saves, [{ revision: "shown", heavySlots: 6, totalSlots: 31 }]);
+  } finally {
+    done();
+  }
+});
+
+test("Heavy and Total stay within each other's bounds", async () => {
+  const saves: CapacityInput[] = [];
+  const { ui, done } = await mountLimits({
+    authority: authority({ effective: { heavySlots: 5, totalSlots: 5, globalLimit: 5 } }),
+    saveCapacity: async (input: CapacityInput) => { saves.push(input); },
+  });
+  try {
+    const heavy = "Heavy dispatch limit (slots, 0–5)";
+    const total = totalControl(5);
+    assert.equal(ui.get(`Increase ${heavy}`).props.accessibilityState.disabled, true);
+    assert.equal(ui.get(`Decrease ${total}`).props.accessibilityState.disabled, true);
+    for (const [label, invalid] of [[heavy, "6"], [total, "4"]] as const) {
+      ui.get(label).props.onFocus();
+      ui.get(label).props.onChangeText(invalid);
+      ui.get(label).props.onBlur();
+      assert.equal(ui.get(label).props.value, "5");
+    }
+    assert.deepEqual(saves, []);
   } finally {
     done();
   }
 });
 
 test("limits show applied values beside controls, and the recorded changes stay off the screen", async () => {
-  const applied = { globalLimit: 21, normalSlots: 11, projectLimit: 6 };
+  const applied = { globalLimit: 21, totalSlots: 21, projectLimit: 6 };
   const v1 = "2026-11-02T09:00:00.000Z",
     v2 = "2026-11-03T10:30:00.000Z";
   const { ui, done } = await mountLimits({
@@ -235,8 +255,7 @@ test("limits show applied values beside controls, and the recorded changes stay 
     }),
   });
   try {
-    assert.equal(ui.get(NORMAL).props.value, "11");
-    assert.match(ui.text(), /Total 21/);
+    assert.equal(ui.get(totalControl(5)).props.value, "21");
     assert.doesNotMatch(
       ui.text(),
       /In force/,
@@ -362,11 +381,11 @@ test("the value in force appears under a limit only once the entered value diffe
   try {
     assert.doesNotMatch(ui.text(), /In force/);
     ui.get(HEAVY).props.onFocus();
-    ui.get(HEAVY).props.onChangeText("40");
+    ui.get(HEAVY).props.onChangeText("6");
     await settle(() => /In force 5 slots/.test(ui.text()));
     assert.equal(
       ui.get(HEAVY).props.value,
-      "40",
+      "6",
     );
   } finally {
     done();
@@ -636,7 +655,7 @@ test("the task slots sit on one wrapping row of steppers at narrow and wide size
         .filter((node) =>
           /dispatch limit \(/.test(node.props.accessibilityLabel ?? ""),
         ).length,
-      4,
+      3,
       "every limit is a typeable stepper",
     );
     assert.ok(
@@ -778,12 +797,10 @@ test("an inline label never shrinks into its words: a tight card wraps the contr
   );
 });
 
-test("the weight slot cards stack their labels alike and Per project stays inline", async () => {
+test("Heavy, Total and Per project share a row and each stacks its label above its control", async () => {
   const { ui, done } = await mountLimits();
   try {
-    // A short label like Light would otherwise sit beside its control while
-    // Heavy and Normal wrap under theirs.
-    for (const name of ["Heavy", "Light"]) {
+    for (const name of ["Heavy", "Total", "Per project"]) {
       assert.ok(
         ui.ofType("Text").some(
           (node) =>
@@ -794,12 +811,6 @@ test("the weight slot cards stack their labels alike and Per project stays inlin
         `${name} takes its own line`,
       );
     }
-    assert.ok(
-      ui.ofType("Text").some(
-        (node) => node.children.join("") === "Per project" && node.props.style?.flexShrink === 0,
-      ),
-      "Per project shows inline",
-    );
   } finally {
     done();
   }

@@ -277,11 +277,6 @@ struct Configure {
     /// Select the defaults for worktrees, scratch and builds.
     #[arg(long, value_enum)]
     placement: Option<Placement>,
-    #[arg(long, hide = true, conflicts_with = "clear_legacy_volume")]
-    volume: Option<PathBuf>,
-    /// Remove the old volume pin from a copied profile during an offline move.
-    #[arg(long)]
-    clear_legacy_volume: bool,
     /// Clear stored root overrides before applying the options below.
     #[arg(long)]
     reset_roots: bool,
@@ -387,20 +382,6 @@ async fn main() -> Result<()> {
 fn configure(args: &Configure) -> Result<()> {
     let settings = open_settings(args.home.as_deref())?;
     let snapshot = settings.read::<EngineSettings>()?;
-    let scratch_root = if args.scratch_root.is_some() || args.reset_roots {
-        args.scratch_root.clone()
-    } else {
-        snapshot.value.scratch_root.clone()
-    };
-    let volume = args
-        .volume
-        .as_deref()
-        .map(|path| {
-            let mut probe = snapshot.value.clone();
-            probe.scratch_root.clone_from(&scratch_root);
-            settings.identify_volume(path, &probe)
-        })
-        .transpose()?;
     settings.configure(&snapshot, |config| {
         if let Some(enabled) = args.enable {
             config.enabled = enabled;
@@ -420,9 +401,6 @@ fn configure(args: &Configure) -> Result<()> {
             if args.reset_roots || requested.is_some() {
                 current.clone_from(requested);
             }
-        }
-        if args.clear_legacy_volume || volume.is_some() {
-            config.work_volume.clone_from(&volume);
         }
     })?;
     Ok(())

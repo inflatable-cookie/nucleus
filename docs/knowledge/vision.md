@@ -346,7 +346,7 @@ Rust port (Tom, 2026-11-06, in the Nucleus planner thread): once the split is do
 Storage placement in the port (Tom, 2026-11-10, a note for later): use the shared
 storage service, still in development. The operator defines a drive and its settings
 once; participating apps reuse that central configuration for their data and caches.
-Until then, Nucleus's `workRoot` and `workVolumeId` settings (nucleus#1096) own placement.
+Until then, Nucleus's own storage root settings (nucleus#1096) own placement.
 The port replaces them with the shared target instead of adding a second source.
 Coordinate with that service's planner when the port starts, not before. Shared
 placement is its fundamental purpose, so this should need only modest changes.

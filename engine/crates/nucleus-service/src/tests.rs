@@ -22,8 +22,8 @@ use nucleus_hosts::{
     SendOutcome, StopProgress, TaskHost,
 };
 use nucleus_store::{
-    AllowanceObservation, PinnedVolume, Profiles, ProjectSettings, Projects, RepositorySettings,
-    Store, StoreError,
+    AllowanceObservation, Profiles, ProjectSettings, Projects, RepositorySettings, Store,
+    StoreError,
 };
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -58,10 +58,6 @@ pub(super) fn save_row(
         extension: None,
     };
     store.save_accounted(expected, task, event, None, idle, false)
-}
-
-pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
-    fixture_with_volume(forge, None)
 }
 
 /// The production registry over one checkout: Projects settings register it, and
@@ -158,10 +154,7 @@ fn fixture_checkout(root: &Path) -> PathBuf {
     checkout
 }
 
-pub(super) fn fixture_with_volume(
-    forge: GitHub,
-    work_volume: Option<&PinnedVolume>,
-) -> (tempfile::TempDir, Service) {
+pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     let home = tempfile::tempdir().expect("fixture volume directory");
     let root = home.path().canonicalize().expect("portable root");
     let checkout = fixture_checkout(&root);
@@ -172,7 +165,6 @@ pub(super) fn fixture_with_volume(
     settings
         .configure(&settings.read().expect("fixture settings"), |current| {
             current.enabled = true;
-            current.work_volume = work_volume.cloned();
         })
         .expect("enable fixture");
     let profile = RoleProfile {
@@ -1721,8 +1713,7 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
     service.set_fixture_acp_provider(Some("fixture-acp"));
     service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
         heavy_slots: 1,
-        normal_slots: 0,
-        light_slots: 0,
+        total_slots: 1,
         project_default_slots: 1,
         ..nucleus_store::DispatchSettings::default()
     });
@@ -1761,7 +1752,7 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
     let queued = Task::new(shape.identity().clone(), "Fixture".into(), None);
     {
         let mut state = service.state.lock().await;
-        assert_eq!(state.store.occupied_slots("").unwrap().total(), 0);
+        assert_eq!(state.store.occupied_slots("").unwrap().total, 0);
         state
             .store
             .create_with_facts(

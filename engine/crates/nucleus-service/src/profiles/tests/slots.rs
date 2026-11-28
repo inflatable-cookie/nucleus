@@ -42,8 +42,8 @@ fn brief(weight: Option<&str>, priority: QueuePriority, body: &str) -> String {
     format!("---\nqueue:\n  complexity: medium\n{weight}{priority}---\n{body}")
 }
 
-/// A service with these heavy, normal and light slots, launching on a fixture host.
-async fn fleet(slots: (u32, u32, u32), project: u32) -> Fleet {
+/// A service with these heavy and total slots, launching on a fixture host.
+async fn fleet(slots: (u32, u32), project: u32) -> Fleet {
     let (forge, forge_server) = serve_forge(Router::new().route(
         &format!("/repos/{REPOSITORY}/pulls"),
         get(|| async { Json(Vec::<Value>::new()) }),
@@ -69,7 +69,7 @@ async fn fleet(slots: (u32, u32, u32), project: u32) -> Fleet {
 
 async fn assemble(
     service: Service,
-    (heavy, normal, light): (u32, u32, u32),
+    (heavy, total): (u32, u32),
     project: u32,
     servers: Servers,
     home: tempfile::TempDir,
@@ -78,8 +78,7 @@ async fn assemble(
         let mut state = service.state.lock().await;
         state.settings.dispatch = Some(DispatchSettings {
             heavy_slots: heavy,
-            normal_slots: normal,
-            light_slots: light,
+            total_slots: total,
             project_default_slots: project,
             ..DispatchSettings::default()
         });
@@ -113,7 +112,7 @@ async fn assemble(
 
 impl Fleet {
     /// Open a new service over the same stored rows, as a process restart does.
-    async fn restart(self, slots: (u32, u32, u32), prepare: impl FnOnce(&mut Service)) -> Self {
+    async fn restart(self, slots: (u32, u32), prepare: impl FnOnce(&mut Service)) -> Self {
         let Self {
             service,
             api,
@@ -278,15 +277,14 @@ impl Fleet {
         self.settle().await;
     }
 
-    async fn save_slots(&self, heavy: u32, normal: u32, light: u32) {
+    async fn save_slots(&self, heavy: u32, total: u32) {
         let path = "/v1/settings/dispatch";
         let current = self.request(Method::GET, path, &Value::Null).await;
         // The fixture's settings are in memory, so the file still holds defaults.
         let held = self.service.state.lock().await.settings.dispatch.clone();
         let mut value = serde_json::to_value(held.expect("dispatch settings")).expect("value");
         value["heavySlots"] = json!(heavy);
-        value["normalSlots"] = json!(normal);
-        value["lightSlots"] = json!(light);
+        value["totalSlots"] = json!(total);
         self.request(
             Method::PUT,
             path,
@@ -302,9 +300,14 @@ impl Fleet {
         let limits = state.settings.dispatch.as_ref().expect("dispatch").slots();
         let occupied = state.store.occupied_slots("").expect("occupied slots");
         assert!(!state.capacity_waiters.is_empty());
-        for (weight, _, _, id) in &state.capacity_waiters {
+        for (_, _, _, id) in &state.capacity_waiters {
+            let row = state
+                .store
+                .row(id)
+                .expect("read waiter")
+                .expect("waiting task");
             assert!(
-                limits.blocks(occupied, *weight).is_some(),
+                limits.blocks(occupied, row.task.weight()).is_some(),
                 "{id} fits {limits:?} with {occupied:?}"
             );
         }
@@ -313,12 +316,12 @@ impl Fleet {
 
 #[tokio::test]
 async fn a_freed_slot_goes_to_the_heaviest_waiting_task_then_promoted_then_oldest() {
-    let fleet = fleet((1, 0, 0), 32).await;
+    let fleet = fleet((1, 1), 32).await;
     fleet.add("blocker", "normal").await;
     for (id, weight, priority) in [
-        ("light", "light", QueuePriority::Promoted),
-        ("normal-old", "normal", QueuePriority::Normal),
-        ("normal-promoted", "normal", QueuePriority::Promoted),
+        ("light-old", "light", QueuePriority::Normal),
+        ("normal", "normal", QueuePriority::Normal),
+        ("light-promoted", "light", QueuePriority::Promoted),
         ("heavy", "heavy", QueuePriority::Normal),
     ] {
         fleet.admit(id, Some(weight), priority).await;
@@ -327,7 +330,7 @@ async fn a_freed_slot_goes_to_the_heaviest_waiting_task_then_promoted_then_oldes
     assert_eq!(fleet.label("heavy").await, FULL);
 
     let mut running = "blocker";
-    for next in ["heavy", "normal-promoted", "normal-old", "light"] {
+    for next in ["heavy", "light-promoted", "light-old", "normal"] {
         fleet.finish(running).await;
         fleet.assert_running(&[next]).await;
         running = next;
@@ -336,21 +339,21 @@ async fn a_freed_slot_goes_to_the_heaviest_waiting_task_then_promoted_then_oldes
 
 #[tokio::test]
 async fn a_new_slot_goes_to_the_heavy_task_when_every_waiter_wakes() {
-    let fleet = fleet((1, 0, 0), 32).await;
+    let fleet = fleet((1, 1), 32).await;
     fleet.add("blocker", "normal").await;
     fleet.add("a-light", "light").await;
     fleet.add("b-normal", "normal").await;
     fleet.add("c-heavy", "heavy").await;
 
     // One heavy slot becomes free beside the running task.
-    fleet.save_slots(2, 0, 0).await;
+    fleet.save_slots(2, 2).await;
     fleet.assert_running(&["blocker", "c-heavy"]).await;
     fleet.assert_no_idle_slot().await;
 }
 
 #[tokio::test]
-async fn nested_caps_hold_only_the_weights_which_do_not_fit() {
-    let fleet = fleet((1, 1, 1), 32).await;
+async fn a_full_heavy_cap_leaves_all_remaining_slots_available() {
+    let fleet = fleet((1, 4), 32).await;
     fleet.add("heavy-run", "heavy").await;
     fleet.add("heavy-wait", "heavy").await;
     assert_eq!(fleet.label("heavy-wait").await, WAITING_HEAVY);
@@ -358,64 +361,42 @@ async fn nested_caps_hold_only_the_weights_which_do_not_fit() {
     assert_eq!(next["wait"], "capacity");
     assert_eq!(next["waitDetail"], WAITING_HEAVY);
 
-    // The heavy cap is full; normal and light tasks still start.
     fleet.add("normal-run", "normal").await;
-    fleet.assert_running(&["heavy-run", "normal-run"]).await;
-    // Heavy and normal together are full; a light task still has a slot.
-    fleet.add("normal-wait", "normal").await;
-    assert_eq!(
-        fleet.label("normal-wait").await,
-        "Waiting for a normal slot (2/2)"
-    );
-    fleet.assert_no_idle_slot().await;
+    fleet.add("second-normal", "normal").await;
     fleet.add("light-run", "light").await;
+    fleet.add("normal-wait", "normal").await;
     fleet
-        .assert_running(&["heavy-run", "light-run", "normal-run"])
+        .assert_running(&["heavy-run", "light-run", "normal-run", "second-normal"])
         .await;
-    // With every slot in use the wait is plain capacity again.
     assert_eq!(fleet.label("normal-wait").await, FULL);
     assert_eq!(fleet.label("heavy-wait").await, FULL);
+    fleet.assert_no_idle_slot().await;
 
-    // The light slot frees: neither waiter may use it.
+    // A freed slot goes to the fitting waiter even with a heavy task ahead of it.
     fleet.finish("light-run").await;
-    fleet.assert_running(&["heavy-run", "normal-run"]).await;
+    fleet
+        .assert_running(&["heavy-run", "normal-run", "normal-wait", "second-normal"])
+        .await;
+    fleet.finish("normal-run").await;
     assert_eq!(fleet.label("heavy-wait").await, WAITING_HEAVY);
     fleet.assert_no_idle_slot().await;
 }
 
 #[tokio::test]
-async fn light_tasks_use_any_slot() {
-    let fleet = fleet((1, 1, 1), 32).await;
-    for id in ["light-1", "light-2", "light-3", "light-4"] {
-        fleet.add(id, "light").await;
-    }
-    fleet
-        .assert_running(&["light-1", "light-2", "light-3"])
-        .await;
-    assert_eq!(fleet.label("light-4").await, FULL);
-}
-
-#[tokio::test]
 async fn a_missing_weight_is_normal() {
-    let fleet = fleet((1, 0, 1), 32).await;
+    let fleet = fleet((0, 2), 32).await;
     fleet.admit("first", None, QueuePriority::Normal).await;
     fleet.admit("second", None, QueuePriority::Normal).await;
-    fleet.assert_running(&["first"]).await;
-    assert_eq!(
-        fleet.label("second").await,
-        "Waiting for a normal slot (1/1)"
-    );
+    fleet.assert_running(&["first", "second"]).await;
     assert_eq!(
         fleet.service.task("second").await.unwrap().task.weight(),
         TaskWeight::Normal
     );
-    fleet.add("small", "light").await;
-    fleet.assert_running(&["first", "small"]).await;
 }
 
 #[tokio::test]
 async fn project_caps_apply_to_a_task_which_fits_its_weight() {
-    let fleet = fleet((2, 2, 2), 1).await;
+    let fleet = fleet((2, 6), 1).await;
     fleet.add("first", "heavy").await;
     fleet.add("second", "light").await;
     fleet.assert_running(&["first"]).await;
@@ -424,7 +405,7 @@ async fn project_caps_apply_to_a_task_which_fits_its_weight() {
 
 #[tokio::test]
 async fn running_work_is_never_preempted_and_a_new_weight_counts_at_once() {
-    let fleet = fleet((1, 1, 0), 32).await;
+    let fleet = fleet((1, 2), 32).await;
     fleet.add("first", "heavy").await;
     fleet.add("second", "light").await;
     let held = fleet.running().await;
@@ -433,17 +414,13 @@ async fn running_work_is_never_preempted_and_a_new_weight_counts_at_once() {
     assert_eq!(fleet.running().await, held);
 
     // Lowering a limit and making a running task heavier stop nothing.
-    fleet.save_slots(0, 1, 0).await;
+    fleet.save_slots(0, 1).await;
     assert_eq!(fleet.running().await, held);
-    fleet.save_slots(1, 1, 0).await;
+    fleet.save_slots(1, 2).await;
     fleet.amend("second", "heavy").await;
     assert_eq!(fleet.running().await, held);
-    // Two heavy runs fill heavy and normal, so the new slot serves neither waiter.
-    fleet.save_slots(1, 1, 1).await;
-    assert_eq!(fleet.running().await, held);
-
-    // A waiting task made light takes the free slot.
-    fleet.amend("fourth", "light").await;
+    // Two heavy runs exceed the heavy cap. Normal work still takes the new slot.
+    fleet.save_slots(1, 3).await;
     fleet.assert_running(&["first", "fourth", "second"]).await;
 
     // Running heavy work made light frees the heavy cap for the waiter.
@@ -456,7 +433,7 @@ async fn running_work_is_never_preempted_and_a_new_weight_counts_at_once() {
 
 #[tokio::test]
 async fn a_restart_ranks_a_heavy_task_beyond_the_first_scan_page() {
-    let fleet = fleet((0, 0, 0), 32).await;
+    let fleet = fleet((0, 0), 32).await;
     fleet.queue("early-light", "light").await;
     // One scan page holds 32 tasks, so the heavy task is on the next one.
     for number in 0..32 {
@@ -466,7 +443,7 @@ async fn a_restart_ranks_a_heavy_task_beyond_the_first_scan_page() {
     fleet.settle().await;
     fleet.assert_running(&[]).await;
 
-    let fleet = fleet.restart((1, 0, 0), |_| {}).await;
+    let fleet = fleet.restart((1, 1), |_| {}).await;
     fleet.settle().await;
     fleet.assert_running(&["late-heavy"]).await;
 }
@@ -478,7 +455,7 @@ async fn a_restart_ranks_a_waiting_heavy_reviewer_before_an_earlier_light_task()
             .expect("profile")
     };
     let (author, reviewer) = (profile("author", "first"), profile("review", "second"));
-    let fleet = fleet((0, 0, 0), 32).await;
+    let fleet = fleet((0, 0), 32).await;
     fleet.queue("early-light", "light").await;
     // A stored task between its second worker report and the next review. The
     // stopped service never decided either task.
@@ -522,9 +499,7 @@ async fn a_restart_ranks_a_waiting_heavy_reviewer_before_an_earlier_light_task()
             .route("/graphql", post(move || async { Json(checks) })),
     )
     .await;
-    let fleet = fleet
-        .restart((1, 0, 0), |service| service.forge = forge)
-        .await;
+    let fleet = fleet.restart((1, 1), |service| service.forge = forge).await;
     fleet.settle().await;
     fleet.assert_running(&["heavy-review"]).await;
     let row = fleet.service.task("heavy-review").await.expect("review");

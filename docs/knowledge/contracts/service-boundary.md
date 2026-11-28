@@ -78,7 +78,7 @@ and [validated domains](../../../engine/crates/nucleus-store/src/settings_domain
 The engine serves the board and Settings on its own loopback listener. Use
 `nucleus ui` to issue a short-lived, single-use pairing grant for the current
 authority. The browser removes the link fragment, exchanges
-the grant and uses an HttpOnly, SameSite=Strict cookie. The engine stores
+the grant and uses an HttpOnly, SameSite=Strict cookie. A paired browser can also pair another device, such as the T3 mobile web view, from Settings → Devices: it shows a short code that is single-use, lasts five minutes and burns after five wrong attempts. Only one code is open at a time, and the engine stores only its digest. The code exchange makes the same Host and Origin checks, and it gives the new device an ordinary session that revocation also clears. The engine stores
 only a session digest and its authority and expiry in the owner-only profile.
 Active sessions survive an engine restart. At the 64-session limit, a new
 pairing first expires stale sessions, then replaces the least recently used one

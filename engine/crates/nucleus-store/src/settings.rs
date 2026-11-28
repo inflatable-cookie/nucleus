@@ -1,6 +1,4 @@
 use std::{
-    cell::RefCell,
-    collections::BTreeSet,
     error::Error,
     marker::PhantomData,
     os::fd::OwnedFd,
@@ -24,16 +22,12 @@ use longhorn_storage_layout::{
     StorageIdentity, StorageLayoutOverrides, StorageLayoutRequest, StorageProfile, TargetPlatform,
     native_platform_directory_facts, resolve_storage_layout,
 };
-use nucleus_core::profiles::Slots;
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::{
-    DispatchSettings, GitHubAccountSettings, Hosts, PinnedVolume, Profiles, Projects,
-    StorageDirectory,
-};
+use crate::{DispatchSettings, GitHubAccountSettings, Hosts, Profiles, Projects, StorageDirectory};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_ID: &str = "com.inflatablecookie.nucleus-engine";
@@ -44,9 +38,7 @@ const MUTATION: MutationOptions =
 pub enum StorageError {
     #[error("the engine is disabled")]
     Disabled,
-    #[error("the pinned work volume is not mounted")]
-    MissingVolume,
-    #[error("the pinned, writable work volume is unavailable")]
+    #[error("the work volume is unavailable")]
     VolumeUnavailable,
     /// A write or removal which outlived its caller and holds its owner.
     #[error(
@@ -56,8 +48,8 @@ pub enum StorageError {
     CallHeld { step: &'static str, since: Instant },
     #[error("Barge could not place {class}: {reason}")]
     BargePlacement { class: &'static str, reason: String },
-    #[error("the storage path is outside the pinned volume")]
-    OutsideVolume,
+    #[error("the storage path leaves its root")]
+    OutsideRoot,
     #[error("the engine storage layout is invalid")]
     Layout,
     #[error("{0}")]
@@ -91,8 +83,6 @@ fn age(since: &Instant) -> String {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct EngineSettings {
     pub enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub work_volume: Option<PinnedVolume>,
     #[serde(skip_serializing_if = "StoragePlacement::is_internal")]
     pub placement: StoragePlacement,
     pub work_root: Option<PathBuf>,
@@ -178,6 +168,7 @@ impl SettingsFile {
 
     /// Open the settings domains in an explicitly selected, existing engine home.
     /// Opening validates the domains and publishes any required schema upgrades.
+    /// A version 1 file is refused by name.
     ///
     /// # Errors
     /// Returns an error if the home, layout, or settings cannot be verified.
@@ -279,9 +270,7 @@ impl SettingsFile {
             StorageClass::MachineState => self.layout.storage_roots().state(),
             _ => return Err(StorageError::Layout),
         };
-        let config = self.load()?;
-        let scratch = scratch_path(&self.layout, &config);
-        let directory = storage_dir(config.work_volume.as_ref(), root.to_path_buf(), &scratch)?;
+        let directory = StorageDirectory::native(root.to_path_buf())?;
         self.edit_in(revision, &directory, edit)
     }
 
@@ -323,7 +312,7 @@ impl SettingsFile {
     }
 
     /// Apply startup flags at the revision read by the CLI. An offline profile move
-    /// verifies the destination using the proposed roots and volume pin.
+    /// verifies the destination using the proposed roots.
     ///
     /// # Errors
     /// Returns an error if the proposal is stale or its storage cannot be verified.
@@ -335,11 +324,7 @@ impl SettingsFile {
         let mut proposed = snapshot.value.clone();
         patch(&mut proposed);
         proposed.verify_for_save(self)?;
-        let directory = storage_dir(
-            proposed.work_volume.as_ref(),
-            self.layout.storage_roots().state().to_owned(),
-            &scratch_path(&self.layout, &proposed),
-        )?;
+        let directory = StorageDirectory::native(self.layout.storage_roots().state().to_owned())?;
         self.edit_in(&snapshot.revision, &directory, |current| {
             patch(current);
             Ok(())
@@ -355,21 +340,10 @@ impl SettingsFile {
         Ok(self.read()?.value)
     }
 
-    /// Resolve a new volume pin, with filesystem probe temp confined to scratch.
-    /// # Errors
-    /// Returns an error if the selected volume cannot be identified.
-    pub fn identify_volume(
-        &self,
-        path: &Path,
-        settings: &EngineSettings,
-    ) -> Result<PinnedVolume, StorageError> {
-        PinnedVolume::detect_using(path, Some(&scratch_path(&self.layout, settings)))
-    }
-
     /// Resolve the active storage paths for the enabled engine.
     ///
     /// # Errors
-    /// Returns an error if the engine is disabled or the pinned volume cannot be used.
+    /// Returns an error if the engine is disabled or its storage cannot be used.
     pub fn storage(&self) -> Result<EngineStorage, StorageError> {
         let settings = self.enabled_settings()?;
         EngineStorage::resolve(&self.layout, &self.home, &settings)
@@ -381,11 +355,7 @@ impl SettingsFile {
     /// Returns an error if the engine is disabled or its durable directory or lock is unavailable.
     pub fn lock_profile(&self) -> Result<LockedProfile, StorageError> {
         let settings = self.enabled_settings()?;
-        let database = storage_dir(
-            settings.work_volume.as_ref(),
-            self.layout.durable_database_dir(),
-            &scratch_path(&self.layout, &settings),
-        )?;
+        let database = StorageDirectory::native(self.layout.durable_database_dir())?;
         database.ensure()?;
         let lock = open(
             database.path().join("service.lock"),
@@ -412,7 +382,7 @@ impl SettingsFile {
 
     /// Resolve configured roots for status, including when the engine is disabled.
     /// # Errors
-    /// Returns an error if settings or the pinned volume cannot be verified.
+    /// Returns an error if settings or storage cannot be verified.
     pub fn configured_storage(&self) -> Result<EngineStorage, StorageError> {
         EngineStorage::resolve(&self.layout, &self.home, &self.load()?)
     }
@@ -447,7 +417,7 @@ fn snapshot<S: SettingsValue>(
 
 fn register<S: SettingsValue>(store: &mut ConfigStore) -> Result<SettingsDomain<S>, StorageError> {
     let mut domain = SettingsDomain::new()?;
-    domain.retired_keys = Some(RefCell::default());
+    domain.upgrades = true;
     store.register(&domain).map_err(|_| StorageError::Layout)?;
     Ok(domain)
 }
@@ -487,7 +457,6 @@ pub struct EngineStorage {
     builds: StorageDirectory,
     backup: StorageDirectory,
     log: StorageDirectory,
-    mount: Option<OwnedFd>,
 }
 
 /// Class paths used by the running engine. Explicit overrides bypass their class.
@@ -516,15 +485,9 @@ impl EngineStorage {
         settings: &EngineSettings,
         class_path: impl Fn(&'static str) -> Result<PathBuf, StorageError>,
     ) -> Result<Self, StorageError> {
-        let volume = settings.work_volume.as_ref();
         let roots = resolved.storage_roots();
         let mut barge_paths = BargePaths::default();
         if settings.placement == StoragePlacement::Barge {
-            if volume.is_some() {
-                return Err(StorageError::InvalidSettings(
-                    "migrate the legacy volume profile before enabling Barge placement".into(),
-                ));
-            }
             for (class, explicit, path) in [
                 ("worktrees", &settings.work_root, &mut barge_paths.worktrees),
                 ("scratch", &settings.scratch_root, &mut barge_paths.scratch),
@@ -535,8 +498,11 @@ impl EngineStorage {
                 }
             }
         }
-        let scratch = scratch_path(resolved, settings);
-        let directory = |path| storage_dir(volume, path, &scratch);
+        let scratch = settings
+            .scratch_root
+            .clone()
+            .unwrap_or_else(|| roots.runtime().join("scratch"));
+        let directory = StorageDirectory::native;
         let class_directory = |class, path: &Option<PathBuf>, default| match path {
             Some(path) => StorageDirectory::barge(path.clone()).map_err(|error| {
                 StorageError::BargePlacement {
@@ -549,9 +515,6 @@ impl EngineStorage {
             }),
             None => directory(default),
         };
-        let mount = volume
-            .map(|volume| volume.open_mount(Some(&scratch)))
-            .transpose()?;
         let log = settings
             .log_root
             .clone()
@@ -579,7 +542,6 @@ impl EngineStorage {
             backup: directory(roots.backup().to_path_buf())?,
             log: directory(log)?,
             barge_paths,
-            mount,
         };
         for root in [
             roots.config(),
@@ -588,7 +550,7 @@ impl EngineStorage {
             roots.cache(),
             roots.runtime(),
         ] {
-            storage.verify_optional(&directory(root.to_path_buf())?)?;
+            verify_optional(&directory(root.to_path_buf())?)?;
         }
         for path in [
             &storage.bin,
@@ -599,7 +561,7 @@ impl EngineStorage {
             &storage.backup,
             &storage.log,
         ] {
-            storage.verify_optional(path)?;
+            verify_optional(path)?;
         }
         Ok(storage)
     }
@@ -631,20 +593,6 @@ impl EngineStorage {
     #[must_use]
     pub const fn barge_paths(&self) -> &BargePaths {
         &self.barge_paths
-    }
-
-    fn verify(&self, directory: &StorageDirectory) -> Result<(), StorageError> {
-        match &self.mount {
-            Some(mount) => directory.verify_from_mount(mount),
-            None => directory.verify(),
-        }
-    }
-
-    fn verify_optional(&self, directory: &StorageDirectory) -> Result<(), StorageError> {
-        match self.verify(directory) {
-            Ok(()) | Err(StorageError::ConfinedDirectory(rustix::io::Errno::NOENT)) => Ok(()),
-            Err(error) => Err(error),
-        }
     }
 
     #[must_use]
@@ -683,7 +631,7 @@ impl EngineStorage {
         &self.log
     }
 
-    /// List Longhorn-verified config archives in the active pinned backup root.
+    /// List Longhorn-verified config archives in the active backup root.
     ///
     /// # Errors
     /// Returns an error if the backup root escapes or cannot be verified.
@@ -694,7 +642,7 @@ impl EngineStorage {
             issues: 0,
             verified: Vec::new(),
         };
-        match self.verify(&self.backup) {
+        match self.backup.verify() {
             Ok(()) => {}
             Err(StorageError::ConfinedDirectory(rustix::io::Errno::NOENT)) => return Ok(response),
             Err(error) => return Err(error),
@@ -723,6 +671,13 @@ impl EngineStorage {
             })
             .collect();
         Ok(response)
+    }
+}
+
+fn verify_optional(directory: &StorageDirectory) -> Result<(), StorageError> {
+    match directory.verify() {
+        Ok(()) | Err(StorageError::ConfinedDirectory(rustix::io::Errno::NOENT)) => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -773,24 +728,6 @@ pub(crate) fn default_home() -> Result<PathBuf, StorageError> {
         .ok_or(StorageError::Layout)
 }
 
-fn storage_dir(
-    volume: Option<&PinnedVolume>,
-    path: PathBuf,
-    scratch: &Path,
-) -> Result<StorageDirectory, StorageError> {
-    match volume {
-        Some(volume) => volume.dir(path, scratch),
-        None => StorageDirectory::native(path),
-    }
-}
-
-fn scratch_path(layout: &ResolvedStorageLayout, settings: &EngineSettings) -> PathBuf {
-    settings
-        .scratch_root
-        .clone()
-        .unwrap_or_else(|| layout.storage_roots().runtime().join("scratch"))
-}
-
 fn portable_layout(home: &Path) -> Result<ResolvedStorageLayout, StorageError> {
     let platform = if cfg!(target_os = "macos") {
         TargetPlatform::MacOs
@@ -809,7 +746,7 @@ pub trait SettingsValue: Default + Serialize + DeserializeOwned {
     const ID: &'static str;
     const FILE: &'static str;
     const CLASS: StorageClass;
-    /// The domain's current schema version. Version 1 files upgrade on startup.
+    /// The domain's current schema version. Version 1 files are refused.
     const VERSION: u32 = 2;
 
     /// Check stored or submitted settings without consulting an adapter.
@@ -821,7 +758,7 @@ pub trait SettingsValue: Default + Serialize + DeserializeOwned {
     /// Verify machine-local placement when saving settings that name storage roots.
     ///
     /// # Errors
-    /// Returns an error if the configured paths cannot stay on the pinned volume.
+    /// Returns an error if the configured paths cannot be used.
     fn verify_for_save(&self, _file: &SettingsFile) -> Result<(), StorageError> {
         Ok(())
     }
@@ -849,7 +786,8 @@ impl SettingsValue for EngineSettings {
 struct SettingsDomain<S> {
     descriptor: DomainDescriptor,
     value_type: PhantomData<S>,
-    retired_keys: Option<RefCell<BTreeSet<&'static str>>>,
+    /// Only the registered domain upgrades a file, after backing it up.
+    upgrades: bool,
 }
 
 impl<S: SettingsValue> SettingsDomain<S> {
@@ -861,7 +799,7 @@ impl<S: SettingsValue> SettingsDomain<S> {
             descriptor: DomainDescriptor::new(id, version, S::CLASS, Some(path))
                 .map_err(|_| StorageError::Layout)?,
             value_type: PhantomData,
-            retired_keys: None,
+            upgrades: false,
         })
     }
 
@@ -918,12 +856,8 @@ impl<S: SettingsValue> SettingsDomain<S> {
             MigrationRewriteOptions::new(timeout, safety),
         ) {
             Ok(receipt) => {
-                let keys = self
-                    .retired_keys
-                    .as_ref()
-                    .map_or_else(BTreeSet::new, RefCell::take);
                 let message = format!(
-                    "Upgraded {} to settings version {}. Removed keys {keys:?}. Verified backup at {}",
+                    "Upgraded {} to settings version {}. Verified backup at {}",
                     S::FILE,
                     receipt.to(),
                     receipt.safety_backup().path.display()
@@ -977,84 +911,23 @@ impl<S: SettingsValue> ConfigDomain for SettingsDomain<S> {
         from: SchemaVersion,
         mut value: Value,
     ) -> Result<Option<MigrationStep>, DomainIssue> {
-        let Some(retired_keys) = self
-            .retired_keys
-            .as_ref()
-            .filter(|_| from < self.descriptor.schema_version())
-        else {
-            return Ok(None);
-        };
-        // Later versions follow one step at a time.
-        let next = SchemaVersion::new(from.get() + 1)
-            .map_err(|_| DomainIssue::new("migration", "unknown settings version"))?;
-        if S::FILE == DispatchSettings::FILE && from.get() == 2 {
-            split_global_slots(&mut value)?;
-            retired_keys.borrow_mut().insert("globalSlots");
-            return Ok(Some(MigrationStep {
-                schema_version: next,
-                value,
-            }));
+        if from.get() == 1 {
+            return Err(DomainIssue::new(
+                "migration",
+                "settings version 1 is no longer supported. This engine reads version 2 or later",
+            ));
         }
-        if from.get() != 1 {
+        if !self.upgrades || S::FILE != DispatchSettings::FILE {
             return Ok(None);
         }
-        let mut retired = BTreeSet::new();
-        let mut rewrite = |object: &mut Value, key: &'static str, replacement: Option<&str>| {
-            if let Some(fields) = object.as_object_mut()
-                && replacement.is_none_or(|name| !fields.contains_key(name))
-                && let Some(old) = fields.remove(key)
-            {
-                retired.insert(key);
-                if let Some(name) = replacement {
-                    fields.insert(name.into(), old);
-                }
-            }
-        };
-        match S::FILE {
-            DispatchSettings::FILE => {
-                for key in [
-                    "maxLoad",
-                    "max_load",
-                    "allowanceMinutes",
-                    "allowance_minutes",
-                    "hostConcurrency",
-                    "host_concurrency",
-                    "legacyLimitsImported",
-                    "providerLimitCooldownSeconds",
-                    "provider_limit_cooldown_seconds",
-                ] {
-                    rewrite(&mut value, key, None);
-                }
-                rewrite(&mut value, "slots", Some("globalSlots"));
-            }
-            Profiles::FILE => {
-                let profiles = value.get_mut("profiles").and_then(Value::as_array_mut);
-                for profile in profiles.into_iter().flatten() {
-                    rewrite(profile, "roles", None);
-                    rewrite(profile, "scopes", None);
-                    if let Some(selection) = profile.get_mut("selection") {
-                        rewrite(selection, "thinkingOptionId", Some("effort"));
-                    }
-                }
-            }
-            Projects::FILE => {
-                let projects = value.get_mut("projects").and_then(Value::as_object_mut);
-                for project in projects.into_iter().flat_map(serde_json::Map::values_mut) {
-                    rewrite(project, "slots", None);
-                    let repositories = project
-                        .get_mut("repositories")
-                        .and_then(Value::as_array_mut);
-                    for repository in repositories.into_iter().flatten() {
-                        rewrite(repository, "requiredChecks", None);
-                        rewrite(repository, "hungToolMinutes", None);
-                    }
-                }
-            }
-            _ => {}
+        match from.get() {
+            2 => split_global_slots(&mut value)?,
+            3 => combine_weight_slots(&mut value)?,
+            _ => return Ok(None),
         }
-        retired_keys.borrow_mut().extend(retired);
         Ok(Some(MigrationStep {
-            schema_version: next,
+            schema_version: SchemaVersion::new(from.get() + 1)
+                .map_err(|_| DomainIssue::new("migration", "unknown settings version"))?,
             value,
         }))
     }
@@ -1071,15 +944,33 @@ fn split_global_slots(value: &mut Value) -> Result<(), DomainIssue> {
         .and_then(Value::as_u64)
         .and_then(|total| u32::try_from(total).ok())
         .ok_or_else(invalid)?;
-    let slots = Slots::split(total);
+    let heavy = total.min(5);
+    let light = (total - heavy).min(5);
     for (key, count) in [
-        ("heavySlots", slots.heavy),
-        ("normalSlots", slots.normal),
-        ("lightSlots", slots.light),
+        ("heavySlots", heavy),
+        ("normalSlots", total - heavy - light),
+        ("lightSlots", light),
     ] {
         if fields.insert(key.into(), count.into()).is_some() {
             return Err(invalid());
         }
+    }
+    Ok(())
+}
+
+fn combine_weight_slots(value: &mut Value) -> Result<(), DomainIssue> {
+    let invalid = || DomainIssue::new("dispatch", "the stored slot counts are not usable");
+    let heavy = value["heavySlots"].as_u64().ok_or_else(invalid)?;
+    let fields = value.as_object_mut().ok_or_else(invalid)?;
+    let total = ["normalSlots", "lightSlots"]
+        .into_iter()
+        .try_fold(heavy, |total, key| {
+            total.checked_add(fields.remove(key)?.as_u64()?)
+        })
+        .and_then(|total| u32::try_from(total).ok())
+        .ok_or_else(invalid)?;
+    if fields.insert("totalSlots".into(), total.into()).is_some() {
+        return Err(invalid());
     }
     Ok(())
 }
@@ -1100,238 +991,225 @@ pub(crate) fn test_store(home: &Path) -> crate::Store {
 mod tests {
     use super::*;
 
-    #[test]
-    #[expect(clippy::too_many_lines, reason = "complete saved settings fixtures")]
-    fn startup_upgrades_every_settings_domain_and_keeps_verified_originals() {
-        use longhorn_config::inspect_backup_archive;
+    /// Settings files as version 1 engines saved them.
+    fn version_one_documents() -> Vec<(&'static str, &'static str, &'static str, Value)> {
         use serde_json::json;
 
-        let temporary = tempfile::tempdir().expect("fixture home");
-        let home = temporary.path().canonicalize().expect("canonical home");
-        let config = home.join("config");
-        let state = home.join("state");
-        std::fs::create_dir(&config).unwrap();
-        std::fs::create_dir(&state).unwrap();
-
-        let dispatch = json!({
-            "usage": "high", "usageUntilMs": 1_800_000_000_000_u64,
-            "heavySlots": 3, "normalSlots": 0, "lightSlots": 0,
-            "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8, "beta": 0},
-            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused",
-            "plannerModel": {"provider": "claude", "model": "claude-opus-5-5", "effort": "high"}
-        });
-        let legacy_dispatch = json!({
-            "usage": "high", "usageUntilMs": 1_800_000_000_000_u64, "slots": 3,
-            "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8, "beta": 0},
-            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused",
-            "maxLoad": 18, "max_load": 18, "hostConcurrency": 8, "host_concurrency": 8,
-            "allowanceMinutes": 30, "allowance_minutes": 30, "legacyLimitsImported": true,
-            "providerLimitCooldownSeconds": 300, "provider_limit_cooldown_seconds": 300
-        });
-        let profiles = json!({
-            "profiles": [{
-                "name": "Fixture",
-                "selection": {"id": "heavy", "capability": "heavyweight", "weight": "fewer",
-                              "provider": "codex", "model": "fixture", "effort": "high"},
-                "enabled": false, "group": "Fixture Team", "providerInstanceId": "codex-team",
-                "modeId": "default", "featureValues": {"useFixture": true}, "notes": "Keep",
-                "unrated": true
-            }, {
-                "name": "Alternate",
-                "selection": {"id": "alternate", "capability": "heavyweight", "weight": "fewer",
-                              "provider": "codex", "model": "fixture", "effort": null}
-            }],
-            "pausedGroups": ["Fixture Plus", "Fixture Team"]
-        });
-        let mut legacy_profiles = profiles.clone();
-        legacy_profiles["pausedGroups"] = json!(["Fixture Team", "Fixture Plus"]);
-        let profile = &mut legacy_profiles["profiles"][0];
-        profile["roles"] = json!(["worker", "reviewer", "coordinator"]);
-        profile["scopes"] = json!(["mechanical", "complex"]);
-        profile["selection"]
-            .as_object_mut()
-            .unwrap()
-            .remove("effort");
-        profile["selection"]["thinkingOptionId"] = json!("high");
-        legacy_profiles["profiles"][1]["enabled"] = json!(true);
-
-        let projects = json!({
-            "projects": {
-                "alpha": {
-                    "name": "Alpha", "archived": false,
-                    "plannerClaim": {"thread": "planner", "occurrence": "claim", "replaced": "prior"},
+        vec![
+            (
+                "config",
+                DispatchSettings::FILE,
+                DispatchSettings::ID,
+                json!({
+                    "usage": "high", "usageUntilMs": 1_800_000_000_000_u64, "slots": 3,
+                    "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8, "beta": 0},
+                    "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused",
+                    "maxLoad": 18, "hostConcurrency": 8, "allowanceMinutes": 30
+                }),
+            ),
+            (
+                "config",
+                Profiles::FILE,
+                Profiles::ID,
+                json!({
+                    "profiles": [{
+                        "name": "Fixture", "roles": ["worker", "reviewer"],
+                        "scopes": ["mechanical", "complex"],
+                        "selection": {"id": "heavy", "capability": "heavyweight",
+                            "weight": "fewer", "provider": "codex", "model": "fixture",
+                            "thinkingOptionId": "high"}
+                    }],
+                    "pausedGroups": ["Fixture Team"]
+                }),
+            ),
+            (
+                "config",
+                GitHubAccountSettings::FILE,
+                GitHubAccountSettings::ID,
+                json!({
+                    "accounts": [{"host": "github.com", "userId": "42", "login": "fixture-worker"}],
+                    "workerAccountId": "github.com:42", "reviewerAccountId": null
+                }),
+            ),
+            (
+                "state",
+                EngineSettings::FILE,
+                EngineSettings::ID,
+                json!({
+                    "enabled": true, "workRoot": "/fixture/work",
+                    "scratchRoot": "/fixture/scratch", "logRoot": "/fixture/log",
+                    "retention": {"keepNewest": 17, "maxAgeDays": 45}
+                }),
+            ),
+            (
+                "state",
+                Projects::FILE,
+                Projects::ID,
+                json!({"projects": {"alpha": {
+                    "name": "Alpha", "archived": false, "slots": 11,
                     "repositories": [{
                         "origin": "example/alpha", "path": "/fixture/alpha", "base": "trunk",
-                        "hostProject": "host-project", "hostProjectTitle": "Alpha T3",
-                        "plannerThreads": ["planner", "prior"]
+                        "requiredChecks": ["CI"], "hungToolMinutes": 47
                     }]
-                },
-                "beta": {"name": "Beta", "archived": true, "repositories": []}
-            },
-            "removed": {"old": {
-                "repositories": [{"origin": "example/old", "path": "/fixture/old"}],
-                "blockedOrigins": ["example/old"], "cleanupPending": true, "digest": "receipt",
-                "reason": "Retired project", "removedAtMs": 42
-            }}
-        });
-        let mut legacy_projects = projects.clone();
-        let alpha = &mut legacy_projects["projects"]["alpha"];
-        alpha["slots"] = json!(11);
-        alpha["repositories"][0]["requiredChecks"] = json!(["CI", "lint"]);
-        alpha["repositories"][0]["hungToolMinutes"] = json!(47);
-
-        let github = json!({
-            "accounts": [
-                {"host": "github.com", "userId": "42", "login": "fixture-worker"},
-                {"host": "github.com", "userId": "43", "login": "fixture-reviewer"}
-            ],
-            "workerAccountId": "github.com:42", "reviewerAccountId": "github.com:43"
-        });
-        let engine = json!({
-            "enabled": true, "placement": "barge",
-            "workRoot": "/fixture/work", "scratchRoot": "/fixture/scratch",
-            "buildsRoot": "/fixture/builds", "logRoot": "/fixture/log",
-            "retention": {"keepNewest": 17, "maxAgeDays": 45}
-        });
-        let hosts =
-            json!({"t3": {"endpoint": "http://127.0.0.1:7777/", "credentialRef": "FIXTURE_T3"}});
-        let cases = [
-            (
-                config.join(DispatchSettings::FILE),
-                DispatchSettings::ID,
-                legacy_dispatch,
-                dispatch,
+                }}}),
             ),
             (
-                config.join(Profiles::FILE),
-                Profiles::ID,
-                legacy_profiles,
-                profiles,
+                "state",
+                Hosts::FILE,
+                Hosts::ID,
+                json!({"t3": {"endpoint": "http://127.0.0.1:7777/", "credentialRef": "FIXTURE_T3"}}),
             ),
-            (
-                config.join(GitHubAccountSettings::FILE),
-                GitHubAccountSettings::ID,
-                github.clone(),
-                github,
-            ),
-            (
-                state.join(EngineSettings::FILE),
-                EngineSettings::ID,
-                engine.clone(),
-                engine,
-            ),
-            (
-                state.join(Projects::FILE),
-                Projects::ID,
-                legacy_projects,
-                projects,
-            ),
-            (state.join(Hosts::FILE), Hosts::ID, hosts.clone(), hosts),
-        ];
-        let originals: Vec<_> = cases
-            .iter()
-            .map(|(path, domain, old, _)| {
-                let bytes = json!({"domain": domain, "schemaVersion": 1, "value": old}).to_string();
-                std::fs::write(path, &bytes).unwrap();
-                bytes.into_bytes()
-            })
-            .collect();
-
-        let file = SettingsFile::open(&home).expect("upgrade on startup");
-        let rewritten: Vec<_> = cases
-            .iter()
-            .map(|(path, domain, _, expected)| {
-                let bytes = std::fs::read(path).unwrap();
-                let version = if *domain == DispatchSettings::ID {
-                    DispatchSettings::VERSION
-                } else {
-                    2
-                };
-                assert_eq!(
-                    serde_json::from_slice::<Value>(&bytes).unwrap(),
-                    json!({"domain": domain, "schemaVersion": version, "value": expected}),
-                    "{}",
-                    path.display()
-                );
-                (bytes, std::fs::metadata(path).unwrap().modified().unwrap())
-            })
-            .collect();
-        let backup_root = file.layout.storage_roots().backup();
-        let archives = || {
-            std::fs::read_dir(backup_root)
-                .unwrap()
-                .map(|entry| {
-                    let archive = std::fs::read(entry.unwrap().path()).unwrap();
-                    let verified =
-                        inspect_backup_archive(&archive, BackupArchiveLimits::default()).unwrap();
-                    assert_eq!(verified.payloads().len(), 1);
-                    verified.payloads()[0].bytes().to_vec()
-                })
-                .collect::<BTreeSet<_>>()
-        };
-        assert_eq!(archives(), originals.iter().cloned().collect());
-        assert_eq!(std::fs::read_dir(backup_root).unwrap().count(), cases.len());
-
-        SettingsFile::open(&home).expect("reopen current files");
-        for ((path, _, _, _), (bytes, modified)) in cases.iter().zip(rewritten) {
-            assert_eq!(std::fs::read(path).unwrap(), bytes);
-            assert_eq!(
-                std::fs::metadata(path).unwrap().modified().unwrap(),
-                modified
-            );
-        }
-        assert_eq!(std::fs::read_dir(backup_root).unwrap().count(), cases.len());
+        ]
     }
 
     #[test]
-    fn dispatch_upgrade_splits_the_global_slot_count_by_weight_once() {
+    fn startup_refuses_every_version_one_settings_file_by_name_without_rewriting_it() {
+        for (root, file, domain, value) in version_one_documents() {
+            let temporary = tempfile::tempdir().expect("fixture home");
+            let home = temporary.path().canonicalize().expect("canonical home");
+            std::fs::create_dir(home.join(root)).unwrap();
+            let path = home.join(root).join(file);
+            let stored = serde_json::json!({"domain": domain, "schemaVersion": 1, "value": value})
+                .to_string();
+            std::fs::write(&path, &stored).unwrap();
+
+            let error = SettingsFile::open(&home).err().expect("refused");
+
+            let message = error.to_string();
+            assert!(message.starts_with(&format!("{file}: ")), "{message}");
+            assert!(
+                message.contains(
+                    "settings version 1 is no longer supported. \
+                     This engine reads version 2 or later"
+                ),
+                "{message}"
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), stored);
+            assert!(!home.join("backups").exists(), "{file}");
+            assert_eq!(std::fs::read_dir(&home).unwrap().count(), 1, "{file}");
+        }
+    }
+
+    #[test]
+    fn a_version_one_file_placed_after_startup_is_refused_on_read() {
+        let temporary = tempfile::tempdir().expect("fixture home");
+        let home = temporary.path().canonicalize().expect("canonical home");
+        let file = SettingsFile::open(&home).expect("empty home");
+        std::fs::create_dir(home.join("config")).unwrap();
+        let stored = serde_json::json!({
+            "domain": Profiles::ID, "schemaVersion": 1, "value": {"profiles": []}
+        });
+        std::fs::write(home.join("config").join(Profiles::FILE), stored.to_string()).unwrap();
+
+        let message = file.read::<Profiles>().expect_err("refused").to_string();
+
+        assert!(message.contains(Profiles::FILE), "{message}");
+        assert!(message.contains("settings version 1"), "{message}");
+    }
+
+    #[test]
+    fn startup_refuses_a_pinned_volume_profile_by_name_without_rewriting_it() {
+        let temporary = tempfile::tempdir().expect("fixture home");
+        let home = temporary.path().canonicalize().expect("canonical home");
+        std::fs::create_dir(home.join("state")).unwrap();
+        let path = home.join("state").join(EngineSettings::FILE);
+        let stored = serde_json::json!({
+            "domain": EngineSettings::ID, "schemaVersion": 2,
+            "value": {
+                "enabled": true,
+                "workVolume": {"mount": "/fixture/volume",
+                    "volumeId": "00000000-0000-4000-8000-000000000000"},
+                "workRoot": "/fixture/volume/work", "scratchRoot": null, "logRoot": null,
+                "retention": {"keepNewest": 10, "maxAgeDays": null}
+            }
+        })
+        .to_string();
+        std::fs::write(&path, &stored).unwrap();
+
+        let message = SettingsFile::open(&home)
+            .err()
+            .expect("refused")
+            .to_string();
+
+        assert!(message.starts_with("engine.json: "), "{message}");
+        assert!(message.contains("workVolume"), "{message}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), stored);
+    }
+
+    #[test]
+    fn dispatch_upgrade_preserves_total_and_heavy_slots_once() {
         use serde_json::json;
 
-        for (global, heavy, normal, light) in [
-            (18, 5, 8, 5),
-            (32, 5, 22, 5),
-            (11, 5, 1, 5),
-            (10, 5, 0, 5),
-            (7, 5, 0, 2),
-            (5, 5, 0, 0),
-            (1, 1, 0, 0),
+        for (version, stored_slots, heavy, total) in [
+            (2, json!({"globalSlots": 32}), 5, 32),
+            (2, json!({"globalSlots": 1}), 1, 1),
+            (
+                3,
+                json!({"heavySlots": 6, "normalSlots": 13, "lightSlots": 0}),
+                6,
+                19,
+            ),
+            (
+                3,
+                json!({"heavySlots": 5, "normalSlots": 8, "lightSlots": 5}),
+                5,
+                18,
+            ),
+            (
+                3,
+                json!({"heavySlots": 0, "normalSlots": 1, "lightSlots": 0}),
+                0,
+                1,
+            ),
+            (
+                3,
+                json!({"heavySlots": 1, "normalSlots": 0, "lightSlots": 0}),
+                1,
+                1,
+            ),
         ] {
             let temporary = tempfile::tempdir().expect("fixture home");
             let home = temporary.path().canonicalize().expect("canonical home");
             std::fs::create_dir(home.join("config")).unwrap();
             let path = home.join("config").join(DispatchSettings::FILE);
-            let stored = json!({
-                "domain": DispatchSettings::ID, "schemaVersion": 2,
+            let mut stored = json!({
+                "domain": DispatchSettings::ID, "schemaVersion": version,
                 "value": {
-                    "usage": "high", "usageUntilMs": null, "globalSlots": global,
+                    "usage": "high", "usageUntilMs": null,
                     "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8},
                     "threadRetentionDays": 3, "threadRetentionIntervalHours": 12,
                     "mode": "running"
                 }
             });
+            stored["value"]
+                .as_object_mut()
+                .unwrap()
+                .extend(stored_slots.as_object().unwrap().clone());
             std::fs::write(&path, stored.to_string()).unwrap();
 
             let file = SettingsFile::open(&home).expect("upgrade on startup");
             let upgraded = std::fs::read(&path).unwrap();
             let mut expected = stored.clone();
-            expected["schemaVersion"] = json!(3);
+            expected["schemaVersion"] = json!(4);
             let value = expected["value"].as_object_mut().unwrap();
-            value.remove("globalSlots");
+            for key in ["globalSlots", "normalSlots", "lightSlots"] {
+                value.remove(key);
+            }
             value.insert("heavySlots".into(), json!(heavy));
-            value.insert("normalSlots".into(), json!(normal));
-            value.insert("lightSlots".into(), json!(light));
+            value.insert("totalSlots".into(), json!(total));
             // The rewrite also stores the default of a field added since.
             value.insert("plannerModel".into(), json!(crate::PlannerModel::default()));
             assert_eq!(
                 serde_json::from_slice::<Value>(&upgraded).unwrap(),
                 expected,
-                "{global}"
+                "{stored}"
             );
             let settings = file.read::<DispatchSettings>().unwrap().value;
-            assert_eq!(settings.slots().total(), global);
+            assert_eq!(settings.heavy_slots, heavy);
+            assert_eq!(settings.total_slots, total);
             drop(file);
 
-            // A current file is never split again.
+            // Reopening current settings leaves the file byte-for-byte intact.
             SettingsFile::open(&home).expect("reopen the current file");
             assert_eq!(std::fs::read(&path).unwrap(), upgraded);
         }
@@ -1370,26 +1248,6 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_pinned_volume_never_creates_startup_roots() {
-        let temporary = tempfile::tempdir().expect("fixture home");
-        let mount = temporary.path().join("unmounted");
-        let home = mount.join("engine-home");
-        let settings = EngineSettings {
-            enabled: true,
-            work_volume: Some(PinnedVolume {
-                mount: mount.clone(),
-                volume_id: "absent".into(),
-            }),
-            ..EngineSettings::default()
-        };
-        assert!(matches!(
-            EngineStorage::resolve(&portable_layout(&home).expect("layout"), &home, &settings),
-            Err(StorageError::MissingVolume)
-        ));
-        assert!(!mount.exists());
-    }
-
-    #[test]
     fn default_profile_keeps_durable_storage_under_home_without_barge() {
         let temporary = tempfile::tempdir().expect("fixture home");
         let root = temporary.path().canonicalize().expect("canonical home");
@@ -1406,8 +1264,8 @@ mod tests {
                 .configure(&settings.read().expect("defaults"), |current| {
                     current.enabled = true;
                 })
-                .expect("enable without a pin");
-            let storage = settings.storage().expect("no volume is required");
+                .expect("enable the default profile");
+            let storage = settings.storage().expect("resolve internal roots");
             assert!(storage.scratch().path().starts_with(root.join("cache")));
             assert!(storage.work().path().starts_with(root.join("state")));
             assert!(storage.builds().path().starts_with(root.join("cache")));
