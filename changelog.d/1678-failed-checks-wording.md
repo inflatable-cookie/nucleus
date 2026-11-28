@@ -1,0 +1,1 @@
+- The worker instruction for a failed merge check no longer calls every failing check "required".
