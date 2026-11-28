@@ -202,7 +202,7 @@ impl Store {
         stamp: WriteAt<'_>,
     ) -> Result<Decision, StoreError> {
         Ok(self
-            .answer_decision_with_notice(project, id, input, stamp, None)?
+            .answer_decision_with_notice(project, id, input, stamp, None, None)?
             .0)
     }
 
@@ -216,11 +216,14 @@ impl Store {
         id: &str,
         input: DecisionAnswerInput,
         stamp: WriteAt<'_>,
+        relayed: Option<String>,
         notice: Option<(&TellSubmission<'_>, &str)>,
     ) -> Result<(Decision, bool), StoreError> {
         let tx = self.planning_write()?;
         let mut decision: Decision = required(&tx, DecisionRecord, project, id)?;
-        if decision.withdrawn || (decision.task.is_some() && decision.answer.is_some()) {
+        if decision.withdrawn
+            || (decision.answer.is_some() && (decision.task.is_some() || relayed.is_some()))
+        {
             return Err(StoreError::PlanningConflict);
         }
         let valid_option = |id: &str| decision.input.options.iter().any(|option| option.id == id);
@@ -235,7 +238,11 @@ impl Store {
             }
             None => valid_option(&input.option_id) && input.based_on_option_id.is_none(),
         };
-        if !valid {
+        if !valid
+            || relayed.as_ref().is_some_and(|quote| {
+                quote.trim().is_empty() || quote.encode_utf16().count() > 48_000
+            })
+        {
             return Err(StoreError::PlanningInput);
         }
         if let Some(target) = &decision.task {
@@ -252,6 +259,7 @@ impl Store {
             input,
             author: stamp.actor.into(),
             answered_at_ms: stamp.at_ms,
+            relayed,
         });
         save(&tx, DecisionRecord, project, id, "answer", &decision, stamp)?;
         let queued = if !same_answer && let Some((tell, tell_id)) = notice {

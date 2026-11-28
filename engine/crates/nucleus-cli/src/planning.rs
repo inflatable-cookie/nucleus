@@ -190,9 +190,16 @@ pub(super) enum Action {
     DecisionAnswer {
         project: String,
         id: String,
-        option_id: String,
+        #[arg(required_unless_present = "answer")]
+        option_id: Option<String>,
+        /// Free-text answer to an ordinary decision when relaying from chat.
+        #[arg(long, conflicts_with = "option_id", requires = "relayed")]
+        answer: Option<String>,
         #[arg(long)]
         note: Option<String>,
+        /// The operator's exact words in the asking planner's chat.
+        #[arg(long)]
+        relayed: Option<String>,
     },
 }
 
@@ -449,12 +456,16 @@ impl Action {
                 project,
                 id,
                 option_id,
+                answer,
                 note,
+                relayed,
             } => (
                 Method::POST,
                 Some(project),
                 format!("decisions/{}/answer", segment(&id)?),
-                Some(json!({ "optionId": option_id, "note": note })),
+                Some(
+                    json!({ "optionId": option_id.unwrap_or_default(), "answer": answer, "note": note, "relayed": relayed }),
+                ),
             ),
         };
         Ok((method, planning_path(project.as_deref(), &path)?, body))
@@ -581,6 +592,34 @@ mod tests {
                 .len(),
             4
         );
+    }
+
+    #[test]
+    fn decision_answer_sends_the_option_and_verbatim_relay_quote() {
+        let quote = "  Go ahead.\nThat’s the one. ";
+        for (args, option, answer) in [
+            (vec!["approve"], "approve", None),
+            (vec!["--answer", "Go ahead."], "", Some("Go ahead.")),
+        ] {
+            let parsed = Cli::try_parse_from(
+                ["nucleus", "decision.answer", "project", "d-test"]
+                    .into_iter()
+                    .chain(args)
+                    .chain(["--relayed", quote]),
+            )
+            .unwrap();
+            let Action::Planning(action) = parsed.action else {
+                panic!("expected a planning command");
+            };
+            let (_, path, body) = action.request().unwrap();
+            assert_eq!(path, "/v1/planning/project/decisions/d-test/answer");
+            assert_eq!(
+                body.unwrap(),
+                serde_json::json!({
+                    "optionId": option, "answer": answer, "note": null, "relayed": quote
+                })
+            );
+        }
     }
 
     #[test]

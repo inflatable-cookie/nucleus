@@ -57,6 +57,11 @@ enum AdmissionSource<'a> {
     },
 }
 
+pub(super) enum DecisionAnswerSource<'a> {
+    Operator(&'a Authority),
+    Relayed { thread: &'a str, quote: String },
+}
+
 impl AdmissionSource<'_> {
     fn admitted_event(&self, caller: &Authority) -> Result<EventDraft, StoreError> {
         let mut admitted = event("admitted");
@@ -537,7 +542,35 @@ impl Service {
         let (mut state, project) = self
             .planning_state_in_scope(Some(project), &ControllerScope::default())
             .await?;
-        self.record_decision_answer(&mut state, &project, id, input, caller)
+        if !matches!(caller, Authority::Operator { .. }) {
+            return Err(ServiceError::DecisionOperator);
+        }
+        self.record_decision_answer(
+            &mut state,
+            &project,
+            id,
+            input,
+            DecisionAnswerSource::Operator(caller),
+        )
+    }
+
+    pub(crate) async fn relay_decision_answer(
+        &self,
+        project: &str,
+        id: &str,
+        input: DecisionAnswerInput,
+        quote: String,
+        scope: &ControllerScope,
+    ) -> Result<Decision, ServiceError> {
+        let thread = scope.actor().ok_or(ServiceError::DecisionOperator)?;
+        let (mut state, project) = self.planning_state_in_scope(Some(project), scope).await?;
+        self.record_decision_answer(
+            &mut state,
+            &project,
+            id,
+            input,
+            DecisionAnswerSource::Relayed { thread, quote },
+        )
     }
 
     pub(super) fn record_decision_answer(
@@ -546,13 +579,32 @@ impl Service {
         project: &str,
         id: &str,
         input: DecisionAnswerInput,
-        caller: &Authority,
+        source: DecisionAnswerSource<'_>,
     ) -> Result<Decision, ServiceError> {
-        if !matches!(caller, Authority::Operator { .. }) {
-            return Err(ServiceError::DecisionOperator);
-        }
-        let stamp = stamp(caller);
         let prior = state.store.decision(project, id)?;
+        let asking_thread = prior
+            .as_ref()
+            .map(|decision| self.decision_asking_thread(state, decision))
+            .transpose()?
+            .flatten();
+        let relay_author;
+        let (stamp, relayed, recording_thread) = match source {
+            DecisionAnswerSource::Operator(caller) => (stamp(caller), None, None),
+            DecisionAnswerSource::Relayed { thread, quote }
+                if asking_thread.as_deref() == Some(thread) =>
+            {
+                relay_author = format!("operator, relayed by planner {thread} from chat");
+                (
+                    WriteAt {
+                        actor: &relay_author,
+                        at_ms: now_ms(),
+                    },
+                    Some(quote),
+                    Some(thread),
+                )
+            }
+            _ => return Err(ServiceError::DecisionOperator),
+        };
         if let Some(decision) = &prior
             && let Some(target) = decision.task.as_ref()
             && target.kind == DecisionKind::UsagePermission
@@ -566,7 +618,8 @@ impl Service {
             }
         }
         let notice = if let Some(decision) = &prior
-            && let Some(thread) = self.decision_notice_target(state, decision)?
+            && let Some(thread) =
+                asking_thread.filter(|thread| Some(thread.as_str()) != recording_thread)
         {
             let text = decision_answer_text(decision, &input, stamp.at_ms);
             let key = new_id("decision")?;
@@ -597,6 +650,7 @@ impl Service {
                 id,
                 input,
                 stamp,
+                relayed,
                 submission.as_ref().zip(
                     notice
                         .as_ref()
@@ -619,15 +673,12 @@ impl Service {
         Ok(decision)
     }
 
-    fn decision_notice_target(
+    fn decision_asking_thread(
         &self,
         state: &State,
         decision: &Decision,
     ) -> Result<Option<String>, ServiceError> {
-        if decision.author == "Nucleus" {
-            let Some(target) = &decision.task else {
-                return Ok(None);
-            };
+        if let Some(target) = &decision.task {
             return Ok(self
                 .lookup(state, &target.task_id)?
                 .task
@@ -635,7 +686,8 @@ impl Service {
                 .origin_thread
                 .clone());
         }
-        if decision.author == "operator"
+        if decision.author == "Nucleus"
+            || decision.author == "operator"
             || decision.author == "fixture-operator"
             || decision.author.starts_with("operator via ")
         {

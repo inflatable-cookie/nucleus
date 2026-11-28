@@ -1276,11 +1276,16 @@ Decision answers on the board may use free text for ordinary decisions. An edite
 choice records its source option when available. Task-owned decisions apply an
 automatic gate and accept only an exact option; the store rejects free text for
 them. Answer notices include the custom text and its source option when present.
-Answering requires an operator binding and an explicit project. Answering a
-planner-authored or task-linked decision also delivers one answer notice
-through the planner message queue under ruling 52. A decision that belongs to a
-task question accepts one answer for the bound task version, then wakes the
-ordinary answer path.
+Answering requires an explicit project. The operator uses the operator binding.
+Under ruling 67, the asking planner can record the operator's chat answer with
+`decision.answer PROJECT ID OPTION --relayed "<operator's exact words>"`.
+Ordinary decisions also accept `--answer TEXT` in place of `OPTION`. A gate
+decision uses the task's origin planner and requires the exact option ID. The
+record keeps the quote verbatim and attributes it to the operator via the
+recording thread. Ruling 52 queues an answer notice for the asking thread when
+someone else records the answer. A decision that belongs to a task question
+accepts one answer for the bound task version, then wakes the ordinary answer
+path.
 
 `task.add` reads a brief from stdin. `item.promote` admits the current item
 body and commits the task, source link and item history together. When the
