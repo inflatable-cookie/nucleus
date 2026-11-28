@@ -91,13 +91,15 @@ const usageOf = (state: Record<string, unknown>) => ({
   },
 });
 const invokeBoard = async (method: string) =>
-  method === "rust.profile-usage" ? usageOf(board) : method === "queue.ui-snapshot"
-    ? board
-    : method === "queue.capacity-state"
-      ? capacity
-      : method === "queue.telemetry"
-        ? new Promise(() => {})
-        : missing();
+  method === "rust.profile-usage"
+    ? usageOf(board)
+    : method === "queue.ui-snapshot"
+      ? board
+      : method === "queue.capacity-state"
+        ? capacity
+        : method === "queue.telemetry"
+          ? new Promise(() => {})
+          : missing();
 
 type Node = {
   type: string;
@@ -114,6 +116,7 @@ const SECTIONS = [
   "Projects",
   "Hosts",
   "Storage",
+  "Devices",
 ];
 
 test("one row of five tabs at every width, the same at a narrow host, the Paseo settings column and a wide page", async (t) => {
@@ -173,7 +176,14 @@ test("the tabs show the short labels and keep the full names for a screen reader
       return typeof node === "string" ? node : node.children.map(text).join("");
     })(tab),
   );
-  assert.deepEqual(shown, ["Limits", "Profiles", "Projects", "Hosts", "Storage"]);
+  assert.deepEqual(shown, [
+    "Limits",
+    "Profiles",
+    "Projects",
+    "Hosts",
+    "Storage",
+    "Devices",
+  ]);
   assert.equal(
     tabsOf(ui).some((tab) => tab.props.accessibilityLabel === "Subscriptions"),
     false,
@@ -206,8 +216,6 @@ test("each tab opens its section and stays ticked; the content takes the full wi
   ui.update(h("View"));
 });
 
-
-
 test("projects distinguish loading, failure and empty results", async () => {
   let rejectProjects!: (e: Error) => void;
   const pending = new Promise((_resolve, reject) => {
@@ -233,7 +241,6 @@ test("projects distinguish loading, failure and empty results", async () => {
   assert.ok(ui.get("Retry projects"));
   ui.update(h("View"));
 });
-
 
 test("telemetry distinguishes loading, failed, stale and empty reads and keeps long filter values accessible", async () => {
   const { SettingsTelemetry } = await import("../client/settings-telemetry");
@@ -532,10 +539,10 @@ test("Profiles holds the Subscriptions list beneath the profiles, with its empty
     method === "rust.profile-usage"
       ? usageOf(board)
       : method === "queue.ui-snapshot"
-      ? slow
-      : method === "queue.capacity-state"
-        ? capacity
-        : missing(),
+        ? slow
+        : method === "queue.capacity-state"
+          ? capacity
+          : missing(),
   );
   loading.press("Profiles");
   await settle(() => loading.text().includes("Reading subscriptions…"));
@@ -562,9 +569,7 @@ test("long subscription group names stay in their row with accessible controls",
         supportedThinking: [],
       },
     ],
-    pool: [
-      { profileId: "p", group, enabled: true, weight: "default" },
-    ],
+    pool: [{ profileId: "p", group, enabled: true, weight: "default" }],
     availability: [
       { group, unavailable: true, reason: "weekly limit", retryAt: null },
     ],
@@ -576,9 +581,9 @@ test("long subscription group names stay in their row with accessible controls",
         ? usageOf(state)
         : method === "queue.ui-snapshot"
           ? state
-        : method === "queue.capacity-state"
-          ? capacity
-          : missing(),
+          : method === "queue.capacity-state"
+            ? capacity
+            : missing(),
     true,
   );
   await settle(() => ui.text().includes("Usage level"));

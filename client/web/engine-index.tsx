@@ -14,11 +14,10 @@ const root = createRoot(target);
 
 async function start() {
   if (token) {
-    const response = await requestRustBoard("/pair", {
+    await requestRustBoard("/pair", {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) throw new Error("The board link could not be paired.");
+    }).catch(() => undefined);
   }
   root.render(<WebApp />);
 }

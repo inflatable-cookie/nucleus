@@ -16,16 +16,26 @@ import {
 } from "./rust-board";
 import { listenForPlanningIssues } from "./rust-planning";
 import { createRustAdapter } from "./rust-adapter";
+import { DevicePairPrompt } from "./device-pairing";
 import { boardThemeFromT3 } from "../../hosts/t3code/board-theme";
 
 export function WebApp() {
-  const [planningIssues, setPlanningIssues] = useState<Record<string, string>>({});
+  const [planningIssues, setPlanningIssues] = useState<Record<string, string>>(
+    {},
+  );
   const adapter = useMemo(() => createRustAdapter(), []);
-  useEffect(() => listenForPlanningIssues(adapter.rust, (collection, issues) => {
-    const message = issues.join("\n");
-    setPlanningIssues(previous => (previous[collection] ?? "") === message
-      ? previous : { ...previous, [collection]: message });
-  }), [adapter]);
+  useEffect(
+    () =>
+      listenForPlanningIssues(adapter.rust, (collection, issues) => {
+        const message = issues.join("\n");
+        setPlanningIssues((previous) =>
+          (previous[collection] ?? "") === message
+            ? previous
+            : { ...previous, [collection]: message },
+        );
+      }),
+    [adapter],
+  );
   const [themeRevision, setThemeRevision] = useState(0);
   const readRustTheme = useCallback(
     async (signal: AbortSignal) => {
@@ -35,12 +45,10 @@ export function WebApp() {
     },
     [adapter],
   );
-  const { appearance, theme } = useWebTheme(
-    readRustTheme,
-    themeRevision,
-  );
+  const { appearance, theme } = useWebTheme(readRustTheme, themeRevision);
   const [live, setLive] = useState(false);
   const [ready, setReady] = useState(false);
+  const [authExpired, setAuthExpired] = useState(false);
   // The live channel's last failure. A stream that drops reconnects below, and
   // the reader says why in the meantime instead of failing silently.
   const [liveError, setLiveError] = useState<string | null>(null);
@@ -49,17 +57,20 @@ export function WebApp() {
   );
   const [sessionEpoch, setSessionEpoch] = useState(0);
   const query = useMemo(
-    () => new QueryClient({
-      defaultOptions: {
-        queries: {
-          staleTime: Infinity,
-          refetchOnWindowFocus: false,
-          refetchOnReconnect: false,
-          retry: (attempt, error) =>
-            !isRustHttpError(error, 401) && !isRustHttpError(error, 403) && attempt < 2,
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: Infinity,
+            refetchOnWindowFocus: false,
+            refetchOnReconnect: false,
+            retry: (attempt, error) =>
+              !isRustHttpError(error, 401) &&
+              !isRustHttpError(error, 403) &&
+              attempt < 2,
+          },
         },
-      },
-    }),
+      }),
     [sessionEpoch],
   );
   const invalidateRust = useMemo(() => createRustInvalidator(query), [query]);
@@ -67,13 +78,10 @@ export function WebApp() {
     () => ({ transport: adapter, settings }),
     [adapter, settings],
   );
-  const openSettings = useCallback(
-    (open: boolean) => {
-      window.history.pushState(null, "", open ? "/settings" : "/");
-      setSettings(open);
-    },
-    [],
-  );
+  const openSettings = useCallback((open: boolean) => {
+    window.history.pushState(null, "", open ? "/settings" : "/");
+    setSettings(open);
+  }, []);
   useEffect(() => {
     const readLocation = () =>
       setSettings(window.location.pathname === "/settings");
@@ -102,66 +110,77 @@ export function WebApp() {
       if (!controller.signal.aborted)
         invalidateBoard({ queryKey: ["nucleus"] });
     };
-    void listenForRustChanges(
-      invalidateRust,
-      controller.signal,
-      {
-        resync: () => {
-          // The initial marker starts the first reads after the subscription is open.
-          if (startReads()) return;
-          invalidateRust();
-          void adapter.refreshSession().then((changed) => {
+    void listenForRustChanges(invalidateRust, controller.signal, {
+      resync: () => {
+        // The initial marker starts the first reads after the subscription is open.
+        if (startReads()) return;
+        invalidateRust();
+        void adapter
+          .refreshSession()
+          .then((changed) => {
             if (controller.signal.aborted) return;
             if (changed) {
               setPlanningIssues({});
               setSessionEpoch((value) => value + 1);
-            }
-            else refreshBoard();
-          }).catch(refreshBoard);
-        },
-        settingsChanged: () => {
-          invalidateBoard({
-            queryKey: ["nucleus"],
-            predicate: ({ queryKey: [, area, detail] }) =>
-              ["state", "profiles", "repositories", "project-settings", "capacity-state", "hosts"]
-                .some((key) => key === area) ||
-              (area === "github-accounts" && detail === "settings"),
-          });
-        },
-        storageChanged: () => invalidateBoard({ queryKey: ["nucleus", "work-storage"] }),
-        planningChanged: () => {
-          // A source item can change its task’s lane without changing the task row.
-          invalidateBoard({ queryKey: rustTaskListKey, exact: true });
-          invalidateBoard({
-            queryKey: ["nucleus"],
-            predicate: ({ queryKey: [, area] }) =>
-              ["plans", "leads", "lane-document", "item"].some((key) => key === area),
-          });
-        },
-        profileUsageChanged: () => invalidateBoard({ queryKey: RUST_PROFILE_USAGE_KEY }),
-        decisionsChanged: () => invalidateBoard({
-          queryKey: ["nucleus"],
-          predicate: ({ queryKey: [, area] }) => area === "decisions" || area === "decision",
-        }),
-        themeChanged: () => setThemeRevision((value) => value + 1),
-        catalogChanged: () => {
-          invalidateBoard({ queryKey: ["nucleus", "state"] });
-          invalidateBoard({ queryKey: ["nucleus", "profile-vocabulary"] });
-          invalidateBoard({ queryKey: ["nucleus", "profiles", "compatibility"] });
-        },
-        connection: (state) => {
-          if (state !== "live") startReads();
-          setLive(state === "live");
-          setLiveError(
-            state === "expired"
-              ? "The board link expired. Open a fresh one using nucleus-engine ui"
-              : state === "retrying"
-                ? "Reconnecting to the engine"
-                : null,
-          );
-        },
+            } else refreshBoard();
+          })
+          .catch(refreshBoard);
       },
-    );
+      settingsChanged: () => {
+        invalidateBoard({
+          queryKey: ["nucleus"],
+          predicate: ({ queryKey: [, area, detail] }) =>
+            [
+              "state",
+              "profiles",
+              "repositories",
+              "project-settings",
+              "capacity-state",
+              "hosts",
+            ].some((key) => key === area) ||
+            (area === "github-accounts" && detail === "settings"),
+        });
+      },
+      storageChanged: () =>
+        invalidateBoard({ queryKey: ["nucleus", "work-storage"] }),
+      planningChanged: () => {
+        // A source item can change its task’s lane without changing the task row.
+        invalidateBoard({ queryKey: rustTaskListKey, exact: true });
+        invalidateBoard({
+          queryKey: ["nucleus"],
+          predicate: ({ queryKey: [, area] }) =>
+            ["plans", "leads", "lane-document", "item"].some(
+              (key) => key === area,
+            ),
+        });
+      },
+      profileUsageChanged: () =>
+        invalidateBoard({ queryKey: RUST_PROFILE_USAGE_KEY }),
+      decisionsChanged: () =>
+        invalidateBoard({
+          queryKey: ["nucleus"],
+          predicate: ({ queryKey: [, area] }) =>
+            area === "decisions" || area === "decision",
+        }),
+      themeChanged: () => setThemeRevision((value) => value + 1),
+      catalogChanged: () => {
+        invalidateBoard({ queryKey: ["nucleus", "state"] });
+        invalidateBoard({ queryKey: ["nucleus", "profile-vocabulary"] });
+        invalidateBoard({ queryKey: ["nucleus", "profiles", "compatibility"] });
+      },
+      connection: (state) => {
+        if (state !== "live") startReads();
+        setLive(state === "live");
+        setAuthExpired(state === "expired");
+        setLiveError(
+          state === "expired"
+            ? "The board link expired. Open a fresh one using nucleus-engine ui"
+            : state === "retrying"
+              ? "Reconnecting to the engine"
+              : null,
+        );
+      },
+    });
     return () => controller.abort();
   }, [adapter, query, invalidateRust, sessionEpoch]);
   useEffect(() => {
@@ -201,7 +220,16 @@ export function WebApp() {
                 </p>
               )}
               <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-                {!ready ? (
+                {authExpired ? (
+                  <DevicePairPrompt
+                    c={theme.colors}
+                    onPaired={() => {
+                      setAuthExpired(false);
+                      setLiveError(null);
+                      setSessionEpoch((value) => value + 1);
+                    }}
+                  />
+                ) : !ready ? (
                   <p role="status">Connecting to the Nucleus engine…</p>
                 ) : settings ? (
                   <StandaloneSettingsScreen
@@ -214,7 +242,9 @@ export function WebApp() {
                     theme={theme}
                     layout={{ compact: false }}
                     rustBoard={invalidateRust}
-                    planningIssues={Object.values(planningIssues).filter(Boolean).join("\n")}
+                    planningIssues={Object.values(planningIssues)
+                      .filter(Boolean)
+                      .join("\n")}
                   />
                 )}
               </div>
