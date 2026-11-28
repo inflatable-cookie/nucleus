@@ -825,6 +825,18 @@ test("shared Limits writes sparse project overrides and the two Dispatch default
   assert.ok(fake.writes.every((write) => write.domain === "dispatch"));
 });
 
+test("Limits reads and writes the Dispatch planner model beside the slots", async () => {
+  const fake = engine();
+  const adapter = createRustAdapter(createRustApi(fake.fetcher));
+  const { revision } = await adapter.rpc(api.capacityState, {});
+  assert.ok(revision);
+  const plannerModel = { provider: "claude", model: "claude-opus-5-5", effort: null };
+  await adapter.rpc(api.configureCapacity, { revision, plannerModel });
+  const saved = await adapter.rpc(api.capacityState, {});
+  assert.deepEqual(saved.plannerModel, plannerModel);
+  assert.equal(saved.effective.projectLimit, 2, "the slots stay as they were");
+});
+
 test("two Limits tabs preserve untouched slots and refuse an edit against an older view", async () => {
   const fake = engine();
   const first = createRustAdapter(createRustApi(fake.fetcher));

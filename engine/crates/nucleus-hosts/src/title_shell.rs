@@ -5,7 +5,7 @@ use std::{path::Path, sync::Arc};
 use serde_json::{Value, json};
 
 use crate::{
-    Binding, HostError, RegisteredProject, T3,
+    Binding, HostError, RegisteredProject, RepositoryProject, T3,
     inbox::{INBOX_THREAD, InboxTarget, PROJECT},
     parent_thread,
     rpc::{Read, Reply, closed_row},
@@ -130,6 +130,22 @@ impl T3 {
                 .ok_or(HostError::Uncertain)?
                 .project(id)
                 .ok_or(HostError::Binding)
+        })
+    }
+
+    /// Find the active project holding a repository checkout in the synchronized shell.
+    ///
+    /// # Errors
+    /// Returns an error while the project snapshot is unknown.
+    pub fn cached_repository_project(
+        &self,
+        origin: &str,
+        root: &Path,
+    ) -> Result<RepositoryProject, HostError> {
+        self.rpc.with_shell(|shell| {
+            Ok(shell
+                .ok_or(HostError::Uncertain)?
+                .repository_project(origin, root))
         })
     }
 
