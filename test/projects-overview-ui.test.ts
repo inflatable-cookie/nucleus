@@ -278,17 +278,17 @@ test("columns follow the project select's order and leave archived projects out"
   );
 });
 
-test("the header has no help tip and shows Active, Leads, Papercuts and Queue as tabs", async () => {
+test("the header has no help tip and shows Leads, Papercuts, Queue and Active as tabs, with Active selected", async () => {
   const inputs = await boardInputs();
   const { ui } = await mountOverview(inputs);
   // Active counts the five active stages; open leads and papercuts only (the dropped lead is not counted); all three queued tasks.
   assert.match(
     textOf(ui.get("Orchard overview")),
-    /Orchard 5 Active 2 Leads 1 Papercuts 3 Queue/,
+    /Orchard 2 Leads 1 Papercuts 3 Queue 5 Active/,
   );
   assert.match(
     textOf(ui.get("Nucleus overview")),
-    /Nucleus 0 Active 0 Leads 1 Papercuts 1 Queue/,
+    /Nucleus 0 Leads 1 Papercuts 1 Queue 0 Active/,
   );
   assert.equal(ui.query(/counts help$/), undefined, "no (?) tip");
   assert.equal(ui.query(/counts$/), undefined, "no help popover");
