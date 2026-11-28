@@ -145,8 +145,7 @@ test("Settings override removal stays locked across tab switches, distinguishes 
         revision: "limits-0",
         effective: {
           heavySlots: 5,
-          normalSlots: 22,
-          lightSlots: 5,
+          totalSlots: 32,
           globalLimit: 32,
           projectLimit: 4,
           hostCallLimit: 6,

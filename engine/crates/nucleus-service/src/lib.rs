@@ -976,7 +976,13 @@ impl Service {
             || {
                 self.project.as_ref().map_or_else(
                     || nucleus_store::DispatchSettings::default().slots(),
-                    |project| Slots::split(project.launch_budget.slots),
+                    |project| {
+                        let total = project.launch_budget.slots;
+                        Slots {
+                            heavy: total.min(5),
+                            total,
+                        }
+                    },
                 )
             },
             nucleus_store::DispatchSettings::slots,
@@ -992,21 +998,13 @@ impl Service {
         {
             return Ok(None);
         }
-        let Some(SlotBlock::Weight {
-            weight,
-            running,
-            limit,
-        }) = self.slot_block(state, &identity.id, task.weight())?
+        let Some(SlotBlock::Heavy { running, limit }) =
+            self.slot_block(state, &identity.id, task.weight())?
         else {
             return Ok(None);
         };
-        let slot = if weight == TaskWeight::Heavy {
-            "heavy"
-        } else {
-            "normal"
-        };
         Ok(Some(format!(
-            "Waiting for a {slot} slot ({running}/{limit})"
+            "Waiting for a heavy slot ({running}/{limit})"
         )))
     }
 
@@ -2469,7 +2467,7 @@ impl State {
             .any(|(_, _, _, waiting)| waiting == id)
         {
             self.capacity_waiters.insert((
-                task.weight(),
+                std::cmp::Reverse(task.weight().is_heavy()),
                 task.queue_priority(),
                 self.store.admission_order(id)?,
                 id.clone(),
@@ -2626,8 +2624,11 @@ impl Service {
                             && !state.store.dependency_blocked(id).unwrap_or(true)
                             && !state.has_open_usage_decision(&row.task).unwrap_or(true)
                             && self
-                                .launch_capacity_in(state, row.task.identity(), false)
+                                .project_capacity(state, row.task.identity(), false)
                                 .unwrap_or(false)
+                            && self
+                                .slot_block(state, id, row.task.weight())
+                                .is_ok_and(|block| block.is_none())
                     })
             })
             .cloned();

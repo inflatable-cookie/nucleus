@@ -45,8 +45,10 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   ```
 
   Declare how much of the host the task takes with `queue.weight`, separate from
-  complexity. Each weight has limited slots, and every run of the task counts,
-  reviews included:
+  complexity. Every run counts toward the total, reviews included. Heavy work
+  has its own cap and goes first when a slot frees and it fits. Light and normal
+  schedule alike.
+
   - `light`: docs, planning, briefs, text or small config changes; no build beyond
     a docs check.
   - `normal`: code changes with scoped checks and tests; the default.

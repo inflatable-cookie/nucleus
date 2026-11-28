@@ -2868,8 +2868,7 @@ fn occupy_slot(task: &mut Task, head: &nucleus_core::Head) {
 /// Hold `total` slots in the heavy count, which every weight may use.
 fn set_global_slots(value: &mut Value, total: u32) {
     value["heavySlots"] = json!(total);
-    value["normalSlots"] = json!(0);
-    value["lightSlots"] = json!(0);
+    value["totalSlots"] = json!(total);
 }
 
 async fn assert_project_slots(registry: &Registry, beta: &Task) {
@@ -4189,12 +4188,7 @@ async fn verify_released_and_unparked_keep_original_order(registry: &Registry) {
         .schedule
         .park("beta-done-prereq");
 
-    let waiters: Vec<(
-        nucleus_core::profiles::TaskWeight,
-        nucleus_core::QueuePriority,
-        i64,
-        String,
-    )> = registry
+    let waiters: Vec<_> = registry
         .service
         .state
         .lock()
