@@ -121,7 +121,7 @@ impl Service {
         {
             return Err(ServiceError::PlannerAuthorityRefused);
         }
-        let project = self.planning_project(&state, scope, selector)?.to_owned();
+        let project = state.planning_project(scope, selector)?.to_owned();
         Ok((state, project))
     }
 

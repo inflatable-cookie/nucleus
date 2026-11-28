@@ -11,20 +11,6 @@ use crate::{
     thread_snapshots::ThreadRead,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlannerThread {
-    pub id: String,
-    pub project_id: String,
-    pub updated_at: String,
-    pub latest_user_message_at: Option<String>,
-    pub worktree_path: Option<String>,
-    pub archived_at: Option<String>,
-    pub deleted_at: Option<String>,
-    pub parent_thread_id: Option<String>,
-    pub provider_instance_id: Option<String>,
-}
-
 /// Exact thread metadata for a local authority check. It carries no custody proof.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,21 +163,6 @@ impl NoticeSnapshot {
 }
 
 impl T3 {
-    /// Read the host's planner candidates. A missing or partial listing cannot
-    /// establish that a stronger candidate is absent.
-    /// # Errors
-    /// Returns an error when the host inventory is unreadable.
-    pub async fn planner_threads(&self) -> Result<Vec<PlannerThread>, HostError> {
-        let result = self
-            .rpc
-            .shell(json!({"requestCompletionMarker": true}))
-            .await?;
-        let threads = result
-            .pointer("/snapshot/threads")
-            .ok_or(HostError::Protocol)?;
-        serde_json::from_value(threads.clone()).map_err(|_| HostError::Protocol)
-    }
-
     /// Verify the precise delivery target, including threads not in the shell.
     /// # Errors
     /// Returns an error for an unreadable or different thread.

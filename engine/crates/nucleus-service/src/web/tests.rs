@@ -647,8 +647,6 @@ fn seed_cancelled_notice(service: &Service, state: &mut EngineState, done: &Task
             None,
         )
         .unwrap();
-    service.request_planner_check(state, &cancelled);
-    assert!(!state.planner_requests.contains("cancelled"));
     assert!(
         state
             .store

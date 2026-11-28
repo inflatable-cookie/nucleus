@@ -77,7 +77,7 @@ pub use provider_setup::{
 };
 pub use questions::{
     NoticeAuthorization, NoticeDispatch, NoticeObservation, NoticeOutcome, NoticeState,
-    NoticeTarget, PlannerIdentity, PlannerThread,
+    NoticeTarget, PlannerIdentity,
 };
 pub use rpc::ThreadHint;
 use rpc::{CallError, Read, Reply, Rpc, ThreadFence, ThreadReply, closed_row};

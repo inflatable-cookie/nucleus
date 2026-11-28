@@ -138,7 +138,7 @@ impl DependencyEdits {
         authority: Option<&Authority>,
         status: &DependencyStatus,
     ) -> Self {
-        if authority.is_none_or(|actor| check_authority(state, task, actor).is_err()) {
+        if authority.is_none_or(|actor| state.command_authority(actor).is_err()) {
             return Self::unavailable();
         }
         let mut edits = Self::for_task(
@@ -318,13 +318,6 @@ pub(super) fn describe_dependency_error(
     StoreError::DependencyCycle { path }.into()
 }
 
-fn check_authority(state: &State, task: &Task, authority: &Authority) -> Result<(), ServiceError> {
-    match authority {
-        Authority::Planner { actor } => state.check_planner_authority(task, actor),
-        Authority::Operator { .. } => Ok(()),
-    }
-}
-
 impl Service {
     pub(super) fn resolve_dependencies(
         &self,
@@ -455,11 +448,7 @@ impl Service {
         {
             return Err(ServiceError::AcpUnauthorized);
         }
-        let authority_check = check_authority(&state, task, authority);
-        if matches!(authority_check, Err(ServiceError::PlannerAuthorityUnknown)) {
-            self.request_planner_check(&mut state, task);
-        }
-        authority_check?;
+        state.command_authority(authority)?;
         let (version, named, reason) = command.parts()?;
         if row.version != version {
             return Err(StoreError::StaleTask.into());

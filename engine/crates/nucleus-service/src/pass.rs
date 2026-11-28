@@ -1525,10 +1525,7 @@ impl Service {
         let dependencies =
             crate::DependencyStatus::read(&state, row, &crate::ControllerScope::default())?;
         let mut context = LaneContext::default();
-        let Some(project) = &route.project_id else {
-            context.missing = policy.lane_documents;
-            return Ok((context, dependencies));
-        };
+        let project = &route.project_id;
         let mut keys = if let Some(report) = task.report_task() {
             vec![report.lane.clone()]
         } else {
@@ -1873,7 +1870,7 @@ impl Service {
             state
                 .live_planner_route(&target.thread)
                 .filter(|(id, repo)| {
-                    Some(*id) == route.project_id.as_deref()
+                    *id == route.project_id
                         && repo.host_project.as_deref() == Some(target.project_id.as_str())
                         && state
                             .enrolled_planners

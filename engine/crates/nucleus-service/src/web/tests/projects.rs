@@ -748,8 +748,7 @@ async fn assert_project_slots(registry: &Registry, beta: &Task) {
         .project_for(&waiting)
         .await
         .expect("Alpha route")
-        .project_id
-        .expect("Alpha project");
+        .project_id;
     for (global, overrides, alpha_allowed, beta_allowed) in [
         (2, json!({&project: 2}), true, true),
         (2, json!({}), false, true),

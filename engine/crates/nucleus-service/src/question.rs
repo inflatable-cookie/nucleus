@@ -1,89 +1,10 @@
-use std::cmp::Reverse;
-
 use nucleus_core::{Action, OperatorDecline, Question, QuestionDelivery, Task, WaitReason};
-use nucleus_hosts::{
-    HostError, NoticeAuthorization, NoticeOutcome, NoticeState, PlannerIdentity, PlannerThread, T3,
-    ThreadHint,
-};
-use nucleus_store::{TaskRow, ThreadProvenance};
+use nucleus_hosts::{NoticeAuthorization, NoticeOutcome, NoticeState, T3};
+use nucleus_store::TaskRow;
 use tokio::time::Instant;
 
 use crate::pass::{DispatchPermit, DispatchTarget};
-use crate::{Service, ServiceError, State, event, project::ProjectRoute, schedule::Priority};
-
-pub(super) struct PlannerAuthority {
-    thread: String,
-    project_id: Option<String>,
-    identity: Option<PlannerIdentity>,
-    checked_at: Instant,
-}
-
-impl PlannerAuthority {
-    pub(crate) fn project_id(&self) -> Option<&str> {
-        self.project_id.as_deref()
-    }
-
-    pub(crate) fn resolved(&self) -> Option<(Instant, &str)> {
-        self.identity
-            .as_ref()
-            .map(|identity| (self.checked_at, identity.id.as_str()))
-    }
-}
-
-fn bound_planner(task: &Task) -> Option<&str> {
-    if task.phase().is_terminal() {
-        return None;
-    }
-    task.question_delivery()
-        .map(|delivery| delivery.thread.as_str())
-        .or(task.identity().origin_thread.as_deref())
-}
-
-impl State {
-    pub(super) fn invalidate_planner_authority(&mut self) {
-        self.planner_authority_epoch += 1;
-        self.planner_authority.clear();
-    }
-
-    pub(super) fn planner_thread_changed(&mut self, hint: &ThreadHint) {
-        let count = self.planner_authority.len();
-        self.planner_authority.retain(|_, authority| {
-            authority.thread != hint.thread || !hint.is_identity_change(authority.identity.as_ref())
-        });
-        if self.planner_authority.len() != count
-            || self.planner_check.as_ref() == Some(&hint.thread)
-        {
-            // A read started before an identity event cannot publish stale authority.
-            self.planner_authority_epoch += 1;
-        }
-    }
-
-    pub(super) fn check_planner_authority(
-        &self,
-        task: &Task,
-        actor: &str,
-    ) -> Result<(), ServiceError> {
-        if self.registry_mode {
-            return self
-                .verified_controller(actor)
-                .then_some(())
-                .ok_or(ServiceError::PlannerAuthorityRefused);
-        }
-        if bound_planner(task) != Some(actor) {
-            return Err(ServiceError::PlannerAuthorityRefused);
-        }
-        let authority = self
-            .planner_authority
-            .get(&task.identity().id)
-            .filter(|authority| authority.thread == actor)
-            .ok_or(ServiceError::PlannerAuthorityUnknown)?;
-        authority
-            .identity
-            .as_ref()
-            .map(|_| ())
-            .ok_or(ServiceError::PlannerAuthorityRefused)
-    }
-}
+use crate::{Service, ServiceError, State, event, schedule::Priority};
 
 impl Service {
     pub(super) fn planner_routes_changed(&self, state: &mut State) {
@@ -156,9 +77,7 @@ impl Service {
                 }
                 NoticeState::Undelivered | NoticeState::Gone => {}
                 NoticeState::Absent if delivery.last_send_at_ms.is_none() => {
-                    if self.project.is_some()
-                        || self.check_registered_planner(&delivery.thread).await?
-                    {
+                    if self.check_registered_planner(&delivery.thread).await? {
                         pending_attempt = Some(delivery.clone());
                     }
                 }
@@ -227,88 +146,8 @@ impl Service {
         Ok(wait)
     }
 
-    pub(super) async fn watch_planner_authority(&self) {
-        loop {
-            self.planner_wake.notified().await;
-            while let Some(id) = self.take_planner_check().await {
-                let _ = self.refresh_planner_authority(&id).await;
-            }
-        }
-    }
-
-    async fn take_planner_check(&self) -> Option<String> {
-        self.host.wait_for_requests().await;
-        self.state.lock().await.planner_requests.pop_first()
-    }
-
-    pub(super) fn request_planner_check(&self, state: &mut State, task: &Task) {
-        if bound_planner(task).is_none() {
-            return;
-        }
-        state.planner_requests.insert(task.identity().id.clone());
-        self.planner_wake.notify_one();
-    }
-
-    pub(super) async fn refresh_planner_authority(&self, id: &str) -> Result<(), ServiceError> {
-        if self.project.is_none() {
-            return Ok(());
-        }
-        let (epoch, thread, route) = {
-            let mut state = self.state.lock().await;
-            let row = self.lookup(&state, id)?;
-            let Some(thread) = bound_planner(&row.task).map(str::to_owned) else {
-                return Ok(());
-            };
-            let route = self.resolve_project(&state, row.task.identity())?;
-            if route.slots.is_none() {
-                return Ok(());
-            }
-            if state
-                .planner_authority
-                .get(id)
-                .is_some_and(|authority| authority.thread == thread)
-            {
-                return Ok(());
-            }
-            state.planner_check = Some(thread.clone());
-            (state.planner_authority_epoch, thread, route)
-        };
-        let result = self.host.planner_identity(&thread).await;
-        let mut state = self.state.lock().await;
-        state.planner_check = None;
-        let row = self.lookup(&state, id)?;
-        if state.planner_authority_epoch != epoch || bound_planner(&row.task) != Some(&thread) {
-            return Err(HostError::Uncertain.into());
-        }
-        let host = match &result {
-            Ok(_) => crate::web::CachedHost::Reachable,
-            Err(HostError::Deferred { .. } | HostError::Unavailable | HostError::Timeout) => {
-                crate::web::CachedHost::Unavailable
-            }
-            Err(_) => crate::web::CachedHost::Unknown,
-        };
-        self.set_cached_host(&mut state, host);
-        let identity = result?.filter(|identity| {
-            identity.project_id == route.host_project
-                && !identity.is_child()
-                && self.acp_provider().is_none_or(|provider| {
-                    identity.provider_instance_id.as_deref() != Some(provider)
-                })
-        });
-        state.planner_authority.insert(
-            id.into(),
-            PlannerAuthority {
-                thread,
-                project_id: route.project_id,
-                identity,
-                checked_at: Instant::now(),
-            },
-        );
-        self.settings_changes.send_replace(());
-        self.publish(id, row.version);
-        Ok(())
-    }
-
+    /// The task's exact origin thread when T3 can route to it, then a checked
+    /// planner of the task's project.
     pub(super) async fn responsible_planner(
         &self,
         task: &Task,
@@ -320,29 +159,7 @@ impl Service {
         {
             return Ok(Some(origin.clone()));
         }
-        if self.project.is_none() {
-            return self.registered_planner(&route, prefer_claim).await;
-        }
-        for (rank, _, thread) in self.planner_candidates(task, &route).await? {
-            if self
-                .planner_workspace(&route, rank, thread.worktree_path)
-                .await?
-                && self.host.planner_routable(&thread.id).await?
-            {
-                return Ok(Some(thread.id));
-            }
-        }
-        Ok(None)
-    }
-
-    async fn registered_planner(
-        &self,
-        route: &ProjectRoute,
-        prefer_claim: bool,
-    ) -> Result<Option<String>, ServiceError> {
-        let Some(project) = route.project_id.as_deref() else {
-            return Ok(None);
-        };
+        let project = route.project_id.as_str();
         let candidates = {
             let state = self.state.lock().await;
             let mut candidates = state.planner_candidates_for(project);
@@ -365,66 +182,6 @@ impl Service {
             }
         }
         Ok(None)
-    }
-
-    async fn planner_candidates(
-        &self,
-        task: &Task,
-        route: &ProjectRoute,
-    ) -> Result<Vec<(u8, Reverse<String>, PlannerThread)>, ServiceError> {
-        let threads = self.host.planner_threads().await?;
-        let ids: Vec<_> = threads.iter().map(|thread| thread.id.as_str()).collect();
-        let provenance = {
-            let state = self.state.lock().await;
-            state
-                .store
-                .routing_provenance(Some(&task.identity().repository), &ids)?
-        };
-        let mut ranked = Vec::new();
-        for thread in threads {
-            if thread.archived_at.is_some()
-                || thread.deleted_at.is_some()
-                || thread.parent_thread_id.is_some()
-                || self.acp_provider().is_some_and(|instance| {
-                    thread.provider_instance_id.as_deref() == Some(instance)
-                })
-                || provenance.get(&thread.id) == Some(&ThreadProvenance::TaskRole)
-            {
-                continue;
-            }
-            // Titles carry no authority. Registered roles and task provenance set
-            // rank, with project membership as the last candidate source.
-            let rank = (provenance.get(&thread.id) == Some(&ThreadProvenance::Dispatcher))
-                .then_some(0)
-                .or_else(|| (thread.project_id == route.host_project).then_some(1));
-            if let Some(rank) = rank {
-                let interaction = thread.latest_user_message_at.clone().map_or_else(
-                    || thread.updated_at.clone(),
-                    |last| last.max(thread.updated_at.clone()),
-                );
-                ranked.push((rank, Reverse(interaction), thread));
-            }
-        }
-        ranked.sort_unstable_by(|left, right| {
-            (left.0, &left.1, &left.2.id).cmp(&(right.0, &right.1, &right.2.id))
-        });
-        Ok(ranked)
-    }
-
-    async fn planner_workspace(
-        &self,
-        route: &ProjectRoute,
-        rank: u8,
-        worktree: Option<String>,
-    ) -> Result<bool, ServiceError> {
-        if rank == 3
-            && let Some(worktree) = worktree
-        {
-            return Ok(self
-                .verify_linked_checkout(&worktree, route.checkout.clone(), (&worktree).into())
-                .await?);
-        }
-        Ok(true)
     }
 }
 
@@ -466,6 +223,7 @@ mod tests {
     use crate::tests::native_fixture;
     use nucleus_core::{Entry, Host, Identity, Observed, Report, RunState};
     use nucleus_forge::GitHub;
+    use nucleus_hosts::HostError;
     use serde_json::{Value, json};
 
     use super::*;
@@ -538,7 +296,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exact_origin_wins_and_fallback_respects_rank_and_unknown() {
+    async fn exact_origin_wins_and_an_unreadable_registered_planner_is_not_skipped() {
         for (origin, strongest, expected) in [
             ("origin", "planner-old", Some("origin")),
             ("gone", "planner-old", Some("planner-old")),
@@ -578,6 +336,25 @@ mod tests {
             }
             server.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn a_project_thread_which_never_enrolled_is_not_a_planner() {
+        let (_home, mut service) =
+            crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
+        let checkout = service.fixture().checkout;
+        let (host, server) =
+            native_fixture(move |request| snapshot_reply(request, "planner", &checkout)).await;
+        service.host = host;
+        register_planners(&service, &[]).await;
+        let row = seed_question_from(&service, Some("gone")).await;
+        assert_eq!(
+            service.responsible_planner(&row.task, false).await.unwrap(),
+            None
+        );
+        service.notify_question(&row).await.unwrap();
+        assert_eq!(service.task("notice").await.unwrap(), row);
+        server.abort();
     }
 
     #[tokio::test]
@@ -636,7 +413,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_notice_cannot_send_or_unsettle_outside_the_fixture_project() {
+    async fn a_notice_cannot_send_or_unsettle_outside_the_task_project() {
         let (_home, mut service) =
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
         service.set_fixture_acp_provider(Some("fixture-acp"));
@@ -829,7 +606,11 @@ mod tests {
 
     #[tokio::test]
     async fn unsent_question_delivery_resends_only_when_no_send_was_attempted() {
-        for attempted in [false, true] {
+        for (bound, attempted) in [
+            ("planner-a", false),
+            ("planner-a", true),
+            ("unregistered", false),
+        ] {
             let (_home, mut service) =
                 crate::tests::fixture(GitHub::new("unused-test-forge").unwrap());
             let checkout = service.fixture().checkout.clone();
@@ -867,12 +648,9 @@ mod tests {
             register_planners(&service, &["planner-a"]).await;
 
             let row = seed_question(&service).await;
-            let mut delivery = T3::prepare_notice(
-                "planner-a".into(),
-                "saved-before-send".into(),
-                "Please decide",
-            )
-            .unwrap();
+            let mut delivery =
+                T3::prepare_notice(bound.into(), "saved-before-send".into(), "Please decide")
+                    .unwrap();
             if attempted {
                 delivery.last_send_at_ms = Some(1_000);
             }
@@ -888,6 +666,11 @@ mod tests {
             if attempted {
                 // Uncertain delivery (last_send_at_ms set, message absent) must never resend.
                 assert!(sends.is_empty());
+            } else if bound != "planner-a" {
+                // A recorded recipient the project no longer registers gets nothing.
+                assert_eq!(sends.len(), 1);
+                assert_eq!(sends[0]["threadId"], "planner-a");
+                assert_ne!(sends[0]["commandId"], "saved-before-send");
             } else {
                 // Unsent delivery (last_send_at_ms None, message absent) sends the recorded command.
                 assert_eq!(sends.len(), 1);

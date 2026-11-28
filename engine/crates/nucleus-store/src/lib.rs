@@ -242,12 +242,6 @@ pub struct AcpSession {
     pub controller_thread: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThreadProvenance {
-    Dispatcher,
-    TaskRole,
-}
-
 /// Durable inputs resolved by service admission and committed with the task.
 #[derive(Default)]
 pub struct TaskAdmissionFacts<'a> {
@@ -876,38 +870,17 @@ impl Store {
         Ok(())
     }
 
-    /// Read provenance only for threads in the current native inventory.
+    /// Whether any task retains this thread as its worker or reviewer.
     /// # Errors
-    /// Returns an error if task identities or their retained roles cannot be read.
-    pub fn routing_provenance(
-        &self,
-        repository: Option<&str>,
-        candidates: &[&str],
-    ) -> Result<BTreeMap<String, ThreadProvenance>, StoreError> {
-        let mut query = self.connection.prepare_cached(
-            "WITH provenance(thread, is_task_role) AS (
-               SELECT origin_thread, 0 FROM tasks WHERE (?1 IS NULL OR repository = ?1)
-               UNION ALL
-               SELECT json_extract(threads, '$.worker'), 1 FROM tasks WHERE (?1 IS NULL OR repository = ?1)
-               UNION ALL
-               SELECT json_extract(threads, '$.reviewer'), 1 FROM tasks WHERE (?1 IS NULL OR repository = ?1)
-             )
-             SELECT thread, max(is_task_role)
-               FROM provenance JOIN json_each(?2) AS candidate ON candidate.value = thread
-               GROUP BY thread",
-        )?;
-        let rows = query.query_map(
-            params![repository, serde_json::to_string(candidates)?],
-            |row| {
-                let role = if row.get::<_, bool>(1)? {
-                    ThreadProvenance::TaskRole
-                } else {
-                    ThreadProvenance::Dispatcher
-                };
-                Ok((row.get(0)?, role))
-            },
-        )?;
-        Ok(rows.collect::<Result<_, _>>()?)
+    /// Returns an error if retained roles cannot be read.
+    pub fn is_task_role_thread(&self, thread: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .connection
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM tasks WHERE ?1 IN
+                   (json_extract(threads, '$.worker'), json_extract(threads, '$.reviewer')))",
+            )?
+            .query_row([thread], |row| row.get(0))?)
     }
 
     /// Read all tasks for the board, including terminal rows.

@@ -860,14 +860,14 @@ async fn next(
         &state,
         api.service.uses_operator_inbox(),
     );
-    if state.recheckable(task) && state.command_authority(task, &authority).is_ok() {
+    if state.recheckable(task) && state.command_authority(&authority).is_ok() {
         commands.push(CommandView {
             name: "recheck",
             preflight: CommandReadiness::Ready,
             phase: None,
         });
     }
-    if state.can_change_queue_priority(task) && state.command_authority(task, &authority).is_ok() {
+    if state.can_change_queue_priority(task) && state.command_authority(&authority).is_ok() {
         commands.push(CommandView {
             name: if task.queue_priority().is_promoted() {
                 "demote"
