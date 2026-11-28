@@ -1,0 +1,1 @@
+- Settings → Projects saves Up-to-date base and Pre-merge check; the projects editor previously dropped both on save.
