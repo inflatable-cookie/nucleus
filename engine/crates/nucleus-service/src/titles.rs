@@ -876,6 +876,34 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_weight_slot_wait_keeps_the_capacity_title() {
+        let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+        let task = task();
+        let id = task.identity().id.clone();
+        let label = "Waiting for a heavy slot (5/5)";
+        let mut state = service.state.lock().await;
+        state
+            .store
+            .create(&task, &event("fixture"))
+            .expect("stored task");
+        state
+            .observe_wait_detail(
+                &task,
+                Some(WaitReason::Capacity),
+                Some(WaitDetail::SlotCap(label.into())),
+            )
+            .expect("slot wait");
+        assert_eq!(
+            task_state_label(&task, Some(WaitReason::Capacity), state.wait_detail(&id)),
+            label
+        );
+        let (title, _) = service
+            .row_label(&state, &task, "thread", TitleTiming::Stable)
+            .expect("title label");
+        assert_eq!(title, "Queued · capacity");
+    }
+
     #[test]
     fn title_policy_formats_reference_roles_and_waits() {
         let mut task = task();

@@ -217,17 +217,9 @@ impl Fleet {
     async fn save_slots(&self, heavy: u32, normal: u32, light: u32) {
         let path = "/v1/settings/dispatch";
         let current = self.request(Method::GET, path, &Value::Null).await;
-        let mut value = serde_json::to_value(
-            self.service
-                .state
-                .lock()
-                .await
-                .settings
-                .dispatch
-                .clone()
-                .expect("dispatch settings"),
-        )
-        .expect("dispatch value");
+        // The fixture's settings are in memory, so the file still holds defaults.
+        let held = self.service.state.lock().await.settings.dispatch.clone();
+        let mut value = serde_json::to_value(held.expect("dispatch settings")).expect("value");
         value["heavySlots"] = json!(heavy);
         value["normalSlots"] = json!(normal);
         value["lightSlots"] = json!(light);
