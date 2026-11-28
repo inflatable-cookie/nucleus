@@ -490,11 +490,6 @@ scheduler verifies the child's absence after observing the terminal parent
 and records the outcome before retiring that reservation. Subsequent
 preparation gets a new parent and a new launch identity.
 
-The operator can queue a read-only row refresh with
-`POST /v1/tasks/{id}/acp/refresh`. The scheduler proves the row is idle and
-records the refresh intent before sending it. The ACP session renders the
-current task and releases the turn.
-
 Use `PUT /v1/settings/profiles/pauses/{group}` with `{"untilMs":<epoch-ms>}`
 to pause a named subscription group until a known provider reset. This
 operator-only endpoint extends the same durable deadline used by automatic

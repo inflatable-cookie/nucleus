@@ -154,7 +154,7 @@ Later decisions carry their own attribution.
      - Thread reads are bounded and decide from T3's coverage fields. A full thread history is never requested.
      - Monitoring reuses a thread's last observation while its shell marker holds. Exact reads happen only for a due effect, an ambiguous reply or an ordered safety fence, and one read is shared across the steps of that effect.
      - Done thread housekeeping uses the synchronized shell. It makes no thread reads on ordinary ticks.
-     - Presentation writes (titles, snoozes, refreshes) happen only when the shown value differs. Readback is due-scheduled, never immediate, and never after a failed write.
+     - Presentation writes (titles, snoozes) happen only when the shown value differs. Readback is due-scheduled, never immediate, and never after a failed write.
      - One host budget covers every background worker. Safety probes and operator actions come before presentation. One failure deadline applies to every call and reconnect.
      - Rare reads (provider catalog, setup) happen on demand and are cached by revision, not refreshed per pass.
      - Each pass records its host calls by method, timeouts, and reads of terminal or archived threads.
@@ -162,9 +162,9 @@ Later decisions carry their own attribution.
    `hasMoreHistory` describes the history window. `turnItemsOmitLocalVisible`
    describes the compact timeline representation. Native run and request
    evidence keeps its meaning in either form. Settlement of an observed native
-   run, parent refresh and unarchive use a bound shell row at or after the
-   observed revision. The row must show no active turn, outstanding request or
-   pending background work. The live subscription omits archived rows. An
+   run and unarchive use a bound shell row at or after the observed revision.
+   The row must show no active turn, outstanding request or pending background
+   work. The live subscription omits archived rows. An
    exact bound archive that needs a quiet decision uses the archived shell on
    demand and discards its evidence if the live shell changes. Delivery follows
    the matching native run or the command receipt. A missing timeline item
