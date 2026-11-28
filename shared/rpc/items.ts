@@ -22,6 +22,8 @@ export const itemHistoryEntrySchema = z.object({
   recipient: z.string().nullable().default(null),
   /** The readable recipient label, when the engine knows it. */
   recipientLabel: z.string().nullable().optional(),
+  /** The assessment send this entry belongs to: a send, or its later progress. */
+  send: z.number().int().nullable().default(null),
 });
 
 export const itemDetailSchema = z.object({

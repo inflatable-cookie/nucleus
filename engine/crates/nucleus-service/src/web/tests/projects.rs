@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Mutex as SyncMutex,
     time::Duration,
 };
@@ -29,6 +29,8 @@ pub(super) struct NoticeFixture {
     pub(super) next_reply: NoticeReply,
     settled: bool,
     uncertain_planner: bool,
+    /// T3's server config, for the cached model list.
+    server_config: Option<Value>,
     archived_threads: BTreeSet<String>,
     missing_threads: BTreeSet<String>,
 }
@@ -340,6 +342,11 @@ async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
                     {"id": "beta-native", "workspaceRoot": beta_path, "defaultModelSelection": {"instanceId": "codex", "model": "gpt-5"}},
                     {"id": "missing-native", "workspaceRoot": missing},
                 ]}})
+            }
+            Some("server.getConfig") => {
+                return json!({"_tag": "Exit", "requestId": request["id"], "exit": {
+                    "_tag": "Success", "value": notices.server_config.clone().expect("config")
+                }});
             }
             Some("orchestration.dispatchCommand") => return notices.dispatch(request),
             Some("orchestration.launchThread") => return notices.launch(request),
@@ -4761,6 +4768,442 @@ async fn item_assess_with_archived_claimed_planner_and_no_fallback_records_new_t
         Some(launched_thread.as_str())
     );
 }
+/// A project row as T3's shell lists it, with the identity it reads from the checkout.
+fn t3_project(id: &str, root: &Path, identity: Option<&str>, model: &Value) -> Value {
+    let identity = identity.map(|key| {
+        let path = key.split_once('/').expect("host and repository path").1;
+        let (owner, name) = path.split_once('/').expect("owner and name");
+        json!({
+            "canonicalKey": key,
+            "locator": {"source": "git-remote", "remoteName": "origin",
+                "remoteUrl": format!("git@github.com:{path}.git")},
+            "rootPath": root, "displayName": path, "provider": "github",
+            "owner": owner, "name": name,
+        })
+    });
+    json!({
+        "id": id, "title": "Sample Gamma", "workspaceRoot": root, "repositoryIdentity": identity,
+        "defaultModelSelection": model, "scripts": [],
+        "createdAt": "2026-11-27T09:00:00.000Z", "updatedAt": "2026-11-27T09:00:00.000Z",
+        "deletedAt": null,
+    })
+}
+
+/// A project that no planner thread has ever enrolled, with one item sent to its planner.
+struct UnboundProject {
+    registry: Registry,
+    project: String,
+    root: PathBuf,
+    items: String,
+    item: String,
+}
+
+const BETA_KEY: &str = "github.com/example/second";
+
+impl UnboundProject {
+    async fn new() -> Self {
+        let registry = registry().await;
+        registry.enroll("beta-planner").await;
+        let project = registry
+            .service
+            .state
+            .lock()
+            .await
+            .live_planner_project("beta-planner")
+            .expect("beta")
+            .to_owned();
+        clear_project_planners(&registry, &project, "Sample Gamma").await;
+        let file = registry.service.settings.clone();
+        let before = file.read::<nucleus_store::Projects>().unwrap();
+        let mut root = PathBuf::new();
+        let saved = file
+            .edit(&before.revision, |all: &mut nucleus_store::Projects| {
+                let repo = &mut all.projects.get_mut(&project).unwrap().repositories[0];
+                repo.host_project = None;
+                repo.host_project_title = None;
+                root.clone_from(&repo.path);
+                Ok(())
+            })
+            .unwrap();
+        registry.service.state.lock().await.settings.projects = Some(saved.0.value);
+        let items = format!("/v1/planning/{project}/items");
+        let created = json_body(
+            post_as(
+                &registry.api,
+                &items,
+                &BOARD_KEY,
+                &json!({"kind": "lead", "title": "First assessment", "body": "No planner yet."}),
+            )
+            .await,
+        )
+        .await;
+        let item = created["id"].as_str().expect("item id").to_owned();
+        Self {
+            registry,
+            project,
+            root,
+            items,
+            item,
+        }
+    }
+
+    fn shell(&self, projects: &[Value]) {
+        self.registry
+            .service
+            .host
+            .fixture_project_shell(&json!({"projects": projects, "threads": []}), "fixture-acp");
+    }
+
+    async fn send_to_planner(&self) {
+        let response = post_as(
+            &self.registry.api,
+            &format!("{}/{}/assess", self.items, self.item),
+            &BOARD_KEY,
+            &json!({}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// The recorded progress since the item was filed: action and cause.
+    async fn progress(&self) -> Vec<(String, Option<String>)> {
+        let (_, entries) = item_latest_version(&self.registry.api, &self.project, &self.item).await;
+        entries
+            .iter()
+            .skip(1)
+            .map(|entry| {
+                if entry["action"] != "assess" {
+                    assert_eq!(entry["actorLabel"], "Nucleus");
+                }
+                (
+                    entry["action"].as_str().unwrap().to_owned(),
+                    entry["snapshot"]["cause"].as_str().map(str::to_owned),
+                )
+            })
+            .collect()
+    }
+
+    /// Each recorded outcome with the zero-based number of the send it belongs to.
+    async fn outcomes(&self) -> Vec<(String, usize)> {
+        let (_, entries) = item_latest_version(&self.registry.api, &self.project, &self.item).await;
+        let sends: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry["action"] == "assess")
+            .map(|entry| entry["sequence"].clone())
+            .collect();
+        entries
+            .iter()
+            .filter(|entry| !entry["snapshot"]["send"].is_null())
+            .map(|entry| {
+                let send = &entry["snapshot"]["send"];
+                (
+                    entry["action"].as_str().unwrap().to_owned(),
+                    sends.iter().position(|sequence| sequence == send).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    async fn queued(&self) -> bool {
+        let state = self.registry.service.state.lock().await;
+        state.store.next_tell().unwrap().is_some()
+    }
+
+    /// Check the one launch: the matched project, bound and claimed, with the assessment.
+    async fn assert_launched(&self, host_project: &str, model: &Value) {
+        let thread = {
+            let fixture = self.registry.notices.lock().expect("notices");
+            assert_eq!(fixture.launches.len(), 1);
+            let launch = &fixture.launches[0];
+            assert_eq!(launch["projectId"], host_project);
+            assert_eq!(launch["title"], "Sample Gamma planner");
+            assert_eq!(&launch["modelSelection"], model);
+            assert_eq!(launch["workspaceStrategy"]["type"], "root");
+            let text = launch["initialMessage"]["text"].as_str().expect("prompt");
+            assert!(text.contains("First assessment") && text.contains(&self.item));
+            launch["threadId"].as_str().expect("thread id").to_owned()
+        };
+        let state = self.registry.service.state.lock().await;
+        let project = &state.settings.projects.as_ref().unwrap().projects[&self.project];
+        assert_eq!(project.planner_claim.as_ref().unwrap().thread, thread);
+        let repo = &project.repositories[0];
+        assert_eq!(repo.host_project.as_deref(), Some(host_project));
+        assert_eq!(repo.host_project_title.as_deref(), Some("Sample Gamma"));
+        assert_eq!(repo.planner_threads, std::slice::from_ref(&thread));
+        assert_eq!(
+            state.live_planner_project(&thread),
+            Some(self.project.as_str())
+        );
+    }
+}
+
+#[tokio::test]
+async fn item_assess_starts_a_planner_in_the_unbound_t3_project_matching_the_repository() {
+    let unbound = UnboundProject::new().await;
+    let model = json!({"instanceId": "codex", "model": "gpt-5"});
+    let elsewhere = unbound.root.with_file_name("elsewhere");
+    // A fork's canonical key names its upstream; its origin carries the match.
+    let mut fork = t3_project(
+        "gamma-native",
+        &unbound.root,
+        Some("github.com/upstream/second"),
+        &model,
+    );
+    fork["repositoryIdentity"]["origin"] = json!({"canonicalKey": BETA_KEY});
+    unbound.shell(&[
+        t3_project("a-other-folder", &elsewhere, Some(BETA_KEY), &model),
+        t3_project(
+            "b-other-repository",
+            &unbound.root,
+            Some("github.com/example/third"),
+            &model,
+        ),
+        fork,
+    ]);
+    unbound.send_to_planner().await;
+    unbound.registry.advance_tell().await.expect("launch");
+    unbound.assert_launched("gamma-native", &model).await;
+    assert_eq!(unbound.progress().await, [("assess".into(), None)]);
+}
+
+#[tokio::test]
+async fn item_assess_uses_the_settings_planner_model_when_t3_has_no_default() {
+    for chosen in [None, Some("medium")] {
+        let unbound = UnboundProject::new().await;
+        unbound.shell(&[t3_project(
+            "gamma-native",
+            &unbound.root,
+            Some(BETA_KEY),
+            &Value::Null,
+        )]);
+        if let Some(effort) = chosen {
+            let current =
+                json_body(get_as(&unbound.registry.api, "/v1/settings/dispatch", &BOARD_KEY).await)
+                    .await;
+            assert_eq!(
+                current["value"]["plannerModel"],
+                json!({"provider": "claude", "model": "claude-opus-5-5", "effort": "high"})
+            );
+            let mut value = current["value"].clone();
+            value["plannerModel"]["effort"] = json!(effort);
+            let saved = planning::put_as(
+                &unbound.registry.api,
+                "/v1/settings/dispatch",
+                &BOARD_KEY,
+                &json!({"revision": current["revision"], "value": value}),
+            )
+            .await;
+            assert_eq!(saved.status(), StatusCode::OK);
+        }
+        unbound.send_to_planner().await;
+
+        // The model list hasn't arrived: the send waits and says so once.
+        unbound.registry.advance_tell().await.expect("wait");
+        unbound.registry.advance_tell().await.expect("wait again");
+        assert!(unbound.queued().await);
+        assert_eq!(
+            unbound.progress().await[1..],
+            [(
+                "assess_blocked".into(),
+                Some("Can't start a planner: T3's model list hasn't arrived yet".into())
+            )]
+        );
+
+        unbound.registry.notices.lock().unwrap().server_config = Some(json!({
+            "environment": {"orchestrationProtocolVersion": 2},
+            "providers": [{
+                "instanceId": "claudeAgent", "driver": "claudeAgent", "enabled": true,
+                "status": "ready",
+                "models": [{"slug": "claude-opus-5-5", "name": "Claude Opus 5.5",
+                    "capabilities": {"optionDescriptors": [{
+                        "id": "effort", "label": "Reasoning", "type": "select",
+                        "options": [{"id": "medium", "label": "Medium"},
+                            {"id": "high", "label": "High", "isDefault": true}]
+                    }]}}]
+            }]
+        }));
+        let pass = unbound.registry.service.host.pass(&unbound.root);
+        nucleus_hosts::TaskHost::profile_catalog(&pass)
+            .await
+            .expect("model list");
+        unbound.registry.advance_tell().await.expect("launch");
+        unbound
+            .assert_launched(
+                "gamma-native",
+                &json!({"instanceId": "claudeAgent", "model": "claude-opus-5-5",
+                    "options": [{"id": "effort", "value": chosen.unwrap_or("high")}]}),
+            )
+            .await;
+        assert_eq!(
+            unbound.progress().await.last().unwrap(),
+            &("assess_reached".into(), None)
+        );
+    }
+}
+
+#[tokio::test]
+async fn item_assess_without_a_matching_t3_project_stops_until_sent_again() {
+    let unbound = UnboundProject::new().await;
+    let model = json!({"instanceId": "codex", "model": "gpt-5"});
+    let other = t3_project(
+        "other-native",
+        &unbound.root,
+        Some("github.com/example/third"),
+        &model,
+    );
+    unbound.shell(std::slice::from_ref(&other));
+    let blocked = (
+        "assess_blocked".to_owned(),
+        Some("Can't start a planner: no T3 project matches example/second".to_owned()),
+    );
+    for _ in 0..2 {
+        unbound.send_to_planner().await;
+        unbound.registry.advance_tell().await.expect("stop");
+        assert!(!unbound.queued().await, "the send must not retry");
+    }
+    assert_eq!(
+        unbound.progress().await,
+        [
+            ("assess".into(), None),
+            blocked.clone(),
+            ("assess".into(), None),
+            blocked,
+        ]
+    );
+    assert!(unbound.registry.notices.lock().unwrap().launches.is_empty());
+
+    unbound.shell(&[
+        other,
+        t3_project("gamma-native", &unbound.root, Some(BETA_KEY), &model),
+    ]);
+    unbound.send_to_planner().await;
+    unbound.registry.advance_tell().await.expect("launch");
+    unbound.assert_launched("gamma-native", &model).await;
+}
+
+#[tokio::test]
+async fn item_assess_waits_for_t3_to_identify_the_repository() {
+    let unbound = UnboundProject::new().await;
+    let model = json!({"instanceId": "codex", "model": "gpt-5"});
+    unbound.shell(&[t3_project("gamma-native", &unbound.root, None, &model)]);
+    unbound.send_to_planner().await;
+    unbound.registry.advance_tell().await.expect("wait");
+    assert!(unbound.queued().await);
+    assert_eq!(
+        unbound.progress().await[1..],
+        [(
+            "assess_blocked".into(),
+            Some(
+                "Can't start a planner: T3 hasn't identified the repository for example/second yet"
+                    .into()
+            )
+        )]
+    );
+    unbound.shell(&[t3_project(
+        "gamma-native",
+        &unbound.root,
+        Some(BETA_KEY),
+        &model,
+    )]);
+    unbound.registry.advance_tell().await.expect("launch");
+    unbound.assert_launched("gamma-native", &model).await;
+}
+
+#[tokio::test]
+async fn item_assess_progress_stays_with_its_own_send() {
+    let unbound = UnboundProject::new().await;
+    let model = json!({"instanceId": "codex", "model": "gpt-5"});
+    let unidentified = t3_project("gamma-native", &unbound.root, None, &model);
+    unbound.shell(std::slice::from_ref(&unidentified));
+    unbound.send_to_planner().await;
+    unbound.registry.advance_tell().await.expect("first waits");
+
+    // Send again while the first still waits; the newer send is due first.
+    unbound.shell(&[t3_project(
+        "other-native",
+        &unbound.root,
+        Some("github.com/example/third"),
+        &model,
+    )]);
+    unbound.send_to_planner().await;
+    unbound.registry.advance_tell().await.expect("second stops");
+    unbound.shell(&[t3_project(
+        "gamma-native",
+        &unbound.root,
+        Some(BETA_KEY),
+        &model,
+    )]);
+    unbound
+        .registry
+        .advance_tell()
+        .await
+        .expect("first launches");
+
+    unbound.assert_launched("gamma-native", &model).await;
+    // Only the launched send is still due, to confirm delivery. The newer one stays stopped.
+    let due = unbound
+        .registry
+        .service
+        .state
+        .lock()
+        .await
+        .store
+        .next_tell();
+    assert!(matches!(
+        due.unwrap().unwrap().state,
+        nucleus_store::TellState::Accepted(_)
+    ));
+    assert_eq!(
+        unbound.outcomes().await,
+        [
+            ("assess_blocked".into(), 0),
+            ("assess_blocked".into(), 1),
+            ("assess_reached".into(), 0),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn item_assess_records_causes_for_sends_queued_by_the_earlier_engine() {
+    let unbound = UnboundProject::new().await;
+    unbound.shell(&[]);
+    for _ in 0..2 {
+        unbound.send_to_planner().await;
+        // The two sends need distinct times, as two clicks have.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // The earlier engine's history entry held only the item and its recipient.
+    let database = unbound
+        .registry
+        .service
+        .storage
+        .database()
+        .path()
+        .join("engine.sqlite");
+    let rewritten = rusqlite::Connection::open(database)
+        .unwrap()
+        .execute(
+            "UPDATE planning_history SET snapshot = json_remove(snapshot, '$.tell')
+             WHERE action = 'assess'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(rewritten, 2);
+
+    for _ in 0..2 {
+        unbound.registry.advance_tell().await.expect("stop");
+    }
+    assert!(!unbound.queued().await);
+    assert_eq!(
+        unbound.outcomes().await,
+        [("assess_blocked".into(), 0), ("assess_blocked".into(), 1)]
+    );
+    assert_eq!(
+        unbound.progress().await.last().unwrap().1.as_deref(),
+        Some("Can't start a planner: no T3 project matches example/second")
+    );
+}
+
 async fn watch_via(api: &Router, actor: &str, selector: &str, verb: &str) -> Response {
     let encoded = selector.replace('/', "%2F").replace('#', "%23");
     caller_request(

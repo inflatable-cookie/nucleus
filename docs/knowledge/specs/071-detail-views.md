@@ -14,6 +14,22 @@ Tom accepted the planner's recommendations on 2026-11-26:
 6. Leads and papercuts gain reopen (parked or dropped back to open). A revisit date marks a parked item due; it does not reopen automatically.
 7. **Leads and papercuts go to their planner for assessment, not straight to a task.** Tom, 2026-11-27: "Rather than turning the papercut straight into a task, the promote button should send a message to the planner (and maybe start one if there isn't one) asking to assess the issue, kill it if its stale, dispatch it with a brief if not. Directly converting a papercut to a task isn't actually useful", then: "The same would apply to leads to". An open or parked lead or papercut offers **Send to planner** instead of Promote, with no repository or complexity choice. Nucleus sends the project's planner one queued message carrying the item's kind, title, ID and body, and asks it to assess the item. If it is stale, already done or no longer wanted, the planner drops it with the right disposition. If it is still worth doing, the planner writes or updates the brief and dispatches it, choosing repository and complexity itself. Either way, the planner's answer is on the item: a drop note giving the reason, or a link to the promoted task. The message goes to the claimed planner, or by fallback to the project's most recently active thread (ruling 41 of Spec 070). If the project has no thread at all, Nucleus starts a planner thread in the project's bound T3 project with that message as its first prompt. The item keeps its state and shows that it is with the planner and since when, with Send again. Its state changes when the planner drops or promotes it. The operator Promote action is removed from the board. Planners still promote through the CLI.
 
+   Starting that planner needs no earlier enrollment (nucleus#1665, 2026-11-27):
+
+   - Without a bound repository, Nucleus takes the project's primary (first)
+     repository and looks in the held T3 project list, with no extra calls, for
+     the project at its exact checkout root whose repository identity is that
+     origin. Claiming the new planner binds it.
+   - The planner uses the T3 project's default model. Without one it uses the
+     planner model in Settings → Limits, which defaults to Claude Opus 5.5 at
+     high thinking.
+   - A planner that can't start yet records why on the item and in the log, and
+     the item shows the latest send's cause under "With planner since". An earlier
+     send still records its own progress without changing that. The send retries
+     while the cause can clear on its own. It stops when no T3 project matches,
+     that T3 project is bound to another repository, or the project is archived or
+     has no repository. Send again retries it.
+
 ## Lifecycle journal facts
 
 Task updates record each phase transition with its previous and new phases at

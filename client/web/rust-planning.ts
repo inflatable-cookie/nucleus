@@ -222,6 +222,7 @@ export function listenForPlanningIssues(
 
 const history = z.array(
   z.object({
+    sequence: z.number().int(),
     actor: z.string(),
     actorLabel: z.string().default("Agent thread"),
     recipientLabel: z.string().optional(),
@@ -235,6 +236,8 @@ const historySnapshot = z.object({
   note: z.string().optional(),
   disposition: z.enum(["completed", "deprecated"]).optional(),
   recipient: z.string().optional(),
+  cause: z.string().optional(),
+  send: z.number().int().optional(),
 });
 
 async function laneRevision(
@@ -505,11 +508,13 @@ export function createRustPlanning(
           actorLabel: entry.actorLabel,
           atMs: entry.atMs,
           action: entry.action,
-          note: snapshot?.note ?? null,
+          // Why an assessment send is waiting shows as that entry's note.
+          note: (entry.action === "assess_blocked" ? snapshot?.cause : snapshot?.note) ?? null,
           disposition:
             entry.action === "drop" ? (snapshot?.disposition ?? "deprecated") : null,
           recipient: entry.action === "assess" ? (snapshot?.recipient ?? null) : null,
           recipientLabel: entry.action === "assess" ? (entry.recipientLabel ?? null) : null,
+          send: entry.action === "assess" ? entry.sequence : (snapshot?.send ?? null),
         };
       }),
     };
