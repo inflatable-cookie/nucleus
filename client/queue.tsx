@@ -49,7 +49,6 @@ import { InboxMenu, type BoardView } from "./board/inbox-menu";
 import {
   ProjectsOverview,
   projectOverviewColumns,
-  type ProjectListView,
   type ProjectSelectorInputs,
 } from "./board/projects-overview";
 import { useBoardSelection } from "./board/use-board-selection";
@@ -430,11 +429,6 @@ export function MainSurface({
     if (next !== view) clearSelection();
     setView(next);
     setMenuOpen(false);
-  };
-  /** A Projects header count: its list, with the project filter on that project. */
-  const openProjectList = (project: string, next: ProjectListView) => {
-    setScope({ projects: [project] });
-    openView(next);
   };
   const laneName = (key: string) =>
     lanes.find((lane) => lane.key === key)?.title ?? key;
@@ -910,7 +904,18 @@ export function MainSurface({
                 narrowWidth={narrow && panelWidth > 0 ? panelWidth : null}
                 badge={itemBadge}
                 rust={rustListProps}
-                onOpenList={openProjectList}
+                items={{
+                  selected:
+                    selectedLeadId || openPapercutId
+                      ? {
+                          id: (selectedLeadId ?? openPapercutId)!,
+                          project: recordProject,
+                        }
+                      : null,
+                  repositoryBadges: state?.repositoryBadges,
+                  onSelectLead: (id, project) => selectLead(id, null, project),
+                  onSelectPapercut: selectPapercut,
+                }}
               />
             ) : (
               <>

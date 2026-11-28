@@ -161,6 +161,37 @@ test("answered decisions mark the choice and retain answer metadata", async () =
   }
 });
 
+test("Enter on an unselected card selects it and never submits another choice", async () => {
+  const { ui, answers, close } = await setup(base);
+  try {
+    ui.get("Use option: First, recommended").props.onKeyDown({
+      key: " ",
+      preventDefault() {},
+    });
+    assert.equal(ui.get("Operator answer").props.value, "First");
+    const second = ui.get("Use option: Second");
+    second.props.onKeyDown({ key: "Enter", preventDefault() {} });
+    // React Native Web presses the card again on the Enter keyup.
+    ui.get("Use option: Second").props.onPress();
+    assert.equal(ui.get("Operator answer").props.value, "Second");
+    assert.equal(
+      ui.get("Use option: Second").props.accessibilityState.checked,
+      true,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(answers.length, 0);
+    ui.get("Use option: Second").props.onKeyDown({
+      key: "Enter",
+      preventDefault() {},
+    });
+    ui.get("Use option: Second").props.onPress();
+    await waitFor(() => answers.length === 1, 4000, "keyboard answer");
+    assert.equal(answers[0].optionId, "two");
+  } finally {
+    close();
+  }
+});
+
 test("arrow keys move focus and Enter submits the selected choice", async () => {
   const { ui, answers, close } = await setup(base);
   try {

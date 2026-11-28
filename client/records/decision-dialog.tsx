@@ -73,6 +73,7 @@ export function DecisionDialog({
   const [decisionDetailsOpen, setDecisionDetailsOpen] = useState(false);
   const [decisionAnswerText, setDecisionAnswerText] = useState("");
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
+  const enterPressed = useRef(false);
   const [pendingDecisionOption, setPendingDecisionOption] = useState<
     string | null
   >(null);
@@ -260,7 +261,14 @@ export function DecisionDialog({
                       label={`Use option: ${choice.displayLabel}${choice.label === recommended ? ", recommended" : ""}${active && edited ? ", edited" : ""}`}
                       selected={active || chosen}
                       disabled={decisionDetail.status !== "open"}
-                      onPress={() => selectChoice(index)}
+                      onPress={() => {
+                        // React Native Web also presses on the Enter keyup.
+                        if (enterPressed.current) {
+                          enterPressed.current = false;
+                          return;
+                        }
+                        selectChoice(index);
+                      }}
                       onKeyDown={(event) => {
                         if (
                           [
@@ -292,7 +300,15 @@ export function DecisionDialog({
                           selectChoice(index);
                         } else if (event.key === "Enter") {
                           event.preventDefault();
-                          submitAnswer();
+                          // Enter answers only from the selected card, so it
+                          // never sends a different choice than the one focused.
+                          if (active) {
+                            enterPressed.current = true;
+                            submitAnswer();
+                          } else {
+                            selectChoice(index);
+                            enterPressed.current = true;
+                          }
                         }
                       }}
                       style={{

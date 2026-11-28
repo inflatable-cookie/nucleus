@@ -1,0 +1,1 @@
+- Decision dialog: Enter on a choice card that isn't selected now selects it instead of submitting the selected answer.
