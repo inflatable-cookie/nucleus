@@ -357,7 +357,6 @@ async fn task_prompt(
         return Ok(());
     }
     let detail = client.detail().await?;
-    let hold = !detail.phase.is_terminal() && detail.parent_hold.as_deref() == Some(prompt);
     let updates = {
         let mut view = view.lock().await;
         let replay = !std::mem::replace(&mut view.prompt_seen, true);
@@ -366,7 +365,7 @@ async fn task_prompt(
     for update in updates {
         notify(output, session, update);
     }
-    if !hold {
+    if !detail.holds(prompt) {
         return Ok(());
     }
     let mut delay = 1;
@@ -376,15 +375,10 @@ async fn task_prompt(
             loop {
                 stream.next().await?;
                 let detail = client.detail().await?;
-                let hold = !detail.phase.is_terminal()
-                    && detail
-                        .parent_hold
-                        .as_deref()
-                        .map_or(detail.active_child, |current| current == prompt);
                 for update in view.lock().await.update(&detail, structured, false) {
                     notify(output, session, update);
                 }
-                if !hold {
+                if !detail.holds(prompt) {
                     return Ok(());
                 }
                 delay = 1;

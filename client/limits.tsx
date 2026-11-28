@@ -202,6 +202,8 @@ const CAPACITY_FIELDS = [
 ] as const;
 type CapacityKey = (typeof CAPACITY_FIELDS)[number]["key"];
 type LimitSpec = (typeof CAPACITY_FIELDS)[number];
+/** The weight slot cards, which share a row. */
+const WEIGHT_SLOTS = new Set<string>(["heavySlots", "normalSlots", "lightSlots"]);
 
 /** A limits read that has not settled: loading, a failed first read, or a failed refresh. Nothing here writes, so Try again is always safe. */
 function ReadNotice({
@@ -298,6 +300,8 @@ function TaskSlots({
       <NumberStepper
         key={spec.key}
         card
+        // The weight cards share a row: stacked, a short label like Light lines up with Heavy and Normal.
+        stacked={WEIGHT_SLOTS.has(spec.key)}
         c={c}
         label={name}
         a11yLabel={`${name} dispatch limit (slots, ${spec.min}–${spec.max})`}

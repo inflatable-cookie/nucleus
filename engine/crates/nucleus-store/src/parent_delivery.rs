@@ -1,4 +1,4 @@
-use rusqlite::{OptionalExtension, Row, params};
+use rusqlite::{OptionalExtension, Row, Transaction, params};
 
 use crate::{Store, StoreError};
 
@@ -28,43 +28,65 @@ pub struct ParentDelivery {
     pub result: ParentResult,
 }
 
-fn delivery(row: &Row<'_>) -> rusqlite::Result<ParentDelivery> {
-    let result = match row.get_ref(6)?.as_str()? {
-        // Schema 12 used three additional outcomes. Any exact command that
-        // wasn't accepted can now be retried using its original ID.
-        "pending" | "refused" | "failed" | "held" => ParentResult::Pending,
+fn delivery_table(refresh: bool) -> &'static str {
+    if refresh {
+        "parent_refresh_deliveries"
+    } else {
+        "parent_deliveries"
+    }
+}
+
+pub(super) fn migrate(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch("ALTER TABLE parent_deliveries RENAME TO parent_deliveries_v15;")?;
+    tx.execute_batch(include_str!("parent_delivery.sql"))?;
+    for refresh in [false, true] {
+        let table = delivery_table(refresh);
+        tx.execute(
+            &format!(
+                "INSERT INTO {table} (task_id, version, command, wire, legacy_prompt, due_ms, result)
+                 SELECT task_id, version, command, wire, legacy_prompt, due_ms,
+                        CASE result WHEN 'accepted' THEN 'accepted' ELSE 'pending' END
+                 FROM parent_deliveries_v15 WHERE ordinal IN (
+                     SELECT max(ordinal) FROM parent_deliveries_v15
+                     WHERE refresh=?1 AND command<>'' GROUP BY task_id
+                 )"
+            ),
+            [refresh],
+        )?;
+    }
+    tx.execute_batch("DROP TABLE parent_deliveries_v15;")
+}
+
+fn delivery(row: &Row<'_>, refresh: bool) -> rusqlite::Result<ParentDelivery> {
+    let result = match row.get_ref(5)?.as_str()? {
+        "pending" => ParentResult::Pending,
         "accepted" => ParentResult::Accepted,
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     Ok(ParentDelivery {
         version: row.get(0)?,
         command: row.get(1)?,
-        refresh: row.get(2)?,
-        wire: row.get(3)?,
-        legacy_prompt: row.get(4)?,
-        due_ms: row.get(5)?,
+        refresh,
+        wire: row.get(2)?,
+        legacy_prompt: row.get(3)?,
+        due_ms: row.get(4)?,
         result,
     })
 }
 
 impl Store {
-    /// Read the delivery rows for the requested task version.
+    /// Read the task version's one-shot refresh independently of its hold.
     ///
     /// # Errors
-    /// Returns an error if the delivery rows cannot be read.
-    pub fn parent_deliveries(
+    /// Returns an error if the refresh cannot be read.
+    pub fn current_parent_refresh(
         &self,
         task: &str,
         version: i64,
-    ) -> Result<Vec<ParentDelivery>, StoreError> {
-        let mut query = self.connection.prepare_cached(
-            "SELECT version, command, refresh, wire, legacy_prompt, due_ms, result
-             FROM parent_deliveries WHERE task_id=?1 AND version=?2 AND command<>''
-             ORDER BY ordinal DESC",
-        )?;
-        Ok(query
-            .query_map(params![task, version], delivery)?
-            .collect::<Result<_, _>>()?)
+    ) -> Result<Option<ParentDelivery>, StoreError> {
+        Ok(self
+            .parent_delivery(task, true)?
+            .filter(|row| row.version == version))
     }
 
     /// Read the task's one current hold across role and task version changes.
@@ -72,15 +94,22 @@ impl Store {
     /// # Errors
     /// Returns an error if the row cannot be read.
     pub fn current_parent_hold(&self, task: &str) -> Result<Option<ParentDelivery>, StoreError> {
+        self.parent_delivery(task, false)
+    }
+
+    fn parent_delivery(
+        &self,
+        task: &str,
+        refresh: bool,
+    ) -> Result<Option<ParentDelivery>, StoreError> {
+        let table = delivery_table(refresh);
         Ok(self
             .connection
-            .query_row(
-                "SELECT version, command, refresh, wire, legacy_prompt, due_ms, result
-             FROM parent_deliveries WHERE task_id=?1 AND refresh=0 AND command<>''
-             ORDER BY ordinal DESC LIMIT 1",
-                [task],
-                delivery,
-            )
+            .prepare_cached(&format!(
+                "SELECT version, command, wire, legacy_prompt, due_ms, result
+                 FROM {table} WHERE task_id=?1"
+            ))?
+            .query_row([task], |row| delivery(row, refresh))
             .optional()?)
     }
 
@@ -90,10 +119,9 @@ impl Store {
     /// Returns an error if the delivery record cannot be read.
     pub fn pending_parent_preparation(&self, task: &str, version: i64) -> Result<bool, StoreError> {
         Ok(self.connection.query_row(
-            "SELECT coalesce((SELECT result<>'accepted' FROM parent_deliveries
-             WHERE task_id=?1 AND version=?2 AND command<>'' AND refresh=0
-               AND coalesce(json_extract(wire, '$.checkpoint.preparing_launch'), 1)
-             ORDER BY ordinal DESC LIMIT 1), 0)",
+            "SELECT EXISTS(SELECT 1 FROM parent_deliveries
+             WHERE task_id=?1 AND version=?2 AND result='pending'
+               AND coalesce(json_extract(wire, '$.checkpoint.preparing_launch'), 1))",
             params![task, version],
             |row| row.get(0),
         )?)
@@ -108,29 +136,18 @@ impl Store {
         task: &str,
         value: &ParentDelivery,
     ) -> Result<bool, StoreError> {
-        let tx = self.connection.unchecked_transaction()?;
-        let inserted = tx.execute(
-            "INSERT INTO parent_deliveries (task_id,version,command,refresh,wire,due_ms,result)
-             SELECT id,version,?3,?4,?5,?6,'pending' FROM tasks WHERE id=?1 AND version=?2
-             ON CONFLICT(task_id, version, command) DO NOTHING",
-            params![
-                task,
-                value.version,
-                value.command,
-                value.refresh,
-                value.wire,
-                value.due_ms
-            ],
-        )? == 1;
-        if inserted && !value.refresh {
-            tx.execute(
-                "DELETE FROM parent_deliveries
-                 WHERE task_id=?1 AND refresh=0 AND ordinal<>last_insert_rowid()",
-                [task],
-            )?;
-        }
-        tx.commit()?;
-        Ok(inserted)
+        let table = delivery_table(value.refresh);
+        Ok(self.connection.execute(
+            &format!(
+                "INSERT INTO {table} (task_id,version,command,wire,due_ms,result)
+             SELECT id,version,?3,?4,?5,'pending' FROM tasks WHERE id=?1 AND version=?2
+             ON CONFLICT(task_id) DO UPDATE SET
+                 version=excluded.version, command=excluded.command, wire=excluded.wire,
+                 due_ms=excluded.due_ms, legacy_prompt=NULL, result='pending'
+             WHERE {table}.version<>excluded.version OR {table}.command<>excluded.command"
+            ),
+            params![task, value.version, value.command, value.wire, value.due_ms],
+        )? == 1)
     }
 
     /// Store a due retry of the same command or its replacement after rejection.
@@ -146,11 +163,14 @@ impl Store {
         wire: &str,
         due_ms: i64,
     ) -> Result<(), StoreError> {
+        let table = delivery_table(delivery.refresh);
         let count = self.connection.execute(
-            "UPDATE parent_deliveries
-             SET command=?5, wire=?6, due_ms=?7, runtime=NULL, legacy_prompt=NULL, result='pending'
+            &format!(
+                "UPDATE {table}
+             SET command=?5, wire=?6, due_ms=?7, legacy_prompt=NULL, result='pending'
              WHERE task_id=?1 AND version=?2 AND command=?3 AND result<>'accepted'
-               AND EXISTS (SELECT 1 FROM tasks WHERE id=?1 AND version=?4)",
+               AND EXISTS (SELECT 1 FROM tasks WHERE id=?1 AND version=?4)"
+            ),
             params![
                 task,
                 delivery.version,
@@ -179,10 +199,13 @@ impl Store {
         result: ParentResult,
         due_ms: i64,
     ) -> Result<(), StoreError> {
+        let table = delivery_table(delivery.refresh);
         let count = self.connection.execute(
-            "UPDATE parent_deliveries SET result=?6, due_ms=?7
+            &format!(
+                "UPDATE {table} SET result=?6, due_ms=?7
              WHERE task_id=?1 AND version=?2 AND command=?3 AND (result='accepted')=?4
-               AND EXISTS (SELECT 1 FROM tasks WHERE id=?1 AND version=?5)",
+               AND EXISTS (SELECT 1 FROM tasks WHERE id=?1 AND version=?5)"
+            ),
             params![
                 task,
                 delivery.version,
