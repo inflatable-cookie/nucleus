@@ -233,7 +233,8 @@ impl Task {
             self.observe_pr(pr);
         }
         if phase == Phase::Reviewing
-            && let (Some(author), Some(Report::Work(work))) = (&mut self.review_author, &report)
+            && let (Some(author), Some(Report::Work(work))) =
+                (&mut self.threads.review_author, &report)
             && self.pr.as_ref() == Some(&work.pull_request)
         {
             author.worker_head = Some(work.pull_request.head.clone());

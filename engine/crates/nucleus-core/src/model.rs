@@ -619,6 +619,9 @@ pub struct Threads {
     reviewer_profile: Option<Box<BoundProfile>>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) earlier_worker_models: BTreeSet<String>,
+    /// External contributor evidence belongs to the same durable role history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) review_author: Option<Box<ReviewAuthor>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) complexity_raised_at: Option<NonZeroU64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -731,8 +734,6 @@ pub struct Task {
     pub(crate) threads: Threads,
     pub(crate) run: Option<Run>,
     pub(crate) pr: Option<PullRequest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) review_author: Option<Box<ReviewAuthor>>,
     pub(crate) verdict: Option<Verdict>,
     pub(crate) attempts: u8,
     pub(crate) question: Option<OpenQuestion>,
@@ -755,7 +756,6 @@ struct StoredTask {
     threads: Threads,
     run: Option<Run>,
     pr: Option<PullRequest>,
-    review_author: Option<Box<ReviewAuthor>>,
     verdict: Option<Verdict>,
     attempts: u8,
     question: Option<OpenQuestion>,
@@ -805,7 +805,7 @@ impl TryFrom<StoredTask> for Task {
         if stored.attempts > 3 {
             return Err("stored attempt count exceeds the retry limit".into());
         }
-        if stored.review_author.as_ref().is_some_and(|author| {
+        if stored.threads.review_author.as_ref().is_some_and(|author| {
             stored.identity.entry != Entry::ReviewEntry || !author.declaration.is_valid()
         }) {
             return Err("stored author declaration does not match its review entry".into());
@@ -842,7 +842,6 @@ impl TryFrom<StoredTask> for Task {
             threads: stored.threads,
             run: stored.run,
             pr: stored.pr,
-            review_author: stored.review_author,
             verdict: stored.verdict,
             attempts: stored.attempts,
             question: stored.question,
@@ -874,7 +873,6 @@ impl Task {
             threads: Threads::default(),
             run: None,
             pr,
-            review_author: None,
             verdict: None,
             attempts: 0,
             question: None,
@@ -892,12 +890,12 @@ impl Task {
         let pr = self.pr.as_ref()?;
         if self.identity.entry != Entry::ReviewEntry
             || self.threads.launch_sequence != 0
-            || self.review_author.is_some()
+            || self.threads.review_author.is_some()
             || !declaration.is_valid()
         {
             return None;
         }
-        self.review_author = Some(Box::new(ReviewAuthor {
+        self.threads.review_author = Some(Box::new(ReviewAuthor {
             head: pr.head.clone(),
             worker_head: None,
             declaration,
@@ -908,7 +906,7 @@ impl Task {
     /// Return the external author evidence when the task head has known provenance.
     #[must_use]
     pub fn review_author(&self) -> Option<&AuthorDeclaration> {
-        let author = self.review_author.as_ref()?;
+        let author = self.threads.review_author.as_ref()?;
         let head = &self.pr.as_ref()?.head;
         (head == &author.head || Some(head) == author.worker_head.as_ref())
             .then_some(&author.declaration)

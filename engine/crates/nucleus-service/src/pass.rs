@@ -3768,7 +3768,9 @@ mod tests {
                 reserved.identity().clone(),
                 reserved.brief().text.clone(),
                 reserved.pull_request().cloned(),
-            );
+            )
+            .with_author_declaration(crate::tests::author_declaration())
+            .expect("declare the external author");
             let _ = task.reconcile(&observation);
             service
                 .state

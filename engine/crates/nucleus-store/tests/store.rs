@@ -1220,6 +1220,7 @@ fn profile_reservation(store: &mut Store, id: &str, role: Role) -> (TaskRow, Tas
     let _ = task.reconcile(&observation);
     store.create(&task, &event("admitted")).expect("admit");
     let row = row(store, id);
+    assert_eq!(row.task.review_author(), task.review_author());
     let profile = Profile {
         id: "greeting".into(),
         capability: Capability::Worker,

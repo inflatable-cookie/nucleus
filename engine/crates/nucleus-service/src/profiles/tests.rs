@@ -323,15 +323,13 @@ async fn review_entry_routes_attested_authors_through_review_and_first_revision(
 }
 
 async fn admit_attested_fixture(service: &Service, id: &str, pr: &PullRequest) -> TaskRow {
-    let mut declaration = nucleus_core::AuthorDeclaration {
-        models: vec!["fixture/FIRST".into()],
+    let declaration = crate::tests::author_declaration();
+    let mismatch = nucleus_core::AuthorDeclaration {
         github_author: "unverified-author".into(),
-        authoring_system: "fixture".into(),
-        attested_by: "operator".into(),
-        provenance: "Verified the fixture's authoring records.".into(),
+        ..declaration.clone()
     };
     assert!(matches!(
-        admit_review_entry(service, "wrong-author", pr, Some(declaration.clone())).await,
+        admit_review_entry(service, "wrong-author", pr, Some(mismatch)).await,
         Err(ServiceError::AuthorDeclaration(_))
     ));
     let missing = admit_review_entry(service, "missing-author", pr, None)
@@ -351,7 +349,6 @@ async fn admit_attested_fixture(service: &Service, id: &str, pr: &PullRequest) -
             .is_none()
     );
 
-    declaration.github_author = "fixture-author".into();
     let admitted = admit_review_entry(service, id, pr, Some(declaration))
         .await
         .unwrap();
