@@ -240,12 +240,9 @@ impl Inventory {
                 .next()
                 .and_then(|parent| parent.parse::<u32>().ok())
                 .ok_or(HostError::Protocol)?;
-            // `ps` prints a uid outside u32, such as -2 for a system daemon. That row
-            // is never this user's, so it must not fail the whole census.
-            let uid = columns.next().ok_or(HostError::Protocol)?;
+            let uid = parse_uid(columns.next().ok_or(HostError::Protocol)?)?;
             let status = columns.next().ok_or(HostError::Protocol)?;
-            if pid != probe_pid && uid.parse::<u32>().ok() == Some(user) && !status.starts_with('Z')
-            {
+            if pid != probe_pid && uid == user && !status.starts_with('Z') {
                 let mut process = by_pid.remove(&pid).unwrap_or_default();
                 process.parent = parent;
                 live.insert(pid, process);
@@ -370,6 +367,19 @@ fn gone(pid: u32) -> bool {
         .ok()
         .and_then(Pid::from_raw)
         .is_some_and(|pid| test_kill_process(pid) == Err(Errno::SRCH))
+}
+
+/// The uid `ps` prints, as the unsigned value the kernel stores. `ps` prints a uid above
+/// `i32::MAX` in signed form, so `-2` is uid 4294967294 (the `nobody` account on macOS).
+/// Anything that is neither a whole number in range nor that signed form is malformed.
+fn parse_uid(text: &str) -> Result<u32, HostError> {
+    let value: i64 = text.parse().map_err(|_| HostError::Protocol)?;
+    let unsigned = match value {
+        -2_147_483_648..=-1 => value + (1 << 32),
+        0..=4_294_967_295 => value,
+        _ => return Err(HostError::Protocol),
+    };
+    u32::try_from(unsigned).map_err(|_| HostError::Protocol)
 }
 
 fn process_paths(stdout: &[u8]) -> Result<HashMap<u32, ProcessPaths>, HostError> {
@@ -719,12 +729,46 @@ mod tests {
     }
 
     #[test]
-    fn a_daemon_with_a_signed_uid_is_not_a_census_failure() {
-        // The row shape `ps -axo pid=,ppid=,uid=,stat=` prints for a uid -2 system daemon.
-        let processes = b"1 0 501 S\n74465 1 -2 Ss\n";
+    fn a_signed_daemon_uid_is_another_users_row_beside_a_live_row() {
+        // The row shapes `ps -axo pid=,ppid=,uid=,stat=` prints for a uid -2 system daemon.
+        let processes = b"1 0 501 S\n74465 1 -2 Ss\n4294967294 1 4294967294 S\n";
         let inventory = Inventory::from_listings(b"", processes, 501, 0).expect("inventory");
         assert!(inventory.processes.contains_key(&1));
         assert!(!inventory.processes.contains_key(&74465));
+        assert!(!inventory.processes.contains_key(&4_294_967_294));
+    }
+
+    #[test]
+    fn a_malformed_or_unrepresentable_uid_fails_the_census() {
+        let rows: [&[u8]; 4] = [
+            b"74466 1 bad S\n",
+            b"74467 1 -2147483649 S\n",
+            b"74468 1 4294967296 S\n",
+            b"74469 1 - S\n",
+        ];
+        for row in rows {
+            let mut processes = b"1 0 501 S\n".to_vec();
+            processes.extend(row);
+            assert!(
+                matches!(
+                    Inventory::from_listings(b"", &processes, 501, 0),
+                    Err(HostError::Protocol)
+                ),
+                "{}",
+                String::from_utf8_lossy(row)
+            );
+        }
+    }
+
+    #[test]
+    fn the_current_uid_matches_in_signed_and_unsigned_form() {
+        // A user whose uid `ps` prints in signed form names the same user as its unsigned value.
+        let processes = b"1 0 -2 S\n2 0 4294967294 S\n3 0 4294967293 S\n";
+        let inventory =
+            Inventory::from_listings(b"", processes, 4_294_967_294, 0).expect("inventory");
+        assert!(inventory.processes.contains_key(&1));
+        assert!(inventory.processes.contains_key(&2));
+        assert!(!inventory.processes.contains_key(&3));
     }
 
     #[test]
