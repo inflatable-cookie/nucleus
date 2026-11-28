@@ -4188,12 +4188,7 @@ async fn verify_released_and_unparked_keep_original_order(registry: &Registry) {
         .schedule
         .park("beta-done-prereq");
 
-    let waiters: Vec<(
-        nucleus_core::profiles::TaskWeight,
-        nucleus_core::QueuePriority,
-        i64,
-        String,
-    )> = registry
+    let waiters: Vec<_> = registry
         .service
         .state
         .lock()
