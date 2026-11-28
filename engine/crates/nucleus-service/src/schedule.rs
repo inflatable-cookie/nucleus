@@ -221,13 +221,6 @@ impl Schedule {
         self.tasks.insert(id.into(), Pending::default());
     }
 
-    pub(crate) fn defer_effect(&mut self, id: &str, due: Instant) {
-        self.reset_workspace(id);
-        let mut pending = Pending::default();
-        pending.wake(due, Priority::Effect);
-        self.tasks.insert(id.into(), pending);
-    }
-
     pub(crate) fn recover_workspace(&mut self, id: &str, now: Instant, phase: Phase) -> bool {
         let next = match self.workspace.get(id).copied() {
             Some(Recovery::CheckAt(due)) if due <= now => Recovery::Blocked,

@@ -65,9 +65,9 @@ fn board_wait_detail(detail: &crate::WaitDetail) -> Option<&str> {
         crate::WaitDetail::BeforeSend(message) => *message,
         crate::WaitDetail::ConfirmingDelivery(message)
         | crate::WaitDetail::Observation(message) => Some(*message),
-        crate::WaitDetail::Blocked(message)
-        | crate::WaitDetail::SlotCap(message)
-        | crate::WaitDetail::OperatorSnoozed { message, .. } => Some(message.as_str()),
+        crate::WaitDetail::Blocked(message) | crate::WaitDetail::SlotCap(message) => {
+            Some(message.as_str())
+        }
         crate::WaitDetail::Archive(_) | crate::WaitDetail::Prerequisites(_) => None,
     }
 }
@@ -1367,7 +1367,6 @@ impl Summary {
 struct CardInputs {
     observed_wait: Option<crate::TaskWait>,
     dependencies_block: bool,
-    snooze: Option<crate::WaitDetail>,
     state_label: String,
     attention: crate::attention::TaskAttention,
 }
@@ -1384,7 +1383,6 @@ impl CardInputs {
         let detail = observed_wait.as_ref().and_then(|wait| wait.detail.as_ref());
         Ok(Self {
             state_label: state.display_state_label(task, wait, detail)?,
-            snooze: state.operator_snoozes.get(&task.identity().id).filter(|snooze| matches!(snooze, crate::WaitDetail::OperatorSnoozed { until, .. } if *until > crate::now_ms())).cloned(),
             observed_wait,
             dependencies_block,
             attention: state.task_attention_with_dependencies(row, || Ok(dependencies_block))?,
@@ -1482,14 +1480,8 @@ impl Card {
                     return None;
                 }
                 board_wait_detail(detail?)
-            });
-        let snooze = inputs.snooze.as_ref().and_then(board_wait_detail);
-        let wait_detail = match (wait_detail, snooze) {
-            (Some(reason), Some(snooze)) => Some(format!("{reason} {snooze}")),
-            (Some(reason), None) => Some(reason.to_owned()),
-            (None, Some(snooze)) => Some(snooze.to_owned()),
-            (None, None) => None,
-        };
+            })
+            .map(str::to_owned);
         Ok(Self {
             identity: task.identity().clone(),
             title: crate::titles::brief(task),

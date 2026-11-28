@@ -200,7 +200,9 @@ impl Service {
             return Err(ServiceError::Input);
         }
         let sent = self.save(row, updated, &event("question_delivery")).await?;
-        let result = self.host.send_notice(dispatch).await;
+        let result = self
+            .send_notice_preserving_snooze(Some(&row.task.identity().id), dispatch)
+            .await;
         let not_sent = match &result {
             Ok(NoticeOutcome::NotSent(error)) => Some(*error),
             _ => None,
@@ -521,7 +523,7 @@ mod tests {
             let (host, server) =
                 native_fixture(move |request| snapshot_reply(request, strongest, &checkout)).await;
             service.host = host;
-            service.fixture_mut().acp_provider = Some("fixture-acp".into());
+            service.set_fixture_acp_provider(Some("fixture-acp"));
             let task = Task::new(
                 Identity {
                     id: "notice".into(),
@@ -607,7 +609,7 @@ mod tests {
     async fn a_notice_cannot_send_or_unsettle_outside_the_fixture_project() {
         let (_home, mut service) =
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        service.set_fixture_acp_provider(Some("fixture-acp"));
         let checkout = service.fixture().checkout.clone();
         let (host, server) =
             native_fixture(move |request| snapshot_reply(request, "outside", &checkout)).await;

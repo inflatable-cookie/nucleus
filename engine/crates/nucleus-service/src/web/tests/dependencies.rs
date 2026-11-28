@@ -1,3 +1,4 @@
+use crate::tests::registry_fixture;
 use nucleus_store::TaskRow;
 
 use super::*;
@@ -25,7 +26,13 @@ fn controller(service: Arc<Service>) -> Router {
 
 async fn add(service: &Service, id: &str, brief: &str) -> TaskRow {
     service
-        .admit(id.into(), id.into(), brief.into(), &operator())
+        .admit_to(
+            Some(crate::tests::REPOSITORY),
+            id.into(),
+            id.into(),
+            brief.into(),
+            &operator(),
+        )
         .await
         .unwrap()
 }
@@ -197,7 +204,7 @@ async fn dependencies_admit_resolve_and_edit_without_host_reads() {
 
 #[tokio::test]
 async fn dispatched_tasks_cannot_wait_on_each_other() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, service) = registry_fixture(GitHub::new("fixture").unwrap());
     let service = Arc::new(service);
     for id in ["first", "second"] {
         let (running, _, _) = reservation(id, Entry::Brief, &service.fixture().start);

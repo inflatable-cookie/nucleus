@@ -16,7 +16,6 @@ pub(crate) enum ThreadRead<'a> {
     Observation,
     SentRun(&'a str),
     Exact,
-    Visibility,
     Inbox,
 }
 
@@ -32,7 +31,6 @@ impl ThreadRead<'_> {
                 "sentRunBackstop"
             }
             Self::SentRun(_) => "sentRunEvidence",
-            Self::Visibility => "visibilityEvidence",
             Self::Exact => "orderedEvidence",
             Self::Inbox => "inboxEvidence",
         }
@@ -323,6 +321,37 @@ impl ThreadSnapshots {
         json!({"snapshot": {"threads": threads, "projects": projects}})
     }
 
+    pub(crate) fn delivery_cleared_snooze(
+        &self,
+        thread: &str,
+        message: &str,
+        snoozed_at: Option<u64>,
+    ) -> bool {
+        let Some(held) = self.held.get(thread).filter(|held| held.same_marker) else {
+            return false;
+        };
+        let projection = &held.reply["projection"];
+        let row = &projection["thread"];
+        if !row["snoozedUntil"].is_null()
+            || snoozed_at
+                .zip(
+                    row["lastSnoozeWakeAt"]
+                        .as_str()
+                        .and_then(|at| crate::task_row::timestamp_ms(at).ok()),
+                )
+                .is_some_and(|(snoozed, woke)| woke > snoozed)
+        {
+            return false;
+        }
+        [("messages", "id"), ("runs", "userMessageId")]
+            .into_iter()
+            .any(|(collection, key)| {
+                projection[collection]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item[key] == message))
+            })
+    }
+
     pub(crate) fn get(
         &mut self,
         id: &str,
@@ -335,7 +364,7 @@ impl ThreadSnapshots {
         let fresh = held.fresh();
         let overlapping = fresh && requested_at < held.observed_at;
         let reusable = match policy {
-            ThreadRead::Exact | ThreadRead::Visibility => false,
+            ThreadRead::Exact => false,
             ThreadRead::Inbox => held.same_marker || overlapping,
             ThreadRead::Observation => (held.same_marker && !held.active) || overlapping,
             ThreadRead::SentRun(message) => (fresh && held.usable_for_run(message)) || overlapping,

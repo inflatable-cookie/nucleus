@@ -186,10 +186,6 @@ impl Service {
         {
             return Err(HostError::Binding.into());
         }
-        if write.starts_turn() {
-            let thread = write.thread_id().ok_or(ServiceError::Input)?;
-            write.allow_owned_snoozes(self.owned_delivery_snoozes(row, thread).await?);
-        }
         // Record the wire and deadline before sending. A restart or transport
         // error can replay this exact command against T3's durable receipt.
         let attempt = if write.starts_turn() {
@@ -197,9 +193,7 @@ impl Service {
         } else {
             None
         };
-        let result = self
-            .write_parent_with_snooze(row, &command, write, preparing)
-            .await?;
+        let result = self.write_parent(row, write, preparing).await;
         match (result, attempt) {
             (Ok(()), record) => {
                 if let Some((record, _)) = record {
@@ -255,67 +249,44 @@ impl Service {
         let state = self.state.lock().await;
         state
             .store
-            .finish_parent_snooze(id, &record.command, None)?;
-        state
-            .store
             .retry_parent_delivery(id, row.version, record, &command, &wire, due)?;
         Err(parent_delivery_retry(HostError::ParentHoldRejected, due))
     }
 
-    async fn write_parent_with_snooze(
+    async fn write_parent(
         &self,
         row: &TaskRow,
-        command: &str,
         write: ParentWrite,
         preparing: bool,
-    ) -> Result<Result<(), ParentSendError>, ServiceError> {
+    ) -> Result<(), ParentSendError> {
         let id = &row.task.identity().id;
         let starts_turn = write.starts_turn();
         let checkout = PathBuf::from(&write.binding().worktree_path);
-        let mut store_error = None;
+        let mut journal = self.delivery_snooze_journal(Some(id));
         let result = self
             .host
-            .write_parent(write, |snooze| {
-                let state = self.state.try_lock().map_err(|_| HostError::Uncertain)?;
-                let dispatch = state.dispatch_mode();
-                if !self.lookup(&state, id).is_ok_and(|fresh| fresh == *row)
-                    || dispatch == DispatchMode::Stopped
-                    || starts_turn
-                        && !wants_parent_hold(
-                            row,
-                            dispatch,
-                            preparing && dispatch.allows_launch(row.task.first_launch()),
-                            self.active_parent_role(&row.task, &checkout),
-                            crate::now_ms(),
-                        )
-                {
-                    return Err(HostError::Uncertain);
-                }
-                let Some(intent) = snooze else {
-                    return Ok(());
-                };
-                state
-                    .store
-                    .record_parent_snooze(
-                        id,
-                        command,
-                        &intent.thread,
-                        &intent,
-                        intent.until_ms,
-                        crate::now_ms(),
-                    )
-                    .map_err(|error| {
-                        store_error = Some(error);
-                        HostError::Uncertain
-                    })?;
-                self.title_wake.notify_one();
-                Ok(())
+            .write_parent(write, |update| {
+                journal.authorize(update, |state| {
+                    let dispatch = state.dispatch_mode();
+                    if !self.lookup(state, id).is_ok_and(|fresh| fresh == *row)
+                        || dispatch == DispatchMode::Stopped
+                        || starts_turn
+                            && !wants_parent_hold(
+                                row,
+                                dispatch,
+                                preparing && dispatch.allows_launch(row.task.first_launch()),
+                                self.active_parent_role(&row.task, &checkout),
+                                crate::now_ms(),
+                            )
+                    {
+                        return Err(HostError::Uncertain);
+                    }
+                    Ok(())
+                })
             })
             .await;
-        if let Some(error) = store_error {
-            return Err(error.into());
-        }
-        Ok(result)
+        journal.settle().await;
+        result
     }
 
     async fn begin_parent_delivery(

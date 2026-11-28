@@ -7,11 +7,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Binding, HostError, RowChildren, T3, clock_ms,
+    Binding, HostError, RowChildren, T3,
     launch::Method,
     message_id,
     rpc::{Read, Reply, Rpc, ShellRevision, ThreadFence, closed_row},
-    task_row::timestamp_ms,
+    task_row::{DeliverySnooze, SnoozeUpdate, timestamp_ms},
     thread_snapshots::{ShellCustody, ThreadRead, ThreadSnapshots, belongs_to, row_activity},
 };
 
@@ -124,27 +124,7 @@ pub struct ArchiveWrite {
 pub struct ParentWrite {
     wire: FrozenParentWrite,
     unarchive_fence: Option<ThreadFence>,
-    owned_snoozes: Vec<u64>,
     turn: Option<ParentTurn>,
-}
-
-/// Operator visibility intent captured before a parent message can clear it.
-#[derive(Serialize, Deserialize)]
-pub struct ParentSnooze {
-    binding: Binding,
-    provider: String,
-    pub thread: String,
-    message: String,
-    pub until: String,
-    pub until_ms: u64,
-    snoozed_at_ms: Option<u64>,
-}
-
-/// Reconciliation of one recorded operator horizon.
-pub enum SnoozeRestoration {
-    Complete,
-    Pending,
-    Rejected,
 }
 
 /// Immutable inputs to a parent mutation. Live authorization is prepared separately.
@@ -224,7 +204,6 @@ impl ParentWrite {
                 checkpoint: None,
             },
             unarchive_fence: None,
-            owned_snoozes: Vec::new(),
             turn: None,
         }
     }
@@ -242,11 +221,6 @@ impl ParentWrite {
     #[must_use]
     pub fn thread_id(&self) -> Option<&str> {
         self.wire.payload["threadId"].as_str()
-    }
-
-    /// Pass the exact horizons owned by the task's existing presentation record.
-    pub fn allow_owned_snoozes(&mut self, horizons: Vec<u64>) {
-        self.owned_snoozes = horizons;
     }
 
     #[must_use]
@@ -835,7 +809,7 @@ impl T3 {
     pub async fn write_parent(
         &self,
         write: ParentWrite,
-        authorize: impl FnOnce(Option<ParentSnooze>) -> Result<(), HostError> + Send,
+        mut authorize: impl FnMut(Option<SnoozeUpdate>) -> Result<(), HostError> + Send,
     ) -> Result<(), ParentSendError> {
         let expects_receipt = write.starts_turn();
         let thread_id = write.thread_id().map(str::to_owned);
@@ -893,107 +867,37 @@ impl T3 {
                             return Err(HostError::Uncertain);
                         }
                     }
-                    let snooze = if let (Some(thread), Some(message)) =
-                        (thread_id.as_deref(), delivered_message.as_deref())
-                        && let Some(row) = self.rpc.thread_row(thread)
-                        && let Some(until) = row["snoozedUntil"].as_str()
-                        && let Ok(until_ms) = timestamp_ms(until)
-                        && until_ms > clock_ms()?
-                        && !write.owned_snoozes.contains(&until_ms)
-                    {
-                        Some(ParentSnooze {
-                            binding: write.wire.binding.clone(),
-                            provider: write.wire.provider.clone(),
-                            thread: thread.into(),
-                            message: message.into(),
-                            until: until.into(),
-                            until_ms,
-                            snoozed_at_ms: row["snoozedAt"]
-                                .as_str()
-                                .and_then(|at| timestamp_ms(at).ok()),
-                        })
-                    } else {
-                        None
-                    };
+                    let snooze =
+                        match (thread_id.as_deref(), delivered_message.as_deref(), &command) {
+                            (Some(thread), Some(message), Some((command, _))) => {
+                                self.capture_snooze(thread, command, message)?
+                            }
+                            _ => None,
+                        };
                     authorize(snooze)
                 },
             )
-            .await;
-        parent_send_result(
-            reply?,
+            .await?;
+        let sequence = DeliverySnooze::sequence(&reply);
+        let result = parent_send_result(
+            reply,
             expects_receipt,
             thread_id.as_deref(),
             command.as_ref().map(|(id, kind)| (id.as_str(), *kind)),
             &write.wire.binding.project_id,
-        )
-    }
-
-    /// Reconcile a previously recorded horizon using the exact native message.
-    ///
-    /// # Errors
-    /// Returns an error when the native observation or write is uncertain.
-    pub async fn restore_parent_snooze(
-        &self,
-        intent: &ParentSnooze,
-        attempt: i64,
-        still_due: impl FnOnce() -> bool + Send,
-    ) -> Result<SnoozeRestoration, HostError> {
-        let thread = &intent.thread;
-        let (projection, fence) = self
-            .observe_thread(&intent.binding, thread, ThreadRead::Visibility)
-            .await?;
-        let Some(projection) = projection else {
-            return Ok(SnoozeRestoration::Pending);
-        };
-        if projection.archived() || projection.deleted() || intent.until_ms <= clock_ms()? {
-            return Ok(SnoozeRestoration::Complete);
-        }
-        projection.require_parent_provider(&intent.provider)?;
-        let newer_wake = intent
-            .snoozed_at_ms
-            .zip(projection.last_snooze_wake_ms())
-            .is_some_and(|(snoozed, woke)| woke > snoozed);
-        let shown = projection
-            .row_observation()?
-            .and_then(|row| row.visibility.snoozed_until_ms);
-        if newer_wake {
-            return Ok(SnoozeRestoration::Complete);
-        }
-        if let Some(until) = shown {
-            let shell_agrees = self
-                .row_visibility_hint(thread)
-                .is_some_and(|row| row.snoozed_until_ms == Some(until));
-            return Ok(
-                if shell_agrees
-                    && (until != intent.until_ms || projection.has_delivery(&intent.message))
-                {
-                    SnoozeRestoration::Complete
-                } else {
-                    SnoozeRestoration::Pending
-                },
+        );
+        if delivered_message.is_some() {
+            DeliverySnooze::after_send(
+                command.map(|(id, _)| id),
+                if result.is_ok() { sequence } else { None },
+                matches!(
+                    result,
+                    Err(ParentSendError::Rejected | ParentSendError::InitialMessageRejected)
+                ),
+                |update| authorize(Some(update)),
             );
         }
-        if !projection.has_delivery(&intent.message) {
-            return Ok(SnoozeRestoration::Pending);
-        }
-        let command = format!(
-            "{}-restore-snooze-{}-{}-{attempt}",
-            intent.message,
-            intent.until_ms,
-            intent.snoozed_at_ms.unwrap_or_default()
-        );
-        let reply = self.rpc.call_guarded(
-            "orchestration.dispatchCommand",
-            json!({"type":"thread.snooze","commandId":command,"threadId":thread,"snoozedUntil":intent.until}),
-            Read::Background,
-            || Ok(self.rpc.same_thread(thread, &fence) && intent.until_ms > clock_ms()? && still_due()),
-        ).await?;
-        match reply {
-            Reply::Failure(cause) if crate::command_rejected(&cause, &command, "thread.snooze") => {
-                Ok(SnoozeRestoration::Rejected)
-            }
-            _ => Ok(SnoozeRestoration::Pending),
-        }
+        result
     }
 }
 
