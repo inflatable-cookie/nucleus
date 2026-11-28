@@ -603,7 +603,7 @@ impl Service {
                     Some(thread),
                 )
             }
-            _ => return Err(ServiceError::DecisionOperator),
+            DecisionAnswerSource::Relayed { .. } => return Err(ServiceError::DecisionOperator),
         };
         if let Some(decision) = &prior
             && let Some(target) = decision.task.as_ref()
