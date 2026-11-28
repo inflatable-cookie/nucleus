@@ -826,6 +826,28 @@ async fn first_contact_refuses_child_closed_task_session_and_missing_checkout() 
 }
 
 #[tokio::test]
+async fn a_thread_a_task_retains_as_a_role_cannot_enroll() {
+    let registry = registry().await;
+    let head = "1111111111111111111111111111111111111111".parse().unwrap();
+    let (task, _) = crate::tests::code_task_at_merge("held", &head);
+    seed_task(&registry.service, &task).await;
+    // Both are top-level threads in a registered T3 project. Only the stored
+    // task row marks them as roles.
+    for (actor, id) in [("thread:held", "worker"), ("thread:reviewer", "reviewer")] {
+        registry.enroll(actor).await;
+        let response = submit(&registry.api, actor, id, None).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            json_body(response).await["error"],
+            "A task role cannot enroll as a project planner."
+        );
+        assert!(registry.service.task(id).await.is_err());
+    }
+    registry.enroll("alpha-planner").await;
+    registry.task("alpha-planner", "planned").await;
+}
+
+#[tokio::test]
 async fn promotion_uses_the_selected_member_and_returns_its_public_reference() {
     let registry = registry_with_options(BETA_REPO, true).await;
     registry.enroll("alpha-planner").await;
@@ -1239,7 +1261,7 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     let reassign =
         json!({"revision": initial["settings"]["revision"], "origin":REPOSITORY, "toProject":beta});
     let reads = registry.reads.load(Ordering::Relaxed);
-    let wake = registry.service.planner_wake.notified();
+    let mut changes = registry.service.project_changes.subscribe();
     let moved = post_as(
         &registry.api,
         "/v1/settings/projects/reassign",
@@ -1249,8 +1271,9 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     .await;
     assert_eq!(moved.status(), StatusCode::OK);
     let moved = json_body(moved).await;
-    tokio::time::timeout(std::time::Duration::from_secs(1), wake)
+    tokio::time::timeout(std::time::Duration::from_secs(1), changes.changed())
         .await
+        .unwrap()
         .unwrap();
     assert!(
         moved["settings"]["value"]["projects"][&alpha]["repositories"]
@@ -1282,7 +1305,6 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     );
     let state = registry.service.state.lock().await;
     assert_eq!(state.planner_authority_epoch, epoch + 1);
-    assert!(state.planner_authority.is_empty());
     assert!(state.live_planner_project("alpha-planner").is_none());
     assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
 }

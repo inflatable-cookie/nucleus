@@ -155,10 +155,6 @@ async fn unlisted_done_threads_make_no_native_reads_after_restart() {
             .all(|outcome| matches!(outcome.result, Ok(Action::Nothing)))
     );
     assert!(service.state.lock().await.last_pass_calls.is_empty());
-    service
-        .refresh_planner_authority("cancelled")
-        .await
-        .unwrap();
     assert!(service.host.host_calls().is_empty());
     native.abort();
 }

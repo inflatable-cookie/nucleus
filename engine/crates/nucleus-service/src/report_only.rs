@@ -430,9 +430,7 @@ impl Service {
             return Err(StoreError::StaleTask.into());
         }
         scope.task(&state, prior.task.identity())?;
-        if let Authority::Planner { actor } = authority {
-            state.check_planner_authority(&prior.task, actor)?;
-        }
+        state.command_authority(authority)?;
         if let Some(session) = session
             && acp::writer_controller(&state, id, &session.credential) != Some(session.controller)
         {

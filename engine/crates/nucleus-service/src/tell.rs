@@ -883,7 +883,7 @@ fn tell_projects<'a>(
     selectors
         .into_iter()
         .map(|name| {
-            let project = state.settings.resolve_planning_project(None, name)?;
+            let project = state.settings.resolve_planning_project(name)?;
             state.settings.require_active_project(project)?;
             Ok(project)
         })

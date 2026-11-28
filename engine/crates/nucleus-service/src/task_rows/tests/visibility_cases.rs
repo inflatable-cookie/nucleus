@@ -620,8 +620,7 @@ async fn a_retained_role_waiting_on_background_work_keeps_one_hold_after_restart
     fixture.restart();
     {
         let service = &fixture.service;
-        let mut state = service.state.lock().await;
-        state.registry_mode = true;
+        let state = service.state.lock().await;
         assert_eq!(
             service.acp_turn_view(&state, &row).unwrap(),
             (
@@ -632,7 +631,6 @@ async fn a_retained_role_waiting_on_background_work_keeps_one_hold_after_restart
                 false,
             )
         );
-        state.registry_mode = false;
     }
     fixture.publish_shell();
 

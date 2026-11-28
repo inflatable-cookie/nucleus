@@ -14,8 +14,6 @@ use nucleus_work::{Checkout, WorkError};
 
 use crate::{Service, ServiceError, State, volume::Limit};
 
-const FIXTURE_REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
-
 /// The single-repository fixture configuration that tests build in memory.
 #[derive(Clone)]
 pub struct Project {
@@ -37,28 +35,6 @@ pub struct LaunchBudget {
 }
 
 impl Project {
-    pub(crate) fn verify(&self, policy: &LocalGit) -> Result<(), ServiceError> {
-        if self.repository != FIXTURE_REPOSITORY
-            || self.launch_budget.slots == 0
-            || self.host_project.trim().is_empty()
-            || self
-                .acp_provider
-                .as_deref()
-                .is_some_and(|provider| provider.trim().is_empty())
-        {
-            return Err(ServiceError::Project);
-        }
-        verify_repository(&self.repository, &self.checkout, &self.base, policy)?;
-        Ok(())
-    }
-
-    pub(crate) fn scope(&self, identity: &Identity) -> Result<(), ServiceError> {
-        if self.repository != identity.repository || self.base != identity.base {
-            return Err(ServiceError::Project);
-        }
-        check_task_id(&identity.id)
-    }
-
     pub(crate) const fn profile(&self, role: Role) -> &RoleProfile {
         match role {
             Role::Worker => &self.worker,
@@ -69,7 +45,7 @@ impl Project {
 
 #[derive(Clone)]
 pub(super) struct ProjectRoute {
-    pub(super) project_id: Option<String>,
+    pub(super) project_id: String,
     pub(super) checkout: PathBuf,
     pub(super) host_project: String,
     pub(super) slots: Option<u32>,
@@ -99,44 +75,29 @@ impl ProjectRoute {
 
 impl Service {
     pub(super) fn acp_provider(&self) -> Option<&str> {
-        self.project
-            .as_ref()
-            .and_then(|project| project.acp_provider.as_deref())
-            .or(self.registry_provider.as_deref())
+        self.registry_provider.as_deref()
     }
 
+    /// Every stored task is in the registry's scope when its ID is well formed.
+    #[expect(clippy::unused_self, reason = "task reads ask the service")]
     pub(super) fn task_scope(&self, identity: &Identity) -> Result<(), ServiceError> {
-        match &self.project {
-            Some(project) => project.scope(identity),
-            None => check_task_id(&identity.id),
-        }
+        check_task_id(&identity.id)
     }
 
+    /// The registered repository and project which own a task's origin and base.
     pub(super) fn resolve_project(
         &self,
         state: &State,
         identity: &Identity,
     ) -> Result<ProjectRoute, ServiceError> {
         self.task_scope(identity)?;
-        if let Some(project) = &self.project {
-            return Ok(ProjectRoute {
-                project_id: state
-                    .settings
-                    .fixture_project(project)
-                    .map(|(id, _, _)| id.into()),
-                checkout: project.checkout.clone(),
-                host_project: project.host_project.clone(),
-                slots: state.settings.fixture_slots(project),
-                repositories: vec![project.repository.clone()],
-            });
-        }
         let (id, project, repo) = state
             .settings
             .project_for_origin(&identity.repository)
             .filter(|(_, _, repo)| repo.base == identity.base)
             .ok_or(ServiceError::Project)?;
         Ok(ProjectRoute {
-            project_id: Some(id.into()),
+            project_id: id.into(),
             checkout: repo.path.clone(),
             host_project: repo.host_project.clone().ok_or(ServiceError::Project)?,
             slots: (!project.archived).then(|| state.settings.project_slots(id)),
@@ -218,22 +179,15 @@ impl Service {
         Ok(())
     }
 
-    /// The test project: the single-project fixture, or the checkout registered
-    /// in Projects settings when the service runs the production registry.
+    /// The checkout registered in Projects settings, read as test values.
     #[cfg(test)]
     pub(super) fn fixture(&self) -> Project {
-        self.project
-            .clone()
-            .unwrap_or_else(|| registered_fixture(&self.settings))
+        registered_fixture(&self.settings)
     }
 
-    /// Set the ACP provider the test service launches through, in either mode.
     #[cfg(test)]
     pub(super) fn set_fixture_acp_provider(&mut self, provider: Option<&str>) {
-        match self.project.as_mut() {
-            Some(project) => project.acp_provider = provider.map(str::to_owned),
-            None => self.registry_provider = provider.map(str::to_owned),
-        }
+        self.registry_provider = provider.map(str::to_owned);
     }
 
     #[cfg(test)]
@@ -547,31 +501,26 @@ mod tests {
     use nucleus_core::{Entry, Task};
     use nucleus_forge::GitHub;
     use nucleus_hosts::{Binding, HostError};
+    use nucleus_store::TaskAdmissionFacts;
     use serde_json::json;
 
     use super::*;
     use crate::{
         pass::DispatchTarget,
-        tests::{fixture, git, native_fixture},
+        tests::{REGISTERED_PROJECT, REPOSITORY, fixture, git, native_fixture, reservation},
     };
 
     #[test]
-    fn fixture_scope_and_both_remotes_must_name_the_repository() {
+    fn both_remotes_must_name_the_repository() {
         let (_home, service) = fixture(GitHub::new("unused-fixture").expect("forge"));
-        let mut project = service.fixture().clone();
-        project.verify(&service.git).expect("fixture repository");
-
-        // A Project serves only the fixture repository. The remote checks run on the
-        // same repository verification that the registry route uses.
-        project.repository = "example/greeter".into();
-        assert!(matches!(
-            project.verify(&service.git),
-            Err(ServiceError::Project)
-        ));
-        let (checkout, base) = (project.checkout.clone(), project.base.clone());
+        let project = service.fixture();
+        let (checkout, base) = (project.checkout, project.base);
+        verify_repository(&project.repository, &checkout, &base, &service.git)
+            .expect("registered repository");
         let check = |git_policy: &LocalGit| {
             verify_repository("example/greeter", &checkout, &base, git_policy)
         };
+        assert!(matches!(check(&service.git), Err(ServiceError::Project)));
         git(
             &checkout,
             &[
@@ -615,6 +564,61 @@ mod tests {
             ],
         );
         assert!(matches!(check(&service.git), Err(ServiceError::Project)));
+    }
+
+    #[tokio::test]
+    async fn a_stored_task_routes_only_through_its_registered_repository_and_base() {
+        let (_home, service) = fixture(GitHub::new("unused-fixture").expect("forge"));
+        let registered = service.fixture();
+        let (task, _, _) = reservation("routed", Entry::Brief, &registered.start);
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create_with_facts(
+                &task,
+                &crate::event("fixture"),
+                TaskAdmissionFacts::default(),
+            )
+            .expect("stored task");
+        let identity = service
+            .task("routed")
+            .await
+            .unwrap()
+            .task
+            .identity()
+            .clone();
+        let route = service.project_for(&identity).await.expect("registered");
+        assert_eq!(route.project_id, REGISTERED_PROJECT);
+        assert_eq!(route.checkout, registered.checkout);
+        assert_eq!(route.host_project, registered.host_project);
+        assert_eq!(route.repositories, [registered.repository]);
+        assert!(route.slots.is_some());
+        for (id, repository, base) in [
+            ("routed", "example/unregistered", "main"),
+            ("routed", REPOSITORY, "other"),
+            ("not/an id", REPOSITORY, "main"),
+        ] {
+            let mut other = identity.clone();
+            (other.id, other.repository, other.base) = (id.into(), repository.into(), base.into());
+            assert!(matches!(
+                service.project_for(&other).await,
+                Err(ServiceError::Project)
+            ));
+        }
+        service
+            .state
+            .lock()
+            .await
+            .settings
+            .projects
+            .as_mut()
+            .and_then(|registry| registry.projects.get_mut(REGISTERED_PROJECT))
+            .expect("registered project")
+            .archived = true;
+        let archived = service.project_for(&identity).await.expect("still routed");
+        assert_eq!(archived.slots, None, "an archived project launches nothing");
     }
 
     #[tokio::test]

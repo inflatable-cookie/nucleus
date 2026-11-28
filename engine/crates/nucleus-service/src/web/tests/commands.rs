@@ -131,8 +131,7 @@ async fn shell_startup_does_not_invent_a_hold_for_a_bound_role() {
     task.record_send(&instance, 1).unwrap();
     seed_task(&service, &task).await;
     let row = service.task("worker").await.unwrap();
-    let mut state = service.state.lock().await;
-    state.registry_mode = true;
+    let state = service.state.lock().await;
     assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
     service
         .host
@@ -1166,10 +1165,6 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
     let (host, _, _, native) = planner_roster_fixture("planner", "spare-planner").await;
     service.host = host;
     let exact = seed_review_work_question(&service, &head).await;
-    service
-        .refresh_planner_authority("reviewer")
-        .await
-        .expect("planner roster");
     let prior = service.task("reviewer").await.expect("seeded question");
     let service = Arc::new(service);
     let api = router(

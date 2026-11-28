@@ -197,60 +197,42 @@ impl RuntimeSettings {
             .map_or(binding.host_project.as_str(), |(id, _, _)| id)
     }
 
-    pub(crate) fn resolve_planning_project<'a>(
-        &'a self,
-        binding: Option<&'a Project>,
-        selector: &str,
-    ) -> Result<&'a str, ServiceError> {
-        self.match_planning_project(binding, selector)
+    pub(crate) fn resolve_planning_project(&self, selector: &str) -> Result<&str, ServiceError> {
+        self.match_planning_project(selector)
             .map_err(|error| match error {
                 ProjectMatchError::Unknown => ServiceError::TellUnknownProject(selector.into()),
                 ProjectMatchError::Ambiguous => ServiceError::TellAmbiguousProject(selector.into()),
             })
     }
 
-    pub(crate) fn match_planning_project<'a>(
-        &'a self,
-        binding: Option<&'a Project>,
-        selector: &str,
-    ) -> Result<&'a str, ProjectMatchError> {
-        match &self.projects {
-            Some(registry) => {
-                if let Some((id, _)) = registry.projects.get_key_value(selector) {
-                    return Ok(id);
-                }
-                let name = selector.to_lowercase();
-                let mut names = registry
-                    .projects
-                    .iter()
-                    .filter(|(_, project)| project.name.to_lowercase() == name);
-                if let Some((id, _)) = names.next() {
-                    return if names.next().is_none() {
-                        Ok(id)
-                    } else {
-                        Err(ProjectMatchError::Ambiguous)
-                    };
-                }
-                let mut owners = registry.projects.iter().filter(|(_, project)| {
-                    project
-                        .repositories
-                        .iter()
-                        .any(|repo| repository_matches(&repo.origin, selector))
-                });
-                let (owner, _) = owners.next().ok_or(ProjectMatchError::Unknown)?;
-                if owners.next().is_some() {
-                    return Err(ProjectMatchError::Ambiguous);
-                }
-                Ok(owner)
-            }
-            None => binding
-                .filter(|binding| {
-                    binding.host_project == selector
-                        || repository_matches(&binding.repository, selector)
-                })
-                .map(|binding| binding.host_project.as_str())
-                .ok_or(ProjectMatchError::Unknown),
+    pub(crate) fn match_planning_project(&self, selector: &str) -> Result<&str, ProjectMatchError> {
+        let registry = self.projects.as_ref().ok_or(ProjectMatchError::Unknown)?;
+        if let Some((id, _)) = registry.projects.get_key_value(selector) {
+            return Ok(id);
         }
+        let name = selector.to_lowercase();
+        let mut names = registry
+            .projects
+            .iter()
+            .filter(|(_, project)| project.name.to_lowercase() == name);
+        if let Some((id, _)) = names.next() {
+            return if names.next().is_none() {
+                Ok(id)
+            } else {
+                Err(ProjectMatchError::Ambiguous)
+            };
+        }
+        let mut owners = registry.projects.iter().filter(|(_, project)| {
+            project
+                .repositories
+                .iter()
+                .any(|repo| repository_matches(&repo.origin, selector))
+        });
+        let (owner, _) = owners.next().ok_or(ProjectMatchError::Unknown)?;
+        if owners.next().is_some() {
+            return Err(ProjectMatchError::Ambiguous);
+        }
+        Ok(owner)
     }
 
     pub(crate) fn only_bound_repository(&self, project: &str) -> Option<&str> {
@@ -279,16 +261,6 @@ impl RuntimeSettings {
                     .filter(|_| self.projects.is_none())
                     .map(|project| project.host_project.as_str()),
             )
-    }
-
-    pub(crate) fn fixture_slots(&self, fixture: &Project) -> Option<u32> {
-        match &self.projects {
-            None => Some(self.project_slots(&fixture.host_project)),
-            Some(_) => self
-                .fixture_project(fixture)
-                .filter(|(_, project, _)| !project.archived)
-                .map(|(id, _, _)| self.project_slots(id)),
-        }
     }
 
     pub(crate) fn project_slots(&self, id: &str) -> u32 {
@@ -436,13 +408,6 @@ async fn project_view(service: &Service, settings: SettingsSnapshot<Projects>) -
                     .values()
                     .filter(|proof| state.live_planner_project(&proof.identity.id) == Some(id))
                     .map(|proof| (proof.verified_at, proof.identity.id.as_str())),
-            );
-            planners.extend(
-                state
-                    .planner_authority
-                    .values()
-                    .filter(|authority| authority.project_id() == Some(id))
-                    .filter_map(super::super::question::PlannerAuthority::resolved),
             );
         }
         planners.sort_unstable_by(|left, right| right.cmp(left));
@@ -1032,9 +997,8 @@ impl Service {
     }
 
     pub(crate) fn project_settings_changed(&self, state: &mut crate::State) {
-        state.invalidate_planner_authority();
+        state.planner_authority_epoch += 1;
         state.observed_forge.clear();
-        self.planner_wake.notify_one();
         self.title_wake.notify_one();
         self.planner_routes_changed(state);
         self.inbox_changed();

@@ -166,7 +166,8 @@ history in its own `engine.sqlite`. It uses WAL and transactional schema
 versioning. The brief's text, version and digest are stored together. Store
 a human acceptance, when needed, as an exact-head
 alternative in the verdict slot, including the accepting actor and authority.
-Resolve the responsible planner from the task's origin and live host inventory.
+Resolve the responsible planner from the task's origin, then the project's
+enrolled planners.
 Append audit history in the state transaction. The pass loop schedules active
 rows. API history
 and live notifications may read the event log.
@@ -277,10 +278,10 @@ T3 is the engine's only supported host. The host interface describes the reads
 and effects the task engine needs.
 
 Every T3 mutation goes through the destination gate after the exact native
-read. The gate checks the frozen destination against the fixture's Git origin
+read. The gate checks the frozen destination against the registered Git origin
 and current T3 project root. This includes interrupt, queue cancellation,
 archive, unarchive and unsettle. Role writes need their owned checkout.
-Planner writes need an exact thread in the fixture project. Review sends
+Planner writes need an exact routable thread. Review sends
 also check the open PR and clean checkout after native authorization.
 
 - Get a ticket with `POST /api/auth/websocket-ticket/rpc`, then open `/ws`
@@ -306,10 +307,9 @@ also check the open PR and clean checkout after native authorization.
 - `orchestration.subscribeThread` reads a synchronized, bounded projection of
   the exact thread. Settlement uses the current bound row in the held shell.
   [T3's background-work derivation](https://github.com/pingdotgg/t3code/blob/3b08d975ab58ed19ff7c61b077f69c4bd818989f/packages/shared/src/orchestrationV2PendingBackgroundWork.ts#L225)
-- Planner authority uses only the exact thread record from a compact bounded
-  snapshot, on scheduler demand. Only notice routing after confirmed absence
-  needs the complete candidate inventory. Request for T3: a single-thread shell
-  RPC on the WebSocket contract so authority checks can skip the transcript.
+- Planner enrollment and notice routing read the exact thread, from the held
+  shell or a compact bounded snapshot. Request for T3: a single-thread shell RPC
+  on the WebSocket contract so those checks can skip the transcript.
 - Request for T3: project or thread filters for the shell subscription, so a
   service can receive only events for the projects it runs.
 - Request for T3: server-attested answer provenance that distinguishes a
@@ -465,11 +465,9 @@ records the largest sections when an assignment cannot fit.
 Use `bind-acp --read-only <task>` for a session that can only read the task,
 its history and its event stream. A writable binding has a separate command
 credential. The service checks current authority locally before committing
-an ACP command or a planner's answer through the API. A planner's writable
-binding or command with unknown authority wakes the scheduler to read the exact
-bound planner or task origin, and the service asks the caller to retry. The
-service keeps that authority in memory until the host reports an identity change,
-the connection fails or the task reaches Done. Rebinding keeps the session ID
+an ACP command or a planner's answer through the API: a planner needs current
+enrollment proof. The service keeps that proof in memory until the host reports
+an identity change or the connection fails. Rebinding keeps the session ID
 and rotates the credentials. Reaching Done revokes command access and keeps the final view
 readable. Attach, load and every prompt read the committed view and history
 locally. A terminal task renders its final view and ends normally. T3's ACP

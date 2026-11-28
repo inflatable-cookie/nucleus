@@ -141,7 +141,6 @@ impl Service {
         // Keep an attached turn through shell startup. New writes still require
         // the synchronized shell, and a stored prompt keeps its exact identity.
         let restoring = delivery.is_some()
-            && state.registry_mode
             && !self.host.projects_synchronized()
             && !crate::task_rows::visibility_roles(task).is_empty();
         let wanted = wants_parent_hold(
@@ -361,18 +360,11 @@ impl Service {
         scope: &ControllerScope,
         read_only: bool,
     ) -> Result<MintedSession, ServiceError> {
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
         let row = self.lookup(&state, task)?;
         scope.task(&state, row.task.identity())?;
-        if !read_only
-            && row.task.phase() != Phase::Done
-            && let Authority::Planner { actor } = authority
-        {
-            let check = state.check_planner_authority(&row.task, actor);
-            if matches!(check, Err(ServiceError::PlannerAuthorityUnknown)) {
-                self.request_planner_check(&mut state, &row.task);
-            }
-            check?;
+        if !read_only && row.task.phase() != Phase::Done {
+            state.command_authority(authority)?;
         }
         self.resolve_project(&state, row.task.identity())?;
         let checkout = nucleus_work::checkout_path(

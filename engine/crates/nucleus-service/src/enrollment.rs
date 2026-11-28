@@ -1,9 +1,7 @@
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 use nucleus_hosts::{HostError, PlannerIdentity, ThreadHint};
-use nucleus_store::{
-    ProjectSettings, Projects, RepositorySettings, StorageError, ThreadProvenance,
-};
+use nucleus_store::{ProjectSettings, Projects, RepositorySettings, StorageError};
 use sha2::{Digest, Sha256};
 use tokio::{sync::watch, time::Instant};
 
@@ -156,6 +154,23 @@ impl State {
         candidates
     }
 
+    /// The named project, or the calling planner's own. It must be active.
+    pub(super) fn planning_project<'a>(
+        &'a self,
+        scope: &ControllerScope,
+        selector: Option<&str>,
+    ) -> Result<&'a str, ServiceError> {
+        let id = match selector {
+            Some(name) => self.settings.resolve_planning_project(name)?,
+            None => scope
+                .actor()
+                .and_then(|actor| self.live_planner_project(actor))
+                .ok_or(ServiceError::ProjectRequired)?,
+        };
+        self.settings.require_active_project(id)?;
+        Ok(id)
+    }
+
     pub(super) fn verified_controller(&self, actor: &str) -> bool {
         self.enrolled_planners.get(actor).is_some_and(|proof| {
             if proof.binding.is_some() {
@@ -232,25 +247,6 @@ impl Service {
         }
     }
 
-    pub(super) fn planning_project<'a>(
-        &'a self,
-        state: &'a State,
-        scope: &ControllerScope,
-        selector: Option<&str>,
-    ) -> Result<&'a str, ServiceError> {
-        let id = match selector {
-            Some(name) => state
-                .settings
-                .resolve_planning_project(self.project.as_ref(), name)?,
-            None => scope
-                .actor()
-                .and_then(|actor| state.live_planner_project(actor))
-                .ok_or(ServiceError::ProjectRequired)?,
-        };
-        state.settings.require_active_project(id)?;
-        Ok(id)
-    }
-
     fn require_planning_checkout(&self, repo: &RepositorySettings) -> Result<(), ServiceError> {
         if repo.host_project.as_ref().is_some_and(|host| {
             self.host
@@ -295,11 +291,7 @@ impl Service {
                         if !project.archived
                             && repo.host_project.is_none()
                             && selector.is_none_or(|name| {
-                                state
-                                    .settings
-                                    .resolve_planning_project(self.project.as_ref(), name)
-                                    .ok()
-                                    == Some(id)
+                                state.settings.resolve_planning_project(name).ok() == Some(id)
                             }) =>
                     {
                         ServiceError::UnboundCheckout {
@@ -315,38 +307,16 @@ impl Service {
 
     fn resolve_admission_route(
         &self,
-        state: &mut State,
+        state: &State,
         scope: &ControllerScope,
         selector: Option<&str>,
         origin: Option<&str>,
     ) -> Result<PlanningRepository, ServiceError> {
-        if let Some(project) = &self.project {
-            let id = state.settings.planning_project_id(project);
-            if let Some(name) = selector
-                && state
-                    .settings
-                    .resolve_planning_project(Some(project), name)?
-                    != id
-            {
-                return Err(ServiceError::Project);
-            }
-            if origin.is_some_and(|requested| !project.repository.eq_ignore_ascii_case(requested))
-                || state.settings.fixture_slots(project).is_none()
-            {
-                return Err(ServiceError::Project);
-            }
-            return Ok(PlanningRepository {
-                project_id: id.into(),
-                checkout: project.checkout.clone(),
-                repository: project.repository.clone(),
-                base: project.base.clone(),
-            });
-        }
         let native = scope
             .actor()
             .and_then(|actor| state.live_planner_route(actor));
         let id = if scope.actor().is_some() || selector.is_some() {
-            self.planning_project(state, scope, selector)?
+            state.planning_project(scope, selector)?
         } else if let Some(origin) = origin {
             state
                 .settings
@@ -719,12 +689,7 @@ impl Service {
                 "The T3 project or planner proof changed during verification. Retry shortly.",
             ));
         }
-        if state
-            .store
-            .routing_provenance(None, &[planner.id.as_str()])?
-            .get(&planner.id)
-            == Some(&ThreadProvenance::TaskRole)
-        {
+        if state.store.is_task_role_thread(&planner.id)? {
             return Err(ServiceError::PlannerEnrollmentRefused(
                 "A task role cannot enroll as a project planner.",
             ));

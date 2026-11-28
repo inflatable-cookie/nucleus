@@ -688,7 +688,6 @@ async fn planner_extend_via_http_raises_the_exhausted_allowance_once() {
         .save(&asked, assigned, &event("question_delivery"))
         .await
         .unwrap();
-    service.refresh_planner_authority("legacy").await.unwrap();
     let service = Arc::new(service);
     let api = router(
         Arc::clone(&service),

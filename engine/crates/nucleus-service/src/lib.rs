@@ -187,8 +187,6 @@ pub enum ServiceError {
         "GitHub did not confirm the PR head required by this command. Read Next before retrying."
     )]
     CommandHeadUnconfirmed,
-    #[error("planner authority is not yet known. Retry shortly.")]
-    PlannerAuthorityUnknown,
     #[error("the caller is no longer the responsible planner for this task")]
     PlannerAuthorityRefused,
     #[error("a task effect is still in progress. Retry shortly.")]
@@ -259,7 +257,6 @@ pub struct Service {
     /// The environment's board theme inputs, cached from the host's config stream.
     theme: watch::Sender<Option<serde_json::Value>>,
     wake: Notify,
-    planner_wake: Notify,
     title_wake: Notify,
     enrollment_wake: Notify,
     housekeeping_wake: Notify,
@@ -298,7 +295,6 @@ struct State {
     store: Store,
     allowance_clock: allowance::Clock,
     settings: web::RuntimeSettings,
-    registry_mode: bool,
     schedule: Schedule,
     last_pass_calls: HostCalls,
     scheduler_error: Option<&'static str>,
@@ -310,10 +306,7 @@ struct State {
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
     activity: BTreeMap<String, presentation::ActivityAt>,
-    planner_authority: BTreeMap<String, question::PlannerAuthority>,
     planner_authority_epoch: u64,
-    planner_requests: BTreeSet<String>,
-    planner_check: Option<String>,
     enrollments: enrollment::Enrollments,
     enrolled_planners: BTreeMap<String, enrollment::EnrolledPlanner>,
     planner_notice_waiters: BTreeSet<String>,
@@ -361,30 +354,6 @@ pub struct PassOutcome {
 }
 
 impl Service {
-    /// Open the enabled engine on its configured storage with one fixture project.
-    ///
-    /// # Errors
-    /// Returns an error if configuration, storage, or project scope is invalid.
-    #[cfg(test)]
-    pub fn open(
-        settings: &SettingsFile,
-        project: Project,
-        host: T3,
-        forge: GitHub,
-        callback: SocketAddr,
-        report_command: PathBuf,
-    ) -> Result<Self, ServiceError> {
-        Self::open_runtime(
-            settings.lock_profile()?,
-            Some(project),
-            None,
-            host,
-            forge,
-            callback,
-            report_command,
-        )
-    }
-
     /// Open one service for the repositories registered in Projects settings.
     ///
     /// # Errors
@@ -400,34 +369,11 @@ impl Service {
         if acp_provider.trim().is_empty() || acp_provider.trim() != acp_provider {
             return Err(ServiceError::Project);
         }
-        Self::open_runtime(
-            profile,
-            None,
-            Some(acp_provider),
-            host,
-            forge,
-            callback,
-            report_command,
-        )
-    }
-
-    fn open_runtime(
-        profile: LockedProfile,
-        project: Option<Project>,
-        registry_provider: Option<String>,
-        host: T3,
-        forge: GitHub,
-        callback: SocketAddr,
-        report_command: PathBuf,
-    ) -> Result<Self, ServiceError> {
         let (settings, mut storage, lock) = profile.into_storage()?;
         storage.pin_roots()?;
         storage.builds().ensure()?;
         storage.log().ensure()?;
         let git = project::LocalGit(storage.scratch().path().into());
-        if let Some(project) = &project {
-            project.verify(&git)?;
-        }
         if !callback.ip().is_loopback()
             || callback.port() == 0
             || !report_command.is_absolute()
@@ -444,18 +390,16 @@ impl Service {
         {
             runtime_settings.projects = Some(store.clean_removed_projects(&settings)?.value);
         }
-        native_inbox::supersede_process_decisions(&mut store, &runtime_settings, project.as_ref())?;
+        native_inbox::supersede_process_decisions(&mut store, &runtime_settings, None)?;
         let allowance_clock = allowance::Clock::new(store.allowance_elapsed()?);
-        if project.is_none() {
-            host.use_held_shell();
-        }
+        host.use_held_shell();
         let github_accounts = Arc::new(github_accounts::GitHubAccounts::new(settings.clone()));
         Ok(Self {
             storage,
             volume: volume::WorkVolume::new(),
             git,
             settings,
-            registry_provider,
+            registry_provider: Some(acp_provider),
             host,
             forge,
             _github_account_lifetime: github_accounts.lifetime(),
@@ -468,7 +412,6 @@ impl Service {
                 store,
                 allowance_clock,
                 settings: runtime_settings,
-                registry_mode: project.is_none(),
                 schedule: Schedule::new(),
                 last_pass_calls: HostCalls::new(),
                 scheduler_error: None,
@@ -480,10 +423,7 @@ impl Service {
                 observed_forge: BTreeMap::new(),
                 forge_requested: BTreeSet::new(),
                 activity: BTreeMap::new(),
-                planner_authority: BTreeMap::new(),
                 planner_authority_epoch: 0,
-                planner_requests: BTreeSet::new(),
-                planner_check: None,
                 enrollments: enrollment::Enrollments::default(),
                 enrolled_planners: BTreeMap::new(),
                 planner_notice_waiters: BTreeSet::new(),
@@ -491,7 +431,7 @@ impl Service {
                 title_candidates: BTreeMap::new(),
                 held_calls: BTreeMap::new(),
             })),
-            project,
+            project: None,
             project_writes: RwLock::new(()),
             pass_lock: Mutex::new(()),
             merges: checkout_update::Merges::default(),
@@ -505,7 +445,6 @@ impl Service {
             planning_changes: watch::channel(()).0,
             theme: watch::channel(None).0,
             wake: Notify::new(),
-            planner_wake: Notify::new(),
             title_wake: Notify::new(),
             enrollment_wake: Notify::new(),
             housekeeping_wake: Notify::new(),
@@ -776,7 +715,6 @@ impl Service {
         self.host.use_held_shell();
         tokio::join!(
             self.watch_thread_hints(),
-            Box::pin(self.watch_planner_authority()),
             Box::pin(self.watch_titles()),
             Box::pin(self.watch_enrollments()),
             Box::pin(self.watch_housekeeping()),
@@ -821,10 +759,7 @@ impl Service {
             {
                 let mut state = self.state.lock().await;
                 self.set_cached_host(&mut state, web::CachedHost::Unavailable);
-                if !state.planner_authority.is_empty() {
-                    self.settings_changes.send_replace(());
-                }
-                state.invalidate_planner_authority();
+                state.planner_authority_epoch += 1;
                 if !state.enrolled_planners.is_empty() {
                     state.enrolled_planners.clear();
                     self.planner_routes_changed(&mut state);
@@ -859,13 +794,8 @@ impl Service {
             Ok(false) => {}
             Err(error) => service_log!("operator snooze shell update: {error}"),
         }
-        let authorities = state.planner_authority.len();
-        state.planner_thread_changed(&hint);
         if state.invalidate_enrolled_planner(&hint) {
             self.planner_routes_changed(&mut state);
-        }
-        if authorities != state.planner_authority.len() {
-            self.settings_changes.send_replace(());
         }
         let State {
             thread_tasks,
@@ -1562,11 +1492,7 @@ impl Service {
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let row = self.command_row(&state, id, scope, session)?;
-        let proof = state.command_authority(&row.task, authority);
-        if matches!(proof, Err(ServiceError::PlannerAuthorityUnknown)) {
-            self.request_planner_check(&mut state, &row.task);
-        }
-        proof?;
+        state.command_authority(authority)?;
         if version != row.version || !state.recheckable(&row.task) {
             return Err(ServiceError::RecheckUnavailable);
         }
@@ -1588,11 +1514,7 @@ impl Service {
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
         let prior = self.command_row(&state, id, scope, session)?;
-        let proof = state.command_authority(&prior.task, authority);
-        if matches!(proof, Err(ServiceError::PlannerAuthorityUnknown)) {
-            self.request_planner_check(&mut state, &prior.task);
-        }
-        proof?;
+        state.command_authority(authority)?;
         if version != prior.version {
             return Err(StoreError::StaleTask.into());
         }
@@ -1642,14 +1564,12 @@ impl Service {
             Ok(Preflight::Ready) => Ok(Some(task)),
             Ok(Preflight::NeedsHead) => Ok(None),
             Err(error) => {
-                if matches!(error, ServiceError::PlannerAuthorityUnknown) {
-                    self.request_planner_check(state, prior);
-                } else if matches!(
+                if matches!(
                     error,
                     ServiceError::Core(CommandError::MergeAuthorityRequired)
                 ) && matches!(observation.forge, Observed::Known(Forge::Merged { .. }))
                 {
-                    state.command_authority(prior, authority)?;
+                    state.command_authority(authority)?;
                     // Let reconciliation offer external source acceptance even at capacity.
                     state.forge_requested.insert(id.clone());
                     state.schedule.wake(id, Instant::now(), Priority::Wake);
@@ -1994,10 +1914,6 @@ impl Service {
             self.merges.landed(task.identity().clone(), commit);
         }
         self.track(state, task);
-        if task.phase().is_terminal() {
-            state.planner_authority.remove(id);
-            state.planner_requests.remove(id);
-        }
         if task.run().is_none_or(nucleus_core::Run::revoked)
             || task.run().map(|run| &run.launch().instance)
                 != prior.task.run().map(|run| &run.launch().instance)
@@ -2744,10 +2660,13 @@ fn active(task: &Task) -> bool {
 }
 
 impl State {
-    fn command_authority(&self, task: &Task, actor: &Authority) -> Result<(), ServiceError> {
+    /// A planner writes only while the engine holds proof of its enrollment.
+    fn command_authority(&self, actor: &Authority) -> Result<(), ServiceError> {
         match actor {
-            Authority::Planner { actor } => self.check_planner_authority(task, actor),
-            Authority::Operator { .. } => Ok(()),
+            Authority::Planner { actor } if !self.verified_controller(actor) => {
+                Err(ServiceError::PlannerAuthorityRefused)
+            }
+            Authority::Planner { .. } | Authority::Operator { .. } => Ok(()),
         }
     }
 
@@ -2767,7 +2686,7 @@ impl State {
             (&command, actor),
             (Command::Answer(_), Authority::Planner { .. })
         ) && task.question_delivery().is_none();
-        let authority = self.command_authority(task, actor);
+        let authority = self.command_authority(actor);
         let was_terminal = task.phase().is_terminal();
         let ready = match task.command(command, actor, observation) {
             Ok(()) => Preflight::Ready,

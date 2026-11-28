@@ -347,7 +347,7 @@ impl Service {
         let decision = {
             let mut state = self.state.lock().await;
             let route = self.resolve_project(&state, row.task.identity())?;
-            let project = route.project_id.unwrap_or(route.host_project);
+            let project = route.project_id;
             if let Some(decision) = state.store.task_decision(&project, &target)? {
                 decision
             } else {
@@ -399,7 +399,7 @@ impl Service {
         let Ok(route) = self.resolve_project(state, row.task.identity()) else {
             return;
         };
-        let project = route.project_id.unwrap_or(route.host_project);
+        let project = route.project_id;
         if let Err(error) =
             state
                 .store
