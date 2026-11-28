@@ -49,6 +49,7 @@ try {
   const detailText = () => detail.textContent ?? '';
   await click('Brief, collapsed');
   await eventually(() => detailText().includes('complexity: low'), 'brief opens in place');
+  await click('Show Markdown source');
   const before = await (await fetcher('/api/engine/tasks/board-task')).json();
   const updatedBrief = '---\nqueue:\n  complexity: low\n---\n# Updated from another session';
   const amended = await fetcher('/api/engine/tasks/board-task/commands', {
@@ -58,6 +59,7 @@ try {
   assert.equal(amended.status, 200);
   await eventually(() => detailText().includes(updatedBrief), 'the open brief updates on invalidation');
   await click('Hold');
+  await eventually(() => control('Reason'), 'hold reason field');
   const reason = control('Reason');
   assert.ok(reason);
   Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(reason, 'Wait for fixture');

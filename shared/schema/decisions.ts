@@ -103,6 +103,8 @@ export const decisionViewSchema = storedDecisionSchema.extend({
     decisionAnswerSchema.extend({ optionId: z.string(), text: z.string(), note: z.string() }),
     decisionAnswerSchema,
   ]).nullable().default(null),
+  gate: z.boolean().optional(),
+  projectName: z.string().optional(),
   stale: z.boolean(), projectKey: z.string().nullable().default(null),
   askerLabel: z.string().min(1).max(240),
 }).strict().transform(view => {

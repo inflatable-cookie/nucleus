@@ -1170,6 +1170,8 @@ mod tests {
                     "test-decision",
                     nucleus_store::planning::DecisionAnswerInput {
                         option_id: "yes".into(),
+                        answer: None,
+                        based_on_option_id: None,
                         note: None,
                     },
                     stamp("operator", 1),

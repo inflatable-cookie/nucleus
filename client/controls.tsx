@@ -175,12 +175,16 @@ export function SurfacePress({
   c,
   corner = radius.card,
   children,
+  onKeyDown,
+  selectionWash = true,
 }: {
   label: string;
   onPress: () => void;
   selected?: boolean;
   disabled?: boolean;
-  role?: "button" | "menuitem" | "tab";
+  role?: "button" | "menuitem" | "tab" | "radio";
+  onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
+  selectionWash?: boolean;
   hitSlop?: ReturnType<typeof touchSlop>;
   style?: ViewStyle;
   c: Colors;
@@ -194,8 +198,14 @@ export function SurfacePress({
       accessibilityRole={role}
       accessibilityLabel={label}
       accessibilityState={
-        disabled === undefined ? { selected } : { selected, disabled }
+        role === "radio"
+          ? { checked: selected, disabled }
+          : disabled === undefined
+            ? { selected }
+            : { selected, disabled }
       }
+      {...(onKeyDown ? { onKeyDown } : {})}
+      aria-checked={role === "radio" ? selected : undefined}
       disabled={disabled}
       hitSlop={hitSlop}
       onPress={onPress}
@@ -207,8 +217,12 @@ export function SurfacePress({
     >
       <StateWash
         c={c}
-        hovered={!disabled && (hovered || focus.visible)}
-        selected={selected}
+        hovered={
+          !disabled &&
+          (hovered || focus.visible) &&
+          (selectionWash || !selected)
+        }
+        selected={selectionWash && selected}
         corners={{ borderRadius: corner }}
       />
       {children}

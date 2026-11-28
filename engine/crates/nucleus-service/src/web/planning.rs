@@ -787,7 +787,7 @@ async fn decisions(
     Extension(scope): Extension<ControllerScope>,
     ProjectSelector { project }: ProjectSelector,
     Query(query): Query<DecisionQuery>,
-) -> Result<Json<Vec<Decision>>, ApiError> {
+) -> Result<Json<Vec<LabeledItem<Decision>>>, ApiError> {
     let (state, project) = api
         .service
         .planning_state_in_scope(project.as_deref(), &scope)
@@ -796,7 +796,18 @@ async fn decisions(
         state
             .store
             .decisions(&project, query.pending)
-            .map_err(ServiceError::from)?,
+            .map_err(ServiceError::from)?
+            .into_iter()
+            .map(|item| {
+                let author_label = actor_label(
+                    &api,
+                    state.settings.projects.as_ref(),
+                    &project,
+                    &item.author,
+                );
+                LabeledItem { item, author_label }
+            })
+            .collect(),
     ))
 }
 
