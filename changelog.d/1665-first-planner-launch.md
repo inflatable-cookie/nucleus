@@ -1,0 +1,1 @@
+Send to planner now starts a planner in a project that has never had one: Nucleus finds the T3 project holding its primary repository, and uses the new planner model in Settings → Limits when that project has no default. When a planner can't start, the item says why.

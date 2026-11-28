@@ -385,6 +385,17 @@ pub struct RegisteredProject {
     pub root: String,
     pub title: Option<String>,
     pub default_model_selection: Option<Value>,
+    /// T3's canonical `host/owner/name` key for the checkout's origin remote.
+    /// Absent until T3 has identified the repository.
+    pub origin_key: Option<String>,
+}
+
+/// The synchronized shell's answer for one repository checkout.
+pub enum RepositoryProject {
+    Found(String, RegisteredProject),
+    /// T3 holds the folder but hasn't identified its repository yet.
+    Unidentified,
+    Missing,
 }
 
 impl RegisteredProject {
@@ -399,6 +410,12 @@ impl RegisteredProject {
                 .get("defaultModelSelection")
                 .filter(|value| value.is_object())
                 .cloned(),
+            // A fork's canonical key names its upstream; `origin` then names the origin remote.
+            origin_key: row
+                .pointer("/repositoryIdentity/origin/canonicalKey")
+                .or_else(|| row.pointer("/repositoryIdentity/canonicalKey"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         })
     }
 }

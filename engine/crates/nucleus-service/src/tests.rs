@@ -1110,9 +1110,7 @@ async fn interrupted_checkout_with_a_sent_worker_is_preserved() {
             .unwrap();
     }
     let row = service.task("sent").await.unwrap();
-    let result = service
-        .advance_due_task(&row, &service.host.fixture_pass())
-        .await;
+    let result = Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await;
     assert!(matches!(
         result,
         Err(ServiceError::Workspace(
@@ -1298,9 +1296,8 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     }
     if lose_launch_reply {
         // Run the normal task decision when an already scheduled recheck becomes due.
-        let result = service
-            .advance_due_task(&preparing, &service.host.fixture_pass())
-            .await;
+        let result =
+            Box::pin(service.advance_due_task(&preparing, &service.host.fixture_pass())).await;
         assert!(matches!(result, Ok(Action::Wait(WaitReason::Capacity))));
         service
             .schedule_result(&preparing, &result, Priority::Effect)

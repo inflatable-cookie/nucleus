@@ -1,11 +1,11 @@
 //! Exact thread snapshots are reusable while their synchronized shell row holds.
 
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
-use crate::{RegisteredProject, rpc::closed_row, task_row::RowChildren};
+use crate::{RegisteredProject, RepositoryProject, rpc::closed_row, task_row::RowChildren};
 
 const MAX_SNAPSHOTS: usize = 64;
 const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
@@ -294,6 +294,31 @@ impl ThreadSnapshots {
 
     pub(crate) fn project(&self, id: &str) -> Option<RegisteredProject> {
         RegisteredProject::read(self.projects.get(id)?)
+    }
+
+    /// Match a `owner/name` GitHub origin at its exact checkout root.
+    pub(crate) fn repository_project(&self, origin: &str, root: &Path) -> RepositoryProject {
+        let key = format!("github.com/{origin}");
+        let mut unidentified = false;
+        for (id, row) in &self.projects {
+            let Some(project) =
+                RegisteredProject::read(row).filter(|project| Path::new(&project.root) == root)
+            else {
+                continue;
+            };
+            match &project.origin_key {
+                Some(found) if found.eq_ignore_ascii_case(&key) => {
+                    return RepositoryProject::Found(id.clone(), project);
+                }
+                Some(_) => {}
+                None => unidentified = true,
+            }
+        }
+        if unidentified {
+            RepositoryProject::Unidentified
+        } else {
+            RepositoryProject::Missing
+        }
     }
 
     pub(crate) fn title_threads(&self, provider: &str) -> Vec<String> {

@@ -1094,7 +1094,8 @@ mod tests {
         let dispatch = json!({
             "usage": "high", "usageUntilMs": 1_800_000_000_000_u64, "globalSlots": 3,
             "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8, "beta": 0},
-            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused"
+            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused",
+            "plannerModel": {"provider": "claude", "model": "claude-opus-5-5", "effort": "high"}
         });
         let legacy_dispatch = json!({
             "usage": "high", "usageUntilMs": 1_800_000_000_000_u64, "slots": 3,

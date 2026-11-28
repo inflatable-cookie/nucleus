@@ -431,6 +431,9 @@ fn actor_label(
     if is_operator_actor(actor) {
         return "Operator".into();
     }
+    if actor == "Nucleus" {
+        return actor.into();
+    }
     if let Some(project) = projects.and_then(|projects| {
         projects
             .projects

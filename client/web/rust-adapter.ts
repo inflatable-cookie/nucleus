@@ -365,7 +365,12 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "queue.capacity-state": async () => {
       const dispatch = await rust.domain(dispatchSnapshot, "dispatch");
-      return { revision: dispatch.revision, effective: capacityValues(dispatch.value), changes: [] };
+      return {
+        revision: dispatch.revision,
+        effective: capacityValues(dispatch.value),
+        plannerModel: dispatch.value.plannerModel,
+        changes: [],
+      };
     },
     "queue.capacity": async (input: api.CapacityInput) => {
       if (!("revision" in input)) throw new Error("Refresh Limits before saving.");
@@ -376,6 +381,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         ...current.value,
         globalSlots: input.globalLimit ?? current.value.globalSlots,
         projectDefaultSlots: input.projectLimit ?? current.value.projectDefaultSlots,
+        plannerModel: input.plannerModel ?? current.value.plannerModel,
       });
       return { ok: true };
     },

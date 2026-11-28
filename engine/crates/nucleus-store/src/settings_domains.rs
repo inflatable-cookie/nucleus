@@ -5,7 +5,7 @@ use std::{
 };
 
 use longhorn_config::{DomainIssue, StorageClass};
-use nucleus_core::profiles::{Profile, UsageLevel};
+use nucleus_core::profiles::{Effort, Profile, Provider, UsageLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::{Host, Url};
@@ -104,6 +104,28 @@ pub struct DispatchSettings {
     pub thread_retention_interval_hours: u32,
     #[serde(default)]
     pub mode: DispatchMode,
+    /// Starts a planner in a T3 project that has no default model.
+    #[serde(default)]
+    pub planner_model: PlannerModel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlannerModel {
+    pub provider: Provider,
+    pub model: String,
+    #[serde(default)]
+    pub effort: Option<Effort>,
+}
+
+impl Default for PlannerModel {
+    fn default() -> Self {
+        Self {
+            provider: Provider::Claude,
+            model: "claude-opus-5-5".into(),
+            effort: Some(Effort::High),
+        }
+    }
 }
 
 /// The operator's global dispatch switch. It gates launches only; a stored
@@ -157,6 +179,7 @@ impl Default for DispatchSettings {
             thread_retention_days: default_thread_retention_days(),
             thread_retention_interval_hours: default_thread_retention_interval_hours(),
             mode: DispatchMode::Running,
+            planner_model: PlannerModel::default(),
         }
     }
 }
@@ -187,6 +210,11 @@ impl SettingsValue for DispatchSettings {
 
     fn validate(&self) -> Result<(), DomainIssue> {
         check(self.global_slots > 0, "dispatch", "use positive slots")?;
+        check(
+            text(&self.planner_model.model),
+            "plannerModel",
+            "choose a planner model",
+        )?;
         check(
             (1..=32).contains(&self.project_default_slots)
                 && self

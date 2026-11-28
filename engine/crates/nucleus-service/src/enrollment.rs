@@ -630,9 +630,7 @@ impl Service {
                 })??;
         timing.checkout = Some(crate::now_ms());
         repository.host_project = Some(planner.project_id.clone());
-        repository.host_project_title = registered.title.filter(|title| {
-            !title.trim().is_empty() && title.len() <= 240 && !title.chars().any(char::is_control)
-        });
+        repository.host_project_title = host_project_title(registered.title);
         self.save_enrollment(epoch, planner, repository, binding, timing)
             .await?;
         timing.saved = Some(crate::now_ms());
@@ -797,6 +795,13 @@ impl Service {
         self.project_settings_changed(&mut state);
         Ok(())
     }
+}
+
+/// A T3 project title that the registry can store.
+pub(super) fn host_project_title(title: Option<String>) -> Option<String> {
+    title.filter(|title| {
+        !title.trim().is_empty() && title.len() <= 240 && !title.chars().any(char::is_control)
+    })
 }
 
 fn register(

@@ -182,6 +182,34 @@ test("lead · open: Send to planner has one button with no repository or complex
   });
 });
 
+test("papercut · open: the panel shows why no planner can start, until the message reaches one", async () => {
+  const cause = "Can't start a planner: no T3 project matches example/orchard-web";
+  const item = papercut({ id: "i-cold", title: "No planner yet" });
+  // The engine records the cause on the history snapshot, beside the item's fields.
+  const waiting = { ...item, cause };
+  const blocked = [
+    { actor: "Operator", atMs: now - 3 * HOUR, action: "assess", item, recipient: "new planner thread" },
+    { actor: "Nucleus", atMs: now - 2 * HOUR, action: "assess_blocked", item: waiting },
+  ];
+  const engine = planningEngine();
+  engine.seed("orchard", item, { actor: "planner", atMs: now - DAY }, blocked);
+  const { ui } = await open(engine, "i-cold", "orchard", "papercut");
+  assert.match(ui.text(), /With planner since /);
+  assert.ok(ui.text().includes(cause), "the cause is under With planner since");
+  assert.ok(ui.query("Send papercut to planner again"));
+  ui.press("Activity, collapsed");
+  assert.match(ui.text(), /Planner not started/);
+
+  const reached = planningEngine();
+  reached.seed("orchard", item, { actor: "planner", atMs: now - DAY }, [
+    ...blocked,
+    { actor: "Nucleus", atMs: now - HOUR, action: "assess_reached", item },
+  ]);
+  const later = await open(reached, "i-cold", "orchard", "papercut");
+  assert.match(later.ui.text(), /With planner since /);
+  assert.ok(!later.ui.text().includes(cause), "a resolved cause leaves the panel");
+});
+
 test("lead · open: a stale view refuses Send to planner and reloads", async () => {
   const engine = planningEngine();
   engine.seed("acowtancy", lead({ id: "i-stale", title: "Stale lead" }), { actor: "planner", atMs: now - DAY });

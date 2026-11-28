@@ -21,6 +21,8 @@ import { radius, roles, space, type } from "./design";
 import { DateTimeLink, formatLocalDateTime } from "./date-time-field";
 import { USAGE_LABELS } from "../shared/pool";
 import * as api from "../shared/contracts";
+import type { HostCatalog } from "../shared/host";
+import { THINKING_LABELS, type ThinkingLevel } from "../shared/profile-vocabulary";
 import {
   usageLevels,
   type UiQueueState,
@@ -49,6 +51,8 @@ export type DispatchLimitsProps = {
   authority: api.CapacityAuthorityState | undefined;
   authorityError: unknown;
   retryAuthority: () => void;
+  /** The host's models in Nucleus's vocabulary, for the planner model. */
+  catalog?: HostCatalog;
   refreshBoard: () => Promise<unknown>;
   saveUsage: (level: UsageLevel, until: string | null) => Promise<void>;
   saveCapacity: (values: api.CapacityInput) => Promise<void>;
@@ -336,6 +340,95 @@ function TaskSlots({
   );
 }
 
+/** The model that starts a planner when Send to planner finds none to receive an item. */
+function PlannerModelSetting({
+  c,
+  value,
+  revision,
+  catalog,
+  retry,
+  save,
+}: {
+  c: Colors;
+  value: api.PlannerModel;
+  revision: string;
+  catalog: HostCatalog | undefined;
+  retry: () => void;
+  save: (values: api.CapacityInput) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<api.PlannerModel | null>(null);
+  // A queued save writes against the revision read after the one before it.
+  const latest = useRef(revision);
+  latest.current = revision;
+  const auto = useSectionAutoSave<api.PlannerModel>(async (plannerModel) => {
+    try {
+      await save({ revision: latest.current, plannerModel });
+    } catch (error) {
+      retry();
+      throw error;
+    } finally {
+      setDraft((current) => (current === plannerModel ? null : current));
+    }
+  });
+  const shown = draft ?? value;
+  const edit = (next: api.PlannerModel) => {
+    setDraft(next);
+    auto.enqueue(next);
+  };
+  const models = (catalog?.providers ?? []).flatMap((provider) =>
+    provider.models.map((model) => ({
+      value: `${provider.key}/${model.id}`,
+      label: `${provider.label} · ${model.label}`,
+      provider: provider.key,
+      model,
+    })),
+  );
+  const key = `${shown.provider}/${shown.model}`;
+  const chosen = models.find((option) => option.value === key);
+  const levels = chosen?.model.thinkingOptions ?? [];
+  return (
+    <Section
+      c={c}
+      title="Planner model"
+      status={auto.status}
+      description="Starts a planner for Send to planner when the T3 project has no default model."
+    >
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>
+        <DropdownSelect
+          c={c}
+          label="Model"
+          minWidth={220}
+          value={key}
+          options={chosen ? models : [...models, { value: key, label: shown.model }]}
+          onChange={(next) => {
+            const option = models.find((candidate) => candidate.value === next);
+            if (!option) return;
+            const offered = option.model.thinkingOptions.some((level) => level.id === shown.effort);
+            edit({
+              provider: option.provider,
+              model: option.model.id,
+              effort: offered ? shown.effort : option.model.defaultThinkingOptionId,
+            });
+          }}
+        />
+        <DropdownSelect
+          c={c}
+          label="Thinking"
+          value={shown.effort ?? ""}
+          options={[
+            { value: "", label: "Host default" },
+            ...levels.map((level) => ({ value: level.id, label: level.label })),
+            ...(shown.effort && !levels.some((level) => level.id === shown.effort)
+              ? [{ value: shown.effort, label: THINKING_LABELS[shown.effort as ThinkingLevel] ?? shown.effort }]
+              : []),
+          ]}
+          onChange={(effort) => edit({ ...shown, effort: effort || null })}
+        />
+      </View>
+    </Section>
+  );
+}
+
 /**
  * Project overrides, one line each (Tom, 2026-11-08): the project, its slot limit and a
  * trash icon that asks first. The slot limit is the server's effective value
@@ -600,7 +693,7 @@ function ProjectLimitRow({
 
 /**
  * Settings → Dispatch limits, in the order the operator reads it: usage level, task
- * slots, project overrides.
+ * slots, planner model, project overrides.
  */
 export function DispatchLimits(props: DispatchLimitsProps) {
   const { c, state, authority } = props;
@@ -616,6 +709,16 @@ export function DispatchLimits(props: DispatchLimitsProps) {
         retry={props.retryAuthority}
         save={props.saveCapacity}
       />
+      {authority?.plannerModel && authority.revision !== undefined && (
+        <PlannerModelSetting
+          c={c}
+          value={authority.plannerModel}
+          revision={authority.revision}
+          catalog={props.catalog}
+          retry={props.retryAuthority}
+          save={props.saveCapacity}
+        />
+      )}
       <ProjectOverrides
         c={c}
         state={state}

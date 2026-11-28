@@ -398,6 +398,7 @@ impl Store {
         }
         let mut snapshot = serde_json::to_value(&saved.item)?;
         snapshot["recipient"] = recipient.into();
+        snapshot["tell"] = tell.key.into();
         record_history(
             &tx,
             ItemRecord,
@@ -412,6 +413,54 @@ impl Store {
         crate::tells::insert_tell_in_tx(&tx, project, tell, tell_id)?;
         tx.commit()?;
         Ok(saved)
+    }
+
+    /// Record on the item why its assessment send is waiting for a planner, or with no
+    /// cause, that it reached one. Returns the item when this changed what it shows.
+    ///
+    /// # Errors
+    /// Returns an error if the item or its history cannot be read or written.
+    pub fn record_assess_outcome(
+        &mut self,
+        project: &str,
+        tell: &str,
+        cause: Option<&str>,
+        stamp: WriteAt<'_>,
+    ) -> Result<Option<String>, StoreError> {
+        let tx = self.planning_write()?;
+        let latest = tx
+            .query_row(
+                "SELECT id, json_extract(snapshot, '$.cause') FROM planning_history
+                 WHERE project = ?1 AND kind = 'item'
+                 AND json_extract(snapshot, '$.tell') = ?2 ORDER BY sequence DESC LIMIT 1",
+                params![project, tell],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?;
+        // A retry with the same cause adds nothing, and only a waiting send can arrive.
+        let Some((id, _)) = latest.filter(|(_, recorded)| recorded.as_deref() != cause) else {
+            return Ok(None);
+        };
+        let item: Item = required(&tx, ItemRecord, project, &id)?;
+        let mut snapshot = serde_json::to_value(&item)?;
+        snapshot["tell"] = tell.into();
+        let action = if let Some(cause) = cause {
+            snapshot["cause"] = cause.into();
+            "assess_blocked"
+        } else {
+            "assess_reached"
+        };
+        record_history(
+            &tx,
+            ItemRecord,
+            project,
+            &id,
+            action,
+            &snapshot.to_string(),
+            stamp,
+        )?;
+        tx.commit()?;
+        Ok(Some(id))
     }
 
     /// Admit the task, link its source and record the item's promotion together.

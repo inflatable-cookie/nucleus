@@ -95,6 +95,8 @@ const ACTIONS: Record<string, string> = {
   park: "Parked",
   reopen: "Reopened",
   assess: "Sent to planner",
+  assess_blocked: "Planner not started",
+  assess_reached: "Reached a planner",
   promote: "Promoted",
 };
 
@@ -106,6 +108,13 @@ function latestAssess(item: ItemDetail): ItemHistoryEntry | undefined {
     if (entry.action === "drop" || entry.action === "promote" || entry.action === "reopen") return undefined;
   }
   return undefined;
+}
+
+/** Why the latest assessment send is still waiting for a planner, if it is. */
+function assessCause(item: ItemDetail): string | null {
+  const last = item.history.findLast((entry) =>
+    ["assess", "assess_blocked", "assess_reached", "drop", "promote", "reopen"].includes(entry.action));
+  return last?.action === "assess_blocked" ? last.note : null;
 }
 
 /** The item's history as activity, newest first. Imports and unknown actions keep their own word. */
@@ -363,6 +372,7 @@ export function RustItemDialog({
           c={c}
           item={item}
           assessed={assessed}
+          cause={assessCause(item)}
           busy={busy}
           onAssess={() => {
             void (async () => {
@@ -575,12 +585,14 @@ function AssessPanel({
   c,
   item,
   assessed,
+  cause,
   busy,
   onAssess,
 }: {
   c: Colors;
   item: ItemDetail;
   assessed: ItemHistoryEntry | undefined;
+  cause: string | null;
   busy: boolean;
   onAssess: () => void;
 }) {
@@ -619,6 +631,11 @@ function AssessPanel({
           onPress={onAssess}
         />
       </View>
+      {cause ? (
+        <Text accessibilityRole="alert" selectable style={{ ...typeScale.body, color: roles(c).warning }}>
+          {cause}
+        </Text>
+      ) : null}
     </Panel>
   );
 }
