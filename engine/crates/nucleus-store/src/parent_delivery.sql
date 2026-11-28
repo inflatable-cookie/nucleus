@@ -1,13 +1,19 @@
 CREATE TABLE parent_deliveries (
-    ordinal INTEGER PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id),
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id),
     version INTEGER NOT NULL,
-    command TEXT NOT NULL,
-    refresh INTEGER NOT NULL CHECK (refresh IN (0, 1)),
-    runtime TEXT,
+    command TEXT NOT NULL CHECK (command <> ''),
     wire TEXT CHECK (json_valid(wire)),
     legacy_prompt TEXT,
     due_ms INTEGER NOT NULL,
-    result TEXT NOT NULL CHECK (result IN ('pending', 'accepted', 'refused', 'failed', 'held')),
-    UNIQUE(task_id, version, command)
+    result TEXT NOT NULL CHECK (result IN ('pending', 'accepted'))
+) STRICT;
+
+CREATE TABLE parent_refresh_deliveries (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+    version INTEGER NOT NULL,
+    command TEXT NOT NULL CHECK (command <> ''),
+    wire TEXT CHECK (json_valid(wire)),
+    legacy_prompt TEXT,
+    due_ms INTEGER NOT NULL,
+    result TEXT NOT NULL CHECK (result IN ('pending', 'accepted'))
 ) STRICT;

@@ -1,9 +1,9 @@
-use std::{fmt, num::NonZeroU64, path::PathBuf};
+use std::{collections::BTreeSet, fmt, num::NonZeroU64, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::profiles::{BoundProfile, Profile};
+use crate::profiles::{BoundProfile, Profile, model_key};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -612,10 +612,16 @@ pub struct Threads {
     pub(crate) worker: Option<String>,
     pub(crate) reviewer: Option<String>,
     pub(crate) launch_sequence: u64,
+    // Keep profile payloads out of task snapshots held across scheduler awaits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) worker_profile: Option<BoundProfile>,
+    pub(crate) worker_profile: Option<Box<BoundProfile>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    reviewer_profile: Option<BoundProfile>,
+    reviewer_profile: Option<Box<BoundProfile>>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) earlier_worker_models: BTreeSet<String>,
+    /// External contributor evidence belongs to the same durable role history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) review_author: Option<Box<ReviewAuthor>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) complexity_raised_at: Option<NonZeroU64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -644,8 +650,8 @@ impl Threads {
 
     pub(crate) fn bound_profile(&self, role: Role) -> Option<&BoundProfile> {
         match role {
-            Role::Worker => self.worker_profile.as_ref(),
-            Role::Reviewer => self.reviewer_profile.as_ref(),
+            Role::Worker => self.worker_profile.as_deref(),
+            Role::Reviewer => self.reviewer_profile.as_deref(),
         }
     }
 
@@ -661,7 +667,14 @@ impl Threads {
             Role::Reviewer => (&mut self.reviewer, &mut self.reviewer_profile),
         };
         if thread.as_ref() != Some(&launch.thread) || launch.profile.is_some() {
-            profile.clone_from(&launch.profile);
+            if launch.role == Role::Worker
+                && let Some(model) = profile
+                    .as_ref()
+                    .and_then(|bound| model_key(&bound.selected.model))
+            {
+                self.earlier_worker_models.insert(model);
+            }
+            *profile = launch.profile.clone().map(Box::new);
         }
         *thread = Some(launch.thread.clone());
     }
@@ -671,6 +684,42 @@ impl Threads {
 pub(crate) struct WorkContinuation {
     pub(crate) instruction: String,
     pub(crate) require_new_head_from: Option<Head>,
+}
+
+/// Operator-supplied evidence of the models that contributed to an external PR.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuthorDeclaration {
+    pub models: Vec<String>,
+    pub github_author: String,
+    pub authoring_system: String,
+    pub attested_by: String,
+    pub provenance: String,
+}
+
+impl AuthorDeclaration {
+    fn is_valid(&self) -> bool {
+        let bounded = |text: &str, limit| !text.trim().is_empty() && text.len() <= limit;
+        (1..=16).contains(&self.models.len())
+            && self.models.iter().all(|model| {
+                bounded(model, 200)
+                    && model
+                        .split_once('/')
+                        .is_some_and(|(provider, _)| !provider.trim().is_empty())
+                    && model_key(model).is_some()
+            })
+            && bounded(&self.github_author, 100)
+            && bounded(&self.authoring_system, 200)
+            && bounded(&self.attested_by, 240)
+            && bounded(&self.provenance, 4000)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReviewAuthor {
+    head: Head,
+    pub(crate) worker_head: Option<Head>,
+    declaration: AuthorDeclaration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -756,6 +805,11 @@ impl TryFrom<StoredTask> for Task {
         if stored.attempts > 3 {
             return Err("stored attempt count exceeds the retry limit".into());
         }
+        if stored.threads.review_author.as_ref().is_some_and(|author| {
+            stored.identity.entry != Entry::ReviewEntry || !author.declaration.is_valid()
+        }) {
+            return Err("stored author declaration does not match its review entry".into());
+        }
         if stored.question.as_ref().is_some_and(|open| {
             open.operator_decline.is_some()
                 && (stored.identity.entry != Entry::ReviewEntry
@@ -828,6 +882,34 @@ impl Task {
             report_state: None,
             queue_priority,
         }
+    }
+
+    /// Bind the operator's declaration to this review entry's original PR head.
+    #[must_use]
+    pub fn with_author_declaration(mut self, declaration: AuthorDeclaration) -> Option<Self> {
+        let pr = self.pr.as_ref()?;
+        if self.identity.entry != Entry::ReviewEntry
+            || self.threads.launch_sequence != 0
+            || self.threads.review_author.is_some()
+            || !declaration.is_valid()
+        {
+            return None;
+        }
+        self.threads.review_author = Some(Box::new(ReviewAuthor {
+            head: pr.head.clone(),
+            worker_head: None,
+            declaration,
+        }));
+        Some(self)
+    }
+
+    /// Return the external author evidence when the task head has known provenance.
+    #[must_use]
+    pub fn review_author(&self) -> Option<&AuthorDeclaration> {
+        let author = self.threads.review_author.as_ref()?;
+        let head = &self.pr.as_ref()?.head;
+        (head == &author.head || Some(head) == author.worker_head.as_ref())
+            .then_some(&author.declaration)
     }
 
     /// Admit a report-only task with one proved lane and an immutable planning base.

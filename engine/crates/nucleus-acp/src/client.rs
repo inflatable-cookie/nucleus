@@ -147,10 +147,14 @@ pub(crate) struct Detail {
     pub operator_inbox: bool,
     pub plan_scope_id: Option<String>,
     pub parent_hold: Option<String>,
-    #[serde(default)]
-    pub active_child: bool,
     pub pull_request: Option<PullRequest>,
     pub report: Option<Report>,
+}
+
+impl Detail {
+    pub(crate) fn holds(&self, prompt: &str) -> bool {
+        self.parent_hold.as_deref() == Some(prompt)
+    }
 }
 
 #[derive(Deserialize)]

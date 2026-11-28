@@ -196,7 +196,14 @@ impl T3 {
         command: &str,
         message: &str,
     ) -> Result<Option<SnoozeUpdate>, HostError> {
-        let (row, observed_sequence) = self.rpc.thread_row_with_revision(thread);
+        let (row, observed_sequence) = self.rpc.with_shell(|shell| {
+            shell.map_or((None, None), |shell| {
+                (
+                    shell.marker(thread),
+                    shell.row_revision(thread).map(|(revision, _)| revision),
+                )
+            })
+        });
         let Some(row) = row.filter(|row| !closed_row(row)) else {
             return Ok(None);
         };

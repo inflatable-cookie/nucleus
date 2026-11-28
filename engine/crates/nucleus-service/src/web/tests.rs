@@ -45,111 +45,131 @@ const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
 #[tokio::test]
-async fn a_committed_reservation_keeps_the_parent_held_before_its_first_send() {
+async fn the_row_refresh_route_is_gone() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
-    let (task, _, _) = crate::tests::reservation_at(
+    let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+    seed_task(&service, &task).await;
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+    );
+    let found = get_as(&api, "/v1/tasks/worker", &BOARD_KEY).await;
+    assert_eq!(found.status(), StatusCode::OK);
+    assert_eq!(
+        post_json(&api, "/v1/tasks/worker/acp/refresh", &BOARD_KEY, &json!({})).await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn only_a_shell_active_role_gets_the_legacy_hint_without_a_hold() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (mut task, _, _) = crate::tests::reservation_at(
         "worker",
         Entry::Brief,
         &service.fixture().start,
         crate::now_ms(),
     );
     seed_task(&service, &task).await;
-    let mut row = service.task("worker").await.expect("reserved row");
-    assert!(
-        row.task
-            .run()
-            .expect("reservation")
-            .last_send_at_ms()
-            .is_none()
+    let service = Arc::new(service);
+    let api = router(
+        Arc::clone(&service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
     );
-    let mut state = service.state.lock().await;
-    state
-        .observe_wait(&row.task, None)
-        .expect("warm reservation");
-    assert_eq!(
-        state.task_attention(&row).unwrap(),
-        crate::attention::TaskAttention::Active
-    );
-    assert_eq!(
-        service.acp_turn_view(&state, &row).expect("reserved view"),
-        (None, true)
-    );
-    state.settings.dispatch = Some(nucleus_store::DispatchSettings {
-        mode: nucleus_store::DispatchMode::Paused,
-        ..nucleus_store::DispatchSettings::default()
-    });
-    state.set_wait("worker", Some(WaitReason::Capacity));
-    assert_eq!(
-        service
-            .acp_turn_view(&state, &row)
-            .expect("paused reservation"),
-        (None, true)
-    );
-    let instance = row
-        .task
-        .run()
-        .expect("reservation")
-        .launch()
-        .instance
-        .clone();
-    row.task.record_send(&instance, 1).expect("send receipt");
-    state
-        .role_observations
-        .insert("worker".into(), (instance.clone(), RunState::Running));
-    state.set_wait("worker", Some(WaitReason::HostUnknown));
-    assert_eq!(
-        state.task_attention(&row).unwrap(),
-        crate::attention::TaskAttention::Active
-    );
-    assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
-    let identity = row.task.identity();
+    let binding = mint_binding(&api, "worker", &BOARD_KEY).await;
+    let detail = || get_as(&api, "/v1/tasks/worker", &binding.credential);
+    let unsent = json_body(detail().await).await;
+    assert!(unsent.get("parentHold").is_none());
+    assert!(unsent.get("activeChild").is_none());
+
+    let launch = task.run().unwrap().launch().clone();
+    task.record_send(&launch.instance, 1).unwrap();
+    {
+        let mut state = service.state.lock().await;
+        let row = service.lookup(&state, "worker").unwrap();
+        state.store.save_row(&row, &task, &event("sent")).unwrap();
+    }
     let checkout = nucleus_work::checkout_path(
         service.storage.work().path(),
-        &identity.repository,
-        &identity.id,
+        &task.identity().repository,
+        &task.identity().id,
     );
     service.host.fixture_project_shell(
         &json!({"projects":[],"threads":[{
-            "id":row.task.run().unwrap().launch().thread, "worktreePath":checkout,
+            "id":launch.thread, "worktreePath":checkout,
             "status":"running","activeRunId":"native-worker", "pendingBackgroundTasks":[]
         }]}),
         "fixture-acp",
     );
-    assert_eq!(
-        service
-            .acp_turn_view(&state, &row)
-            .expect("held active role"),
-        (None, true)
-    );
-    service
-        .host
-        .fixture_project_shell(&json!({"projects":[],"threads":[]}), "fixture-acp");
-    for wait in [
-        WaitReason::HostObservationBlocked,
-        WaitReason::Permission,
-        WaitReason::Question,
-    ] {
-        state.set_wait("worker", Some(wait));
-        assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
+    let active = json_body(detail().await).await;
+    assert!(active.get("parentHold").is_none());
+    assert_eq!(active["activeChild"], true);
+
+    let write = T3::prepare_parent_hold(
+        &Binding {
+            project_id: "local-fixture".into(),
+            worktree_path: checkout.to_str().unwrap().into(),
+            branch: "fixture".into(),
+        },
+        "fixture-acp",
+        "Fixture",
+        "Starting worker",
+        nucleus_hosts::ParentShell::Missing,
+        None,
+        nucleus_hosts::HoldCheckpoint {
+            after_run: None,
+            recorded_at_ms: crate::now_ms(),
+            short_turns: 0,
+            preparing_launch: false,
+        },
+    )
+    .unwrap();
+    let frozen = write.freeze();
+    {
+        let state = service.state.lock().await;
+        let row = service.lookup(&state, "worker").unwrap();
+        assert!(
+            state
+                .store
+                .freeze_parent_delivery(
+                    "worker",
+                    &nucleus_store::ParentDelivery {
+                        version: row.version,
+                        command: write.command_id().unwrap().into(),
+                        wire: Some(serde_json::to_string(frozen).unwrap()),
+                        legacy_prompt: None,
+                        due_ms: 0,
+                        result: nucleus_store::ParentResult::Pending,
+                    }
+                )
+                .unwrap()
+        );
     }
-    state.set_wait("worker", Some(WaitReason::IdleWithoutTerminalRun));
-    state.role_observations.insert(
-        "worker".into(),
-        (instance.clone(), RunState::IdleWithoutTerminalRun),
-    );
-    assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
-    state.set_wait("worker", Some(WaitReason::Running));
-    state
-        .role_observations
-        .insert("worker".into(), (instance, RunState::Ended));
-    assert_eq!(
-        service.acp_turn_view(&state, &row).expect("ended role"),
-        (None, false)
-    );
+    let held = json_body(detail().await).await;
+    assert_eq!(held["parentHold"].as_str(), frozen.prompt());
+    assert!(held.get("activeChild").is_none());
+
+    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+        mode: nucleus_store::DispatchMode::Stopped,
+        ..Default::default()
+    });
+    let stopped = json_body(detail().await).await;
+    assert!(stopped.get("parentHold").is_none());
+    assert!(stopped.get("activeChild").is_none());
 }
 
 #[tokio::test]
-async fn a_held_parent_survives_refresh_before_the_first_shell_snapshot() {
+async fn shell_startup_does_not_invent_a_hold_for_a_bound_role() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let (mut task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
     let instance = task.run().unwrap().launch().instance.clone();
@@ -158,7 +178,7 @@ async fn a_held_parent_survives_refresh_before_the_first_shell_snapshot() {
     let row = service.task("worker").await.unwrap();
     let mut state = service.state.lock().await;
     state.registry_mode = true;
-    assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, true));
+    assert_eq!(service.acp_turn_view(&state, &row).unwrap(), (None, false));
     service
         .host
         .fixture_project_shell(&json!({"projects":[],"threads":[]}), "fixture-acp");
@@ -494,7 +514,7 @@ fn assert_worker_detail(detail: &Value, list: &Value, thread: &str) {
     assert_eq!(lifecycle["steps"][1]["elapsedMs"], 831_000);
     assert!(lifecycle["steps"][1]["activeSinceMs"].is_null());
     assert_eq!(lifecycle["steps"][2]["roundLabel"], "Round 1");
-    assert_eq!(detail["stateLabel"], "Reviewing · capacity");
+    assert_eq!(detail["stateLabel"], "Waiting for a slot");
     assert_eq!(lifecycle["steps"][2]["note"], detail["stateLabel"]);
     assert_eq!(lifecycle["admittedAtMs"], detail["createdAtMs"]);
     assert!(lifecycle["steps"][2]["activeSinceMs"].is_null());

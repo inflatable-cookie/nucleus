@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{ControllerScope, Service, ServiceError, State, pass::DispatchTarget};
+use crate::{ControllerScope, Service, ServiceError, State};
 use nucleus_core::{
     Authority, Phase, Task, WaitReason,
     acp::{Binding, InboxBinding, session_id},
@@ -146,7 +146,8 @@ impl Service {
         let active_role = self.active_parent_role(task, &checkout);
         // Keep an attached turn through shell startup. New writes still require
         // the synchronized shell, and a stored prompt keeps its exact identity.
-        let restoring = state.registry_mode
+        let restoring = delivery.is_some()
+            && state.registry_mode
             && !self.host.projects_synchronized()
             && !crate::task_rows::visibility_roles(task).is_empty();
         let wanted = wants_parent_hold(
@@ -156,10 +157,8 @@ impl Service {
             active_role || restoring,
             crate::now_ms(),
         );
-        if !wanted {
-            return Ok((None, false));
-        }
-        let prompt = delivery.map(|record| {
+        let active_child = wanted && delivery.is_none() && active_role;
+        let prompt = delivery.filter(|_| wanted).map(|record| {
             frozen
                 .as_ref()
                 .and_then(FrozenParentWrite::prompt)
@@ -172,15 +171,7 @@ impl Service {
                     str::to_owned,
                 )
         });
-        // The compatibility carry applies to an attached turn without a stored
-        // prompt. A pre-wire refusal alone cannot keep that turn open.
-        let carry = prompt.is_none()
-            && (active_role
-                || !matches!(
-                    state.wait_detail(id),
-                    Some(crate::WaitDetail::BeforeSend(_))
-                ));
-        Ok((prompt, carry))
+        Ok((prompt, active_child))
     }
 
     pub(super) async fn deliver_parent(
@@ -188,10 +179,9 @@ impl Service {
         row: &TaskRow,
         mut write: ParentWrite,
         prior: Option<ParentDelivery>,
-        refresh: bool,
     ) -> Result<bool, ServiceError> {
-        let existing = prior
-            .filter(|record| record.command == write.command_id().unwrap_or_default() || refresh);
+        let existing =
+            prior.filter(|record| record.command == write.command_id().unwrap_or_default());
         let preparing = write
             .freeze()
             .checkpoint()
@@ -205,11 +195,7 @@ impl Service {
                 write.use_frozen(serde_json::from_str(wire).map_err(StoreError::from)?)?;
             } else if write.starts_turn() {
                 let prompt = record.legacy_prompt.clone().unwrap_or_else(|| {
-                    if record.refresh {
-                        nucleus_core::acp::REFRESH_TASK_ROW.to_owned()
-                    } else {
-                        nucleus_core::acp::legacy_parent_hold_prompt(&record.command)
-                    }
+                    nucleus_core::acp::legacy_parent_hold_prompt(&record.command)
                 });
                 write.use_legacy_intent(&record.command, &prompt)?;
             }
@@ -224,22 +210,16 @@ impl Service {
         // Record the wire and deadline before sending. A restart or transport
         // error can replay this exact command against T3's durable receipt.
         let attempt = if write.starts_turn() {
-            Some(
-                self.begin_parent_delivery(row, &write, refresh, existing)
-                    .await?,
-            )
+            Some(self.begin_parent_delivery(row, &write, existing).await?)
         } else {
             None
         };
-        let result = self.write_parent(row, write, refresh, preparing).await;
+        let result = self.write_parent(row, write, preparing).await;
         match (result, attempt) {
             (Ok(()), record) => {
                 if let Some((record, _)) = record {
-                    let start_deadline = if refresh {
-                        0
-                    } else {
-                        ms(crate::now_ms().saturating_add(PARENT_START_TIMEOUT_MS))
-                    };
+                    let start_deadline =
+                        ms(crate::now_ms().saturating_add(PARENT_START_TIMEOUT_MS));
                     self.finish_parent_delivery(
                         row,
                         &record,
@@ -298,7 +278,6 @@ impl Service {
         &self,
         row: &TaskRow,
         write: ParentWrite,
-        refresh: bool,
         preparing: bool,
     ) -> Result<(), ParentSendError> {
         let id = &row.task.identity().id;
@@ -308,22 +287,18 @@ impl Service {
         let result = self
             .host
             .write_parent(write, |update| {
-                if refresh && update.is_none() {
-                    return Ok(());
-                }
                 journal.authorize(update, |state| {
                     let dispatch = state.dispatch_mode();
-                    if !refresh
-                        && (!self.lookup(state, id).is_ok_and(|fresh| fresh == *row)
-                            || dispatch == DispatchMode::Stopped
-                            || starts_turn
-                                && !wants_parent_hold(
-                                    row,
-                                    dispatch,
-                                    preparing && dispatch.allows_launch(row.task.first_launch()),
-                                    self.active_parent_role(&row.task, &checkout),
-                                    crate::now_ms(),
-                                ))
+                    if !self.lookup(state, id).is_ok_and(|fresh| fresh == *row)
+                        || dispatch == DispatchMode::Stopped
+                        || starts_turn
+                            && !wants_parent_hold(
+                                row,
+                                dispatch,
+                                preparing && dispatch.allows_launch(row.task.first_launch()),
+                                self.active_parent_role(&row.task, &checkout),
+                                crate::now_ms(),
+                            )
                     {
                         return Err(HostError::Uncertain);
                     }
@@ -339,7 +314,6 @@ impl Service {
         &self,
         row: &TaskRow,
         write: &ParentWrite,
-        refresh: bool,
         existing: Option<ParentDelivery>,
     ) -> Result<(ParentDelivery, FrozenParentWrite), ServiceError> {
         let id = &row.task.identity().id;
@@ -357,7 +331,6 @@ impl Service {
             let record = ParentDelivery {
                 version: row.version,
                 command,
-                refresh,
                 wire: Some(wire),
                 legacy_prompt: None,
                 due_ms,
@@ -366,7 +339,7 @@ impl Service {
             if !state.store.freeze_parent_delivery(id, &record)? {
                 return Err(StoreError::StaleTask.into());
             }
-            if !refresh && row.task.run().is_none() {
+            if row.task.run().is_none() {
                 state.observe_wait(&row.task, Some(WaitReason::Starting))?;
                 self.publish(id, row.version);
             } else {
@@ -400,98 +373,6 @@ impl Service {
             reason: reason.to_string(),
             retry_at: self.host.request_retry_at(),
         }
-    }
-
-    pub(super) async fn queue_acp_refresh(&self, id: &str) -> Result<bool, ServiceError> {
-        let mut state = self.state.lock().await;
-        let row = self.lookup(&state, id)?;
-        if row.task.phase().is_terminal() || row.task.run().is_some() {
-            return Ok(false);
-        }
-        state.acp_refresh_requests.insert(id.into(), row.version);
-        self.wake_task(
-            &mut state,
-            id,
-            row.version,
-            crate::schedule::Priority::Effect,
-        );
-        Ok(true)
-    }
-
-    pub(super) async fn refresh_acp_if_requested(&self, row: &TaskRow) -> Result<(), ServiceError> {
-        let id = &row.task.identity().id;
-        let refresh = {
-            let mut state = self.state.lock().await;
-            state.planner_notice_waiters.remove(id);
-            state.acp_refresh_requests.remove(id) == Some(row.version)
-                || state
-                    .store
-                    .parent_deliveries(id, row.version)?
-                    .iter()
-                    .any(|value| value.refresh && value.result == ParentResult::Pending)
-        };
-        if refresh && let Err(error) = self.refresh_acp_parent(row).await {
-            if matches!(error, ServiceError::ParentNotSent { .. }) {
-                let mut state = self.state.lock().await;
-                if self.lookup(&state, id)?.version == row.version {
-                    state.acp_refresh_requests.insert(id.into(), row.version);
-                }
-            }
-            return Err(error);
-        }
-        Ok(())
-    }
-
-    pub(super) async fn refresh_acp_parent(&self, row: &TaskRow) -> Result<bool, ServiceError> {
-        let task = &row.task;
-        if task.phase().is_terminal() || task.run().is_some() {
-            return Ok(false);
-        }
-        let _fence = self.effect(row).await?;
-        let provider = self.acp_provider().ok_or(ServiceError::AcpBinding)?;
-        let identity = task.identity();
-        let id = &identity.id;
-        let prior = self
-            .state
-            .lock()
-            .await
-            .store
-            .parent_deliveries(id, row.version)?
-            .into_iter()
-            .find(|value| value.refresh);
-        if let Some(record) = &prior {
-            if record.result == ParentResult::Accepted {
-                return Ok(false);
-            }
-            parent_due(record)?;
-        }
-        let route = self.project_for(identity).await?;
-        let work = self.worktrees();
-        let checkout = work.registered(&route.checkout, &identity.repository, id)?;
-        let binding = route.binding(&checkout)?;
-        let Some(write) = self
-            .host
-            .prepare_parent_refresh(&binding, provider)
-            .await
-            .map_err(|error| self.parent_not_sent(error))?
-        else {
-            return Ok(false);
-        };
-        let Some(_permit) = self
-            .dispatch_gate(
-                task,
-                DispatchTarget::Run {
-                    frozen: write.binding(),
-                    checkout: &checkout,
-                    launch: false,
-                },
-            )
-            .await?
-        else {
-            return Ok(false);
-        };
-        self.ensure_parent_reader(id, checkout.path()).await?;
-        self.deliver_parent(row, write, prior, true).await
     }
 
     pub(super) async fn bind_acp(
@@ -535,7 +416,13 @@ impl Service {
             command_credential,
             scratch_dir: Some(scratch_dir),
         };
-        write_binding(&state, &binding_path, &binding, Some(controller))?;
+        write_binding(
+            &state,
+            &binding_path,
+            &binding,
+            Some(controller),
+            scope.actor(),
+        )?;
         self.publish(task, row.version);
         Ok(MintedSession {
             session_id,
@@ -565,7 +452,7 @@ impl Service {
             {
                 binding.scratch_dir = Some(scratch_dir);
                 binding.endpoint = self.callback;
-                write_binding(&state, &binding_path, &binding, None)?;
+                write_binding(&state, &binding_path, &binding, None, None)?;
             }
             return Ok(());
         }
@@ -581,6 +468,7 @@ impl Service {
                 scratch_dir: Some(scratch_dir),
             },
             Some([0; 32]),
+            None,
         )
     }
 
@@ -635,7 +523,9 @@ impl Service {
     pub(super) async fn acp_reader(&self, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
         self.storage.database().verify().ok()?;
         let state = self.state.lock().await;
-        reader_controller(&state, task, key)
+        SessionAccess::Read
+            .authenticate(&state, task, key)
+            .map(|session| session.controller)
     }
 
     pub(super) async fn acp_credential(
@@ -643,22 +533,24 @@ impl Service {
         selector: &str,
         key: &[u8; 32],
         access: SessionAccess,
-    ) -> Option<(String, [u8; 32])> {
+    ) -> Option<(String, AcpSession)> {
         self.storage.database().verify().ok()?;
         let state = self.state.lock().await;
-        let controller = match access {
-            SessionAccess::Read => reader_controller,
-            SessionAccess::Write => writer_controller,
-        };
         if !selector.contains('#') {
-            return controller(&state, selector, key).map(|digest| (selector.into(), digest));
+            return access
+                .authenticate(&state, selector, key)
+                .map(|session| (selector.into(), session));
         }
         crate::numbers::TaskReference::parse(selector)
             .ok()?
             .candidates(&state)
             .ok()?
             .into_iter()
-            .find_map(|id| controller(&state, &id, key).map(|digest| (id, digest)))
+            .find_map(|id| {
+                access
+                    .authenticate(&state, &id, key)
+                    .map(|session| (id, session))
+            })
     }
 }
 
@@ -666,6 +558,17 @@ impl Service {
 pub(super) enum SessionAccess {
     Read,
     Write,
+}
+
+impl SessionAccess {
+    fn authenticate(self, state: &State, task: &str, key: &[u8; 32]) -> Option<AcpSession> {
+        let session = state.store.acp_session(task).ok()??;
+        let expected = match self {
+            Self::Read => session.reader,
+            Self::Write => session.writer?,
+        };
+        bool::from(expected.ct_eq(&digest(key))).then_some(session)
+    }
 }
 
 fn existing_binding<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, ServiceError> {
@@ -695,6 +598,7 @@ fn write_binding(
     path: &Path,
     binding: &Binding,
     controller: Option<[u8; 32]>,
+    controller_thread: Option<&str>,
 ) -> Result<(), ServiceError> {
     let (temporary, directory) = prepare_binding(path, binding)?;
     if let Some(controller) = controller {
@@ -705,6 +609,7 @@ fn write_binding(
                 reader: digest(&binding.credential),
                 writer: binding.command_credential.as_ref().map(digest),
                 controller,
+                controller_thread: controller_thread.map(str::to_owned),
             },
         )?;
     }
@@ -736,13 +641,9 @@ fn publish_binding(
 }
 
 pub(super) fn writer_controller(state: &State, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
-    let session = state.store.acp_session(task).ok()??;
-    bool::from(session.writer?.ct_eq(&digest(key))).then_some(session.controller)
-}
-
-fn reader_controller(state: &State, task: &str, key: &[u8; 32]) -> Option<[u8; 32]> {
-    let session = state.store.acp_session(task).ok()??;
-    bool::from(session.reader.ct_eq(&digest(key))).then_some(session.controller)
+    SessionAccess::Write
+        .authenticate(state, task, key)
+        .map(|session| session.controller)
 }
 
 fn random_key() -> Result<[u8; 32], ServiceError> {

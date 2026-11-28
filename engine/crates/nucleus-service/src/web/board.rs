@@ -234,21 +234,13 @@ async fn javascript(Extension(board): Extension<Board>) -> impl IntoResponse {
 }
 
 async fn session(
-    State(api): State<Api>,
     Extension(authority): Extension<Authority>,
     Extension(session): Extension<BrowserSession>,
 ) -> Json<Value> {
-    let state = api.service.state.lock().await;
-    let projects = session.scope.actor().map(|actor| {
-        state
-            .live_planner_project(actor)
-            .into_iter()
-            .collect::<Vec<_>>()
-    });
     Json(json!({
         "id": hex::encode(session.id),
         "canEditSettings": matches!(authority, Authority::Operator { .. }),
-        "planningProjects": projects,
+        "planningProjects": Value::Null,
     }))
 }
 
@@ -414,7 +406,7 @@ async fn authorize_browser(
     };
     request.extensions_mut().insert(session.authority);
     let scope = session.scope.for_request();
-    super::reauthorize_known(&api, &scope).await?;
+    super::reauthorize_controller(&api, &scope).await?;
     request.extensions_mut().insert(scope.clone());
     request.extensions_mut().insert(BrowserSession {
         // A public cache key, distinct from the cookie and its stored digest.

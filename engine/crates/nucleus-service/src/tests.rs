@@ -13,8 +13,8 @@ use axum::{
     routing::{get, post},
 };
 use nucleus_core::{
-    CallbackCredential, CheckState, Entry, Forge, Head, Host, LaunchInputs, Observation, Observed,
-    PullRequest, Role, Run, Workspace,
+    AuthorDeclaration, CallbackCredential, CheckState, Entry, Forge, Head, Host, LaunchInputs,
+    Observation, Observed, PullRequest, Role, Run, Workspace,
 };
 use nucleus_hosts::{
     Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
@@ -28,6 +28,16 @@ use super::*;
 
 pub(super) const REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
 const PR: &str = "https://github.com/inflatable-cookie/nucleus-fixture/pull/1";
+
+pub(super) fn author_declaration() -> AuthorDeclaration {
+    AuthorDeclaration {
+        models: vec!["fixture/FIRST".into()],
+        github_author: "fixture-author".into(),
+        authoring_system: "fixture".into(),
+        attested_by: "operator".into(),
+        provenance: "Verified the fixture's authoring records.".into(),
+    }
+}
 
 pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     fixture_with_volume(forge, None)

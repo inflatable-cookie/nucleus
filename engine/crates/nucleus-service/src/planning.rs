@@ -1,12 +1,12 @@
 use std::fmt::Write as _;
 
 use nucleus_core::{
-    Authority, Entry, Head, Identity, PullRequest, Task, WaitReason,
+    AuthorDeclaration, Authority, Entry, Head, Identity, PullRequest, Task, WaitReason,
     profiles::{BriefPolicy, Complexity, UsageLevel},
 };
 use nucleus_forge::Branches;
 use nucleus_store::{
-    StoreError, TaskAdmissionFacts, TaskRow, TellSubmission,
+    EventDraft, StoreError, TaskAdmissionFacts, TaskRow, TellSubmission,
     planning::{
         Decision, DecisionAnswerInput, DecisionInput, DecisionKind, Item, ItemKind, ItemSource,
         ItemState, ItemWithTimes, PromotionCheck, USAGE_APPROVE, UsagePermission, WriteAt,
@@ -39,6 +39,8 @@ pub(crate) struct TaskAdmission {
     pub repository: Option<String>,
     pub brief: String,
     pub review: Option<PullRequest>,
+    #[serde(rename = "authorDeclaration")]
+    pub author_declaration: Option<AuthorDeclaration>,
     #[serde(rename = "planningCommit")]
     pub planning_commit: Option<Head>,
 }
@@ -53,6 +55,17 @@ enum AdmissionSource<'a> {
         /// Save the task brief as the item's body with the promotion (a lead's new level).
         rewrite: bool,
     },
+}
+
+impl AdmissionSource<'_> {
+    fn admitted_event(&self, caller: &Authority) -> Result<EventDraft, StoreError> {
+        let mut admitted = event("admitted");
+        admitted.detail = match self {
+            Self::Direct => stamp(caller).actor.into(),
+            Self::Item { source, .. } => serde_json::to_string(source)?,
+        };
+        Ok(admitted)
+    }
 }
 
 /// A board or planner promotion: the destination, a complexity, and the version seen.
@@ -70,6 +83,7 @@ struct Admission<'a> {
     identity: Identity,
     brief: String,
     review: Option<PullRequest>,
+    author_declaration: Option<AuthorDeclaration>,
     planning_commit: Option<Head>,
     policy: BriefPolicy,
     lane: Option<String>,
@@ -95,21 +109,15 @@ impl Service {
         scope: &ControllerScope,
     ) -> Result<(StateGuard<'_>, String), ServiceError> {
         self.storage.database().verify()?;
-        scope
-            .with_enrollment(|| async {
-                let mut state = self.state.lock().await;
-                let project = if let Some(actor) = scope.actor() {
-                    self.planning_planner_project(&mut state, actor, selector)?
-                } else {
-                    let selector = selector.ok_or(ServiceError::Project)?;
-                    state
-                        .settings
-                        .resolve_planning_project(self.project.as_ref(), selector)?
-                        .to_owned()
-                };
-                Ok((state, project))
-            })
-            .await
+        let state = self.state.lock().await;
+        if scope
+            .actor()
+            .is_some_and(|actor| !state.verified_controller(actor))
+        {
+            return Err(ServiceError::PlannerAuthorityRefused);
+        }
+        let project = self.planning_project(&state, scope, selector)?.to_owned();
+        Ok((state, project))
     }
 
     async fn admission_route(
@@ -118,14 +126,10 @@ impl Service {
         project: Option<&str>,
         repository: Option<&str>,
     ) -> Result<(RwLockReadGuard<'_, ()>, StateGuard<'_>, PlanningRepository), ServiceError> {
-        scope
-            .with_enrollment(|| async {
-                let projects = self.project_writes.read().await;
-                let mut state = self.state.lock().await;
-                let route = self.planning_repository(&mut state, scope, project, repository)?;
-                Ok((projects, state, route))
-            })
-            .await
+        let projects = self.project_writes.read().await;
+        let mut state = self.state.lock().await;
+        let route = self.planning_repository(&mut state, scope, project, repository)?;
+        Ok((projects, state, route))
     }
 
     pub(crate) async fn add_planned_task(
@@ -168,6 +172,7 @@ impl Service {
                 identity,
                 brief: input.brief,
                 review: input.review,
+                author_declaration: input.author_declaration,
                 planning_commit: input.planning_commit,
                 policy,
                 lane,
@@ -302,6 +307,7 @@ impl Service {
             identity,
             brief,
             review: None,
+            author_declaration: None,
             planning_commit: None,
             policy,
             lane,
@@ -328,6 +334,7 @@ impl Service {
             identity,
             brief,
             review,
+            author_declaration,
             planning_commit,
             policy,
             lane,
@@ -349,6 +356,9 @@ impl Service {
         } else {
             admitted_code_task(identity, brief, review, &policy, caller)?
         };
+        let task = self
+            .attest_review_entry(task, author_declaration, caller)
+            .await?;
         let affected_tests = self.affected_tests(&task, route.checkout.clone()).await;
         let mut state = self.state.lock().await;
         if self.planning_repository(&mut state, scope, project, repository)? != route {
@@ -368,13 +378,7 @@ impl Service {
         }
         let permission = usage_permission(&state, &route.project_id, &policy);
         let requested_permission = permission.is_some();
-        let mut admitted = event("admitted");
-        admitted.detail = match &source {
-            AdmissionSource::Direct => stamp(caller).actor.into(),
-            AdmissionSource::Item { source, .. } => {
-                serde_json::to_string(source).map_err(StoreError::from)?
-            }
-        };
+        let admitted = source.admitted_event(caller)?;
         let (prerequisites, blocked) =
             self.resolve_dependencies(&state, task.identity(), &policy.depends_on, scope)?;
         let facts = TaskAdmissionFacts {
@@ -418,6 +422,39 @@ impl Service {
                 number: Some(number),
             },
         ))
+    }
+
+    async fn attest_review_entry(
+        &self,
+        task: Task,
+        declaration: Option<AuthorDeclaration>,
+        caller: &Authority,
+    ) -> Result<Task, ServiceError> {
+        let Some(declaration) = declaration else {
+            return Ok(task);
+        };
+        if !matches!(caller, Authority::Operator { .. }) {
+            return Err(ServiceError::AuthorDeclarationOperator);
+        }
+        let task = task.with_author_declaration(declaration).ok_or(
+            ServiceError::AuthorDeclaration("authorDeclaration requires a review entry, concrete models, and attestation provenance"),
+        )?;
+        let pr = task.pull_request().ok_or(ServiceError::Input)?;
+        let author = task.review_author().ok_or(ServiceError::Input)?;
+        let identity = task.identity();
+        let target =
+            Branches::for_review_entry(&identity.repository, &identity.base)?.target(&pr.url)?;
+        self.check_forge_ready()?;
+        if !self
+            .forge
+            .matches_review_author(&target, &pr.head, author.github_author.trim())
+            .await?
+        {
+            return Err(ServiceError::AuthorDeclaration(
+                "the declared author and head must match the open GitHub pull request",
+            ));
+        }
+        Ok(task)
     }
 
     fn existing_promotion(

@@ -26,15 +26,22 @@ source file opens no write authority. Repository hooks and validation follow
 ## Transport and identity
 
 The Rust API listens on loopback. Controller calls authenticate with a local
-credential. A planner call from T3 uses a separate caller credential and names
-its native thread. When its binding is cold, the scheduler verifies the thread
-and checkout against the held host view and repository identity. Concurrent
-requests for that binding share the verification. Each request waits up to
-three seconds and asks the caller to retry if verification is still pending.
-A verified planner's task and planning access stays within the recorded project
-scope. Commands that use operator authority have an explicit operator check.
+credential. A T3 call uses a separate caller credential and names its native
+thread. On first contact and after loss of host observation, the scheduler
+verifies the exact active thread and checks its checkout when it has a
+repository. Concurrent requests share the verification. Each request waits up
+to three seconds and asks the caller to retry if verification is still pending.
+A verified thread may work across projects under [Spec 070, ruling 65](../specs/070-small-engine.md#rulings).
+The caller names the target when it differs from the thread's project or the
+thread has no project. Commands that use operator authority have an explicit
+operator check.
 See the [controller boundary](../../../engine/crates/nucleus-service/src/web.rs)
 and [project enrollment](../../../engine/crates/nucleus-service/src/enrollment.rs).
+
+An ACP task session bound by a T3 controller stores the issuing thread alongside
+its credential digests. After proof loss or an engine restart, the session
+reauthorizes that thread by the same verification path, including from a
+scratch folder without a planner binding.
 
 A report ticket belongs to one task and run. The endpoint authenticates the
 bound instance before applying a report. A revoked or replaced run cannot report
@@ -48,10 +55,10 @@ and [callback custody](orchestration.md#runs-and-callbacks).
 
 T3 is the integrated host. The store binds a verified planner thread and
 checkout to a project and repository. First dispatch can register a verified
-repository. An explicit repository must already be verified in the same
-project. Several responsible planners can work in one project. The engine
-preserves each task's original binding and follows its current authorized
-planner association. Unknown and incomplete host observations grant no new
+repository. A selected repository must have a registered checkout in the
+target project. Several planners can work in one project. Task notices address
+the dispatching thread first and fall back to a planner in the task's project
+when the origin is gone. Unknown and incomplete host observations grant no new
 identity or authority. The [project registry](../../../engine/crates/nucleus-service/src/project.rs)
 and [Spec 070 rulings](../specs/070-small-engine.md#rulings) own verification and
 the first-use admission rule.
@@ -60,8 +67,7 @@ the first-use admission rule.
 
 Capacity and usage level change through the operator's Settings. Domain
 writes require operator authority and carry versions. Preserve unrelated
-values when sending the next domain value. A planner's project scope can
-qualify its planning edits and task controls. It confers no Settings authority. Provisioning and offline profile changes follow the
+values when sending the next domain value. Provisioning and offline profile changes follow the
 [release contract](release.md). The mode that gates all dispatch is a Dispatch setting. A task hold is a
 separate recorded action. The engine reads Settings from the local snapshot.
 See the [Settings handlers](../../../engine/crates/nucleus-service/src/web/settings.rs)
@@ -71,7 +77,7 @@ and [validated domains](../../../engine/crates/nucleus-store/src/settings_domain
 
 The engine serves the board and Settings on its own loopback listener. Use
 `nucleus ui` to issue a short-lived, single-use pairing grant for the current
-authority and project scope. The browser removes the link fragment, exchanges
+authority. The browser removes the link fragment, exchanges
 the grant and uses an HttpOnly, SameSite=Strict cookie. The engine stores
 only a session digest and its authority and expiry in the owner-only profile.
 Active sessions survive an engine restart. At the 64-session limit, a new
@@ -85,10 +91,10 @@ for its paired API. Controller credentials stay outside the browser. See
 and [session persistence](../../../engine/crates/nucleus-service/src/web/board/sessions.rs).
 
 The paired API mounts the same planning handlers as the controller API and
-checks session scope. The browser subscribes to scoped engine invalidations and
+checks the caller's authority. The browser subscribes to engine invalidations and
 re-reads affected data. List refreshes reuse finished cards until the task version,
 journal sequence or board timestamp changes. Prerequisites use current task
-states and the viewer's project access on every read. Open planning records use periodic reads while the
+states on every read. Open planning records use periodic reads while the
 stream is disconnected. Reconnection resynchronizes open views and stops
 those periodic reads. A browser view, Settings read or ordinary planning read
 consumes the store and cached host facts.

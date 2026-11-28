@@ -14,8 +14,8 @@ use nucleus_core::{
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
     Binding, ControlDispatch, DoneArchive, FrozenParentWrite, HoldCheckpoint, HostError,
-    LaunchRequest, NoticeAuthorization, NoticeTarget, ParentRun, ParentShell, ParentTurn,
-    QuietCheckout, SendOutcome, StopProgress, T3, TaskHost, launch_diagnostic,
+    LaunchRequest, NoticeAuthorization, ParentRun, ParentShell, ParentTurn, QuietCheckout,
+    SendOutcome, StopProgress, T3, TaskHost, launch_diagnostic,
 };
 use nucleus_store::{
     CriticalReviewFallback, DispatchMode, ParentDelivery, ParentResult, StoreError, TaskRow,
@@ -1197,6 +1197,7 @@ impl Service {
             pr,
             discovered_skill,
             model: &profile.model,
+            shared_model: selection.and_then(|selected| selected.intent.shared_model()),
             lanes: &lanes,
             dependencies: &dependencies,
             command: &self.report_command,
@@ -1509,7 +1510,7 @@ impl Service {
         };
         self.ensure_parent_reader(&row.task.identity().id, checkout.path())
             .await?;
-        self.deliver_parent(row, write, prior, false).await?;
+        self.deliver_parent(row, write, prior).await?;
         self.recheck_effect(row, WaitReason::HostUnknown).await;
         Ok(())
     }
@@ -1592,29 +1593,38 @@ impl Service {
         if !pins.is_empty() {
             detail.insert("laneDocumentPins".into(), serde_json::json!(pins));
         }
-        if let Some(selected) = selection
-            && let Some(ceiling) = selected.intent.step_up_from()
-        {
-            detail.insert(
-                "profileStepUp".into(),
-                serde_json::json!({
-                    "ordinaryCeiling": ceiling,
-                    "selectedCapability": selected.intent.profile().capability,
-                    "reason": "Every eligible profile within the ordinary ceiling is paused."
-                }),
-            );
-        }
-        if let Some(selected) = selection
-            && let Some(worker) = selected.intent.critical_fallback_worker()
-        {
-            let receipt = CriticalReviewFallback {
-                at_ms: run.launch().started_at,
-                run_instance: run.launch().instance.clone(),
-                worker_profile_id: worker.into(),
-                reviewer_profile_id: selected.intent.profile().id.clone(),
-                reason: "No available independent reviewer with a known capability at least as high as the worker. Ordinary reviewer selection used.".into(),
-            };
-            detail.insert("criticalReviewFallback".into(), serde_json::json!(receipt));
+        if let Some(selected) = selection {
+            let intent = &selected.intent;
+            if let Some(ceiling) = intent.step_up_from() {
+                detail.insert(
+                    "profileStepUp".into(),
+                    serde_json::json!({
+                        "ordinaryCeiling": ceiling,
+                        "selectedCapability": intent.profile().capability,
+                        "reason": "Every eligible profile within the ordinary ceiling is paused."
+                    }),
+                );
+            }
+            if let Some(worker) = intent.critical_fallback_worker() {
+                let receipt = CriticalReviewFallback {
+                    at_ms: run.launch().started_at,
+                    run_instance: run.launch().instance.clone(),
+                    worker_profile_id: worker.into(),
+                    reviewer_profile_id: intent.profile().id.clone(),
+                    reason: "The selected reviewer is below the worker's capability bracket."
+                        .into(),
+                };
+                detail.insert("criticalReviewFallback".into(), serde_json::json!(receipt));
+            }
+            if let Some(message) = intent.shared_model() {
+                detail.insert(
+                    "sharedModel".into(),
+                    serde_json::json!({
+                        "runInstance": intent.instance(),
+                        "message": message
+                    }),
+                );
+            }
         }
         if !detail.is_empty() {
             audit.detail = serde_json::Value::Object(detail).to_string();
@@ -1849,26 +1859,54 @@ impl Service {
         Ok(SendAttempt::Sent(Box::new((sent, result, archive))))
     }
 
-    async fn planner_notice_root(
+    async fn check_planner_notice_route(
         &self,
+        identity: &nucleus_core::Identity,
         route: &ProjectRoute,
-        target: &NoticeTarget,
-    ) -> Option<PathBuf> {
-        if self.project.is_some() {
-            return (target.project_id == route.host_project).then(|| route.checkout.clone());
+        authorization: &NoticeAuthorization,
+    ) -> Result<(), ServiceError> {
+        let target = authorization.target();
+        self.host.check_notice_target(authorization)?;
+        let root = if self.project.is_some() {
+            (target.project_id == route.host_project).then(|| route.checkout.clone())
+        } else if identity.origin_thread.as_deref() == Some(&target.thread) {
+            // The task's origin is an exact thread address, even in a scratch folder.
+            return Ok(());
+        } else {
+            let state = self.state.lock().await;
+            state
+                .live_planner_route(&target.thread)
+                .filter(|(id, repo)| {
+                    Some(*id) == route.project_id.as_deref()
+                        && repo.host_project.as_deref() == Some(target.project_id.as_str())
+                        && state
+                            .enrolled_planners
+                            .get(&target.thread)
+                            .is_some_and(|proof| authorization.matches_planner(&proof.identity))
+                        && self
+                            .host
+                            .cached_project(&target.project_id)
+                            .is_ok_and(|project| Path::new(&project.root) == repo.path)
+                })
+                .map(|(_, repo)| repo.path.clone())
         }
-        let state = self.state.lock().await;
-        state
-            .live_planner_route(&target.thread)
-            .filter(|(id, repo)| {
-                Some(*id) == route.project_id.as_deref()
-                    && repo.host_project.as_deref() == Some(target.project_id.as_str())
-                    && self
-                        .host
-                        .cached_project(&target.project_id)
-                        .is_ok_and(|project| std::path::Path::new(&project.root) == repo.path)
-            })
-            .map(|(_, repo)| repo.path.clone())
+        .ok_or(HostError::Binding)?;
+        if target.project_id != route.host_project {
+            self.host
+                .check_project(
+                    &target.project_id,
+                    root.to_str().ok_or(ServiceError::Project)?,
+                )
+                .await?;
+        }
+        if let Some(path) = &target.worktree_path
+            && !self
+                .verify_linked_checkout(&identity.id, root, PathBuf::from(path))
+                .await?
+        {
+            return Err(HostError::Binding.into());
+        }
+        Ok(())
     }
 
     pub(super) async fn dispatch_gate(
@@ -1931,6 +1969,13 @@ impl Service {
                         replay_policy(Some(head), &fresh)
                             .filter(|&superseded| !superseded || run.revoked())
                     } else {
+                        if identity.entry == nucleus_core::Entry::ReviewEntry
+                            && (task.review_author().is_none()
+                                || !matches!(self.read_forge(task, checkout).await?.0,
+                                    Forge::Open { pr, .. } if task.pull_request() == Some(&pr)))
+                        {
+                            return Ok(None);
+                        }
                         (self.observe_checkout(checkout).await? != Workspace::Absent)
                             .then_some(false)
                     }
@@ -1939,27 +1984,8 @@ impl Service {
                 }
             }
             DispatchTarget::Planner(authorization) => {
-                let target = authorization.target();
-                let root = self
-                    .planner_notice_root(&route, target)
-                    .await
-                    .ok_or(HostError::Binding)?;
-                if target.project_id != route.host_project {
-                    self.host
-                        .check_project(
-                            &target.project_id,
-                            root.to_str().ok_or(ServiceError::Project)?,
-                        )
-                        .await?;
-                }
-                self.host.check_notice_target(authorization)?;
-                if let Some(path) = &target.worktree_path
-                    && !self
-                        .verify_linked_checkout(&identity.id, root, PathBuf::from(path))
-                        .await?
-                {
-                    return Err(HostError::Binding.into());
-                }
+                self.check_planner_notice_route(identity, &route, authorization)
+                    .await?;
                 Some(false)
             }
         };
@@ -3727,7 +3753,9 @@ mod tests {
                 reserved.identity().clone(),
                 reserved.brief().text.clone(),
                 reserved.pull_request().cloned(),
-            );
+            )
+            .with_author_declaration(crate::tests::author_declaration())
+            .expect("declare the external author");
             let _ = task.reconcile(&observation);
             service
                 .state

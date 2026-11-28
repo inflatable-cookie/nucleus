@@ -90,30 +90,12 @@ cannot be steered to a stronger model (nucleus#033, 2026-09-27).
   profiles, tags request-only profiles, offers a complexity
   picker with an unset state, and requires a reason.
 
-## Independent-review routing preflight (Tom, 2026-10-12)
+## Model overlap
 
-Tom: "If Queue won't run tasks with the same reviewer as worker then that needs
-to be validated on promotion, not at run time." A required worker/reviewer pair
-that names the same profile, or distinct profile IDs that normalize to the same
-actual model, is refused before Ready/approval, again at source promotion and
-every other admission seam that accepts explicit routing, and before any task
-binding or workspace/worker intent. The same canonical model-identity rule as
-runtime selection applies (`modelKey`: last path segment, lower-cased). A
-worker `profileRequests` entry takes precedence over `preferredProfileId` /
-`requirePreferred`, matching selection.
-
-The refusal names the conflicting roles and models and tells the caller to
-choose independent routing. It is never the generic runtime "No eligible
-independent reviewer" line. Optional or fallback requests still pass when
-another independent catalog route exists. A missing or opaque
-(`provider/default`) required identity fails closed. Temporarily exhausted
-subscriptions are not treated as a permanent identity conflict; eligibility
-authority stays at dispatch. Review entry applies the same check to declared
-author models. Existing queued and dispatched tasks are not auto-mutated.
-
-Runtime selection and the adapter independence guard still re-check after
-admission, because the actual author or catalog can change. No new review skip
-or task-author rewrite is added.
+[Spec 070 ruling 64](070-small-engine.md#rulings) governs model choice at dispatch.
+A required worker and reviewer can name the same model or profile. A worker
+`profileRequests` entry takes precedence over a legacy preference. Review
+entry still needs a concrete external author declaration.
 
 ## Capability ratings and task complexity (Tom, 2026-10-12)
 
@@ -170,7 +152,7 @@ retired the matching pool field.
 | 2 | `set_routing` changing scope and preferred profile together | Validated against the new scope; accepted only if the profile has it |
 | 19 | Task `complexity` from `very_low` to `very_high` against a five-level rated pool under equal usage | Each exact fit wins; an invalid complexity is refused |
 | 20 | Known mismatch with no better-rated eligible profile | Still selected; rotation over many assignments reaches every rating without starvation |
-| 21 | Unset ratings/complexity, unknown ratings, explicit requests, and all hard gates | Order reproduces the previous selection bit for bit; requests win; disabled, wrong-scope, by-request, unavailable and independence gates are unchanged |
+| 21 | Unset ratings/complexity, unknown ratings, explicit requests, and all hard gates | Order reproduces the previous selection bit for bit; requests win; disabled, wrong-scope, request-only and availability gates apply |
 | 22 | `set_routing` with the legacy `capability` key, and with `complexity` set then cleared | Legacy key refused naming `scope`; complexity stored, recorded in the event, cleared by `null` |
 | 3 | By-request profile with and without a reason; CLI with and without `note` | Reason required; CLI without note refused, with note recorded as relayed; board recorded as operator |
 | 4 | `set_routing` on a dispatched task, and with a stale version | Refused, naming the replacement controls; stale version refused |
@@ -179,12 +161,12 @@ retired the matching pool field.
 | 7 | Board "Change routing" in the installed bundle, dark theme | Offered only where it applies; lists eligible profiles; requires a reason |
 | 8 | Restart between acceptance and dispatch | The routing change, event and outcome routing survive |
 | 9 | Retained worker profile is unavailable; `retry_resolution` includes a fresh instruction and optional replacement `profile` | Attention text and notice name `retry_resolution`; the instruction replaces the newest pending continuation; the eligible named profile is selected |
-| 10 | Required worker and reviewer name the same profile | Lead check fails before Ready; promotion and direct submission refuse before a task or workspace exists; the error names both roles and the shared model |
-| 11 | Distinct profile IDs whose normalized models match | Same refusal as row 10, naming both profiles and the shared model |
+| 10 | Required worker and reviewer name the same profile | Launches use the requested profile and record the shared model |
+| 11 | Distinct profile IDs whose normalized models match | Both requests apply and the launch records the shared model |
 | 12 | Required worker and reviewer name distinct independent models | Check, promotion and submission proceed |
 | 13 | Optional or fallback request that still has an independent catalog route | Not refused as an identity conflict |
 | 14 | Worker `profileRequests` versus `preferredProfileId` / `requirePreferred` | The worker request wins, matching selection |
 | 15 | Required profile missing from the catalog, or using an opaque provider-default model | Fail-closed with that honest reason |
 | 16 | The only other independent profile's subscription is exhausted | Not an identity conflict; eligibility stays at dispatch |
 | 17 | Catalog identity changes between a passing Ready check and promotion | Promotion refuses; no task is bound; the approval remains |
-| 18 | Review entry whose required reviewer shares a declared author model | Preview and bind refuse; no initial worker is created |
+| 18 | Review entry whose required reviewer shares a declared author model | The first reviewer launches on the requested profile and records the shared model |

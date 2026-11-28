@@ -51,7 +51,9 @@ async fn outage() -> Outage {
         },
         "---\ncomplexity: normal\n---\n\n# Synthetic review".into(),
         Some(pr.clone()),
-    );
+    )
+    .with_author_declaration(author_declaration())
+    .unwrap();
     let _ = review.reconcile(&Observation {
         forge: Observed::Known(Forge::Open {
             pr,

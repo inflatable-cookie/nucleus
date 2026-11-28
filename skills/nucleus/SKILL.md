@@ -5,9 +5,10 @@ description: Use Nucleus to manage a project plan, lanes, leads, papercuts and o
 
 ## Planning and tasks
 
-Use the installed `nucleus` from the current T3 planner thread. Planning commands
-with an optional project default to that thread's verified project. On first
-contact, retry if the engine asks you to let it finish verifying the checkout.
+Use the installed `nucleus` from a verified T3 thread. Planning commands
+default to that thread's project when it has one. Name the target for work in
+another project or from a scratch thread. On first contact, retry if the
+engine is still verifying the thread.
 Use `nucleus <command> --help` for exact arguments. `nucleus ui` prints a
 one-use board link for the current authority. A plan or decision records
 intent. Dispatch, scope changes and outward actions require their own authority.
@@ -27,8 +28,9 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   if it is stale, already done or no longer wanted; otherwise write or update
   the brief and dispatch it (`nucleus item.edit [PROJECT] ID TITLE` on stdin,
   then `nucleus item.promote [PROJECT] ID [--complexity LEVEL]`).
-- Send an approved brief on stdin to `nucleus task.add [PROJECT]`. Direct
-  admission through `task.add` or `admit` requires `queue.complexity` in the
+- Send an approved brief on stdin to `nucleus task.add [PROJECT]`. For a sweep
+  from a scratch thread, run `nucleus task.add PROJECT` with each project's brief.
+  Direct admission through `task.add` or `admit` requires `queue.complexity` in the
   brief front matter. This example uses medium.
 
   ```markdown
@@ -51,7 +53,7 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   - `heavy`: full or milestone test suites, multi-crate Rust builds, VM or
     container stacks, release builds, anything that runs Effigy's managed stack.
 
-  Completion notices arrive by default: the dispatching planner gets one queued notice when the task reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` on admission or amend to turn them off.
+  Completion notices arrive by default: the dispatching thread gets one queued notice when the task reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` on admission or amend to turn them off.
   Set `queue.priority: promoted` under `queue` at admission only to dispatch ahead of normal tasks when slots free (brief amendments cannot change `queue.priority`; use `promote` or `demote` instead).
   Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
   To put a task on a specific or stronger model, add a profile request under
@@ -60,6 +62,9 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   (`reviewer` works the same way). `required: true` makes it the profile used,
   never a hint. A Frontier profile is used only this way, with a reason, and
   applies directly at the Low, Normal and High usage levels (Spec 052).
+  Nucleus prefers different models for work and review and honours required
+  requests even when they share a model. The task view and `next` show shared
+  models (Spec 070 ruling 64).
   On a running task, `amend` the brief, then `move REF working` with no
   `--instruction`. Raising `queue.complexity` by amend moves a retained worker up a tier on its next run if its profile falls below the new start bracket. Use `profileRequests` to pick an exact profile.
   `task.add` resolves those references before dispatch can start.
@@ -70,8 +75,10 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   remove an existing legacy key. Adding a key or changing its value requires
   a supported key.
 
-  For review entry, add `--review PR_URL HEAD` with the named PR and exact full
-  head. Choose the repository explicitly when the project or brief needs it.
+  For review entry, use `--review PR_URL HEAD` with the exact full head. The
+  operator supplies `--author-declaration FILE` to enable dispatch. The JSON
+  object contains `models`, `githubAuthor`, `authoringSystem`, `attestedBy` and
+  `provenance`. Choose the repository explicitly when required.
   For milestone QA, add these fields under `queue` alongside `complexity`.
 
   ```yaml
@@ -107,15 +114,15 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   and repeat `--option` for each choice. Keep the context, consequences and
   recommendation with the question. `decision.list --pending` reads open
   decisions. Inbox requests and operator decisions belong to the operator.
-  A verified planner can send an informational notice with `tell PROJECT TEXT`
-  or `tell all TEXT`. Run `nucleus planner.claim` to receive project messages
-  here. Replacing a claim notifies the previous planner.
-  A delivered message starts `From <project>`, which names the sender's project,
-  so a reply needn't name itself. It ends with a `Reply:` line such as
+  Any verified thread can send an informational notice with `tell PROJECT TEXT`
+  or `tell all TEXT`. Run `nucleus planner.claim` from the project's checkout
+  to receive its messages. Replacing a claim notifies the previous planner.
+  A delivered message names the sender's project (or “no project”) and thread. It ends with a `Reply:` line such as
   `nucleus reply r6e39f1a 'your message'`. Run that command with your text, or
   `nucleus reply r6e39f1a -` to read the text from stdin. Only the thread that
   received the message can use its handle, and only for seven days. The reply
-  reaches the sender, or the sender's project planner if the sender is gone.
+  reaches the exact sender. If the sender is gone and had a project, the reply
+  goes to that project's planner.
   Older `nucleus tell '{"to":{"reply":"nreply_…"}}' TEXT` replies still work.
 
 ## Run protocol
@@ -173,9 +180,10 @@ edit. Report `report_ready` with the returned lane key, version and digest.
 
 ### Reviewer
 
-Own the independent judgment within the current brief. Never read the
-worker's private transcript. Review the assigned exact head using the pinned
-checkout, public PR and comments, author evidence and recorded earlier verdicts.
+Exercise your own judgment within the current brief. Your assignment flags
+any author model you share. Never read the worker's private transcript. Review
+the assigned exact head using the pinned checkout, public PR and comments,
+author evidence and recorded earlier verdicts.
 Read the named inputs yourself, inspect the diff and run the covering checks.
 On re-review, verify each claimed fix and reconsider affected subjects. Required
 proof must be sufficient for approval. Treat live-store counts as planner

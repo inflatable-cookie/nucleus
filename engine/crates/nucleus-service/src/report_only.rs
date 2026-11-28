@@ -571,44 +571,25 @@ impl Service {
                 Authority::Operator { .. } => Err(ServiceError::WatchAgentRequired),
             };
         };
-        let route_state = {
-            let state = self.state.lock().await;
-            if let Some(project) = state.live_planner_project(actor) {
-                Some(Some(
-                    state
-                        .settings
-                        .only_bound_repository(project)
-                        .map(str::to_owned),
-                ))
-            } else if state.settings.planner_route(actor).is_some() {
-                None
-            } else {
-                Some(None)
-            }
-        };
-        match route_state {
-            Some(Some(default_repo)) => return Ok((actor.to_owned(), default_repo)),
-            None => {
-                caller
-                    .with_enrollment(|| async {
-                        let mut state = self.state.lock().await;
-                        self.planning_planner_project(&mut state, actor, None)
-                            .map(|_| ())
-                    })
-                    .await?;
-                let state = self.state.lock().await;
-                let project = state
-                    .live_planner_project(actor)
-                    .ok_or(ServiceError::WatchAgentRequired)?;
-                return Ok((
-                    actor.to_owned(),
-                    state
-                        .settings
-                        .only_bound_repository(project)
-                        .map(str::to_owned),
-                ));
-            }
-            Some(None) => {}
+        let registered = self
+            .state
+            .lock()
+            .await
+            .settings
+            .planner_route(actor)
+            .is_some();
+        if registered {
+            let default_repo = caller
+                .with_enrollment(|| async {
+                    let mut state = self.state.lock().await;
+                    self.require_controller(&mut state, actor)?;
+                    Ok(state
+                        .live_planner_project(actor)
+                        .and_then(|project| state.settings.only_bound_repository(project))
+                        .map(str::to_owned))
+                })
+                .await?;
+            return Ok((actor.to_owned(), default_repo));
         }
         // Any live, unarchived T3 thread in the synchronized shell snapshot may watch/inspect
         // watch status across projects without making request-time host RPC calls (ruling 11).

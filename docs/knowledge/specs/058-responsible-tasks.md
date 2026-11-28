@@ -1000,12 +1000,9 @@ binding. Forced checks are recorded and named in closeout.
 `queue.critical` is one boolean, false by default, readable on the task and in `next`. An explicit
 false is the same submission identity as an absent flag, so a replay reconciles its task. Only a
 planner or operator can change it after dispatch; enabling it refuses every task-owned force,
-including reviewer check waivers. Each fresh automatic reviewer selection requires a model
-independent of every author model and a Spec 053 capability rating at least the worker's current
-profile. Re-routing to a stronger worker raises that floor for the next fresh reviewer.
-Unrated profiles or workers cannot meet it. At Low, Normal and High, Frontier requires a reviewer profile request.
-If no eligible profile is available, ordinary reviewer selection proceeds immediately. The fallback
-is recorded on the task, shown in `next` and named in closeout; it never holds review up.
+including reviewer check waivers. A fresh automatic review prefers a profile
+at least as capable as the worker, with fallback and request eligibility defined
+in [Spec 052](052-usage-level.md). Model choice follows [Spec 070 ruling 64](070-small-engine.md#rulings).
 
 ### Slice 18 — workers on related tasks message each other directly (task 621)
 

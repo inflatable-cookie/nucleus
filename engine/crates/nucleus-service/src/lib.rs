@@ -111,8 +111,8 @@ pub enum ServiceError {
     QueuePriorityUnavailable,
     #[error("The brief changed. Reopen Amend to edit the latest version.")]
     BriefConflict,
-    #[error("the controller cannot access this project")]
-    ControllerProject,
+    #[error("name a project to run this command, using its ID, name or repository")]
+    ProjectRequired,
     #[error("Nucleus is verifying this T3 planner and repository. Retry shortly.")]
     PlannerEnrollmentPending(watch::Receiver<()>),
     #[error("{0}")]
@@ -141,6 +141,10 @@ pub enum ServiceError {
     DependencyEdit(&'static str),
     #[error("task input is invalid")]
     Input,
+    #[error("only the operator can attest external author models")]
+    AuthorDeclarationOperator,
+    #[error("{0}")]
+    AuthorDeclaration(&'static str),
     #[error("queue.complexity is required: very_low, low, medium, high or very_high")]
     ComplexityRequired,
     #[error("brief is {bytes} UTF-8 bytes and exceeds the {MAX_BRIEF_BYTES}-byte limit")]
@@ -151,8 +155,6 @@ pub enum ServiceError {
     TellInput,
     #[error("This reply route is unavailable. Nothing was sent.")]
     TellReply,
-    #[error("tell requires a verified planner binding with a sending project")]
-    TellPlannerRequired,
     #[error("watching a task requires a verified planner thread or active run ticket")]
     WatchAgentRequired,
     #[error("no project named {0}. Use a registered project ID, name or repository.")]
@@ -291,6 +293,7 @@ enum WaitDetail {
     /// A capacity wait on a task weight cap; the text is its whole label.
     SlotCap(String),
     Archive(String),
+    Prerequisites(Vec<String>),
 }
 
 struct State {
@@ -304,7 +307,6 @@ struct State {
     fences: BTreeMap<String, Arc<Mutex<()>>>,
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
-    acp_refresh_requests: BTreeMap<String, i64>,
     capacity_waiters: schedule::CapacityWaiters,
     group_waits: BTreeMap<String, profiles::GroupPause>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
@@ -475,7 +477,6 @@ impl Service {
                 fences: BTreeMap::new(),
                 waits: BTreeMap::new(),
                 role_observations: BTreeMap::new(),
-                acp_refresh_requests: BTreeMap::new(),
                 capacity_waiters: BTreeSet::new(),
                 group_waits: BTreeMap::new(),
                 observed_forge: BTreeMap::new(),
@@ -575,6 +576,7 @@ impl Service {
                 repository: repository.map(str::to_owned),
                 brief,
                 review: None,
+                author_declaration: None,
                 planning_commit: None,
             },
             caller,
@@ -752,7 +754,12 @@ impl Service {
                 return Ok(Action::Wait(WaitReason::Capacity));
             }
         }
-        self.refresh_acp_if_requested(row).await?;
+        // This pass registers the task again if it still waits for a planner.
+        self.state
+            .lock()
+            .await
+            .planner_notice_waiters
+            .remove(&task.identity().id);
         let action = self.advance(row, host).await?;
         if matches!(
             action,
@@ -1268,7 +1275,6 @@ impl Service {
                 && held.is_none()
                 && !active(&current.task)
                 && !state.forge_requested.contains(id)
-                && state.acp_refresh_requests.get(id) != Some(&current.version)
         {
             if state.observe_wait(&current.task, None)? {
                 self.title_wake.notify_one();

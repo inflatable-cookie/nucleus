@@ -27,10 +27,20 @@ pub(super) struct ActivityAt {
 
 impl State {
     pub(super) fn effective_wait(&self, task: &Task) -> Result<Option<WaitReason>, StoreError> {
-        match self.waits.get(&task.identity().id) {
-            Some(wait) => Ok(wait.reason),
-            None => self.prerequisite_wait(task),
+        let prerequisite = self.prerequisite_wait(task)?;
+        if prerequisite.is_some() {
+            return Ok(prerequisite);
         }
+        let observed = self
+            .waits
+            .get(&task.identity().id)
+            .and_then(|wait| wait.reason);
+        if observed == Some(WaitReason::Prerequisite)
+            && !self.store.dependency_blocked(&task.identity().id)?
+        {
+            return Ok(None);
+        }
+        Ok(observed)
     }
 
     fn prerequisite_wait(&self, task: &Task) -> Result<Option<WaitReason>, StoreError> {

@@ -69,7 +69,7 @@ impl From<EnrollmentFailure> for ServiceError {
 pub(super) struct EnrolledPlanner {
     pub(super) identity: PlannerIdentity,
     pub(super) verified_at: Instant,
-    binding: PlannerBinding,
+    binding: Option<PlannerBinding>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -94,15 +94,28 @@ impl PlannerBinding {
 impl State {
     pub(super) fn enroll_launched_planner(&mut self, identity: PlannerIdentity) {
         if let Some(binding) = self.planner_binding(&identity.id) {
-            self.enrolled_planners.insert(
-                identity.id.clone(),
-                EnrolledPlanner {
-                    identity,
-                    verified_at: Instant::now(),
-                    binding,
-                },
-            );
+            self.record_enrollment(identity, Some(binding));
         }
+    }
+
+    fn record_enrollment(&mut self, identity: PlannerIdentity, binding: Option<PlannerBinding>) {
+        self.enrolled_planners.insert(
+            identity.id.clone(),
+            EnrolledPlanner {
+                identity,
+                verified_at: Instant::now(),
+                binding,
+            },
+        );
+    }
+
+    fn has_native_project(&self, id: &str) -> bool {
+        self.settings
+            .projects
+            .iter()
+            .flat_map(|registry| registry.projects.values())
+            .flat_map(|project| &project.repositories)
+            .any(|repo| repo.host_project.as_deref() == Some(id))
     }
 
     fn planner_binding(&self, actor: &str) -> Option<PlannerBinding> {
@@ -143,6 +156,16 @@ impl State {
         candidates
     }
 
+    pub(super) fn verified_controller(&self, actor: &str) -> bool {
+        self.enrolled_planners.get(actor).is_some_and(|proof| {
+            if proof.binding.is_some() {
+                self.live_planner_route(actor).is_some()
+            } else {
+                self.settings.planner_route(actor).is_none()
+            }
+        })
+    }
+
     pub(crate) fn live_planner_project(&self, actor: &str) -> Option<&str> {
         self.live_planner_route(actor).map(|(id, _)| id)
     }
@@ -152,6 +175,7 @@ impl State {
         let (id, repository) = self.settings.planner_route(actor)?;
         proof
             .binding
+            .as_ref()?
             .matches(id, repository)
             .then_some((id, repository))
     }
@@ -196,21 +220,35 @@ pub(crate) struct PlanningRepository {
 }
 
 impl Service {
-    pub(super) fn planning_planner_project(
+    pub(super) fn require_controller(
         &self,
         state: &mut State,
         actor: &str,
-        selector: Option<&str>,
-    ) -> Result<String, ServiceError> {
-        let Some(id) = state.live_planner_project(actor) else {
-            return Err(self.request_enrollment(state, actor));
-        };
-        if let Some(name) = selector
-            && state.settings.resolve_planning_project(None, name)? != id
-        {
-            return Err(ServiceError::ControllerProject);
+    ) -> Result<(), ServiceError> {
+        if state.verified_controller(actor) {
+            Ok(())
+        } else {
+            Err(self.request_enrollment(state, actor))
         }
-        Ok(id.into())
+    }
+
+    pub(super) fn planning_project<'a>(
+        &'a self,
+        state: &'a State,
+        scope: &ControllerScope,
+        selector: Option<&str>,
+    ) -> Result<&'a str, ServiceError> {
+        let id = match selector {
+            Some(name) => state
+                .settings
+                .resolve_planning_project(self.project.as_ref(), name)?,
+            None => scope
+                .actor()
+                .and_then(|actor| state.live_planner_project(actor))
+                .ok_or(ServiceError::ProjectRequired)?,
+        };
+        state.settings.require_active_project(id)?;
+        Ok(id)
     }
 
     fn require_planning_checkout(&self, repo: &RepositorySettings) -> Result<(), ServiceError> {
@@ -235,6 +273,9 @@ impl Service {
         selector: Option<&str>,
         origin: Option<&str>,
     ) -> Result<PlanningRepository, ServiceError> {
+        if let Some(actor) = scope.actor() {
+            self.require_controller(state, actor)?;
+        }
         self.resolve_admission_route(state, scope, selector, origin)
             .map_err(|error| {
                 let Some((id, project, repo)) =
@@ -242,22 +283,17 @@ impl Service {
                 else {
                     return error;
                 };
-                // Describe a repository only inside the caller's established project.
-                if project.archived
-                    || scope
-                        .actor()
-                        .is_some_and(|actor| state.live_planner_project(actor) != Some(id))
-                {
-                    return error;
-                }
                 match error {
-                    ServiceError::TellUnknownProject(selector) => ServiceError::RepositoryOwner {
-                        selector,
-                        repository: repo.origin.clone(),
-                        project: project.name.clone(),
-                    },
-                    ServiceError::Project | ServiceError::ControllerProject
-                        if repo.host_project.is_none()
+                    ServiceError::TellUnknownProject(selector) if !project.archived => {
+                        ServiceError::RepositoryOwner {
+                            selector,
+                            repository: repo.origin.clone(),
+                            project: project.name.clone(),
+                        }
+                    }
+                    ServiceError::Project
+                        if !project.archived
+                            && repo.host_project.is_none()
                             && selector.is_none_or(|name| {
                                 state
                                     .settings
@@ -306,41 +342,31 @@ impl Service {
                 base: project.base.clone(),
             });
         }
-        if let Some(actor) = scope.actor() {
-            let project_id = self.planning_planner_project(state, actor, selector)?;
-            let (_, native) = state
-                .live_planner_route(actor)
-                .ok_or(ServiceError::ControllerProject)?;
-            self.require_planning_checkout(native)?;
-            let target = state
+        let native = scope
+            .actor()
+            .and_then(|actor| state.live_planner_route(actor));
+        let id = if scope.actor().is_some() || selector.is_some() {
+            self.planning_project(state, scope, selector)?
+        } else if let Some(origin) = origin {
+            state
                 .settings
-                .repository(&project_id, origin.unwrap_or(&native.origin))
-                .map_err(|_| ServiceError::ControllerProject)?;
-            if !std::ptr::eq(target, native) {
-                self.require_planning_checkout(target)?;
-            }
-            return Ok(PlanningRepository {
-                project_id,
-                checkout: target.path.clone(),
-                repository: target.origin.clone(),
-                base: target.base.clone(),
-            });
-        }
-
-        let project_id = selector
-            .map(|name| state.settings.resolve_planning_project(None, name))
-            .transpose()?;
+                .project_for_origin(origin)
+                .ok_or_else(|| ServiceError::TellUnknownProject(origin.into()))?
+                .0
+        } else {
+            return Err(ServiceError::ProjectRequired);
+        };
+        let own_repo = native
+            .filter(|(project, _)| *project == id)
+            .map(|(_, repo)| repo);
         let origin = origin
-            .or_else(|| state.settings.only_bound_repository(project_id?))
+            .or_else(|| own_repo.map(|repo| repo.origin.as_str()))
+            .or_else(|| state.settings.only_bound_repository(id))
             .ok_or(ServiceError::Project)?;
-        let (id, _, _) = state
-            .settings
-            .project_for_origin(origin)
-            .ok_or(ServiceError::Project)?;
-        if project_id.is_some_and(|requested| requested != id) {
-            return Err(ServiceError::Project);
-        }
         let repo = state.settings.repository(id, origin)?;
+        if scope.actor().is_some() {
+            self.require_planning_checkout(repo)?;
+        }
         Ok(PlanningRepository {
             project_id: id.into(),
             checkout: repo.path.clone(),
@@ -604,20 +630,38 @@ impl Service {
                 "Submit from a top-level T3 planner thread.",
             ));
         }
-        let registered = self
-            .host
-            .cached_project(&planner.project_id)
-            .map_err(|error| {
-                if matches!(error, HostError::Binding) {
-                    ServiceError::PlannerEnrollmentRefused(
-                        "T3 did not report an active project and exact checkout root.",
-                    )
-                } else {
-                    ServiceError::PlannerEnrollmentUnavailable(
-                        "The T3 project snapshot is unavailable. Retry shortly.",
-                    )
-                }
-            })?;
+        let known_project = binding.is_some()
+            || timing
+                .lock_state(self)
+                .await
+                .has_native_project(&planner.project_id);
+        let registered = match self.host.cached_project(&planner.project_id) {
+            Ok(project) => Some(project),
+            Err(HostError::Binding) if !known_project => None,
+            Err(HostError::Binding) => {
+                return Err(ServiceError::PlannerEnrollmentRefused(
+                    "T3 did not report an active project and exact checkout root.",
+                ));
+            }
+            Err(_) => {
+                return Err(ServiceError::PlannerEnrollmentUnavailable(
+                    "The T3 project snapshot is unavailable. Retry shortly.",
+                ));
+            }
+        };
+        let Some(registered) = registered.filter(|project| {
+            let root = std::path::Path::new(&project.root);
+            known_project
+                || !root.is_dir()
+                || !root
+                    .join(".git")
+                    .symlink_metadata()
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        }) else {
+            return self
+                .save_enrollment(epoch, planner, None, binding, timing)
+                .await;
+        };
         let checkout = PathBuf::from(registered.root);
         let git = self.git.clone();
         let mut repository =
@@ -631,7 +675,7 @@ impl Service {
         timing.checkout = Some(crate::now_ms());
         repository.host_project = Some(planner.project_id.clone());
         repository.host_project_title = host_project_title(registered.title);
-        self.save_enrollment(epoch, planner, repository, binding, timing)
+        self.save_enrollment(epoch, planner, Some(repository), binding, timing)
             .await?;
         timing.saved = Some(crate::now_ms());
         Ok(())
@@ -641,7 +685,7 @@ impl Service {
         &self,
         epoch: u64,
         planner: PlannerIdentity,
-        repository: RepositorySettings,
+        repository: Option<RepositorySettings>,
         binding: Option<&PlannerBinding>,
         timing: &mut EnrollmentTiming,
     ) -> Result<(), ServiceError> {
@@ -664,10 +708,12 @@ impl Service {
             }
         }
         if state.planner_authority_epoch != epoch
-            || !self
-                .host
-                .cached_project(&planner.project_id)
-                .is_ok_and(|project| std::path::Path::new(&project.root) == repository.path)
+            || repository.as_ref().is_some_and(|repo| {
+                !self
+                    .host
+                    .cached_project(&planner.project_id)
+                    .is_ok_and(|project| std::path::Path::new(&project.root) == repo.path)
+            })
         {
             return Err(ServiceError::PlannerEnrollmentUnavailable(
                 "The T3 project or planner proof changed during verification. Retry shortly.",
@@ -675,7 +721,7 @@ impl Service {
         }
         if state
             .store
-            .routing_provenance(&repository.origin, &[planner.id.as_str()])?
+            .routing_provenance(None, &[planner.id.as_str()])?
             .get(&planner.id)
             == Some(&ThreadProvenance::TaskRole)
         {
@@ -683,6 +729,10 @@ impl Service {
                 "A task role cannot enroll as a project planner.",
             ));
         }
+        let Some(repository) = repository else {
+            state.record_enrollment(planner, None);
+            return Ok(());
+        };
         if let Some(binding) = binding {
             if state.planner_binding(&planner.id).as_ref() != Some(binding)
                 || binding.checkout != repository.path
@@ -696,16 +746,11 @@ impl Service {
             if state
                 .enrolled_planners
                 .get(&planner.id)
-                .is_none_or(|proof| proof.binding != *binding || proof.identity != planner)
+                .is_none_or(|proof| {
+                    proof.binding.as_ref() != Some(binding) || proof.identity != planner
+                })
             {
-                state.enrolled_planners.insert(
-                    planner.id.clone(),
-                    EnrolledPlanner {
-                        identity: planner,
-                        verified_at: Instant::now(),
-                        binding: binding.clone(),
-                    },
-                );
+                state.record_enrollment(planner, Some(binding.clone()));
                 self.planner_routes_changed(&mut state);
             }
             return Ok(());
@@ -728,14 +773,7 @@ impl Service {
         let binding = state
             .planner_binding(&planner.id)
             .ok_or(ServiceError::Project)?;
-        state.enrolled_planners.insert(
-            planner.id.clone(),
-            EnrolledPlanner {
-                identity: planner,
-                verified_at: Instant::now(),
-                binding,
-            },
-        );
+        state.record_enrollment(planner, Some(binding));
         if changed {
             self.project_settings_changed(&mut state);
         } else {

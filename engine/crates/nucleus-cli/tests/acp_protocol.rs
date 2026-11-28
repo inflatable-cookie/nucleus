@@ -419,11 +419,11 @@ async fn view(
                 "url":"https://github.com/example/fixture/pull/7","head":format!("{:040x}",1)
             })),
             "parentHold": match state {
-                0 => Some(legacy_parent_hold_prompt("fixture-hold")),
+                0 | 2 | 8 => Some(legacy_parent_hold_prompt("fixture-hold")),
                 10 => Some("Starting reviewer round 1".to_owned()),
                 _ => None,
             },
-            "activeChild": matches!(state, 1 | 2 | 8),
+            "activeChild": state == 1,
             // Older candidates may still send this presentation hint.
             "transcriptPending":state == 9,
         })),
@@ -638,16 +638,20 @@ async fn unverified_prompts_refresh_and_a_prerequisite_wait_releases_the_turn() 
             .await;
         assert_eq!(reply["result"]["stopReason"], "end_turn");
     }
-    agent
-        .send(json!({"jsonrpc":"2.0","id":4,"method":"session/prompt",
-        "params":{"sessionId":SESSION,"prompt":legacy_parent_hold_prompt("fixture-hold")}}))
-        .await;
-    tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
-        .await
-        .expect("hold turn follows the task");
-    fixture.state.store(5, Ordering::Relaxed);
-    let _ = fixture.changes.send(());
-    assert_eq!(agent.response(4).await["result"]["stopReason"], "end_turn");
+    // Both a prerequisite wait and the legacy active-child hint lack the exact prompt.
+    for (id, state) in [(4, 5), (5, 1)] {
+        fixture.state.store(0, Ordering::Relaxed);
+        agent
+            .send(json!({"jsonrpc":"2.0","id":id,"method":"session/prompt",
+            "params":{"sessionId":SESSION,"prompt":legacy_parent_hold_prompt("fixture-hold")}}))
+            .await;
+        tokio::time::timeout(Duration::from_secs(15), fixture.stream_ready.notified())
+            .await
+            .expect("hold turn follows the task");
+        fixture.state.store(state, Ordering::Relaxed);
+        fixture.changes.send(()).unwrap();
+        assert_eq!(agent.response(id).await["result"]["stopReason"], "end_turn");
+    }
     assert_eq!(fixture.commands.load(Ordering::Relaxed), 0);
     server.abort();
 }
@@ -669,7 +673,7 @@ async fn a_missed_report_wake_releases_the_old_turn_on_the_next_task_change() {
         "params":{"sessionId":SESSION,"prompt":legacy_parent_hold_prompt("fixture-hold")}}))
         .await;
     fixture.stream_ready.notified().await;
-    fixture.state.store(1, Ordering::Relaxed);
+    fixture.state.store(2, Ordering::Relaxed);
     fixture.changes.send(()).unwrap();
     agent.update("tool_call").await;
     // The authenticated report arrives without an invalidation. Only the
@@ -691,7 +695,7 @@ async fn a_missed_report_wake_releases_the_old_turn_on_the_next_task_change() {
 }
 
 #[tokio::test]
-async fn an_active_child_keeps_the_parent_hold_through_pause_and_a_read_failure() {
+async fn the_current_prompt_keeps_the_hold_through_pause_and_a_read_failure() {
     let (mut agent, fixture, home, server) = loopback().await;
     fixture.state.store(0, Ordering::Relaxed);
     agent

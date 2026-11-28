@@ -136,26 +136,6 @@ pub enum HostError {
         "the retained thread read returned no thread while the held shell still listed it (held revision {revision:?})"
     )]
     HeldThreadMissing { revision: Option<u64> },
-    #[error(
-        "parent message preflight failed: {predicate} (prepared revision {prepared}, observed revision {observed:?})"
-    )]
-    ParentPreflight {
-        predicate: &'static str,
-        prepared: u64,
-        observed: Option<u64>,
-    },
-    #[error(
-        "parent shell {field} changed after verification (prepared revision {prepared}, observed revision {observed:?}, expected {before:016x}, observed {after:016x}, custody before {activity_before:?}, custody now {activity_now:?}; values are fingerprints)"
-    )]
-    ParentShellChanged {
-        field: &'static str,
-        prepared: u64,
-        observed: Option<u64>,
-        before: u64,
-        after: u64,
-        activity_before: RowChildren,
-        activity_now: RowChildren,
-    },
     #[error("the held shell could not confirm all recorded role children are quiet")]
     RowChildBusy,
     #[error("the local process census could not confirm workspace custody: {0}")]
