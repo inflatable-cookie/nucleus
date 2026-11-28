@@ -143,7 +143,7 @@ Later decisions carry their own attribution.
 10. **Reuse in-house crates.** Use Longhorn for configuration and anything else that
    fits (Tom: "use longhorn for config and anything else you think would be
    useful"). Barge provides worktrees when its pool setting is on.
-11. **Keep it light: reads and edits never call the host.** (Its operator-snooze send rule is replaced by ruling 62.) Tom, 2026-11-23: "We need to keep things light and optimised - remember to treat CRUD operations separately from scheduler interactions with the host and to avoid hammering the host with calls". The rules:
+11. **Keep it light: reads and edits never call the host.** Tom, 2026-11-23: "We need to keep things light and optimised - remember to treat CRUD operations separately from scheduler interactions with the host and to avoid hammering the host with calls". The rules:
    - Board, ACP, CLI and settings reads and edits (create, read, update, delete) touch only the store and the in-memory read model. They never call T3, GitHub or the process census. A command writes its row and wakes the task, and the scheduler does any host work on its next pass.
    - Only the scheduler talks to hosts. Each pass makes one bounded set of host reads per host, shared by every task in that pass (for example, one thread listing rather than a read per task). It reads one thread or PR exactly only when a due decision needs it.
    - Host calls are serialized per host. An unavailable host backs off to a due time.
@@ -154,7 +154,7 @@ Later decisions carry their own attribution.
      - Thread reads are bounded and decide from T3's coverage fields. A full thread history is never requested.
      - Monitoring reuses a thread's last observation while its shell marker holds. Exact reads happen only for a due effect, an ambiguous reply or an ordered safety fence, and one read is shared across the steps of that effect.
      - Done thread housekeeping uses the synchronized shell. It makes no thread reads on ordinary ticks.
-     - Presentation writes (titles, snoozes) happen only when the shown value differs. Readback is due-scheduled, never immediate, and never after a failed write.
+     - Presentation writes (titles, snoozes) happen only when the shown value differs. Restoring an operator snooze uses the send receipt and held shell, with one visibility write when the snooze clears. Readback is due-scheduled through the held shell, never immediately after a write or after a failed write.
      - One host budget covers every background worker. Safety probes and operator actions come before presentation. One failure deadline applies to every call and reconnect.
      - Rare reads (provider catalog, setup) happen on demand and are cached by revision, not refreshed per pass.
      - Each pass records its host calls by method, timeouts, and reads of terminal or archived threads.
@@ -178,7 +178,8 @@ Later decisions carry their own attribution.
    still requires an exact terminal parent run and an authoritative child absence.
    New retained role continuations pin provider and model and can enter the
    native queue without waiting for idle coverage or a prior send deadline.
-   The engine respects operator snoozes and checks the exact destination. A reservation proven
+   The engine checks the exact destination and preserves any operator snooze under
+   ruling 62. A reservation proven
    unsent is replanned with a pin and a fresh command ID. For an older
    reservation that may have been sent, the engine waits for matching native
    evidence and uses the actual run's provider and model when it observes it.
@@ -285,7 +286,7 @@ Later decisions carry their own attribution.
 21. **No machine-load gate.** Tom, 2026-11-24: "running tasks on the queue isn't the load issue, it's them running tests, etc, which is ultimately a separate problem. We shouldn't hold up doing task work because the machine is loaded".
     - Dispatch never reads the machine's load average. Slots and the allowance are the only dispatch limits.
     - Heavy test runs are dealt with where they happen (each repository's test selection and concurrency), not by holding task launches.
-22. **Native task titles.** (Its operator-snooze send rule is replaced by ruling 62.) Tom, 2026-11-24: "We need proper thread titles again - take the naming policy from the TS version".
+22. **Native task titles.** Tom, 2026-11-24: "We need proper thread titles again - take the naming policy from the TS version".
     - Finished task threads archive independently of workspace cleanup. A retained checkout stays visible on the board and in Next.
     - Tom, 2026-11-24: "We'll need the generated project badge icons that match T3 (the screenshot shows a card from rust version and a card from TS version) along with task numbers". Each repository gets its own durable allocator. Seed it from the fenced TypeScript allocator before admitting into a migrated repository and backfill the three pilot tasks in admission order.
     - The task row shows `<State>: #N <brief title>`. Worker children use `#N: <brief title>` and reviewer children use `#N review: <brief title>`. T3 already shows the project. Use the assigned number without padding, and omit the number until it is assigned. Strip a trailing `worker` and fit the title to the host's limit at a word boundary. Update existing live task rows through the title receipt. Already-launched child titles keep their frozen value.
@@ -295,7 +296,7 @@ Later decisions carry their own attribution.
       background work, or a two-minute handover after the child ends,
       using the held shell. With neither decisions nor Working rows it reads “All quiet”.
     - Tom, 2026-11-25, on finished tasks reading "Starting" while closing: "it's pretty confusing. Can we improve the labels?" The label leads with the phase: Queued, Working, Reviewing, Changes, Merging, Closing, Done or Cancelled. Starting means only that a worker or reviewer launch is in flight. A hold that does not block adds `*` to the phase. Done and Cancelled take precedence over waits.
-    - Keep row labels short. Queued labels retain a short cause; other waiting labels name the hold, prerequisite, slot, paused group or start. A snooze never supplies a wait label. The snooze deadline stays in the status detail and Next, while T3 also displays it. A matching Nucleus receipt owns its horizon until the shell observes the clear.
+    - Keep row labels short. Queued labels retain a short cause; other waiting labels name the hold, prerequisite, slot, paused group or start. Status details and Next show the task’s wait reason. T3 displays the snooze deadline on its row. A matching Nucleus receipt owns its horizon until the shell observes the clear.
     - Retitling is a scheduler presentation effect. A new desired title gets a durable receipt and a fresh native command ID. Retries keep the same ID and back off from five seconds to five minutes. The title write uses the existing synchronized shell proof, never gates task progress or archival, and confirms only when synchronized shell readback shows the desired title. A confirmed generation whose held shell still displays older wording is reopened under its existing command ID while preserving any newer generation, and an idle tick with matching or absent shell readback makes no native call.
     - One local attention projection feeds the board and `task.next`. A missing or cancelled prerequisite needs an owner edit.
     - **T3 task rows follow one rule.** Tom, 2026-11-25: "The logic doesn't need to be complicated - if an agent is running, put it in Working, otherwise Snooze it until it's done, then Archive. It needs a little bit of smoothing off so they don't jump between Working and Snoozed when transitioning states. It shouldn't need to be this complicated?" This replaces the attention-based row reconciliation and its special cases.
@@ -303,13 +304,12 @@ Later decisions carry their own attribution.
       - Otherwise the row is snoozed until the task finishes. A finished task's row is archived.
       - Smoothing (planner reading): a row shows as soon as a child is running. It snoozes only after no child has run for two minutes. Handovers and Nucleus's own sends inside that window leave the row as it is.
       - Tom, 2026-11-25: "we could use "Waiting" while in the Working group to show when a thread is waiting for something imminent". During the two-minute window the row stays in T3's Working group and reads Waiting. When a child runs again the visible row shows its task phase. Otherwise it snoozes when the window ends.
-      - Tom, 2026-11-25: "Questions and decisions need to bring the row back". A task with an open question or decision for a person is visible until it is answered, in addition to its Inbox entry. Operator snoozes are respected.
+      - Tom, 2026-11-25: "Questions and decisions need to bring the row back". A task with an open question or decision for a person is visible until it is answered, in addition to its Inbox entry. An operator snooze hides the row until its horizon. The Inbox entry remains visible.
     - A waiting row gets a 48-hour snooze, renewed with less than 24 hours remaining. Nucleus records the wait episode and horizon before dispatch and confirms a snooze from T3's `snoozedUntil`. A refusal or unknown delivery stays recorded for that wait. Showing a row clears only the exact owned horizon. Finished tasks forget their record. Background reconciliation leaves settled, archived and deleted rows and operator snoozes alone.
-    - A native message can wake the exact Nucleus-owned snooze on its destination. T3 clears settlement when it dispatches the message. Child activity drives parent visibility through row reconciliation. Operator snoozes defer delivery. Nucleus never sends a settle command.
-    - A retained role can send directly to its own thread. The scheduler uses
-      the exact parent read under the task fence to hold delivery while an
-      operator snooze is in effect. It records Starting with the first role send intent and
-      updates the native title through the existing receipt.
+    - T3 clears settlement and snooze when it dispatches a message. Nucleus restores a cleared operator horizon under ruling 62. Child activity drives parent visibility again once that horizon expires. Nucleus never sends a settle command.
+    - A retained role can send directly to its own thread while its parent is
+      snoozed. The scheduler records Starting with the first role send intent
+      and updates the native title through the existing receipt.
 23. **Projects register on first use.** Tom, 2026-11-24: "We need nucleus to work seamlessly on a fresh install where a new planner thread without any ceremony can start dispatching tasks and the project gets registered in the db".
     - When an unknown T3 planner calls a planning command, the scheduler reads that exact thread and uses its root from the synchronized project snapshot. It reads both origin remotes and the default branch at that checkout. It attaches the verified T3 checkout to the matching repository in its project, or creates a project with the T3 display name for a new origin. The initial request asks for a retry. Admission defaults to the caller's verified repository. An explicit repository must already have its own verified checkout in the same project.
     - Send to planner can also bind a matching T3 project when it starts a project's first planner ([Spec 071, decision 7](071-detail-views.md#decisions)).
@@ -386,8 +386,8 @@ Later decisions carry their own attribution.
     Retained reads record a missing bounded projection when the shell still
     lists the thread. Revoked-run custody can still require a local writer check.
     Title, settle and snooze changes preserve matching custody evidence.
-    Delivery still checks current binding, requests, children, background
-    work and row visibility, including ownership of any snooze it clears.
+    Delivery checks current binding, requests, children and background work.
+    Snooze ownership determines whether to restore the horizon under ruling 62.
     A pre-wire retry keeps the row visible and releases the ACP turn while
     it waits. An exact terminal parent and an exact absent child let Nucleus
     discard a delegation that has no send intent and prepare it again.
@@ -461,10 +461,10 @@ Later decisions carry their own attribution.
     specifies which processes the sweep can signal and what evidence it records.
 
 
-35. **A lubricated workflow.** (Parent-hold delivery parts amended by ruling 57; operator-snooze delivery rule replaced by ruling 62.) Tom, 2026-11-24: "We need to apply this kind of thinking all the way through the workflow - 'lubricate' the whole thing so we stop getting stuck like this." Ruling 34's principle applies to every step:
+35. **A lubricated workflow.** (Parent-hold delivery parts amended by ruling 57.) Tom, 2026-11-24: "We need to apply this kind of thinking all the way through the workflow - 'lubricate' the whole thing so we stop getting stuck like this." Ruling 34's principle applies to every step:
     - Only destructive or irreversible steps (removing a checkout or worktree, merging, closing a PR) prove custody, and they prove it once.
     - Every other step acts on what it can observe now and is idempotent. Repeating it is harmless. A T3 effect is re-sent under its same command ID, which T3 deduplicates, rather than proved absent.
-    - Parent holds follow ruling 57. Operator snoozes follow ruling 62 and task-row visibility follows ruling 22.
+    - Parent holds follow ruling 57. Operator snoozes affect presentation under ruling 62. Holds, role sends and planner messages use their normal delivery checks while the row is hidden. Task-row visibility follows ruling 22.
     - Held task and Inbox ACP streams use the service's keepalives to detect broken connections. EOF, transport errors and 45 seconds without a complete keepalive or invalidation trigger capped reconnect backoff. The new stream refreshes the view.
     - ACP request failures and requests slower than two seconds record UTC time, route, status or transport outcome, latency and attempt in `acp.log`, without request content or credentials. Engine errors retain the response message; transport failures and deadlines remain unavailable errors. The service timestamps its log lines and records ACP 5xx responses. Slow ACP detail reads record state-lock wait and hold time to distinguish contention from response errors.
     - A report-ready or prerequisite-release notice can make one fresh attempt
@@ -782,7 +782,7 @@ Later decisions carry their own attribution.
 
 61. **Nucleus keeps registered checkouts' default branch current.** Tom, 2026-11-27, confirming the planner's proposal: "Yeah confirm - the damage from not keeping up to date is generally worse, it's rare that anything would be working in the main checkout at the same time as Nucleus tasks landing". After Nucleus merges a PR, it fetches and fast-forwards that repository's registered checkout's local default branch to the merged commit. If that branch is checked out, this is a fast-forward-only merge in the working tree, which Git refuses if it would overwrite local changes. If another branch is checked out, only the local default-branch ref moves, also fast-forward only. A refusal, a diverged branch or a dirty conflict leaves the checkout untouched and is recorded in the task's history. It never resets, stashes, rebases or forces. Task starts still use the fetched published base (nucleus#1623), so a lagging checkout never blocks work. This changes #1623's rule that Nucleus never touches the registered checkout.
 
-62. **A snoozed task row is hidden, not paused.** Tom, 2026-11-27, after bovine-accelerator#7302 stopped for three hours because he had snoozed its row: "Nucleus shouldn't treat manually snoozed task rows any differently - I snoozed 7302 to get it out of my visible list, I don't want it to pause for that amount of time." An operator snooze on a task's parent row, or on one of its role threads, only affects visibility. Nucleus never withholds or delays a parent hold, role send, continuation or notice because of it. T3 clears a thread's snooze when a message is dispatched to it. When a Nucleus send clears an operator snooze, Nucleus puts the same snooze horizon back straight afterwards, so the row stays out of the operator's list until the time they chose. After that horizon the row follows ruling 22's visibility rule again. This replaces the operator-snooze exception in rulings 11, 22 and 35 (carried from #1445 and TypeScript's `wakeBeforeDelivery`).
+62. **A snoozed task row is hidden, not paused.** Tom, 2026-11-27, after bovine-accelerator#7302 stopped for three hours because he had snoozed its row: "Nucleus shouldn't treat manually snoozed task rows any differently - I snoozed 7302 to get it out of my visible list, I don't want it to pause for that amount of time." An operator snooze on a task's parent row, or on one of its role threads, only affects visibility. Nucleus never withholds or delays a parent hold, role send, continuation or notice because of it. T3 clears a thread's snooze when a message is dispatched to it. When a Nucleus send clears an operator snooze, Nucleus puts the same snooze horizon back straight afterwards, so the row stays out of the operator's list until the time they chose. After that horizon the row follows ruling 22's visibility rule again. This retires the delivery deferral carried forward from TypeScript's `wakeBeforeDelivery`.
 
 63. **Tasks declare a weight, and heavy work has its own slots.** Tom, 2026-11-27: "right now we have no concept of what a slot will do.. it might be just making changes to the readme, or it might run a 5 hour test suite building multiple rust binaries in a VM! Would it be possible to have an enum on tasks that defines the weight of a task, and then limit the number of heavy slots that can run concurrently?" He named the options `light`, `normal` and `heavy`, asked that it "doesn't block anything and keeps the queue moving", agreed the planner's shape ("yes, that matches"), and asked for the controls in Settings → Limits. A brief declares `queue.weight: light | normal | heavy`, separate from complexity, which picks the model. A missing weight means `normal`. The weight applies to every run of the task, reviews included. Dispatch keeps three slot counts, heavy H, normal M and light L, whose sum is the global slot count. They act as nested caps: heavy runs ≤ H, heavy plus normal runs ≤ H + M, all runs ≤ H + M + L. So light work can use any slot, normal work normal or heavy slots, and heavy work only heavy slots. When a slot frees, the heaviest waiting task that fits takes it. Within one weight, today's order holds (promoted, then admission), and project slot limits still apply. Nothing is preempted, a free slot is always used whenever any waiting task fits it, and a task waiting on its cap says so. The defaults for this machine are heavy 5, normal 8 and light 5.
 64. **A shared model never blocks a review.** Tom, 2026-11-27: "I've seen a few tasks get stuck due to the reviewer being the same model as the worker for whatever reason. While nucleus should do what it can to ensure it's a different model, it shouldn't block the task". Selection still prefers a reviewer whose model differs from every author model on the task, and a worker whose model differs from the retained reviewer's. If no usable profile with a different model can take the role, because of usage level, paused groups, catalog limits or a required profile request that names the other role's model, the role launches on the best usable profile anyway. The engine records a notice with each shared-model reservation. The task view and `nucleus next` show the latest notice, and a shared-model reviewer receives its notice in the assignment. A required profile request is honoured even when it names the other role's model. Waiting, refusing or raising a decision because of model overlap is never the outcome. This amends the reviewer-independence line in [Spec 052](052-usage-level.md) for Nucleus tasks. Review-entry tasks still refuse before any agent when their external author models are missing ([Spec 017](017-external-pr-review-entry.md)), and once those models are known the same preference applies.
@@ -921,7 +921,9 @@ the existing run, question, hold and exact-head rules still apply.
 Report-ready, work-question, operator-decline and prerequisite-release notices
 stay pending while a planner route is unavailable. A binding change wakes the
 waiting notice, and the next due pass can also retry routing. The scheduler
-records the concrete send intent after checking the recipient and snooze horizon. T3 wakes a settled planner in the message dispatch transaction.
+checks the recipient and records the concrete send intent. T3 wakes a settled
+planner in the message dispatch transaction. If that send clears an operator
+snooze, Nucleus restores its deadline under ruling 62.
 A queued notice remains read-only if the planner settles again. An uncertain
 question or operator-decline send keeps its exact attempt.
 For report-ready and prerequisite-release notices, a
@@ -1061,14 +1063,16 @@ with a fresh due command before another send. No planner or operator action is
 needed for unconfirmed delivery. Old refused, failed and held rows with command
 IDs resume as pending. Historical rows without a command ID do not gate delivery.
 
-Before a parent send can clear an operator snooze, the engine records the
-native destination, message and horizon separately from hold delivery. The
-visibility worker retries restoration after restart, once the exact message
-is visible and the snooze is clear. It reuses the restoration command ID
-after an uncertain reply and uses a fresh ID after a confirmed rejection.
-Automatic row visibility yields to the pending operator horizon until the
-shell confirms the restoration. Expiry, closure or a newer operator visibility
-change also ends the intent.
+The delivery snooze journal records the destination, message and future
+operator horizon before a send. It includes pending parent-only records
+from earlier engines. After acceptance, the visibility worker uses the
+held shell to confirm the snooze cleared and restores the original horizon
+with one guarded write. An uncertain send can also be proven by its exact
+message in an already observed thread snapshot. Restoration reuses its
+command ID after an uncertain reply and uses a fresh ID after an exact
+rejection. Automatic row visibility yields until the shell confirms the
+restoration. Expiry, closure or a newer operator visibility change also
+ends the intent.
 
 Run the installed T3 receipt contract test when changing or upgrading the
 adapter. It starts the bundled server with its own store under scratch and

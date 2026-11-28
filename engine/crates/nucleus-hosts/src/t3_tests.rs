@@ -1,8 +1,8 @@
 use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
 
 use crate::{
-    Binding, Dispatch, HostError, RoleProfile, RunRequest, SendOutcome, StopProgress, T3, T3Pass,
-    TaskHost,
+    Binding, Dispatch, HostError, RoleProfile, RunRequest, SendOutcome, SnoozeUpdate, StopProgress,
+    T3, T3Pass, TaskHost,
 };
 use futures_util::{SinkExt, StreamExt};
 use nucleus_core::{
@@ -1170,7 +1170,7 @@ async fn send(pass: &impl TaskHost, task: &mut Task) -> Result<SendOutcome, Host
             .authorize_send(task.run().expect("reserved run"))
             .await?;
     }
-    pass.send(permit.record(task)?).await
+    pass.send(permit.record(task)?, |_| Ok(())).await
 }
 
 #[tokio::test]
@@ -1597,7 +1597,7 @@ fn retained_reviewer(binding: Binding) -> (Task, Observation, String) {
 }
 
 #[tokio::test]
-async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze() {
+async fn next_review_dispatches_to_a_settled_thread_with_an_operator_snooze() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
     let (mut task, mut observation, previous) = retained_reviewer(binding.clone());
@@ -1613,8 +1613,7 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
     restored_row["visibleItemCount"] = json!(50_000);
     let mut operator_snoozed = restored.clone();
     operator_snoozed["projection"]["thread"]["snoozedUntil"] = json!("2099-06-01T12:00:00.000Z");
-    let mut settled = restored.clone();
-    settled["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:00:00Z");
+    operator_snoozed["projection"]["thread"]["settledAt"] = json!("2026-11-23T16:00:00Z");
     let probe = "orchestration.subscribeThread";
     let command = "orchestration.dispatchCommand";
     let archive_row = shell_row(&archived);
@@ -1624,7 +1623,6 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
         archived_shell_reply(16, &archive_row),
         (command, Response::Success),
         (probe, Response::Snapshot(operator_snoozed)),
-        (probe, Response::Snapshot(settled)),
         (command, Response::Success),
     ])
     .await;
@@ -1670,13 +1668,6 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
         .fixture_shell(&json!({"kind":"thread.updated","sequence":16,
             "thread":restored_row
         }));
-    assert!(
-        matches!(
-            pass.authorize_send(task.run().expect("run")).await,
-            Err(HostError::Uncertain)
-        ),
-        "a continuation must wait for the operator's snooze"
-    );
     let permit = pass
         .authorize_send(task.run().expect("run"))
         .await
@@ -1684,10 +1675,13 @@ async fn next_review_dispatches_to_its_settled_thread_after_the_operator_snooze(
     let dispatch = permit
         .record(&mut task)
         .expect("record settled continuation");
-    assert_eq!(pass.send(dispatch).await.unwrap(), SendOutcome::Sent);
+    assert_eq!(
+        pass.send(dispatch, |_| Ok(())).await.unwrap(),
+        SendOutcome::Sent
+    );
     let sent = server.await.expect("scripted host");
     let unarchive: Value = serde_json::from_str(sent[3].payload.get()).expect("unarchive payload");
-    let message: Value = serde_json::from_str(sent[6].payload.get()).expect("continuation payload");
+    let message: Value = serde_json::from_str(sent[5].payload.get()).expect("continuation payload");
     assert_eq!(
         unarchive,
         json!({"type":"thread.unarchive", "threadId":THREAD, "commandId":format!("{instance}-unarchive")})
@@ -1752,7 +1746,7 @@ fn reserved_worker_continuation(binding: &Binding, pinned: bool) -> (Task, Strin
 async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
-    let (mut task, instance) = reserved_worker_continuation(&binding, true);
+    let (task, instance) = reserved_worker_continuation(&binding, true);
     assert!(crate::retained_worker_continuation(task.run().unwrap()));
     let mut busy = snapshot(&binding, "other-message", "running", false);
     busy["projection"]["thread"]["providerInstanceId"] = json!("alternate-provider");
@@ -1761,10 +1755,6 @@ async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody()
     busy["projection"]["thread"]["settledOverride"] = json!("settled");
     let mut row = busy["projection"]["thread"].clone();
     let (host, native) = server(vec![
-        (
-            "orchestration.subscribeThread",
-            Response::Snapshot(busy.clone()),
-        ),
         ("orchestration.subscribeThread", Response::Snapshot(busy)),
         ("orchestration.dispatchCommand", Response::Success),
     ])
@@ -1792,14 +1782,20 @@ async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody()
     row["snoozedUntil"] = json!("2099-11-24T17:11:15Z");
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
-    assert!(matches!(
-        pass.send(dispatch).await,
-        Ok(SendOutcome::NotSent(HostError::OperatorSnoozed { .. }))
-    ));
-    row["snoozedUntil"] = Value::Null;
-    host.rpc
-        .fixture_shell(&json!({"kind":"thread.updated","sequence":18,"thread":row}));
-    assert_eq!(send(&pass, &mut task).await.unwrap(), SendOutcome::Sent);
+    let mut recorded = false;
+    assert_eq!(
+        pass.send(dispatch, |update| {
+            if let SnoozeUpdate::Record(_, intent) = update {
+                assert_eq!(intent.thread, THREAD);
+                recorded = true;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap(),
+        SendOutcome::Sent
+    );
+    assert!(recorded);
     let requests = native.await.unwrap();
     let wire: Value = serde_json::from_str(requests.last().unwrap().payload.get()).unwrap();
     assert_eq!(wire["commandId"], instance);
@@ -1889,21 +1885,10 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     ])
     .await;
     host.rpc.use_held_shell();
-    let until_ms = 4_102_444_800_000;
     host.rpc.fixture_shell(&json!({"kind":"snapshot","snapshot":{
         "snapshotSequence":16,"threads":[child,{"id":parent, "snoozedUntil":"2100-01-01T00:00:00Z"}],"projects":[]
     }}));
     let pass = host.pass(checkout.path());
-    let permit = pass.authorize_send(task.run().unwrap()).await.unwrap();
-    assert!(permit.parent_row().is_none());
-    let refused = pass.send(permit.record(&mut task.clone()).unwrap()).await;
-    assert!(
-        matches!(
-            refused,
-            Ok(SendOutcome::NotSent(HostError::RetainedParentSnoozed { until })) if until == until_ms
-        ),
-        "{refused:?}"
-    );
     task.record_send(&instance, 4).unwrap();
     assert_eq!(
         pass.observe_retained_role(&binding, THREAD).await.unwrap(),
@@ -1920,9 +1905,11 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
         }
     );
     let permit = pass.authorize_send(task.run().unwrap()).await.unwrap();
-    let mut dispatch = permit.record(&mut task).unwrap();
-    dispatch.allow_owned_parent_snoozes(vec![until_ms]);
-    assert_eq!(pass.send(dispatch).await.unwrap(), SendOutcome::Sent);
+    let dispatch = permit.record(&mut task).unwrap();
+    assert_eq!(
+        pass.send(dispatch, |_| Ok(())).await.unwrap(),
+        SendOutcome::Sent
+    );
     let requests = native.await.unwrap();
     let wire: Value = serde_json::from_str(requests.last().unwrap().payload.get()).unwrap();
     assert_eq!(wire["commandId"], instance);
@@ -2194,7 +2181,7 @@ async fn a_rejected_superseded_replay_keeps_custody_until_archive_readback() {
 }
 
 #[tokio::test]
-async fn planner_notice_obeys_snooze_and_queue_acceptance_is_not_delivery() {
+async fn planner_notice_sends_through_snooze_and_queue_acceptance_is_not_delivery() {
     use crate::{NoticeOutcome, NoticeState};
 
     let directory = checkout_fixture();
@@ -2218,23 +2205,18 @@ async fn planner_notice_obeys_snooze_and_queue_acceptance_is_not_delivery() {
     started["projection"]["runs"][0]["startedAt"] = json!("2026-11-23T16:01:00Z");
     let (client, server) = server(vec![
         (probe, Response::Snapshot(snoozed)),
-        (probe, Response::Snapshot(settled)),
         (command, Response::Success),
         (probe, Response::Snapshot(queued)),
         (probe, Response::Snapshot(interrupted)),
         (probe, Response::Snapshot(started)),
     ])
     .await;
-    assert!(
-        client.authorize_notice(&notice).await.unwrap().is_none(),
-        "operator snooze"
-    );
     let permit = ready_notice(&client, &notice).await;
     assert_eq!(notice.last_send_at_ms, None);
     let dispatch = permit.record(&mut notice).expect("persist native marker");
     assert_eq!(
         client
-            .send_notice(dispatch)
+            .send_notice(dispatch, |_| Ok(()))
             .await
             .expect("queue planner notice"),
         NoticeOutcome::Accepted
@@ -2257,7 +2239,7 @@ async fn planner_notice_obeys_snooze_and_queue_acceptance_is_not_delivery() {
         NoticeState::Started
     );
     let frames = server.await.expect("fixture trace");
-    assert_eq!(frames[2].payload.get(), notice.payload.as_str());
+    assert_eq!(frames[1].payload.get(), notice.payload.as_str());
     let payload: Value = serde_json::from_str(&notice.payload).expect("message wire");
     assert_eq!(payload["dispatchMode"]["type"], "queue_after_active");
 }
@@ -2305,7 +2287,7 @@ async fn a_settled_recipient_gets_only_the_exact_recorded_notice() {
         .expect("record the original bytes");
     assert_eq!(
         client
-            .send_notice(dispatch)
+            .send_notice(dispatch, |_| Ok(()))
             .await
             .expect("confirmed outcome"),
         NoticeOutcome::Rejected
@@ -2987,13 +2969,16 @@ async fn pre_send_connection_failure_reports_not_sent_for_notice_and_role_dispat
     // Drop the cached socket so both writes must reconnect and hit the 503 ticket failure.
     client.rpc.socket_clear_for_test();
     assert_eq!(
-        client.send_notice(notice_dispatch).await.unwrap(),
+        client
+            .send_notice(notice_dispatch, |_| Ok(()))
+            .await
+            .unwrap(),
         NoticeOutcome::NotSent(HostError::Unavailable)
     );
 
     client.rpc.clear_retry_for_test();
     assert_eq!(
-        pass.send(run_dispatch).await.unwrap(),
+        pass.send(run_dispatch, |_| Ok(())).await.unwrap(),
         SendOutcome::NotSent(HostError::Unavailable)
     );
     assert!(!pass.sent_for_test());

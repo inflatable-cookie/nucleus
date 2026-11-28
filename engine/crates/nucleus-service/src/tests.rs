@@ -568,7 +568,11 @@ impl TaskHost for Due {
         Err(HostError::Uncertain)
     }
 
-    async fn send(&self, _: RunDispatch) -> Result<SendOutcome, HostError> {
+    async fn send(
+        &self,
+        _: RunDispatch,
+        _: impl FnMut(nucleus_hosts::SnoozeUpdate) -> Result<(), HostError> + Send,
+    ) -> Result<SendOutcome, HostError> {
         unreachable!("fixture probes the decision before the send marker")
     }
 

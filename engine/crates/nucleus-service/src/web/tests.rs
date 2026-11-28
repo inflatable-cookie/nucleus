@@ -45,21 +45,6 @@ const PLANNER_KEY: [u8; 32] = [5; 32];
 const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
-#[test]
-fn operator_snooze_detail_preserves_its_deadline() {
-    let detail = crate::WaitDetail::OperatorSnoozed {
-        version: 1,
-        thread: "thread:fixture".into(),
-        until: 42,
-        message: "You snoozed this thread until 00:00".into(),
-    };
-
-    assert_eq!(
-        board_wait_detail(&detail),
-        Some("You snoozed this thread until 00:00")
-    );
-}
-
 #[tokio::test]
 async fn the_row_refresh_route_is_gone() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));

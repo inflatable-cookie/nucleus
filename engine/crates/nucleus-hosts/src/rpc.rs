@@ -194,13 +194,6 @@ impl ThreadHint {
         self.running && !self.closed
     }
 
-    /// The native horizon in a held thread update.
-    #[must_use]
-    pub fn snoozed_until(&self) -> Option<u64> {
-        let time = parse_native_time(self.change.as_ref()?[12].as_str()?)?;
-        u64::try_from(time.unix_timestamp_nanos() / 1_000_000).ok()
-    }
-
     /// An event can invalidate a prior authority proof. It cannot grant one.
     #[must_use]
     pub fn is_identity_change(&self, prior: Option<&crate::PlannerIdentity>) -> bool {
@@ -239,7 +232,6 @@ impl ThreadHint {
                         thread["archivedAt"],
                         thread["settledAt"],
                         thread["settledOverride"],
-                        thread["snoozedUntil"],
                     ])),
                 })
             }
@@ -716,9 +708,7 @@ impl Rpc {
         policy: ThreadRead<'_>,
     ) -> Result<(), HostError> {
         if row.is_some_and(closed_row)
-            || (row.is_none()
-                && self.uses_held_shell()
-                && matches!(policy, ThreadRead::Inbox | ThreadRead::Visibility))
+            || (row.is_none() && self.uses_held_shell() && matches!(policy, ThreadRead::Inbox))
         {
             return Err(HostError::Uncertain);
         }

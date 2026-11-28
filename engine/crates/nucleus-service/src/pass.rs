@@ -1756,10 +1756,6 @@ impl Service {
         Ok(action)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "keep admission, intent and send in order"
-    )]
     async fn send(
         &self,
         row: &TaskRow,
@@ -1802,18 +1798,8 @@ impl Service {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(SendAttempt::Deferred);
         }
-        let parent = authorization.parent_row().zip(self.acp_provider());
-        if let Some((parent, _)) = parent {
-            self.check_parent_snooze(row, authorization.binding(), parent)
-                .await?;
-        }
-        let queued_parent = authorization.queued_parent().map(str::to_owned);
-        let owned_parent_snoozes = if let Some(thread) = queued_parent.as_deref() {
-            self.owned_delivery_snoozes(row, thread).await?
-        } else {
-            Vec::new()
-        };
         let archive = permit.superseded;
+        let reflect_admission = authorization.reflect_admission();
         self.storage.database().verify()?;
         let (mut sent, dispatch) = {
             let mut state = self.state.lock().await;
@@ -1827,8 +1813,7 @@ impl Service {
                 return Ok(SendAttempt::Deferred);
             }
             let mut task = task.clone();
-            let mut dispatch = authorization.record(&mut task)?;
-            dispatch.allow_owned_parent_snoozes(owned_parent_snoozes);
+            let dispatch = authorization.record(&mut task)?;
             let version = self.commit(&mut state, row, &task, &event("host_send"), None)?;
             (
                 TaskRow {
@@ -1839,31 +1824,22 @@ impl Service {
                 dispatch,
             )
         };
-        if let Some((_, provider)) = parent
+        if reflect_admission
+            && let Some(provider) = self.acp_provider()
             && run.last_send_at_ms().is_none()
             && let Err(error) = self.reflect_role_admission(&sent, checkout, provider).await
         {
             service_log!("{}: {error}", task.identity().id);
         }
-        let result = match host.send(dispatch).await? {
+        let mut journal = self.delivery_snooze_journal(Some(&task.identity().id));
+        let result = host.send(dispatch, |update| journal.record(update)).await;
+        journal.settle().await;
+        let result = match result? {
             SendOutcome::NotSent(error) => {
                 let mut audit = event("host_send_not_sent");
                 audit.detail = serde_json::json!({"command":run.launch().instance}).to_string();
-                let restored = self.save(&sent, row.task.clone(), &audit).await?;
-                let (thread, until) = match error {
-                    HostError::OperatorSnoozed { until } => (run.launch().thread.clone(), until),
-                    HostError::RetainedParentSnoozed { until } => {
-                        (queued_parent.ok_or(ServiceError::Input)?, until)
-                    }
-                    error => return Err(error.into()),
-                };
-                self.schedule_result(
-                    &restored,
-                    &Err(ServiceError::OperatorSnoozed { thread, until }),
-                    crate::schedule::Priority::Effect,
-                )
-                .await?;
-                return Ok(SendAttempt::Deferred);
+                self.save(&sent, row.task.clone(), &audit).await?;
+                return Err(error.into());
             }
             outcome => outcome,
         };
@@ -4896,11 +4872,12 @@ mod tests {
         async fn send(
             &self,
             dispatch: nucleus_hosts::RunDispatch,
+            record_snooze: impl FnMut(nucleus_hosts::SnoozeUpdate) -> Result<(), HostError> + Send,
         ) -> Result<SendOutcome, HostError> {
             self.reject_tickets
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             self.host.fixture_disconnect();
-            self.pass.send(dispatch).await
+            self.pass.send(dispatch, record_snooze).await
         }
 
         async fn write_control(&self, dispatch: ControlDispatch) -> Result<(), HostError> {
