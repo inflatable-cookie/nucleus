@@ -215,7 +215,7 @@ when supplied. `report` reads the role's owner-only ticket and the report from s
 
 ## Settings
 
-| Group | Profile file (schema version 2; Dispatch 3) | Settings |
+| Group | Profile file (schema version 2; Dispatch 4) | Settings |
 | --- | --- | --- |
 | Profiles | `config/profiles.json` | Profile names, enabled flags, selections (stable ID, capability, weight, provider, model and effort), subscription groups, operator pauses and host-specific profile choices. |
 | Dispatch | `config/dispatch.json` | Usage and optional end, Heavy and Total slots, project defaults and overrides, thread retention and dispatch mode. |
@@ -284,8 +284,15 @@ local default branch via `refs/remotes/origin/HEAD` before saving its project
 and planner binding. In a scratch folder a verified thread needs no binding.
 
 Verified threads may plan, dispatch and send messages across projects. Name the
-project or task reference when working outside the thread's own project. Task
-completion notices and message replies address the exact originating thread.
+project or task reference when working outside the thread's own project. A task
+completion notice first goes to its dispatching thread, then falls back to a
+verified planner in the project only after positive evidence rules out the
+origin; an unresolved origin keeps delivery pending. Project messages go to the
+claimed planner, or fall back to the most recently active thread working in the
+project when the claim is unavailable; they are never dropped. Replies use the
+exact sender thread, falling back to that project's planner if the sender is
+archived or gone. See [Spec 070 rulings 23, 40 and
+41](../docs/knowledge/specs/070-small-engine.md#rulings).
 A healthy T3 shell stream keeps the proof across run activity. A closure or
 loss of host observation revokes the cached proof. The next request verifies
 the thread again.
@@ -329,5 +336,7 @@ issuing a one-use link. The ACP reply uses the plain board URL.
 
 ### Agent notes
 
-Agents must never answer Inbox requests or operator decisions, including by
-relay. Tom answers them directly.
+Agents must not answer Inbox requests or operator decisions. If Tom answers a
+decision in chat, its asking planner may record his exact words with
+`decision.answer ... --relayed` under [Spec 070 ruling 67](../docs/knowledge/specs/070-small-engine.md#rulings).
+Tom answers Inbox requests directly.

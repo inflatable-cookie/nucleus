@@ -22,8 +22,8 @@ had its own clear command, ID and refusals. On the same day, a brief timeout too
 four commands to clear (nucleus#1560), and one task had no command at all, because
 every route led into the same proof-gated launch (praxis#391).
 
-Production source line limits and validation selectors are owned by
-[AGENTS.md](../../../AGENTS.md).
+The production source line limit is recorded below. Repository validation
+selectors are owned by [AGENTS.md](../../../AGENTS.md).
 
 The new engine:
 
@@ -732,7 +732,7 @@ Later decisions carry their own attribution.
 
     > Spec 070 caps the Rust engine at 30,000 lines. It was 33,000 on 24 Nov and is 41,800 now. An independent costed review found only ~300–550 lines removable without changing what Nucleus does; the growth is mostly features you asked for (native Inbox, GitHub accounts, reply routes, recovery). Reaching 30k would mean giving up Nucleus running workers/reviewers in T3 itself. How should we treat the budget?
 
-    Tom chose “Freeze at today's size (Recommended)”. Later on 2026-11-26 he amended the ceiling: “We don't need to be that tight with budget - let's cap at 50k”. The Rust production line ceiling is 50,000. Each engine PR reports its net production-line delta and justifies growth; repository validation instructions live in [AGENTS.md](../../../AGENTS.md).
+    Tom chose “Freeze at today's size (Recommended)”. Later on 2026-11-26 he amended the ceiling: “We don't need to be that tight with budget - let's cap at 50k”. The Rust production line ceiling is 50,000. Each engine PR reports its net production-line delta and justifies growth under [Production Rust budget](#production-rust-budget).
 
     > Separately, three optional features each cost 600–1,200 lines and could go without touching core execution. Do you want to retire any of them?
 
@@ -966,6 +966,18 @@ There are only two:
    the worktree, including when the only tracked changes are deletions at the
    exact published head. A clean cancelled checkout can retire after proof of publication.
 
+## Production Rust budget
+
+Tom, 2026-11-24: "How are we doing on complexity? No horrible extra narrow fixes as issues come up? We need to stop this version from descending into madness like the TS version did."
+
+Every change states its general rule and what it replaces. Review each engine PR for special cases, duplicate paths and dead code. The ceiling is 50,000 production Rust lines. Every engine PR reports its net production-line delta and justifies growth by explaining why existing code cannot supply the behavior. Land an offsetting cut before a PR would cross the ceiling. A consolidation PR covers at most three production modules and identifies the rule that replaces the removed code. The repository's counter and validation selectors are documented in [AGENTS.md](../../../AGENTS.md).
+
+## Pass and persistence
+
+Adapter reads run outside the store lock. A pass applies its observations under the task's version fence; host activity also checks the run instance. A stale observation is discarded and wakes the current task. Store changes and audit events commit together, including send intent before a native write. Effects and commands take their per-task fence after preflight.
+
+Host request failures defer reads for 15 seconds, doubling up to four minutes. Scheduler retry deadlines and displayed waits stay in memory; durable task rows hold task state, while parent-delivery receipts and deadlines are persisted separately. A free slot allows a launch, and waiting for a slot does not spend an attempt.
+
 ### Parent delivery storage and upgrade
 
 The database stores the command, frozen wire payload and due time for each parent
@@ -1111,6 +1123,14 @@ disposition and the separate reason. Older dropped records and calls that omit
 the disposition default to deprecated.
 
 **Verbs:** `plan.get` and `plan.set`; `lane.put` and `lane.status`; `item.add`, `item.edit`, `item.park`, `item.drop`, `item.reopen` and `item.promote`; `task.add`; `decision.add` and `decision.answer`.
+
+Planning commands use the verified caller's project when it has one; a caller
+without a project names the target explicitly. Admission uses the caller's
+verified repository unless the command names another verified repository in
+that project. `item.promote` reads the current item, verifies the selected
+repository and commits the task, source link and item history together.
+
+An admitted task never moves between engines.
 
 **What gets simpler**
 
