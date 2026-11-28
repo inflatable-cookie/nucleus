@@ -176,7 +176,7 @@ unchanged when the repository has no opt-in.
   review-skipping lane. An opted-in repository refuses a review-skipping
   submission and its merge gate always requires that login's approved review at
   the current head.
-- The reviewer login must not be the queue-owned worker's observed author model
+- The reviewer login must not be the queue-owned worker's observed author login
   or the operator's personal login for branch protection to mean anything; Nucleus
   verifies the login it was configured with and does not decide that policy.
 

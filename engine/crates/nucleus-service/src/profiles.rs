@@ -4,7 +4,7 @@ use std::{
 };
 
 use nucleus_core::{
-    Action, Observation, Role, Run, Task, WaitReason,
+    Action, Entry, Observation, Role, Run, Task, WaitReason,
     profiles::{
         BriefPolicy, Candidate, LaunchPolicy, ProfileLaunch, ProfileLaunchError, RotationCounts,
         UsageLevel, decide_profile_launch, decide_weighted_launch, pending_complexity_reselection,
@@ -109,6 +109,9 @@ impl Service {
         role: Role,
         host: &impl TaskHost,
     ) -> Result<LaunchSelection, ServiceError> {
+        if task.identity().entry == Entry::ReviewEntry && task.review_author().is_none() {
+            return Err(ProfileLaunchError::OpaqueAuthor.into());
+        }
         {
             let mut state = self.state.lock().await;
             let mode = state
@@ -133,7 +136,10 @@ impl Service {
                 return Ok(LaunchSelection::Fixture);
             }
         }
-        if role == Role::Reviewer && task.threads().profile(Role::Worker).is_none() {
+        if role == Role::Reviewer
+            && task.identity().entry == Entry::Brief
+            && task.threads().profile(Role::Worker).is_none()
+        {
             return Err(ProfileLaunchError::OpaqueAuthor.into());
         }
         let catalog = host.profile_catalog().await?;
@@ -273,7 +279,6 @@ fn select_profile(
             candidates,
             // Admission and brief changes are authenticated controller writes.
             planner_brief: true,
-            author_models: &[],
         };
         sample.map_or_else(
             || decide_profile_launch(task, observation, &policy),

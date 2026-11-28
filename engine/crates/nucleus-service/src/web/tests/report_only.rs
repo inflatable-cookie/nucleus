@@ -930,6 +930,7 @@ impl ReportFixture {
             pr: None,
             discovered_skill: None,
             model: "fixture",
+            shared_model: None,
             lanes: &crate::prompt::LaneContext::default(),
             dependencies: &crate::DependencyStatus::default(),
             command: std::path::Path::new("/engine"),

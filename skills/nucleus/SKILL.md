@@ -60,6 +60,9 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   (`reviewer` works the same way). `required: true` makes it the profile used,
   never a hint. A Frontier profile is used only this way, with a reason, and
   applies directly at the Low, Normal and High usage levels (Spec 052).
+  Nucleus prefers different models for work and review and honours required
+  requests even when they share a model. The task view and `next` show shared
+  models (Spec 070 ruling 64).
   On a running task, `amend` the brief, then `move REF working` with no
   `--instruction`. Raising `queue.complexity` by amend moves a retained worker up a tier on its next run if its profile falls below the new start bracket. Use `profileRequests` to pick an exact profile.
   `task.add` resolves those references before dispatch can start.
@@ -70,8 +73,10 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   remove an existing legacy key. Adding a key or changing its value requires
   a supported key.
 
-  For review entry, add `--review PR_URL HEAD` with the named PR and exact full
-  head. Choose the repository explicitly when the project or brief needs it.
+  For review entry, use `--review PR_URL HEAD` with the exact full head. The
+  operator supplies `--author-declaration FILE` to enable dispatch. The JSON
+  object contains `models`, `githubAuthor`, `authoringSystem`, `attestedBy` and
+  `provenance`. Choose the repository explicitly when required.
   For milestone QA, add these fields under `queue` alongside `complexity`.
 
   ```yaml
@@ -173,9 +178,10 @@ edit. Report `report_ready` with the returned lane key, version and digest.
 
 ### Reviewer
 
-Own the independent judgment within the current brief. Never read the
-worker's private transcript. Review the assigned exact head using the pinned
-checkout, public PR and comments, author evidence and recorded earlier verdicts.
+Exercise your own judgment within the current brief. Your assignment flags
+any author model you share. Never read the worker's private transcript. Review
+the assigned exact head using the pinned checkout, public PR and comments,
+author evidence and recorded earlier verdicts.
 Read the named inputs yourself, inspect the diff and run the covering checks.
 On re-review, verify each claimed fix and reconsider affected subjects. Required
 proof must be sufficient for approval. Treat live-store counts as planner

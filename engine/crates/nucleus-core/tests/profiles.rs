@@ -285,7 +285,6 @@ fn history_free_selection_uses_weights_inside_the_eligible_bracket() {
         usage: Normal,
         candidates: &candidates,
         planner_brief: true,
-        author_models: &[],
     };
     let task = working("Add a greeting.");
     let observation = unbound();
@@ -325,7 +324,6 @@ fn select(
             usage,
             candidates: pool,
             planner_brief: true,
-            author_models: &[],
         },
     )
 }
@@ -355,6 +353,18 @@ fn a_paused_mechanical_reviewer_steps_up_to_an_independent_worker() {
         assert_eq!(stepped.profile(), &peer);
         assert_eq!(stepped.step_up_from(), Some(Mechanical));
     }
+    let only_paused_ordinary = Candidate {
+        group_available: false,
+        ..pool[0]
+    };
+    let stepped = pick(
+        &task,
+        &obs,
+        Normal,
+        &[only_paused_ordinary, pool[2], pool[3]],
+    );
+    assert_eq!(stepped.profile(), &peer);
+    assert_eq!(stepped.step_up_from(), Some(Mechanical));
     pool[1].group_available = true;
     for usage in USAGES {
         let ordinary = pick(&task, &obs, usage, &pool);
@@ -482,7 +492,6 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                     usage,
                     candidates: &[candidate(&frontier)],
                     planner_brief: true,
-                    author_models: &[],
                 }
             ),
             Err(ProfileLaunchError::NoEligibleProfile {
@@ -505,7 +514,6 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                 usage,
                 candidates: &pool,
                 planner_brief: false,
-                author_models: &[],
             },
         )
         .unwrap()
@@ -527,7 +535,6 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                     usage,
                     candidates: &unavailable,
                     planner_brief: true,
-                    author_models: &[],
                 }
             ),
             Err(ProfileLaunchError::RequiredProfileUnavailable {
@@ -621,6 +628,74 @@ fn review_changes(task: &mut Task, obs: &Observation, reviewer: &Profile) {
 }
 
 #[test]
+fn shared_model_profiles_remain_usable_after_review() {
+    let worker = profile("worker", Worker);
+    let mut shared = profile("shared", Worker);
+    shared.model = format!("vendor/{}", worker.model.to_uppercase());
+    let mut lower = profile("lower", Mechanical);
+    lower.model.clone_from(&worker.model);
+    let different = profile("different", Worker);
+    let mut task = working(
+        "---\nqueue: {complexity: high, profileRequests: {worker: {profileId: worker, reason: build, required: true}}}\n---\nImplement.",
+    );
+    finish_worker(&mut task, &worker);
+
+    let observation = open('a');
+    let pool = [candidate(&lower), candidate(&shared), candidate(&different)];
+    let preferred = pick(&task, &observation, UsageLevel::High, &pool);
+    assert_eq!(preferred.profile(), &different);
+    assert_eq!(preferred.shared_model(), None);
+    let paused = Candidate {
+        group_available: false,
+        ..pool[2]
+    };
+    let fallback = pick(
+        &task,
+        &observation,
+        UsageLevel::High,
+        &[pool[0], pool[1], paused],
+    );
+    assert_eq!(fallback.profile(), &shared);
+    assert_eq!(
+        fallback.shared_model(),
+        Some("Review shares vendor/MODEL-WORKER with the worker: no other usable reviewer")
+    );
+    review_changes(&mut task, &observation, &shared);
+
+    let observation = role_thread(observation, "worker-1", RetainedThread::Idle);
+    let resumed = pick(
+        &task,
+        &observation,
+        Normal,
+        &[candidate(&worker), candidate(&different)],
+    );
+    assert_eq!(resumed.profile(), &worker);
+    assert_eq!(resumed.request_reason(), Some("build"));
+    assert_eq!(
+        resumed.shared_model(),
+        Some("Worker shares model-worker with the reviewer: required worker profile")
+    );
+    task.command(
+        Command::Amend("---\nqueue: {complexity: high}\n---\nImplement.".into()),
+        &Authority::Operator {
+            actor: "fixture".into(),
+        },
+        &observation,
+    )
+    .unwrap();
+    let pool = [candidate(&worker), candidate(&different)];
+    assert_eq!(
+        pick(&task, &observation, Normal, &pool).profile(),
+        &different
+    );
+    assert!(
+        pick(&task, &observation, Normal, &pool[..1])
+            .shared_model()
+            .is_some()
+    );
+}
+
+#[test]
 fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
     let mut task = working("---\nqueue: {complexity: high}\n---\nFix the issue.");
     let initial = profile("initial", Mechanical);
@@ -687,7 +762,6 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
                 usage: Maximum,
                 candidates: &[],
                 planner_brief: false,
-                author_models: &[],
             }
         )
         .unwrap()
@@ -724,6 +798,39 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
     );
     assert_eq!(second.profile(), &heavy);
     assert_eq!(second.replaced_thread(), Some("worker-2"));
+}
+
+#[test]
+fn a_replacement_worker_preserves_earlier_author_models_for_review() {
+    let initial = profile("initial", Mechanical);
+    let revised = profile("revised", Worker);
+    let reviewer = profile("reviewer", Mechanical);
+    let mut task = working("---\nqueue: {complexity: high}\n---\nFix the issue.");
+    finish_worker(&mut task, &initial);
+    review_changes(&mut task, &open('a'), &reviewer);
+    let observation = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let intent = pick(&task, &observation, Normal, &[candidate(&revised)]);
+    let (instance, bearer) = reserve(&mut task, &observation, intent, "worker-2");
+    task.record_send(&instance, 2).unwrap();
+    task.record_report(&instance, bearer.as_bytes(), Report::Work(pr('b').into()))
+        .unwrap();
+    assert_eq!(
+        task.reconcile(&current(open('b'), &instance, RunState::Ended)),
+        Action::Advance(Phase::Reviewing)
+    );
+    let restored: Task = serde_json::from_value(serde_json::to_value(&task).unwrap()).unwrap();
+    let fresh = role_thread(open('b'), "reviewer-1", RetainedThread::Gone);
+    let pool = [
+        candidate(&initial),
+        candidate(&revised),
+        candidate(&reviewer),
+    ];
+    assert_eq!(pick(&restored, &fresh, Normal, &pool).profile(), &reviewer);
+    assert!(
+        pick(&restored, &fresh, Normal, &pool[..1])
+            .shared_model()
+            .is_some()
+    );
 }
 
 #[test]
@@ -1021,15 +1128,19 @@ fn configured_heavyweight_profiles_supply_work_and_independent_review() {
 }
 
 #[test]
-fn reviewer_frontier_request_preserves_independence_and_role_bounds() {
+fn reviewer_frontier_request_respects_model_preference_and_role_bounds() {
     let worker = profile("frontier", Frontier);
     let mut same_model = profile("same-model", Frontier);
     same_model.model.clone_from(&worker.model);
     let peer = profile("peer", Frontier);
     let fallback = profile("fallback", Heavyweight);
-    for (requested, selected) in [("peer", &peer), ("same-model", &fallback)] {
+    for (requested, required, selected) in [
+        ("peer", false, &peer),
+        ("same-model", false, &fallback),
+        ("same-model", true, &same_model),
+    ] {
         let mut task = working(&format!(
-            "---\nqueue: {{complexity: very_high, profileRequests: {{worker: {{profileId: frontier, reason: investigation}}, reviewer: {{profileId: {requested}, reason: independent}}}}}}\n---\nInvestigate.",
+            "---\nqueue: {{complexity: very_high, profileRequests: {{worker: {{profileId: frontier, reason: investigation}}, reviewer: {{profileId: {requested}, reason: review, required: {required}}}}}}}\n---\nInvestigate.",
         ));
         finish_worker(&mut task, &worker);
         for usage in [UsageLevel::Low, Normal, UsageLevel::High] {
@@ -1045,24 +1156,58 @@ fn reviewer_frontier_request_preserves_independence_and_role_bounds() {
 }
 
 #[test]
-fn review_entry_excludes_declared_and_opaque_author_models() {
+fn review_entry_prefers_a_different_model_and_requires_known_authors() {
     let entry = task("Review this pull request.", Entry::ReviewEntry);
     let author = profile("author", Mechanical);
     let reviewer = profile("reviewer", Mechanical);
+    let observation = open('a');
     let pool = [candidate(&author), candidate(&reviewer)];
-    let mut policy = LaunchPolicy {
-        usage: Normal,
-        candidates: &pool,
-        planner_brief: true,
-        author_models: &["vendor/MODEL-AUTHOR"],
-    };
-    let selection = decide_profile_launch(&entry, &open('a'), &policy)
-        .unwrap()
-        .unwrap();
-    assert_eq!(selection.profile(), &reviewer);
-    policy.author_models = &["vendor/unknown"];
     assert!(matches!(
-        decide_profile_launch(&entry, &open('a'), &policy),
+        select(&entry, &observation, Normal, &pool),
+        Err(ProfileLaunchError::OpaqueAuthor)
+    ));
+    let mut declaration = nucleus_core::AuthorDeclaration {
+        models: vec!["vendor/unknown".into()],
+        github_author: "fixture-author".into(),
+        authoring_system: "fixture".into(),
+        attested_by: "operator".into(),
+        provenance: "Reviewed the fixture evidence.".into(),
+    };
+    assert!(
+        entry
+            .clone()
+            .with_author_declaration(declaration.clone())
+            .is_none()
+    );
+    declaration.models = vec!["vendor/MODEL-AUTHOR".into()];
+    let entry = entry.with_author_declaration(declaration).unwrap();
+    assert_eq!(
+        pick(&entry, &observation, Normal, &pool).profile(),
+        &reviewer
+    );
+    let shared = pick(&entry, &observation, Normal, &pool[..1]);
+    assert_eq!(shared.profile(), &author);
+    assert!(shared.shared_model().is_some());
+    let mut revised = entry.clone();
+    review_changes(&mut revised, &observation, &author);
+    let intent = pick(&revised, &observation, Normal, &pool[..1]);
+    let (instance, bearer) = reserve(&mut revised, &observation, intent, "revision");
+    revised.record_send(&instance, 2).unwrap();
+    revised
+        .record_report(&instance, bearer.as_bytes(), Report::Work(pr('b').into()))
+        .unwrap();
+    assert_eq!(
+        revised.reconcile(&current(open('b'), &instance, RunState::Ended)),
+        Action::Advance(Phase::Reviewing)
+    );
+    let restored: Task = serde_json::from_value(serde_json::to_value(&revised).unwrap()).unwrap();
+    let retry = role_thread(open('b'), "reviewer-1", RetainedThread::Gone);
+    assert_eq!(pick(&restored, &retry, Normal, &pool).profile(), &reviewer);
+    let moved = open('b');
+    let mut entry = entry;
+    assert_eq!(entry.reconcile(&moved), Action::Advance(Phase::Reviewing));
+    assert!(matches!(
+        select(&entry, &moved, Normal, &pool),
         Err(ProfileLaunchError::OpaqueAuthor)
     ));
 }
@@ -1262,7 +1407,6 @@ fn an_instructed_worker_continuation_keeps_its_profile_over_a_new_request() {
         usage: Normal,
         candidates: &pool,
         planner_brief: true,
-        author_models: &[],
     };
     assert!(matches!(
         decide_profile_launch(&task, &observation, &policy),

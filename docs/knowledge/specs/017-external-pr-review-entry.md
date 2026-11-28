@@ -48,12 +48,9 @@ closeout protections are unchanged.
 
 ## Outcome and boundaries
 
-- The first task agent is an independent canonical reviewer, with a real review
-  run and authenticated reporting credentials. No placeholder worker is created.
-  Preview and bind apply the same independent-review routing preflight as
-  promotion ([Spec 030](030-routing-changes.md)) to declared author models and
-  any required reviewer request, so a pairing that cannot be independent is
-  refused before task binding. No initial worker is invented.
+- The first task agent is the canonical reviewer, with authenticated
+  reporting credentials. Require concrete external author models before
+  launching any agent. Reviewer selection follows [Spec 070 ruling 64](070-small-engine.md#rulings).
 - Acceptance and execution are separate. An active or uncertain source writer -
   the origin author finishing the turn that produced the PR, in the selected
   workspace or elsewhere, or another thread mid-turn in that workspace - never
@@ -82,7 +79,7 @@ closeout protections are unchanged.
   closeout. The review-entry service accepts an inspected existing workspace.
 - Changes requested create the first worker in that same workspace, after the
   reviewer releases its lease. Later cycles retain ordinary worker/reviewer runs.
-- Existing exact-head, comment, independence, capacity, FIFO integration,
+- Existing exact-head, comment, capacity, FIFO integration,
   prospective-merge, durable effect and closeout gates apply unchanged.
 - Initial implementation exposes direct CLI/API intake and ordinary board/detail
   visibility. No new native intake wizard or general-purpose PR import belongs here.
@@ -116,7 +113,7 @@ and a strictly validated payload:
 Reuse existing bounded strings, commit-ID syntax and payload/frame limits. Model
 IDs must be concrete provider/model identities; `unknown`, `default`, tool names
 and open-ended model sets are invalid. Canonicalize and deduplicate model IDs for
-the operation digest and independence check. Reject `skipPRReview: true` and
+the operation digest and model comparison. Reject `skipPRReview: true` and
 worker identity or resume flags. No caller-supplied phase, run ID, completion,
 review verdict or worker identity is accepted. Reject contradictory duplicate
 identity fields in the outer operation envelope and payload.
@@ -399,64 +396,34 @@ the prohibition on creating a workspace concerns the imported task workspace.
 
 Operator attestation is the external author evidence boundary. A GitHub username,
 Grok Bot or Cursor cloud alone does not establish the author models. Require the
-complete declared model set and its provenance; no generic independence override
-exists in v1. Normalize aliases consistently with the existing model-independence
-rule. An unresolved alias or unbounded author set refuses as
+complete declared model set and its provenance. Normalize aliases for model
+comparison. An unresolved alias or unbounded author set refuses as
 `author_identity_unverified`, before spending an agent run.
 
-Reviewer selection excludes every declared external author model and every model
-observed authoring subsequent revisions. Evidence remains labelled declared versus
-observed; a declaration must not masquerade as a Paseo observation. Do not require
-a fake `workerModel`, worker profile, worker callback or nonexistent transcript to
-make the existing selector pass. Reviewer prompts identify imported provenance
-and remain read-only with normal exact-head/run/comment requirements.
+Selection prefers a reviewer whose model differs from the declared external
+author models and the models recorded for subsequent revisions. Required
+requests and shared-model notices follow [Spec 070 ruling 64](070-small-engine.md#rulings).
+Prompts identify imported provenance, and reviews use the usual exact-head
+and reporting requirements. An agent that contributed to the work cannot
+review it.
 
-Reviewer independence is one finite policy with three boundaries — reviewer
-selection, the retained restart and verdict verification — and all three read
-one pure derivation (`taskAuthorModels`/`taskAuthorModelKeys` in
-`shared/authors.ts`). The recorded evidence is the current Nucleus author (worker
-model and profile), prior Nucleus authors (`workerModels` and retired workers),
-the declared external models, every recorded later external author — observed,
-or an unknown contributor when its receipt carries no observation — the
-author-side proof executor's models (Spec 055), and every revision-run
-contributor a store reader can supply. Authors are agents as well as models:
-the reviewer is never an agent that authored worker, revision, proof-execution
-or checkpoint work.
+Models are concrete provider/model names. Nucleus compares the final part
+case-insensitively and refuses opaque names such as `provider/unknown`.
 
-Normalization is part of that one rule: a blank or whitespace-only model, or a
-final component of `unknown` or `default`, is opaque. A provider-qualified
-`provider/unknown` therefore names no concrete model even though review-entry
-admission accepts it as a declaration.
+For the Rust engine, the operator can pass `--author-declaration FILE` with
+`nucleus task.add --review PR_URL HEAD`, or send the same JSON object as
+`authorDeclaration` in task admission. The object has `models`, `githubAuthor`,
+`authoringSystem`, `attestedBy` and `provenance`. Admission verifies the open PR's
+head and GitHub login, then stores the declaration on the task. The first
+review uses that head. An authenticated worker report can establish a revised
+head, and future reviews compare both the external and Nucleus author models.
+A head without either source of evidence cannot start a role.
 
-Absence of a Nucleus authoring worker is not an unknown author. A workerless
-review-entry task's current author is its recorded evidence — the declared
-models plus every observed later external author and recorded executor model —
-so a reader whose model differs from all of them continues from an
-authenticated checkpoint through ordinary `restart role=reviewer`, and a fresh
-reviewer may be selected and verified the same way. Absence never manufactures
-a worker, model or profile.
-
-Unknown, and therefore refused at every boundary before any model is compared:
-no recorded author at all; a task with a Nucleus author whose current model is
-unrecorded; any declared, recorded or observed model that normalizes to opaque;
-a later external revision whose receipt carries no source observation; and a
-distinct bound revision contributor whose model was never recorded. An
-authored task with no recorded current model is unknown even when earlier
-external authors are known, and a revision run bound to the task's own recorded
-author adds no author of its own. A known collision also refuses, except
-through the existing owner-route waiver: a required reviewer named by `route`
-may share the current author's model, and for a workerless entry the recorded
-external authors are that current author, so the same marked request waives
-them while an unmarked or optional request and any opaque model stay excluded.
-A revision run's author is the task's current or retired Nucleus author, whose
-model the task row records, so the verdict boundary sees every recorded
-revision contributor without reading runs.
-
-On authenticated `changes_required` for the current reviewer/head, wait for its
-actual release, then use the normal worker pool, scope, subscription and
-availability gates to select the first revision worker. Exclude the retained
-reviewer's model. If no worker is eligible, retain the task and findings without
-creating another workspace or weakening independence. Record one durable revision
+On authenticated `changes_required` for the current reviewer and head, wait
+for the reviewer to release the run. Select a revision worker through the
+normal pool and availability gates. Prefer a different model from the
+retained reviewer's and record any overlap under
+[Spec 070 ruling 64](070-small-engine.md#rulings). Record one durable revision
 run/agent intent, bind its reporting credentials and launch in the exact same
 workspace/branch/PR. Confirmed creation binds the task's worker agent/profile/model
 fields, never its coordinator identity. PR lookup uses immutable review-entry
@@ -465,8 +432,8 @@ consumes the normal revision budget; it is not free administrative recovery.
 
 Creation ambiguity uses exact run/agent reconciliation, never blind replay. The
 same rules apply after restart. Successful readiness establishes a real worker
-result and enters normal review. Retain eligible threads for later rounds; add all
-observed author models to the exclusion set before the next reviewer decision.
+result and enters normal review. Retain eligible threads for later rounds and
+include observed author models in the next selection's comparison.
 A reviewer who authored a revision can never approve that head.
 
 Approval proceeds through existing verification, public review-comment proof,
@@ -932,7 +899,7 @@ a compatible reader, never deletion of imported tasks or a live-database rewrite
 | Changes requested, reviewer still active | No worker launch until release; then one eligible worker in the same workspace. |
 | PR merged outside Nucleus before the first reviewer | The owner's `move to=closeout` observes the merged head and commit at the forge, proves descent from the intake and recorded heads, and records the exact-final-head operator source acceptance beside the unchanged source head; no reviewer, worker or proof run is created, and without that acceptance the held task does not advance. |
 | Revision worker creation timeout/restart | Reconcile the same intent/run; no second worker from uncertain delivery. |
-| Revision head changes or reviewer matches a declared/observed author | Old review invalid; require independent exact-head review. |
+| Revision head changes | Require a review of the new exact head. Record a notice if the new reviewer shares an author model. |
 | Failing CI or changed integration base | Normal checks/current-base/prospective-merge rules hold; no merge shortcut. |
 | Unknown merge response, closeout failure | Preserve intent and ownership; reconcile normal gates without repeating effects blindly. |
 | Done/cancelled/superseded imported task | Preserve external workspace files and branch; normal terminal projections and notification semantics. A done, merged task's external workspace sidebar entry is archived under "Closing a merged task's external workspace entry" below. |
@@ -941,7 +908,7 @@ a compatible reader, never deletion of imported tasks or a live-database rewrite
 | CLI/API acceptance with slow Git or an unavailable host | Prompt durable receipt and visible pending proof; no dependency on UI-thread RPC completion. |
 | Nucleus-held brief in an existing isolated workspace | Exact checked brief digest/version and planning ancestry bind once; reviewer starts first; no repository handoff is read or written. |
 | `shared_canonical` review-entry input | Typed `exclusive_writer_unavailable` refusal before adapter inspection, binding, agent intent or branch mutation. |
-| Active origin author during isolated intake | One durable task/source claim with the exact identity and a visible pending-handover wait; no reviewer runs while the writer is active. Yield lets admission re-prove the exact source and launch one independent reviewer in the task workspace, with no resubmission or owner retry. Writer yield, clean checkout, exact HEAD and open PR head are checked at reviewer send; a writer observed active blocks the send. |
+| Active origin author during isolated intake | One durable task/source claim with the exact identity and a visible pending-handover wait; no reviewer runs while the writer is active. Yield lets admission re-prove the exact source and launch one reviewer in the task workspace, with no resubmission or owner retry. Writer yield, clean checkout, exact HEAD and open PR head are checked at reviewer send; a writer observed active blocks the send. |
 | Active or uncertain writer with unreadable activity, dirty workspace, moved head/base, changed author/model declaration or foreign Nucleus ownership | Refuse or hold with bounded facts, an honest cause and no reviewer credit; no caller-provided activity exemption, no stale-pin review and no silent repin. |
 
 ## Implementation sequence and motivating-suite preparation

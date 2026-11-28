@@ -245,7 +245,7 @@ omits them. Skills and supervisors are told only after the switch is live (the
 | 4 | Complexity very_high, Normal | Starts on Heavyweight. Frontier requires an explicit request. |
 | 5 | Same task at Maximum | Starts on Frontier; a medium task starts on Heavyweight and a low one on Worker |
 | 6 | Same task at Low after an approved submission | Starts one bracket below the bracket it may climb to |
-| 7 | Reviewer shares the author's model | Excluded, as today |
+| 7 | Reviewer shares an author model | Prefer a usable different model. Use the best usable fallback or an honoured required request and record the overlap ([Spec 070 ruling 64](070-small-engine.md#rulings)). |
 | 8 | Author escalation history (rows stripped 2026-11-09, task 989) | No demand change |
 | 9 | Signed-off request | Used for that role whatever the demand |
 | 10 | Older profile file carries retired membership fields | Loads without those fields. Dispatch uses capability and demand, and the next save omits them. |

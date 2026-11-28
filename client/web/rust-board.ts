@@ -225,6 +225,7 @@ const dependencyStatus = z.object({
   blocking: z.boolean(),
 });
 const detail = summary.extend({
+  sharedModel: z.string().optional(),
   allowance: allowance.optional(),
   dependencyStatus: dependencyStatus.optional().catch(undefined),
   createdAtMs: timestamp.nullable(),
