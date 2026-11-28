@@ -1027,7 +1027,7 @@ export function RustListRows({
         const title = question
           ? rustQuestionText(question)
           : task.title || reference;
-        const detail = task.hold?.reason ?? rustWaitDetail(task);
+        const detail = rustWaitDetail(task) ?? task.hold?.reason;
         const cardAgeAt = ageAt(task);
         const project = rust.project(task);
         const canPrioritize =

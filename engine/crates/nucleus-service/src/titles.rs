@@ -57,6 +57,79 @@ impl State {
     }
 }
 
+impl State {
+    pub(super) fn prerequisite_detail(
+        &self,
+        task: &Task,
+    ) -> Result<Option<String>, nucleus_store::StoreError> {
+        let dependencies = self.store.dependencies(&task.identity().id)?;
+        let (ids, reason) = if let Some(wait) = dependencies
+            .wait
+            .filter(|wait| wait.released_at_ms.is_none())
+        {
+            (wait.ids, Some(wait.reason))
+        } else {
+            (dependencies.before_dispatch, None)
+        };
+        let mut refs = Vec::new();
+        for id in ids {
+            match self.store.row(&id) {
+                Ok(Some(row)) => refs.push(row.reference().into_owned()),
+                Err(nucleus_store::StoreError::UnreadableTask(row)) => refs.push(row.reference),
+                Ok(None) => refs.push(id),
+                Err(error) => return Err(error),
+            }
+        }
+        if refs.is_empty() {
+            return Ok(reason);
+        }
+        let refs = refs.join(", ");
+        Ok(Some(reason.map_or_else(
+            || format!("Waiting for {refs}"),
+            |reason| format!("{reason} ({refs})"),
+        )))
+    }
+
+    pub(super) fn display_state_label(
+        &self,
+        task: &Task,
+        wait: Option<WaitReason>,
+        detail: Option<&WaitDetail>,
+    ) -> Result<String, nucleus_store::StoreError> {
+        let mut refs = Vec::new();
+        if wait == Some(WaitReason::Prerequisite) && task.phase() != Phase::Queued {
+            let dependencies = self.store.dependencies(&task.identity().id)?;
+            let mut ids = Vec::new();
+            if task.threads().get(Role::Worker).is_none()
+                && task.threads().get(Role::Reviewer).is_none()
+            {
+                ids.extend(dependencies.before_dispatch);
+            }
+            if let Some(gate) = dependencies
+                .wait
+                .filter(|gate| gate.released_at_ms.is_none())
+            {
+                ids.extend(gate.ids);
+            }
+            for id in ids {
+                if let Some(row) = self.store.row(&id)?
+                    && row.task.phase() != Phase::Done
+                {
+                    refs.push(row.reference().into_owned());
+                }
+            }
+        }
+        let prerequisites = WaitDetail::Prerequisites(refs);
+        let detail = if matches!(&prerequisites, WaitDetail::Prerequisites(refs) if !refs.is_empty())
+        {
+            Some(&prerequisites)
+        } else {
+            detail
+        };
+        Ok(task_state_label(task, wait, detail))
+    }
+}
+
 pub(super) fn child_title(task: &Task, number: Option<i64>, role: Role) -> String {
     let prefix = match (number, role) {
         (Some(number), Role::Worker) => format!("#{number}: "),
@@ -78,6 +151,9 @@ pub(super) fn task_state_label(
     wait: Option<WaitReason>,
     detail: Option<&WaitDetail>,
 ) -> String {
+    if live_role(task) {
+        return phase_with_delay(task, None);
+    }
     if let Some(label) = task_label_from_facts(task) {
         return label;
     }
@@ -90,13 +166,43 @@ pub(super) fn task_state_label(
         }
         .into();
     }
-    if matches!(detail, Some(WaitDetail::OperatorSnoozed { .. })) {
-        return phase_with_delay(task, None);
-    }
     if wait == Some(WaitReason::Capacity)
         && let Some(WaitDetail::SlotCap(label)) = detail
     {
         return label.clone();
+    }
+    if task.phase() != Phase::Queued {
+        match (wait, detail) {
+            (Some(WaitReason::Prerequisite), Some(WaitDetail::Prerequisites(refs)))
+                if !refs.is_empty() =>
+            {
+                let first = refs[0]
+                    .rsplit_once('#')
+                    .map_or(refs[0].as_str(), |(_, number)| number);
+                let extra = if refs.len() > 1 {
+                    format!(" +{}", refs.len() - 1)
+                } else {
+                    String::new()
+                };
+                return format!("Waiting for #{first}{extra}");
+            }
+            (Some(WaitReason::Capacity), Some(WaitDetail::Blocked(cause))) => {
+                if let Some(group) =
+                    cause
+                        .strip_prefix("Paused: subscription group ")
+                        .and_then(|s| {
+                            s.split_once(" resets at ")
+                                .map(|(group, _)| group)
+                                .or_else(|| s.strip_suffix(". Resume it in Profiles."))
+                        })
+                {
+                    return format!("Paused · {group}");
+                }
+            }
+            (Some(WaitReason::Capacity), _) => return "Waiting for a slot".into(),
+            (Some(WaitReason::Starting | WaitReason::HostUnknown), _) => return "Starting".into(),
+            _ => {}
+        }
     }
     // A capacity wait that carries a cause is a paused subscription group (ruling 51).
     if wait == Some(WaitReason::Capacity) && matches!(detail, Some(WaitDetail::Blocked(_))) {
@@ -160,7 +266,18 @@ pub(super) fn task_label_from_facts(task: &Task) -> Option<String> {
     let delay = match task.phase() {
         Phase::Done | Phase::Cancelled => return Some(phase_label(task).into()),
         _ if task.run().is_some_and(nucleus_core::Run::revoked) => "stopping",
-        _ if let Some(hold) = task.hold().filter(|_| !live_role(task)) => held_label(hold),
+        _ if let Some(hold) = task.hold().filter(|_| !live_role(task)) => {
+            if task.phase() != Phase::Queued {
+                return Some(
+                    match hold.by {
+                        Some(HoldBy::Operator) => "Held by operator",
+                        _ => "Held by planner",
+                    }
+                    .into(),
+                );
+            }
+            held_label(hold)
+        }
         _ if task.operator_decline().is_some() => "declined",
         _ if task.operator_question().is_some() => "Tom",
         _ if task.question().is_some() => "planner",
@@ -395,19 +512,13 @@ impl Service {
             return Ok((label, TitleTiming::Immediate));
         }
         let id = &task.identity().id;
-        let snooze = self
-            .host
-            .row_visibility_hint(thread)
-            .and_then(|row| row.snoozed_until_ms)
-            .filter(|&until| until > self.visibility_now());
-        // The T3 title keeps "capacity": slot counts would rename the thread
-        // as they change (ruling 11).
+        // Slot counts belong on the board; changing counts must not rename T3 rows.
         let detail = state
             .wait_detail(id)
             .filter(|detail| !matches!(detail, WaitDetail::SlotCap(_)));
         let (activity, _, handover) = self.role_window(thread, task);
-        let wait = state.effective_wait(task)?.filter(|wait| {
-            *wait != WaitReason::Starting || activity != nucleus_hosts::RowChildren::Active
+        let wait = state.effective_wait(task)?.filter(|reason| {
+            *reason != WaitReason::Starting || activity != nucleus_hosts::RowChildren::Active
         });
         let person_needed = crate::attention::waiting_for_person(task, wait);
         let timing = if person_needed
@@ -419,10 +530,15 @@ impl Service {
         } else {
             timing
         };
-        let label = if !person_needed && snooze.is_none() && handover.is_some() {
+        let snoozed = self
+            .host
+            .row_visibility_hint(thread)
+            .and_then(|row| row.snoozed_until_ms)
+            .is_some_and(|until| until > self.visibility_now());
+        let label = if !person_needed && !snoozed && handover.is_some() {
             "Waiting".into()
         } else {
-            task_state_label(task, wait, detail)
+            state.display_state_label(task, wait, detail)?
         };
         Ok((label, timing))
     }
@@ -816,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn task_labels_use_at_most_three_words() {
+    fn task_labels_use_at_most_four_words() {
         use WaitReason as W;
         let task = task();
         let (_, service) = fixture(GitHub::new("fixture").unwrap());
@@ -852,7 +968,7 @@ mod tests {
                 for detail in [None, Some(&confirming)] {
                     let label = task_state_label(task, Some(wait), detail);
                     assert!(
-                        label.split_whitespace().filter(|word| *word != "·").count() <= 3,
+                        label.split_whitespace().filter(|word| *word != "·").count() <= 4,
                         "{label}"
                     );
                 }
@@ -902,6 +1018,51 @@ mod tests {
             .row_label(&state, &task, "thread", TitleTiming::Stable)
             .expect("title label");
         assert_eq!(title, "Queued · capacity");
+    }
+
+    #[test]
+    fn waiting_labels_describe_the_current_activity() {
+        let (_, service) = fixture(GitHub::new("fixture").unwrap());
+        let (mut task, _, observation) =
+            crate::tests::reservation("waiting", Entry::Brief, &service.fixture().start);
+        let label = |task: &Task, wait, detail| task_state_label(task, Some(wait), detail);
+        assert_eq!(
+            label(&task, WaitReason::Capacity, None),
+            "Waiting for a slot"
+        );
+        assert_eq!(label(&task, WaitReason::Starting, None), "Starting");
+        assert_eq!(label(&task, WaitReason::HostUnknown, None), "Starting");
+        let paused = WaitDetail::Blocked(
+            "Paused: subscription group opencode-go. Resume it in Profiles.".into(),
+        );
+        assert_eq!(
+            label(&task, WaitReason::Capacity, Some(&paused)),
+            "Paused · opencode-go"
+        );
+        let prereqs = WaitDetail::Prerequisites(vec!["fixture#1184".into(), "fixture#1185".into()]);
+        assert_eq!(
+            label(&task, WaitReason::Prerequisite, Some(&prereqs)),
+            "Waiting for #1184 +1"
+        );
+        let planner = Authority::Planner {
+            actor: "planner".into(),
+        };
+        task.command(
+            Command::Hold("After fixture#192".into()),
+            &planner,
+            &observation,
+        )
+        .unwrap();
+        assert_eq!(label(&task, WaitReason::Hold, None), "Held by planner");
+        let operator = Authority::Operator {
+            actor: "operator".into(),
+        };
+        task.command(Command::Hold("Wait".into()), &operator, &observation)
+            .unwrap();
+        assert_eq!(label(&task, WaitReason::Hold, None), "Held by operator");
+        let instance = task.run().unwrap().launch().instance.clone();
+        task.record_send(&instance, 1).unwrap();
+        assert_eq!(label(&task, WaitReason::Hold, None), "Working*");
     }
 
     #[test]
@@ -1385,6 +1546,9 @@ mod tests {
         {
             let mut state = service.state.lock().await;
             let row = service.lookup(&state, id).unwrap();
+            state
+                .observe_wait(&row.task, Some(WaitReason::Capacity))
+                .unwrap();
             service.desire_title(&mut state, &row.task, row.number);
         }
         assert!(
