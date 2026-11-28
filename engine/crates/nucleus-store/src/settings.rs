@@ -1343,6 +1343,8 @@ mod tests {
             value.insert("heavySlots".into(), json!(heavy));
             value.insert("normalSlots".into(), json!(normal));
             value.insert("lightSlots".into(), json!(light));
+            // The rewrite also stores the default of a field added since.
+            value.insert("plannerModel".into(), json!(crate::PlannerModel::default()));
             assert_eq!(
                 serde_json::from_slice::<Value>(&upgraded).unwrap(),
                 expected,
