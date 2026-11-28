@@ -778,18 +778,28 @@ test("an inline label never shrinks into its words: a tight card wraps the contr
   );
 });
 
-test("Task slot labels stay inline", async () => {
+test("the weight slot cards stack their labels alike and Per project stays inline", async () => {
   const { ui, done } = await mountLimits();
   try {
-    for (const name of ["Heavy", "Normal", "Light", "Per project"]) {
-      // "Normal" is also a usage level, so any text of the name may be the card's.
+    // A short label like Light would otherwise sit beside its control while
+    // Heavy and Normal wrap under theirs.
+    for (const name of ["Heavy", "Light"]) {
       assert.ok(
         ui.ofType("Text").some(
-          (node) => node.children.join("") === name && node.props.style?.flexShrink === 0,
+          (node) =>
+            node.children.join("") === name &&
+            node.props.style?.flexShrink === undefined &&
+            node.props.style?.flex === undefined,
         ),
-        `${name} shows inline`,
+        `${name} takes its own line`,
       );
     }
+    assert.ok(
+      ui.ofType("Text").some(
+        (node) => node.children.join("") === "Per project" && node.props.style?.flexShrink === 0,
+      ),
+      "Per project shows inline",
+    );
   } finally {
     done();
   }

@@ -1,0 +1,1 @@
+- Settings → Limits: the Heavy, Normal and Light slot cards lay out alike, each with its label above the control.
