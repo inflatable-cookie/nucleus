@@ -704,6 +704,8 @@ fn edit_project_details(current: &mut Projects, value: Projects) -> Result<(), S
             }
             project.name = edits.name;
             project.archived = edits.archived;
+            project.require_up_to_date_base = edits.require_up_to_date_base;
+            project.pre_merge_check = edits.pre_merge_check;
             for (repo, edit) in project
                 .repositories
                 .iter_mut()
@@ -982,4 +984,42 @@ fn wake_runs(state: &mut crate::State) -> Result<(), ServiceError> {
             .wake(&id, now, crate::schedule::Priority::Wake);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod project_detail_tests {
+    use super::*;
+
+    fn projects(extra: &Value) -> Projects {
+        let mut project = json!({
+            "name": "Example",
+            "repositories": [{"origin": "example/app", "path": "/fixture/app", "base": "main"}]
+        });
+        if let (Some(project), Some(extra)) = (project.as_object_mut(), extra.as_object()) {
+            project.extend(extra.clone());
+        }
+        serde_json::from_value(json!({"projects": {"example": project}})).unwrap()
+    }
+
+    #[test]
+    fn a_project_edit_saves_the_up_to_date_base_and_pre_merge_check() {
+        let mut current = projects(&json!({}));
+        let edit = projects(&json!({
+            "requireUpToDateBase": true,
+            "preMergeCheck": "effigy check:pre-merge"
+        }));
+        edit_project_details(&mut current, edit).unwrap();
+        let saved = &current.projects["example"];
+        assert!(saved.require_up_to_date_base);
+        assert_eq!(
+            saved.pre_merge_check.as_deref(),
+            Some("effigy check:pre-merge")
+        );
+
+        // Clearing both in a later edit turns them off again.
+        edit_project_details(&mut current, projects(&json!({}))).unwrap();
+        let saved = &current.projects["example"];
+        assert!(!saved.require_up_to_date_base);
+        assert_eq!(saved.pre_merge_check, None);
+    }
 }
