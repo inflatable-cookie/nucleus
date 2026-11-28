@@ -240,12 +240,12 @@ impl Inventory {
                 .next()
                 .and_then(|parent| parent.parse::<u32>().ok())
                 .ok_or(HostError::Protocol)?;
-            let uid = columns
-                .next()
-                .and_then(|uid| uid.parse::<u32>().ok())
-                .ok_or(HostError::Protocol)?;
+            // `ps` prints a uid outside u32, such as -2 for a system daemon. That row
+            // is never this user's, so it must not fail the whole census.
+            let uid = columns.next().ok_or(HostError::Protocol)?;
             let status = columns.next().ok_or(HostError::Protocol)?;
-            if pid != probe_pid && uid == user && !status.starts_with('Z') {
+            if pid != probe_pid && uid.parse::<u32>().ok() == Some(user) && !status.starts_with('Z')
+            {
                 let mut process = by_pid.remove(&pid).unwrap_or_default();
                 process.parent = parent;
                 live.insert(pid, process);
@@ -716,6 +716,15 @@ mod tests {
             Ok(Some(writer)) if writer == pid
         ));
         child.kill().await.expect("stop fixture child");
+    }
+
+    #[test]
+    fn a_daemon_with_a_signed_uid_is_not_a_census_failure() {
+        // The row shape `ps -axo pid=,ppid=,uid=,stat=` prints for a uid -2 system daemon.
+        let processes = b"1 0 501 S\n74465 1 -2 Ss\n";
+        let inventory = Inventory::from_listings(b"", processes, 501, 0).expect("inventory");
+        assert!(inventory.processes.contains_key(&1));
+        assert!(!inventory.processes.contains_key(&74465));
     }
 
     #[test]
