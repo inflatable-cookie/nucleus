@@ -970,7 +970,32 @@ There are only two:
 
 Tom, 2026-11-24: "How are we doing on complexity? No horrible extra narrow fixes as issues come up? We need to stop this version from descending into madness like the TS version did."
 
-Every change states its general rule and what it replaces. Review each engine PR for special cases, duplicate paths and dead code. The ceiling is 50,000 production Rust lines. Every engine PR reports its net production-line delta and justifies growth by explaining why existing code cannot supply the behavior. Land an offsetting cut before a PR would cross the ceiling. A consolidation PR covers at most three production modules and identifies the rule that replaces the removed code. The repository's counter and validation selectors are documented in [AGENTS.md](../../../AGENTS.md).
+Every fix states its general rule and what it replaces. An independent review
+checks for special cases, duplicate paths and dead code before the milestone 3
+cutover. The ceiling is 50,000 production Rust lines. The measured baseline at
+`1d92ea014` is 41,785.
+
+Count nonblank lines of operator-shipped Rust after removing comments, tests,
+fixtures and generated source. Keep lines with code alongside comments, the
+nonblank contents of multiline literals and production platform variants. The
+counter reads tracked crate `src` files from each commit's own Git tree and
+follows module declarations to exclude test-only source files.
+
+In a Python 3.11 virtual environment, install the pinned parser with
+`python -m pip install tree-sitter==0.25.2 tree-sitter-rust==0.24.2`. From the
+repository root, run this on the committed PR head:
+
+```sh
+python scripts/count-engine-rust.py "$(git merge-base origin/main HEAD)" HEAD
+```
+
+Use the checkout containing the counter for both revisions. Older commit IDs
+are valid even if they predate the counter. Every engine PR reports its net
+production Rust delta and justifies growth in the PR body by explaining why
+existing code cannot supply the behavior. Land an offsetting cut before a PR
+would cross the ceiling. Each consolidation PR covers at most three production
+modules and identifies the rule that replaces the removed code. Repository
+validation selectors are documented in [AGENTS.md](../../../AGENTS.md).
 
 ## Pass and persistence
 
@@ -1124,11 +1149,16 @@ the disposition default to deprecated.
 
 **Verbs:** `plan.get` and `plan.set`; `lane.put` and `lane.status`; `item.add`, `item.edit`, `item.park`, `item.drop`, `item.reopen` and `item.promote`; `task.add`; `decision.add` and `decision.answer`.
 
-Planning commands use the verified caller's project when it has one; a caller
-without a project names the target explicitly. Admission uses the caller's
-verified repository unless the command names another verified repository in
-that project. `item.promote` reads the current item, verifies the selected
-repository and commits the task, source link and item history together.
+Without a project selector, planning commands use the verified caller's project
+when it has one; a caller without a project names the target explicitly. An
+explicit selector resolves an exact project key first, then a unique
+case-insensitive display name, repository origin or final path segment;
+ambiguous matches are refused. Under ruling 65, any verified controller may
+name any active project.
+Admission uses the caller's verified repository unless the command names
+another verified repository in that project. `item.promote` reads the current
+item, verifies the selected repository and commits the task, source link and
+item history together.
 
 An admitted task never moves between engines.
 
