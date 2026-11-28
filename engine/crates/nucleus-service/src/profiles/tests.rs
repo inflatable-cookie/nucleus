@@ -618,8 +618,7 @@ async fn launch_three(service: &Service, native: &Mutex<NativeRuns>) -> Vec<Stri
         let mut state = service.state.lock().await;
         state.settings.dispatch = Some(DispatchSettings {
             heavy_slots: 3,
-            normal_slots: 0,
-            light_slots: 0,
+            total_slots: 3,
             ..DispatchSettings::default()
         });
         state.settings.profiles = Some(Arc::new(serde_json::from_value(json!({

@@ -1287,7 +1287,7 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
             .store
             .occupied_slots("")
             .unwrap()
-            .total(),
+            .total,
         1
     );
     server.abort();
@@ -2250,7 +2250,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     {
         let mut state = service.state.lock().await;
         state.capacity_waiters.insert((
-            nucleus_core::profiles::TaskWeight::Normal,
+            std::cmp::Reverse(false),
             nucleus_core::QueuePriority::Normal,
             1,
             "awaiting-slot".into(),
@@ -2264,14 +2264,17 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
     }
     let path = "/v1/settings/dispatch";
     let original = json_body(get_as(&api, path, &BOARD_KEY).await).await;
-    for (key, slots) in [("heavySlots", 5), ("normalSlots", 22), ("lightSlots", 5)] {
+    for (key, slots) in [("heavySlots", 5), ("totalSlots", 32)] {
         assert_eq!(original["value"][key], slots);
     }
     assert_eq!(original["value"]["projectDefaultSlots"], 5);
     let mut update = json!({"revision": original["revision"], "value": original["value"]});
-    for key in ["heavySlots", "normalSlots", "lightSlots"] {
-        update["value"][key] = json!(0);
-    }
+    update["value"]["totalSlots"] = json!(0);
+    assert_eq!(
+        put_settings(&api, path, &BOARD_KEY, &update).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    update["value"]["totalSlots"] = json!(3);
     assert_eq!(
         put_settings(&api, path, &BOARD_KEY, &update).await.status(),
         StatusCode::BAD_REQUEST
@@ -2303,8 +2306,7 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
             .dispatch
             .as_ref()
             .expect("published dispatch")
-            .slots()
-            .total(),
+            .total_slots,
         3
     );
     assert!(
@@ -5179,4 +5181,232 @@ async fn an_unmapped_error_shows_its_cause_backs_off_and_accepts_recheck() {
     assert_eq!(view["wait"], "stopping");
     let cause = view["waitDetail"].as_str().unwrap();
     assert!(cause.contains("base branch"), "{cause}");
+}
+
+fn board_pair_fixture() -> (tempfile::TempDir, Arc<Service>, Router) {
+    let (home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let assets = home.path().join("board");
+    std::fs::create_dir(&assets).expect("board assets dir");
+    std::fs::write(assets.join("index.html"), "<!doctype html>").expect("index");
+    std::fs::write(assets.join("app.js"), "").expect("app");
+    let service = Arc::new(service);
+    let api = router_with_board(
+        service.clone(),
+        [
+            Controller {
+                credential: BOARD_KEY,
+                authority: Authority::Operator {
+                    actor: "operator".into(),
+                },
+            },
+            Controller {
+                credential: PLANNER_KEY,
+                authority: Authority::Planner {
+                    actor: "planner".into(),
+                },
+            },
+        ],
+        &assets,
+    )
+    .expect("board router");
+    (home, service, api)
+}
+
+async fn issue_pair_code(api: &Router, cookie: &str) -> String {
+    let issued = json_body(
+        browser_request(
+            api,
+            Method::POST,
+            "/api/engine/pair/code",
+            Some(cookie),
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert!(issued["expiresAtMs"].as_u64().is_some());
+    issued["code"].as_str().expect("pair code").to_owned()
+}
+
+async fn redeem_code(api: &Router, code: &str) -> Response {
+    browser_request(
+        api,
+        Method::POST,
+        "/api/engine/pair/redeem",
+        None,
+        Some(&json!({"code": code})),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn board_pair_code_pairs_device_with_issuer_authority_and_revokes() {
+    let (_home, _service, api) = board_pair_fixture();
+    assert_eq!(
+        browser_request(&api, Method::POST, "/api/engine/pair/code", None, None)
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let operator = pair_board(&api, &BOARD_KEY).await;
+    let planner = pair_board(&api, &PLANNER_KEY).await;
+
+    let code = issue_pair_code(&api, &operator).await;
+    assert_eq!(code.len(), 9);
+    assert_eq!(code.as_bytes()[4], b'-');
+    let redeemed = redeem_code(&api, &code.replace('-', "").to_lowercase()).await;
+    assert_eq!(redeemed.status(), StatusCode::NO_CONTENT);
+    let set_cookie = redeemed.headers()["set-cookie"].to_str().expect("cookie");
+    assert!(set_cookie.contains("HttpOnly") && set_cookie.contains("SameSite=Strict"));
+    let device_cookie = set_cookie.split(';').next().expect("cookie").to_owned();
+    let session = json_body(
+        browser_request(
+            &api,
+            Method::GET,
+            "/api/engine/session",
+            Some(&device_cookie),
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(session["canEditSettings"], true);
+    assert_eq!(
+        redeem_code(&api, &code).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let first = issue_pair_code(&api, &operator).await;
+    let second = issue_pair_code(&api, &planner).await;
+    assert_eq!(
+        redeem_code(&api, &first).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let redeemed_planner = redeem_code(&api, &second).await;
+    assert_eq!(redeemed_planner.status(), StatusCode::NO_CONTENT);
+    let planner_device = redeemed_planner.headers()["set-cookie"]
+        .to_str()
+        .expect("planner cookie")
+        .split(';')
+        .next()
+        .expect("cookie")
+        .to_owned();
+    let planner_session = json_body(
+        browser_request(
+            &api,
+            Method::GET,
+            "/api/engine/session",
+            Some(&planner_device),
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(planner_session["canEditSettings"], false);
+
+    assert_eq!(
+        post_as(&api, "/v1/board/revoke", &BOARD_KEY, &json!({}))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        browser_request(
+            &api,
+            Method::GET,
+            "/api/engine/session",
+            Some(&device_cookie),
+            None,
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn board_pair_code_burns_after_five_wrong_attempts_and_expires() {
+    let (_home, service, api) = board_pair_fixture();
+    let operator = pair_board(&api, &BOARD_KEY).await;
+
+    let burned = issue_pair_code(&api, &operator).await;
+    for _ in 0..5 {
+        assert_eq!(
+            redeem_code(&api, "AAAA-AAAA").await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        redeem_code(&api, &burned).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let expiring = issue_pair_code(&api, &operator).await;
+    service
+        .board
+        .get()
+        .expect("board")
+        .expire_pair_code_for_test();
+    assert_eq!(
+        redeem_code(&api, &expiring).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn board_pair_code_redeem_enforces_host_origin_and_board_header() {
+    let (_home, _service, api) = board_pair_fixture();
+    let operator = pair_board(&api, &BOARD_KEY).await;
+    let code = issue_pair_code(&api, &operator).await;
+    let payload = json!({"code": code}).to_string();
+
+    let bad_host = api
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/engine/pair/redeem")
+                .header(HOST, "evil.example:9")
+                .header(ORIGIN, "http://evil.example:9")
+                .header("x-nucleus-board", "1")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .expect("bad host request"),
+        )
+        .await
+        .expect("bad host response");
+    assert_eq!(bad_host.status(), StatusCode::FORBIDDEN);
+
+    let bad_origin = api
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/engine/pair/redeem")
+                .header(HOST, LOCAL_HOST)
+                .header(ORIGIN, "http://127.0.0.1:10")
+                .header("x-nucleus-board", "1")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .expect("bad origin request"),
+        )
+        .await
+        .expect("bad origin response");
+    assert_eq!(bad_origin.status(), StatusCode::FORBIDDEN);
+
+    let missing_header = api
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/engine/pair/redeem")
+                .header(HOST, LOCAL_HOST)
+                .header(ORIGIN, "http://127.0.0.1:9")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .expect("missing header request"),
+        )
+        .await
+        .expect("missing header response");
+    assert_eq!(missing_header.status(), StatusCode::UNAUTHORIZED);
 }

@@ -110,21 +110,14 @@ export const plannerModelSchema = z.object({
 }).strict();
 export type PlannerModel = z.infer<typeof plannerModelSchema>;
 
-/** Rust Dispatch uses a u32 for each slot count and for their positive sum. */
+/** Rust Dispatch uses a u32 for each slot count. */
 export const MAX_GLOBAL_SLOTS = 0xffff_ffff;
 const globalSlots = z.number().int().min(1).max(MAX_GLOBAL_SLOTS);
-const weightSlots = z.number().int().min(0).max(MAX_GLOBAL_SLOTS);
-/** Spec 070 ruling 63: one slot count per task weight. */
-const slotFields = {
-  heavySlots: weightSlots,
-  normalSlots: weightSlots,
-  lightSlots: weightSlots,
-};
+const heavySlots = z.number().int().min(0).max(MAX_GLOBAL_SLOTS);
 const slotPatch = z.object({
   revision: z.string().min(1),
-  heavySlots: weightSlots.optional(),
-  normalSlots: weightSlots.optional(),
-  lightSlots: weightSlots.optional(),
+  heavySlots: heavySlots.optional(),
+  totalSlots: globalSlots.optional(),
   projectLimit: legacyCapacitySchema.shape.projectLimit.optional(),
   plannerModel: plannerModelSchema.optional(),
 }).strict().refine(
@@ -202,8 +195,7 @@ export type CapacityChange = z.infer<typeof capacityChangeSchema>;
  */
 export const capacityAuthorityStateSchema = z
   .object({
-    // The global limit is the sum of the three slot counts.
-    effective: capacityAuthorityValuesSchema.extend({ globalLimit: globalSlots, ...slotFields }),
+    effective: capacityAuthorityValuesSchema.extend({ globalLimit: globalSlots, heavySlots, totalSlots: globalSlots }),
     revision: z.string().min(1),
     plannerModel: plannerModelSchema.optional(),
     changes: z.array(capacityChangeSchema).max(CAPACITY_CHANGE_LOG_LIMIT),

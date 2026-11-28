@@ -587,8 +587,8 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Count other tasks whose possibly sent run still holds a launch slot, by
-    /// the weight each held brief declares.
+    /// Count other tasks whose possibly sent run holds a launch slot, including
+    /// how many are heavy.
     /// # Errors
     /// Returns an error if row custody cannot be read.
     pub fn occupied_slots(&self, except: &str) -> Result<Slots, StoreError> {

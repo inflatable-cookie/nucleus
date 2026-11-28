@@ -76,7 +76,7 @@ test("Settings keeps shared sections and the operator GitHub section behind the 
   // Hosts holds the host catalogue and the default host picker (nucleus#1325); Hosts sits after Projects (nucleus#1494).
   // Storage is its own page (nucleus#1526): every work-volume path is edited there,
   // never inside Backups.
-  assert.equal(settingsViews.length, 8);
+  assert.equal(settingsViews.length, 9);
   assert.deepEqual(
     settingsViews.map((view) => view.label),
     [
@@ -87,6 +87,7 @@ test("Settings keeps shared sections and the operator GitHub section behind the 
       "Backups",
       "Storage",
       "GitHub",
+      "Devices",
       "Telemetry",
     ],
   );
@@ -100,18 +101,23 @@ test("Settings keeps shared sections and the operator GitHub section behind the 
       "Backups",
       "Storage",
       "GitHub",
+      "Devices",
       "Telemetry",
     ],
   );
-  const legacy = settingsViews.filter(({ id }) => id !== "github-accounts");
-  const rustOperator = settingsViews.filter(({ id }) => id !== "backups" && id !== "telemetry");
+  const legacy = settingsViews.filter(
+    ({ id }) => id !== "github-accounts" && id !== "devices",
+  );
+  const rustOperator = settingsViews.filter(
+    ({ id }) => id !== "backups" && id !== "telemetry",
+  );
   for (const views of [legacy, rustOperator]) {
     assert.ok(
       views.reduce((sum, { short }) => sum + short.length, 0) <= 52,
       "the visible short labels fit one line",
     );
   }
-  assert.match(settingsScreen, /settingsViews\.map\(\(?view\)? =>/);
+  assert.match(settingsScreen, /settingsViews\s*\.map\(\(?view\)? =>/);
   for (const view of settingsViews)
     assert.ok(
       settingsScreen.includes(`settingsTab === "${view.id}" &&`),

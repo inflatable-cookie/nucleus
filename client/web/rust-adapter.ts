@@ -121,7 +121,7 @@ function capacityValues(
   ) as Record<keyof typeof capacityBounds, number>;
   return {
     ...fallback,
-    globalLimit: dispatch.heavySlots + dispatch.normalSlots + dispatch.lightSlots,
+    globalLimit: dispatch.totalSlots,
     projectLimit: dispatch.projectDefaultSlots,
     hostCallLimit: 1,
     operatorDefaultHostKind: DEFAULT_HOST_KIND,
@@ -365,10 +365,10 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "queue.capacity-state": async () => {
       const dispatch = await rust.domain(dispatchSnapshot, "dispatch");
-      const { heavySlots, normalSlots, lightSlots, plannerModel } = dispatch.value;
+      const { heavySlots, totalSlots, plannerModel } = dispatch.value;
       return {
         revision: dispatch.revision,
-        effective: { ...capacityValues(dispatch.value), heavySlots, normalSlots, lightSlots },
+        effective: { ...capacityValues(dispatch.value), heavySlots, totalSlots },
         plannerModel,
         changes: [],
       };
@@ -381,8 +381,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       await rust.saveDomain(dispatchSnapshot, "dispatch", input.revision, {
         ...current.value,
         heavySlots: input.heavySlots ?? current.value.heavySlots,
-        normalSlots: input.normalSlots ?? current.value.normalSlots,
-        lightSlots: input.lightSlots ?? current.value.lightSlots,
+        totalSlots: input.totalSlots ?? current.value.totalSlots,
         projectDefaultSlots: input.projectLimit ?? current.value.projectDefaultSlots,
         plannerModel: input.plannerModel ?? current.value.plannerModel,
       });
