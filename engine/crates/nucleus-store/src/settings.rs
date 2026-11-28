@@ -1140,7 +1140,8 @@ mod tests {
             "usage": "high", "usageUntilMs": 1_800_000_000_000_u64,
             "heavySlots": 3, "normalSlots": 0, "lightSlots": 0,
             "projectDefaultSlots": 4, "projectSlotOverrides": {"alpha": 8, "beta": 0},
-            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused"
+            "threadRetentionDays": 9, "threadRetentionIntervalHours": 24, "mode": "paused",
+            "plannerModel": {"provider": "claude", "model": "claude-opus-5-5", "effort": "high"}
         });
         let legacy_dispatch = json!({
             "usage": "high", "usageUntilMs": 1_800_000_000_000_u64, "slots": 3,
@@ -1342,6 +1343,8 @@ mod tests {
             value.insert("heavySlots".into(), json!(heavy));
             value.insert("normalSlots".into(), json!(normal));
             value.insert("lightSlots".into(), json!(light));
+            // The rewrite also stores the default of a field added since.
+            value.insert("plannerModel".into(), json!(crate::PlannerModel::default()));
             assert_eq!(
                 serde_json::from_slice::<Value>(&upgraded).unwrap(),
                 expected,

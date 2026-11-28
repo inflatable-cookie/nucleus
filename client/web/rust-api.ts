@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { capabilityLevels } from "../../shared/schema/settings/capability";
+import { plannerModelSchema } from "../../shared/schema/settings/capacity";
 import {
   CANONICAL_PROVIDERS,
   THINKING_LEVELS,
@@ -66,6 +67,7 @@ const dispatch = z
     projectDefaultSlots: integer,
     projectSlotOverrides: z.record(z.string(), integer),
     mode: dispatchMode.default("running"),
+    plannerModel: plannerModelSchema.optional(),
   })
   .loose();
 const repository = z

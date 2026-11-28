@@ -153,6 +153,13 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     queryFn: () => fetchCapacityState({}),
     enabled: settingsTab === "capacity" || settingsTab === "hosts",
   });
+  const fetchCatalog = useRpc(api.readProfileVocabulary);
+  const catalogQuery = useQuery({
+    queryKey: ["nucleus", "profile-vocabulary", ""],
+    queryFn: () => fetchCatalog({}),
+    enabled: settingsTab === "capacity" && Boolean(capacityStateQuery.data?.plannerModel),
+    staleTime: 30_000,
+  });
   // Settings → Hosts (nucleus#1325): the catalogue with status and dependents, refreshed while open.
   const fetchHosts = useRpc(api.hostList),
     removeHost = useRpc(api.hostRemove);
@@ -404,6 +411,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
                 authority={capacityStateQuery.data}
                 authorityError={capacityStateQuery.error}
                 retryAuthority={() => void capacityStateQuery.refetch()}
+                catalog={catalogQuery.data}
                 refreshBoard={() => stateQuery.refetch()}
                 saveUsage={(level, until) =>
                   persist(() => setUsage({ level, until }))

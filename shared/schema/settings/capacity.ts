@@ -102,6 +102,14 @@ const legacyCapacitySchema = z
   })
   .strict();
 
+/** The model that starts a planner in a T3 project with no default model. */
+export const plannerModelSchema = z.object({
+  provider: z.string().min(1),
+  model: z.string().min(1).max(240),
+  effort: z.string().min(1).nullable(),
+}).strict();
+export type PlannerModel = z.infer<typeof plannerModelSchema>;
+
 /** Rust Dispatch uses a u32 for each slot count and for their positive sum. */
 export const MAX_GLOBAL_SLOTS = 0xffff_ffff;
 const globalSlots = z.number().int().min(1).max(MAX_GLOBAL_SLOTS);
@@ -118,6 +126,7 @@ const slotPatch = z.object({
   normalSlots: weightSlots.optional(),
   lightSlots: weightSlots.optional(),
   projectLimit: legacyCapacitySchema.shape.projectLimit.optional(),
+  plannerModel: plannerModelSchema.optional(),
 }).strict().refine(
   (patch) => Object.entries(patch).some(([key, value]) => key !== "revision" && value !== undefined),
   "Choose a dispatch limit to change",
@@ -196,6 +205,7 @@ export const capacityAuthorityStateSchema = z
     // The global limit is the sum of the three slot counts.
     effective: capacityAuthorityValuesSchema.extend({ globalLimit: globalSlots, ...slotFields }),
     revision: z.string().min(1),
+    plannerModel: plannerModelSchema.optional(),
     changes: z.array(capacityChangeSchema).max(CAPACITY_CHANGE_LOG_LIMIT),
   })
   .strict();

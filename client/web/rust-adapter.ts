@@ -365,10 +365,11 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "queue.capacity-state": async () => {
       const dispatch = await rust.domain(dispatchSnapshot, "dispatch");
-      const { heavySlots, normalSlots, lightSlots } = dispatch.value;
+      const { heavySlots, normalSlots, lightSlots, plannerModel } = dispatch.value;
       return {
         revision: dispatch.revision,
         effective: { ...capacityValues(dispatch.value), heavySlots, normalSlots, lightSlots },
+        plannerModel,
         changes: [],
       };
     },
@@ -383,6 +384,7 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         normalSlots: input.normalSlots ?? current.value.normalSlots,
         lightSlots: input.lightSlots ?? current.value.lightSlots,
         projectDefaultSlots: input.projectLimit ?? current.value.projectDefaultSlots,
+        plannerModel: input.plannerModel ?? current.value.plannerModel,
       });
       return { ok: true };
     },

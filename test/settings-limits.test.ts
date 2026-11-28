@@ -144,6 +144,55 @@ test("Limits sends the edited field at the displayed Dispatch revision", async (
   }
 });
 
+test("the planner model saves its model and thinking level at the displayed revision", async () => {
+  const saves: unknown[] = [];
+  const model = (id: string, label: string, levels: string[]) => ({
+    id,
+    label,
+    aliases: [],
+    thinkingOptions: levels.map((level) => ({ id: level, label: level === "high" ? "High" : "Medium" })),
+    defaultThinkingOptionId: levels[0] ?? null,
+    modes: [],
+    features: [],
+  });
+  const { ui, done } = await mountLimits({
+    authority: {
+      ...authority(),
+      plannerModel: { provider: "claude", model: "claude-opus-5-5", effort: "high" },
+    },
+    catalog: {
+      providers: [
+        {
+          key: "claude",
+          label: "Claude",
+          available: true,
+          problem: "",
+          models: [
+            model("claude-opus-5-5", "Opus 5.5", ["medium", "high"]),
+            model("claude-sonnet-5-5", "Sonnet 5.5", ["medium"]),
+          ],
+        },
+      ],
+    },
+    saveCapacity: async (input: unknown) => { saves.push(input); },
+  });
+  try {
+    ui.press("Thinking, High");
+    ui.press("Thinking: Medium");
+    await settle(() => saves.length === 1);
+    ui.press("Model, Claude · Opus 5.5");
+    ui.press("Model: Claude · Sonnet 5.5");
+    await settle(() => saves.length === 2);
+    assert.deepEqual(saves, [
+      { revision: "shown", plannerModel: { provider: "claude", model: "claude-opus-5-5", effort: "medium" } },
+      // A level the new model doesn't offer gives way to its default.
+      { revision: "shown", plannerModel: { provider: "claude", model: "claude-sonnet-5-5", effort: "medium" } },
+    ]);
+  } finally {
+    done();
+  }
+});
+
 test("each weight has its own slot count beside their total, and an edit saves itself", async () => {
   const saves: CapacityInput[] = [];
   const { ui, done } = await mountLimits({
