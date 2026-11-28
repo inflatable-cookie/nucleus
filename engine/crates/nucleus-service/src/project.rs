@@ -218,9 +218,22 @@ impl Service {
         Ok(())
     }
 
+    /// The test project: the single-project fixture, or the checkout registered
+    /// in Projects settings when the service runs the production registry.
     #[cfg(test)]
-    pub(super) fn fixture(&self) -> &Project {
-        self.project.as_ref().expect("fixture project")
+    pub(super) fn fixture(&self) -> Project {
+        self.project
+            .clone()
+            .unwrap_or_else(|| registered_fixture(&self.settings))
+    }
+
+    /// Set the ACP provider the test service launches through, in either mode.
+    #[cfg(test)]
+    pub(super) fn set_fixture_acp_provider(&mut self, provider: Option<&str>) {
+        match self.project.as_mut() {
+            Some(project) => project.acp_provider = provider.map(str::to_owned),
+            None => self.registry_provider = provider.map(str::to_owned),
+        }
     }
 
     #[cfg(test)]
@@ -490,6 +503,45 @@ impl GitPolicy for LocalGit {
     }
 }
 
+/// The first registered repository, read as the test project. Its profiles and
+/// budget are the fixture values, which the registry resolves from settings.
+#[cfg(test)]
+fn registered_fixture(settings: &nucleus_store::SettingsFile) -> Project {
+    let projects = settings
+        .read::<nucleus_store::Projects>()
+        .expect("registered projects")
+        .value;
+    let repository = projects
+        .projects
+        .values()
+        .flat_map(|project| project.repositories.iter())
+        .next()
+        .expect("one registered repository");
+    let start = crate::tests::git(&repository.path, &["rev-parse", "HEAD"])
+        .parse()
+        .expect("registered base head");
+    let profile = RoleProfile {
+        instance_id: "provider".into(),
+        model: "fixture".into(),
+        runtime_mode: "auto".into(),
+        options: Vec::new(),
+    };
+    Project {
+        repository: repository.origin.clone(),
+        checkout: repository.path.clone(),
+        base: repository.base.clone(),
+        start,
+        host_project: repository
+            .host_project
+            .clone()
+            .expect("registered T3 project"),
+        worker: profile.clone(),
+        reviewer: profile,
+        acp_provider: None,
+        launch_budget: LaunchBudget { slots: 1 },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -575,7 +627,7 @@ mod tests {
         let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("forge"));
         service.fixture_mut().repository = "example/greeter".into();
         service.fixture_mut().host_project = "greeter-project".into();
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        service.set_fixture_acp_provider(Some("fixture-acp"));
         let root = service.fixture().checkout.clone();
         git(
             &root,

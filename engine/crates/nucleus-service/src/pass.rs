@@ -2745,7 +2745,8 @@ mod tests {
     use super::*;
     use crate::tests::{
         Due, REPOSITORY, archived_checkout_rows, code_task_at_merge, empty_archive_fixture,
-        fixture, forge_checks, forge_fixture, forge_pull, native_fixture, reservation, serve_forge,
+        fixture, forge_checks, forge_fixture, forge_pull, native_fixture, registry_fixture,
+        reservation, serve_forge,
     };
 
     async fn cancelled_cleanup_task(service: &Service) -> TaskRow {
@@ -3030,8 +3031,8 @@ mod tests {
         host_tree: bool,
         dispatch: Option<nucleus_store::DispatchSettings>,
     ) {
-        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.fixture_mut().acp_provider = Some("fixture".into());
+        let (home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
+        service.set_fixture_acp_provider(Some("fixture"));
         service.state.lock().await.settings.dispatch = dispatch;
         let (terminal, scratch) = if in_scratch {
             let (row, scratch) = settled_cleanup_task(&service, home.path(), legacy).await;
@@ -3253,13 +3254,13 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_cleanup_leaves_a_shared_service_running_in_trash() {
-        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let (home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
         let head = service.fixture().start.clone();
         let (forge, _server) = publish_checkout_forge(head).await;
         service.forge = forge;
         let (native, _archive) = empty_archive_fixture(1).await;
         service.host = crate::tests::verified_native_fixture(native, home.path());
-        service.fixture_mut().acp_provider = Some("fixture".into());
+        service.set_fixture_acp_provider(Some("fixture"));
         let terminal = cancelled_cleanup_task(&service).await;
         let id = &terminal.task.identity().id;
         let work = service.worktrees();
@@ -3345,13 +3346,13 @@ mod tests {
 
     #[tokio::test]
     async fn retirement_requires_running_dispatch_quiet_shell_and_published_git_head() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
         let (native, _archive) = empty_archive_fixture(1).await;
         service.host = native.with_quiet_fixture_processes();
         let head = service.fixture().start.clone();
         let (forge, _server) = publish_checkout_forge(head.clone()).await;
         service.forge = forge;
-        service.fixture_mut().acp_provider = Some("fixture".into());
+        service.set_fixture_acp_provider(Some("fixture"));
         let row = cancelled_cleanup_task(&service).await;
         let work = service.worktrees();
         let checkout = work
@@ -3627,7 +3628,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_running_review_waits_for_its_deadline_without_reading_the_forge() {
-        let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+        let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").expect("client"));
         let head = service.fixture().start.clone();
         let (forge, forge_reads, forge_server) = forge_fixture(&head).await;
         service.forge = forge;
@@ -3823,7 +3824,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_edit_during_native_authorization_cannot_send_the_review() {
-        let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+        let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").expect("client"));
         let head = service.fixture().start.clone();
         let (forge, reads, forge_server) = forge_fixture(&head).await;
         service.forge = forge;
@@ -3899,7 +3900,8 @@ mod tests {
     #[tokio::test]
     async fn an_interrupt_requires_the_current_fixture_project_root() {
         for retargeted in [false, true] {
-            let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            let (_home, mut service) =
+                registry_fixture(GitHub::new("unused-fixture").expect("client"));
             let head = service.fixture().start.clone();
             let git = service.git.clone();
             let worktrees = crate::Worktrees::new(
@@ -4141,6 +4143,15 @@ mod tests {
                     native_accepted.lock().unwrap().push(payload["messageId"].clone());
                     return serde_json::Value::Null;
                 }
+                Some("server.getConfig") => {
+                    return json!({"_tag": "Exit", "requestId": id, "exit": {
+                        "_tag": "Success", "value": {
+                            "environment": {"orchestrationProtocolVersion": 2},
+                            "providers": [{"instanceId": "provider", "enabled": true,
+                                "status": "ready", "models": [{"slug": "fixture"}]}]
+                        }
+                    }});
+                }
                 _ => panic!("unexpected native request {request}"),
             };
             let mut snapshot = snapshot;
@@ -4213,7 +4224,7 @@ mod tests {
             Action::Wait(WaitReason::Running)
         );
         // The rest of this fixture models the no-ACP path; the probe above was the ACP case.
-        service.fixture_mut().acp_provider = None;
+        service.set_fixture_acp_provider(None);
 
         crate::tests::git(&owned, &["reset", "--hard", new_head.as_str()]);
         published.store(true, Ordering::Relaxed);
@@ -4259,7 +4270,7 @@ mod tests {
 
     #[tokio::test]
     async fn stopped_dispatch_waits_then_merges_the_approved_head() {
-        let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+        let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
         let head = service.fixture().start.clone();
         let (task, _) = code_task_at_merge("worker", &head);
         service
@@ -4338,7 +4349,8 @@ mod tests {
     #[tokio::test]
     async fn merge_writes_wait_until_the_forge_confirms_the_next_fact() {
         for status in [StatusCode::CONFLICT, StatusCode::METHOD_NOT_ALLOWED] {
-            let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            let (_home, mut service) =
+                registry_fixture(GitHub::new("unused-fixture").expect("client"));
             let head = service.fixture().start.clone();
             let new_head: Head = "b".repeat(40).parse().expect("changed head");
             let next = Arc::new(AtomicBool::new(false));
@@ -4417,7 +4429,7 @@ mod tests {
     #[tokio::test]
     async fn external_merge_at_the_refused_head_requires_verified_source_acceptance() {
         for merged_during_readback in [false, true] {
-            let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+            let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
             let head = service.fixture().start.clone();
             let (task, _) = code_task_at_merge("worker", &head);
             service
@@ -4566,7 +4578,7 @@ mod tests {
 
     #[test]
     fn forge_transport_backoff_is_capped_and_a_success_resets_it() {
-        let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+        let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
         let failure = ForgeError::Status(StatusCode::BAD_GATEWAY);
         for delay in [30, 60, 120, 240, 240] {
             record_forge_failure(&service, &failure);
@@ -4634,7 +4646,8 @@ mod tests {
             (true, false, false, true),
             (true, true, true, true),
         ] {
-            let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            let (_home, mut service) =
+                registry_fixture(GitHub::new("unused-fixture").expect("client"));
             let head = service.fixture().start.clone();
             let latest = if changed_head {
                 "b".repeat(40).parse().expect("new head")
@@ -4750,7 +4763,7 @@ mod tests {
 
     #[tokio::test]
     async fn merge_gate_uses_only_github_required_checks() {
-        let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+        let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
         let project = service.fixture().clone();
         let head = project.start.clone();
 

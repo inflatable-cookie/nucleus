@@ -240,7 +240,7 @@ impl Fixture {
         }).await;
         host.use_held_shell();
         service.host = host;
-        service.fixture_mut().acp_provider = Some(PROVIDER.into());
+        service.set_fixture_acp_provider(Some(PROVIDER));
         Self {
             service: Arc::new(service),
             native,

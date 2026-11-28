@@ -1,3 +1,4 @@
+use crate::tests::registry_fixture;
 use std::sync::{Arc, Mutex};
 
 use nucleus_core::{
@@ -52,7 +53,7 @@ async fn seed(service: &Service, id: &str) -> (TaskRow, Observed<Forge>) {
 
 #[tokio::test]
 async fn acceptance_waits_for_evidence_of_the_exact_external_merge() {
-    let (_home, service) = fixture(GitHub::new("unused").unwrap());
+    let (_home, service) = registry_fixture(GitHub::new("unused").unwrap());
     let (row, forge) = seed(&service, "accepted").await;
     for observe in [false, true] {
         if observe {
@@ -70,7 +71,7 @@ async fn acceptance_waits_for_evidence_of_the_exact_external_merge() {
 
 #[tokio::test]
 async fn restored_bridge_binding_keeps_the_native_offer_fenced() {
-    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
+    let (_home, mut service) = registry_fixture(GitHub::new("unused").unwrap());
     let (row, _) = seed(&service, "handoff").await;
     let binding = InboxBinding {
         task_version: row.version,

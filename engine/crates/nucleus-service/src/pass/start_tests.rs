@@ -1,5 +1,6 @@
 //! A brief task's first checkout against a real origin which is ahead of the
 //! registered checkout.
+use crate::tests::registry_fixture;
 
 use std::{collections::BTreeMap, os::unix::fs::PermissionsExt, sync::atomic::Ordering};
 
@@ -8,7 +9,7 @@ use nucleus_forge::GitHub;
 use nucleus_store::{ProjectSettings, Projects, RepositorySettings};
 
 use super::*;
-use crate::tests::{REPOSITORY, create_fixture_commit, fixture, git};
+use crate::tests::{REPOSITORY, create_fixture_commit, git};
 
 mod merges;
 
@@ -30,7 +31,7 @@ fn head(repository: &Path, revision: &str) -> Head {
 /// A registry service whose GitHub origin is served over SSH by a local bare
 /// repository, so the engine runs a real fetch.
 async fn registered() -> Registered {
-    let (home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+    let (home, mut service) = registry_fixture(GitHub::new("unused-fixture").expect("client"));
     let checkout = service.fixture().checkout.clone();
     std::fs::write(checkout.join("tracked"), "committed\n").expect("tracked file");
     git(&checkout, &["add", "tracked"]);
