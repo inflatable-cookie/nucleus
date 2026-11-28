@@ -352,7 +352,14 @@ async fn store_slot_task(
         brief(Some(weight), priority, "Fixture"),
         None,
     );
-    state.store.create(&task, &crate::event("fixture")).unwrap();
+    state
+        .store
+        .create_with_facts(
+            &task,
+            &crate::event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
+        .unwrap();
     state
         .observe_wait(&task, Some(WaitReason::Capacity))
         .unwrap();
@@ -361,7 +368,7 @@ async fn store_slot_task(
 
 fn record_slot_send(task: &mut Task, observation: &Observation) -> Role {
     task.reconcile(observation);
-    task.reserve_launch(
+    task.reserve_grouped_launch(
         observation,
         LaunchInputs {
             scratch: None,
@@ -370,6 +377,8 @@ fn record_slot_send(task: &mut Task, observation: &Observation) -> Role {
             input: "fixture wire".into(),
         },
         &[3; 32],
+        None,
+        "fixture-group".into(),
     )
     .unwrap();
     let launch = task.run().unwrap().launch();
@@ -477,7 +486,11 @@ async fn promoted_work_goes_first_and_a_running_reviewer_counts_toward_its_proje
         .lock()
         .await
         .store
-        .create(&review, &crate::event("fixture"))
+        .create_with_facts(
+            &review,
+            &crate::event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
 
     store_slot_task(
@@ -712,7 +725,11 @@ async fn a_restart_ranks_a_waiting_heavy_reviewer_before_an_earlier_light_task()
         .lock()
         .await
         .store
-        .create(&task, &crate::event("fixture"))
+        .create_with_facts(
+            &task,
+            &crate::event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .expect("stored reviewer");
 
     let published = task.pull_request().expect("published pull").clone();

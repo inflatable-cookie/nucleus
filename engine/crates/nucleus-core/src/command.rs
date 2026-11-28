@@ -352,37 +352,11 @@ impl Task {
         true
     }
 
-    /// Reserve a new run before sending it to T3. The task assigns a new instance
-    /// and derives its bearer from the supplied random seed. Keep the bearer in
-    /// the owner-only ticket. A replay reads the existing prepared launch.
-    ///
-    /// # Errors
-    /// Returns an error if the launch no longer applies or IDs are exhausted.
-    pub fn reserve_launch(
-        &mut self,
-        observation: &Observation,
-        inputs: LaunchInputs,
-        seed: &[u8; 32],
-    ) -> Result<CallbackCredential, CommandError> {
-        self.reserve(observation, inputs, seed, None, None)
-    }
-
-    /// Freeze the selected profile with the adapter's prepared wire. The same
-    /// durable reservation owns both the first send and a verified replay.
-    ///
-    /// # Errors
-    /// Returns an error if the launch no longer applies or IDs are exhausted.
-    pub fn reserve_profile_launch(
-        &mut self,
-        observation: &Observation,
-        inputs: LaunchInputs,
-        seed: &[u8; 32],
-        intent: ProfileLaunch,
-    ) -> Result<CallbackCredential, CommandError> {
-        self.reserve(observation, inputs, seed, Some(intent), None)
-    }
-
-    /// Freeze the subscription charged by this reservation with its native inputs.
+    /// Reserve a new run before sending it to T3, freezing the selected profile
+    /// and the subscription it charges with the adapter's prepared wire. The
+    /// task assigns a new instance and derives its bearer from the supplied
+    /// random seed. Keep the bearer in the owner-only ticket. The same durable
+    /// reservation owns both the first send and a verified replay.
     ///
     /// # Errors
     /// Returns an error if the launch no longer applies or IDs are exhausted.
@@ -393,17 +367,6 @@ impl Task {
         seed: &[u8; 32],
         intent: Option<ProfileLaunch>,
         group: String,
-    ) -> Result<CallbackCredential, CommandError> {
-        self.reserve(observation, inputs, seed, intent, Some(group))
-    }
-
-    fn reserve(
-        &mut self,
-        observation: &Observation,
-        inputs: LaunchInputs,
-        seed: &[u8; 32],
-        intent: Option<ProfileLaunch>,
-        subscription_group: Option<String>,
     ) -> Result<CallbackCredential, CommandError> {
         let Action::Launch { role, via } = decide(self, observation) else {
             return Err(CommandError::LaunchNoLongerApplies);
@@ -458,7 +421,7 @@ impl Task {
                 review_head,
                 scratch: inputs.scratch,
                 profile,
-                subscription_group,
+                subscription_group: Some(group),
             },
             report: None,
             revoked: false,

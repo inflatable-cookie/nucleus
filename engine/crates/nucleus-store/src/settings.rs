@@ -340,24 +340,6 @@ impl SettingsFile {
         Ok(self.read()?.value)
     }
 
-    /// Publish the startup configuration after checking its placement.
-    ///
-    /// # Errors
-    /// Returns an error if placement cannot be verified or settings cannot be saved.
-    pub fn save(&self, settings: &EngineSettings) -> Result<(), StorageError> {
-        settings.verify_for_save(self)?;
-        StorageDirectory::native(self.layout.storage_roots().state().to_path_buf())?.ensure()?;
-        self.store.mutate(
-            &SettingsDomain::new()?,
-            MUTATION,
-            |value: &mut EngineSettings| {
-                value.clone_from(settings);
-                Ok(())
-            },
-        )?;
-        Ok(())
-    }
-
     /// Resolve the active storage paths for the enabled engine.
     ///
     /// # Errors
@@ -1279,9 +1261,8 @@ mod tests {
                 .with(PlatformDirectoryFact::Log, root.join("log"));
             let settings = SettingsFile::open_account(&home, facts).expect("platform roots");
             settings
-                .save(&EngineSettings {
-                    enabled: true,
-                    ..EngineSettings::default()
+                .configure(&settings.read().expect("defaults"), |current| {
+                    current.enabled = true;
                 })
                 .expect("enable the default profile");
             let storage = settings.storage().expect("resolve internal roots");

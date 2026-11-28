@@ -39,11 +39,12 @@ import { RustListRows, type InboxListProps } from "./inbox-list";
 import { TriageLeadCard } from "./triage-lead-card";
 
 /** A column's tabs (nucleus#1667), in header order. Active is the default. */
+/** Tab order in each column header. Active sits last but is the default (Tom, 2026-11-28). */
 export const projectColumnTabs = [
-  "active",
   "leads",
   "papercuts",
   "queue",
+  "active",
 ] as const;
 export type ProjectColumnTab = (typeof projectColumnTabs)[number];
 

@@ -4,15 +4,12 @@ use std::{
 };
 
 use longhorn_redact::{RedactionRules, Redactor};
-use nucleus_core::{RetainedThread, RunState};
+use nucleus_core::RunState;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::{
-    Binding, HostError, ProviderLimit, RowObservation, task_row::ThreadVisibility,
-    thread_snapshots::ShellCustody,
-};
+use crate::{Binding, HostError, ProviderLimit, thread_snapshots::ShellCustody};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MissingReceipt {
@@ -47,8 +44,10 @@ pub(crate) struct Projection {
     compact_turn_items: bool,
     #[serde(skip)]
     sequence: u64,
+    /// Set when the projection comes from a closed shell row: whether that
+    /// row still shows work.
     #[serde(skip)]
-    shell_closed: Option<RetainedThread>,
+    closed_row_busy: Option<bool>,
     #[serde(skip)]
     shell_failure: Option<ShellFailure>,
 }
@@ -102,8 +101,6 @@ struct Thread {
     provider_instance_id: Option<String>,
     active_provider_thread_id: Option<String>,
     model_selection: Option<Value>,
-    #[serde(flatten)]
-    visibility: ThreadVisibility,
 }
 
 #[derive(Deserialize)]
@@ -223,20 +220,15 @@ impl Projection {
         id: &str,
     ) -> Result<Self, HostError> {
         let shell = ShellCustody(row);
-        let state = if !row["deletedAt"].is_null() {
-            RetainedThread::Gone
-        } else if shell.activity() != crate::RowChildren::Quiet {
-            RetainedThread::Busy
-        } else {
-            RetainedThread::Idle
-        };
+        let live = row["deletedAt"].is_null();
+        let quiet = shell.activity() == crate::RowChildren::Quiet;
         let runs = match (row["latestRunId"].as_str(), row["status"].as_str()) {
             (
                 Some(run),
                 Some(
                     status @ ("completed" | "interrupted" | "failed" | "cancelled" | "rolled_back"),
                 ),
-            ) if state == RetainedThread::Idle => json!([{"id":run,"status":status}]),
+            ) if live && quiet => json!([{"id":run,"status":status}]),
             _ => json!([]),
         };
         let mut projection = Self::parse(
@@ -247,7 +239,7 @@ impl Projection {
             binding,
             id,
         )?;
-        projection.shell_closed = Some(state);
+        projection.closed_row_busy = Some(live && !quiet);
         projection.windowed = true;
         Ok(projection)
     }
@@ -432,10 +424,10 @@ impl Projection {
         missing_receipt: MissingReceipt,
         quiet: impl FnOnce() -> bool,
     ) -> Result<RunState, HostError> {
-        if self.shell_closed == Some(RetainedThread::Busy) {
+        if self.closed_row_busy == Some(true) {
             return Err(HostError::Uncertain);
         }
-        if self.shell_closed.is_some() || self.thread.deleted_at.is_some() {
+        if self.closed_row_busy.is_some() || self.thread.deleted_at.is_some() {
             return Ok(RunState::Gone);
         }
         let (message, run) = self.delivery(message_id);
@@ -473,16 +465,6 @@ impl Projection {
         self.runs
             .iter()
             .any(|run| run.user_message_id.as_deref() == Some(message_id))
-    }
-
-    pub(crate) fn row_observation(&self) -> Result<Option<RowObservation>, HostError> {
-        if self.archived() || self.thread.deleted_at.is_some() {
-            return Ok(None);
-        }
-        Ok(Some(RowObservation {
-            sequence: self.sequence(),
-            visibility: self.thread.visibility.read()?,
-        }))
     }
 
     pub(crate) const fn archived(&self) -> bool {

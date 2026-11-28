@@ -63,13 +63,6 @@ impl ThreadVisibility {
     }
 }
 
-/// Exact thread observation for presentation work, including its native revision.
-#[derive(Debug, Clone, Copy)]
-pub struct RowObservation {
-    pub sequence: u64,
-    pub visibility: RowVisibility,
-}
-
 /// Commands supported by native task-row reconciliation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowChange {
@@ -357,29 +350,6 @@ impl T3 {
     #[doc(hidden)]
     pub fn fixture_held_shell(&self, item: &serde_json::Value) {
         self.rpc.fixture_shell(item);
-    }
-
-    /// Read the exact root, provider and visibility of a task's parent.
-    ///
-    /// # Errors
-    /// Returns an error for a mismatched binding or unknown host read.
-    pub async fn observe_task_row(
-        &self,
-        binding: &Binding,
-        provider: &str,
-    ) -> Result<Option<RowObservation>, HostError> {
-        let thread = parent_thread(Path::new(&binding.worktree_path));
-        let Some(projection) = self
-            .read_thread(binding, &thread, crate::thread_snapshots::ThreadRead::Exact)
-            .await?
-        else {
-            return Ok(None);
-        };
-        let Some(observed) = projection.row_observation()? else {
-            return Ok(None);
-        };
-        projection.require_parent_provider(provider)?;
-        Ok(Some(observed))
     }
 
     /// Send a single recorded visibility command, rechecking any supplied shell proof.

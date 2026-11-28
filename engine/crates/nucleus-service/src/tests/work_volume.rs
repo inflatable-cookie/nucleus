@@ -66,7 +66,14 @@ async fn outage() -> Outage {
     {
         let mut state = service.state.lock().await;
         for task in [&worker, &review] {
-            state.store.create(task, &event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    task,
+                    &event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
         }
     }
     let work = json!({"work": {"url": PR, "head": head}});

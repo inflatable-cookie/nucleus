@@ -207,8 +207,6 @@ fn profile(id: &str, capability: Capability) -> Profile {
 fn candidate(profile: &Profile) -> Candidate<'_> {
     Candidate {
         profile,
-        enabled: true,
-        available: true,
         group_available: true,
         supported_efforts: &[Effort::XHigh],
         counts: RotationCounts::default(),
@@ -284,7 +282,6 @@ fn history_free_selection_uses_weights_inside_the_eligible_bracket() {
     let policy = LaunchPolicy {
         usage: Normal,
         candidates: &candidates,
-        planner_brief: true,
     };
     let task = working("Add a greeting.");
     let observation = unbound();
@@ -323,7 +320,6 @@ fn select(
         &LaunchPolicy {
             usage,
             candidates: pool,
-            planner_brief: true,
         },
     )
 }
@@ -373,7 +369,7 @@ fn a_paused_mechanical_reviewer_steps_up_to_an_independent_worker() {
     }
 
     review_changes(&mut task, &obs, &muse);
-    let obs = role_thread(obs, "reviewer-1", RetainedThread::Idle);
+    let obs = role_thread(obs, "reviewer-1", RetainedThread::Queueable);
     task.command(
         Command::Move(Phase::Reviewing),
         &Authority::Planner {
@@ -491,7 +487,6 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                 &LaunchPolicy {
                     usage,
                     candidates: &[candidate(&frontier)],
-                    planner_brief: true,
                 }
             ),
             Err(ProfileLaunchError::NoEligibleProfile {
@@ -507,19 +502,6 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
             pick(&automatic, &unbound(), usage, &pool).profile().id,
             peer.id
         );
-        let ignored = decide_profile_launch(
-            &worker,
-            &unbound(),
-            &LaunchPolicy {
-                usage,
-                candidates: &pool,
-                planner_brief: false,
-            },
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(ignored.profile().id, peer.id);
-
         let unavailable = [
             Candidate {
                 supported_efforts: &[],
@@ -534,7 +516,6 @@ fn frontier_is_explicit_below_extra_high_and_the_request_is_role_scoped() {
                 &LaunchPolicy {
                     usage,
                     candidates: &unavailable,
-                    planner_brief: true,
                 }
             ),
             Err(ProfileLaunchError::RequiredProfileUnavailable {
@@ -568,7 +549,7 @@ fn reserve(
 ) -> (String, CallbackCredential) {
     let instance = intent.instance().to_owned();
     let bearer = task
-        .reserve_profile_launch(
+        .reserve_grouped_launch(
             obs,
             LaunchInputs {
                 scratch: None,
@@ -577,7 +558,8 @@ fn reserve(
                 input: format!("immutable native wire {instance}"),
             },
             &[7; 32],
-            intent,
+            Some(intent),
+            "fixture-group".into(),
         )
         .unwrap();
     (instance, bearer)
@@ -662,7 +644,7 @@ fn shared_model_profiles_remain_usable_after_review() {
     );
     review_changes(&mut task, &observation, &shared);
 
-    let observation = role_thread(observation, "worker-1", RetainedThread::Idle);
+    let observation = role_thread(observation, "worker-1", RetainedThread::Queueable);
     let resumed = pick(
         &task,
         &observation,
@@ -705,7 +687,7 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
     let pool = [candidate(&initial), candidate(&next), candidate(&heavy)];
     finish_worker(&mut task, &initial);
     review_changes(&mut task, &open('a'), &reviewer);
-    let obs = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let obs = role_thread(open('a'), "worker-1", RetainedThread::Queueable);
     let intent = pick(&task, &obs, Normal, &pool);
     assert_eq!(intent.profile(), &next);
     assert_eq!(intent.via(), &Launch::Create);
@@ -717,7 +699,7 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
         Some("Fix the race in the revision path.")
     );
     assert_eq!(
-        task.reserve_profile_launch(
+        task.reserve_grouped_launch(
             &obs,
             LaunchInputs {
                 scratch: None,
@@ -726,7 +708,8 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
                 input: "bad child".into(),
             },
             &[7; 32],
-            intent.clone()
+            Some(intent.clone()),
+            "fixture-group".into()
         )
         .unwrap_err(),
         CommandError::LaunchNoLongerApplies
@@ -761,7 +744,6 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
             &LaunchPolicy {
                 usage: Maximum,
                 candidates: &[],
-                planner_brief: false,
             }
         )
         .unwrap()
@@ -776,7 +758,7 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
         Action::Relaunch(Role::Worker)
     );
 
-    for state in [RetainedThread::Idle, RetainedThread::Gone] {
+    for state in [RetainedThread::Queueable, RetainedThread::Gone] {
         let retry = role_thread(open('a'), "worker-2", state);
         let selected = pick(&task, &retry, Maximum, &pool);
         assert_eq!(selected.profile(), &next);
@@ -786,13 +768,13 @@ fn applied_changes_request_a_fresh_child_and_are_consumed_once_across_replay() {
         );
     }
 
-    let review = role_thread(open('a'), "reviewer-1", RetainedThread::Idle);
+    let review = role_thread(open('a'), "reviewer-1", RetainedThread::Queueable);
     task.command(Command::Move(Phase::Reviewing), &planner, &review)
         .unwrap();
     review_changes(&mut task, &review, &reviewer);
     let second = pick(
         &task,
-        &role_thread(open('a'), "worker-2", RetainedThread::Idle),
+        &role_thread(open('a'), "worker-2", RetainedThread::Queueable),
         Normal,
         &pool,
     );
@@ -808,7 +790,7 @@ fn a_replacement_worker_preserves_earlier_author_models_for_review() {
     let mut task = working("---\nqueue: {complexity: high}\n---\nFix the issue.");
     finish_worker(&mut task, &initial);
     review_changes(&mut task, &open('a'), &reviewer);
-    let observation = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let observation = role_thread(open('a'), "worker-1", RetainedThread::Queueable);
     let intent = pick(&task, &observation, Normal, &[candidate(&revised)]);
     let (instance, bearer) = reserve(&mut task, &observation, intent, "worker-2");
     task.record_send(&instance, 2).unwrap();
@@ -840,7 +822,7 @@ fn complexity_amendments_route_legacy_retained_workers_on_their_next_selection()
     let sol = profile("sol", Heavyweight);
     let reviewer = profile("reviewer", Mechanical);
     let pool = [candidate(&luna), candidate(&worker), candidate(&sol)];
-    let obs = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let obs = role_thread(open('a'), "worker-1", RetainedThread::Queueable);
     let planner = Authority::Planner {
         actor: "fixture-planner".into(),
     };
@@ -897,7 +879,7 @@ fn complexity_amendments_route_legacy_retained_workers_on_their_next_selection()
             task.reconcile(&current(open('a'), &instance, RunState::Gone)),
             Action::Relaunch(Role::Worker)
         );
-        let retry = role_thread(open('a'), thread, RetainedThread::Idle);
+        let retry = role_thread(open('a'), thread, RetainedThread::Queueable);
         assert_eq!(pick(&task, &retry, Normal, &pool).profile(), expected);
     }
 }
@@ -917,7 +899,7 @@ fn a_raise_during_a_prepared_send_is_seen_by_each_roles_next_reservation() {
     let mut task = working("---\nqueue: {complexity: low}\n---\nFix it.");
     finish_worker(&mut task, &luna);
     review_changes(&mut task, &open('a'), &reviewer);
-    let obs = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let obs = role_thread(open('a'), "worker-1", RetainedThread::Queueable);
     let old = pick(&task, &obs, Normal, &pool);
     let (instance, _) = reserve(&mut task, &obs, old, "worker-1");
     let frozen = task.run().unwrap().launch().clone();
@@ -957,7 +939,7 @@ fn a_raise_during_a_prepared_send_is_seen_by_each_roles_next_reservation() {
         pending_complexity_reselection(&task, Role::Reviewer, Normal),
         Some((Mechanical, Worker))
     );
-    let review = role_thread(open('b'), "reviewer-1", RetainedThread::Idle);
+    let review = role_thread(open('b'), "reviewer-1", RetainedThread::Queueable);
     let next = pick(&task, &review, Normal, &pool);
     assert_eq!(next.profile(), &stronger_reviewer);
     assert_eq!(next.replaced_thread(), Some("reviewer-1"));
@@ -977,7 +959,7 @@ fn phase_moves_and_a_stale_verdict_do_not_authorize_a_climb() {
 
     let mut moved = working(brief);
     finish_worker(&mut moved, &initial);
-    let obs = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let obs = role_thread(open('a'), "worker-1", RetainedThread::Queueable);
     moved
         .command(Command::Move(Phase::Working), &planner, &obs)
         .unwrap();
@@ -994,7 +976,7 @@ fn phase_moves_and_a_stale_verdict_do_not_authorize_a_climb() {
     let mut stale = working(brief);
     finish_worker(&mut stale, &initial);
     review_changes(&mut stale, &open('a'), &reviewer);
-    let new_head = role_thread(open('b'), "worker-1", RetainedThread::Idle);
+    let new_head = role_thread(open('b'), "worker-1", RetainedThread::Queueable);
     assert_eq!(stale.reconcile(&new_head), Action::Advance(Phase::Working));
     let ordinary = pick(&stale, &new_head, Normal, &pool);
     assert_eq!(ordinary.profile(), &initial);
@@ -1050,7 +1032,7 @@ fn a_critical_fallback_reviewer_continues_until_the_ordinary_bracket_changes() {
     finish_worker(&mut task, &worker);
     review_changes(&mut task, &open('a'), &fallback);
 
-    let obs = role_thread(open('a'), "reviewer-1", RetainedThread::Idle);
+    let obs = role_thread(open('a'), "reviewer-1", RetainedThread::Queueable);
     let planner = Authority::Planner {
         actor: "fixture-planner".into(),
     };
@@ -1213,6 +1195,21 @@ fn review_entry_prefers_a_different_model_and_requires_known_authors() {
 }
 
 #[test]
+fn a_reviewer_needs_the_retained_worker_model_to_be_known() {
+    let author = Profile {
+        model: "vendor/unknown".into(),
+        ..profile("author", Mechanical)
+    };
+    let reviewer = profile("reviewer", Mechanical);
+    let mut task = working("Add a greeting.");
+    finish_worker(&mut task, &author);
+    assert!(matches!(
+        select(&task, &open('a'), Normal, &[candidate(&reviewer)]),
+        Err(ProfileLaunchError::OpaqueAuthor)
+    ));
+}
+
+#[test]
 fn capability_and_availability_filter_before_rotation() {
     let task = working("---\nqueue: {complexity: medium}\n---\nAdd facts.");
     let exact = profile("exact", Heavyweight);
@@ -1242,24 +1239,14 @@ fn capability_and_availability_filter_before_rotation() {
         &low
     );
 
-    let disabled = Candidate {
-        enabled: false,
-        ..candidate(&exact)
-    };
-    let unavailable = Candidate {
-        available: false,
-        ..candidate(&exact)
-    };
     let exhausted = Candidate {
         group_available: false,
         ..candidate(&exact)
     };
-    for other in [disabled, unavailable, exhausted] {
-        assert_eq!(
-            pick(&task, &unbound(), Maximum, &[other, candidate(&low)]).profile(),
-            &low
-        );
-    }
+    assert_eq!(
+        pick(&task, &unbound(), Maximum, &[exhausted, candidate(&low)]).profile(),
+        &low
+    );
 }
 
 #[test]
@@ -1382,7 +1369,7 @@ fn an_instructed_worker_continuation_keeps_its_profile_over_a_new_request() {
         "---\nqueue:\n  profileRequests:\n    worker: {profileId: other, reason: Try this model}\n---\nFix the issue.",
     );
     finish_worker(&mut task, &retained);
-    let observation = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let observation = role_thread(open('a'), "worker-1", RetainedThread::Queueable);
     task.command(
         Command::MoveWork {
             instruction: "Rebase the task branch".into(),
@@ -1406,7 +1393,6 @@ fn an_instructed_worker_continuation_keeps_its_profile_over_a_new_request() {
     let policy = LaunchPolicy {
         usage: Normal,
         candidates: &pool,
-        planner_brief: true,
     };
     assert!(matches!(
         decide_profile_launch(&task, &observation, &policy),
@@ -1427,7 +1413,7 @@ fn a_paused_instructed_revision_reselects_unless_the_brief_requires_its_profile(
         candidate(&reviewer),
         candidate(&alternative),
     ];
-    let observation = role_thread(open('a'), "worker-1", RetainedThread::Idle);
+    let observation = role_thread(open('a'), "worker-1", RetainedThread::Queueable);
     for required in [false, true] {
         let brief = if required {
             "---\nqueue: {complexity: low, profileRequests: {worker: {profileId: retained, reason: fixture, required: true}}}\n---\nFix the issue."
