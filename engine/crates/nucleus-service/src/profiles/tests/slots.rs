@@ -1,5 +1,7 @@
-//! Task weight slots (Spec 070 ruling 63): admitted tasks, real launches and
+//! Launch slots (Spec 070 rulings 66 and 68): admitted tasks, launches and
 //! the label `nucleus next` returns.
+
+use std::collections::BTreeSet;
 
 use axum::{
     body::{Body, to_bytes},
@@ -13,6 +15,9 @@ use crate::web::Controller;
 const KEY: [u8; 32] = [2; 32];
 const WAITING_HEAVY: &str = "Waiting for a heavy slot (1/1)";
 const FULL: &str = "Queued · capacity";
+const SIBLING_REPO: &str = "example/sibling";
+const SECOND_REPO: &str = "example/second";
+const THIRD_REPO: &str = "example/third";
 
 struct Fleet {
     service: Arc<Service>,
@@ -211,19 +216,7 @@ impl Fleet {
 
     /// Finish a running task, which frees its slot.
     async fn finish(&self, id: &str) {
-        let row = self.service.task(id).await.expect("running task");
-        let mut done = serde_json::to_value(&row.task).expect("task value");
-        done["phase"] = json!("done");
-        done["run"] = Value::Null;
-        self.service
-            .save(
-                &row,
-                serde_json::from_value(done).expect("finished task"),
-                &crate::event("done"),
-            )
-            .await
-            .expect("finish task");
-        self.service.state.lock().await.schedule.park(id);
+        finish_slot_task(&self.service, id).await;
         self.settle().await;
     }
 
@@ -314,8 +307,245 @@ impl Fleet {
     }
 }
 
+/// Scheduler fixtures use persisted tasks and synthetic send records.
+async fn project_slots(total: u32) -> (tempfile::TempDir, Service) {
+    let (home, service) =
+        crate::tests::registry_fixture(nucleus_forge::GitHub::new("fixture").unwrap());
+    {
+        let mut state = service.state.lock().await;
+        state.settings.dispatch = Some(DispatchSettings {
+            heavy_slots: total,
+            total_slots: total,
+            project_default_slots: total,
+            ..DispatchSettings::default()
+        });
+        let projects = &mut state.settings.projects.as_mut().unwrap().projects;
+        let first_project = projects.values_mut().next().unwrap();
+        let fixture = first_project.clone();
+        let mut sibling = fixture.repositories[0].clone();
+        sibling.origin = SIBLING_REPO.into();
+        first_project.repositories.push(sibling);
+        for repository in [SECOND_REPO, THIRD_REPO] {
+            let mut project = fixture.clone();
+            project.repositories[0].origin = repository.into();
+            projects.insert(repository.into(), project);
+        }
+    }
+    (home, service)
+}
+
+async fn store_slot_task(
+    service: &Service,
+    (repository, id, weight): (&str, &str, &str),
+    priority: QueuePriority,
+) {
+    let mut state = service.state.lock().await;
+    let task = Task::new(
+        Identity {
+            id: id.into(),
+            reference: id.into(),
+            repository: repository.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        brief(Some(weight), priority, "Fixture"),
+        None,
+    );
+    state.store.create(&task, &crate::event("fixture")).unwrap();
+    state
+        .observe_wait(&task, Some(WaitReason::Capacity))
+        .unwrap();
+    state.schedule.park(id);
+}
+
+fn record_slot_send(task: &mut Task, observation: &Observation) -> Role {
+    task.reconcile(observation);
+    task.reserve_launch(
+        observation,
+        LaunchInputs {
+            scratch: None,
+            thread: "fixture-role".into(),
+            started_at: 1,
+            input: "fixture wire".into(),
+        },
+        &[3; 32],
+    )
+    .unwrap();
+    let launch = task.run().unwrap().launch();
+    let role = launch.role;
+    let instance = launch.instance.clone();
+    task.record_send(&instance, 1).unwrap();
+    role
+}
+
+async fn occupy_worker_slot(service: &Service, id: &str) {
+    let row = service.task(id).await.unwrap();
+    let mut task = row.task.clone();
+    let observation = Observation {
+        forge: Observed::Known(Forge::Absent),
+        host: Observed::Unknown,
+        workspace: Observed::Known(Workspace::Clean(service.fixture().start)),
+    };
+    assert_eq!(record_slot_send(&mut task, &observation), Role::Worker);
+    service
+        .save(&row, task, &crate::event("host_send"))
+        .await
+        .unwrap();
+    service.state.lock().await.schedule.park(id);
+}
+
+async fn finish_slot_task(service: &Service, id: &str) {
+    let row = service.task(id).await.unwrap();
+    let mut done = serde_json::to_value(&row.task).unwrap();
+    done["phase"] = json!("done");
+    done["run"] = Value::Null;
+    service
+        .save(
+            &row,
+            serde_json::from_value(done).unwrap(),
+            &crate::event("done"),
+        )
+        .await
+        .unwrap();
+    service.state.lock().await.schedule.park(id);
+}
+
+async fn assert_next_slot(service: &Service, expected: &str) {
+    let mut state = service.state.lock().await;
+    let due = service
+        .take_ready(&mut state, tokio::time::Instant::now(), &BTreeSet::new())
+        .unwrap();
+    assert_eq!(due.id, expected);
+}
+
 #[tokio::test]
-async fn a_freed_slot_goes_to_the_heaviest_waiting_task_then_promoted_then_oldest() {
+async fn a_project_with_no_runs_takes_the_freed_slot_ahead_of_a_project_with_three() {
+    let (_home, service) = project_slots(4).await;
+    for id in ["running-a", "running-b", "running-c", "blocker"] {
+        store_slot_task(&service, (REPOSITORY, id, "normal"), QueuePriority::Normal).await;
+        occupy_worker_slot(&service, id).await;
+    }
+    store_slot_task(
+        &service,
+        (REPOSITORY, "busy-heavy", "heavy"),
+        QueuePriority::Normal,
+    )
+    .await;
+    store_slot_task(
+        &service,
+        (SECOND_REPO, "idle-normal", "normal"),
+        QueuePriority::Normal,
+    )
+    .await;
+
+    finish_slot_task(&service, "blocker").await;
+    assert_next_slot(&service, "idle-normal").await;
+}
+
+#[tokio::test]
+async fn promoted_work_goes_first_and_a_running_reviewer_counts_toward_its_project() {
+    let (_home, service) = project_slots(2).await;
+    let head = service.fixture().start;
+    let pr = PullRequest {
+        url: format!("https://github.com/{SIBLING_REPO}/pull/1"),
+        head: head.clone(),
+    };
+    let mut review = Task::new(
+        Identity {
+            id: "review".into(),
+            reference: "review".into(),
+            repository: SIBLING_REPO.into(),
+            base: "main".into(),
+            entry: Entry::ReviewEntry,
+            origin_thread: None,
+        },
+        brief(Some("normal"), QueuePriority::Normal, "Fixture"),
+        Some(pr.clone()),
+    );
+    let observation = Observation {
+        forge: Observed::Known(Forge::Open {
+            pr,
+            checks: CheckState::Ready,
+        }),
+        host: Observed::Unknown,
+        workspace: Observed::Known(Workspace::Clean(head)),
+    };
+    assert_eq!(record_slot_send(&mut review, &observation), Role::Reviewer);
+    service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&review, &crate::event("fixture"))
+        .unwrap();
+
+    store_slot_task(
+        &service,
+        (REPOSITORY, "blocker", "normal"),
+        QueuePriority::Normal,
+    )
+    .await;
+    occupy_worker_slot(&service, "blocker").await;
+    store_slot_task(
+        &service,
+        (REPOSITORY, "busy-heavy", "heavy"),
+        QueuePriority::Normal,
+    )
+    .await;
+    store_slot_task(
+        &service,
+        (SECOND_REPO, "idle-normal", "normal"),
+        QueuePriority::Normal,
+    )
+    .await;
+    store_slot_task(
+        &service,
+        (REPOSITORY, "busy-promoted", "light"),
+        QueuePriority::Promoted,
+    )
+    .await;
+
+    finish_slot_task(&service, "blocker").await;
+    assert_next_slot(&service, "busy-promoted").await;
+    occupy_worker_slot(&service, "busy-promoted").await;
+    finish_slot_task(&service, "busy-promoted").await;
+    assert_next_slot(&service, "idle-normal").await;
+}
+
+#[tokio::test]
+async fn a_burst_of_free_slots_gives_each_waiting_project_one_run() {
+    let (_home, service) = project_slots(3).await;
+    for id in ["running-a", "running-b", "running-c"] {
+        store_slot_task(&service, (REPOSITORY, id, "normal"), QueuePriority::Normal).await;
+        occupy_worker_slot(&service, id).await;
+    }
+    for (repository, id) in [
+        (REPOSITORY, "a-first"),
+        (REPOSITORY, "a-next"),
+        (SECOND_REPO, "b-first"),
+        (SECOND_REPO, "b-next"),
+        (THIRD_REPO, "c-first"),
+    ] {
+        store_slot_task(&service, (repository, id, "normal"), QueuePriority::Normal).await;
+    }
+    for id in ["running-a", "running-b", "running-c"] {
+        finish_slot_task(&service, id).await;
+    }
+    for id in ["a-first", "b-first", "c-first"] {
+        assert_next_slot(&service, id).await;
+        occupy_worker_slot(&service, id).await;
+    }
+    let mut state = service.state.lock().await;
+    assert!(
+        service
+            .take_ready(&mut state, tokio::time::Instant::now(), &BTreeSet::new())
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn within_one_project_a_freed_slot_goes_to_promoted_then_heaviest_then_oldest() {
     let fleet = fleet((1, 1), 32).await;
     fleet.add("blocker", "normal").await;
     for (id, weight, priority) in [
@@ -323,6 +553,7 @@ async fn a_freed_slot_goes_to_the_heaviest_waiting_task_then_promoted_then_oldes
         ("normal", "normal", QueuePriority::Normal),
         ("light-promoted", "light", QueuePriority::Promoted),
         ("heavy", "heavy", QueuePriority::Normal),
+        ("heavy-newer", "heavy", QueuePriority::Normal),
     ] {
         fleet.admit(id, Some(weight), priority).await;
     }
@@ -330,7 +561,13 @@ async fn a_freed_slot_goes_to_the_heaviest_waiting_task_then_promoted_then_oldes
     assert_eq!(fleet.label("heavy").await, FULL);
 
     let mut running = "blocker";
-    for next in ["heavy", "light-promoted", "light-old", "normal"] {
+    for next in [
+        "light-promoted",
+        "heavy",
+        "heavy-newer",
+        "light-old",
+        "normal",
+    ] {
         fleet.finish(running).await;
         fleet.assert_running(&[next]).await;
         running = next;
