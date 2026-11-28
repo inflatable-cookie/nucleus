@@ -59,8 +59,8 @@ async fn legacy_process_decisions_are_closed_as_superseded_without_a_census() {
         based_on_option_id: None,
         note: None,
     };
-    let recorded = store
-        .answer_decision(project, answered, answer, engine_stamp())
+    let (recorded, _) = store
+        .answer_decision_with_notice(project, answered, answer, engine_stamp(), None, None)
         .unwrap();
     assert!(recorded.answer.is_some());
     for _ in 0..2 {
@@ -1555,7 +1555,11 @@ async fn open_external_merge_decision(
         .lock()
         .await
         .store
-        .create(&task, &crate::event("admitted"))
+        .create_with_facts(
+            &task,
+            &crate::event("admitted"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let row = fixture.service.task("review-entry-task").await.unwrap();
     fixture.service.native_task_decision(&row).await.unwrap();

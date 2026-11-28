@@ -12,14 +12,14 @@ fn an_unnumbered_repository_fences_admission_without_changing_runs() {
     let storage = fixture_storage(root.path());
     let mut store = Store::open(&storage).expect("open");
     let (prior, running) = profile_reservation(&mut store, "active", Role::Worker);
-    store
-        .save_profile_launch(
-            &prior,
-            &running,
-            &event("run_reserved"),
-            "shared-subscription",
-        )
-        .expect("persist the frozen run");
+    save_launch(
+        &mut store,
+        &prior,
+        &running,
+        &event("run_reserved"),
+        "shared-subscription",
+    )
+    .expect("persist the frozen run");
     drop(store);
 
     let db = Connection::open(storage.database().path().join("engine.sqlite")).expect("fixture");
@@ -46,7 +46,7 @@ fn an_unnumbered_repository_fences_admission_without_changing_runs() {
     assert_eq!(execution.number, None);
     let new = task("new", "new");
     assert!(matches!(
-        store.create(&new, &event("admitted")),
+        store.create_with_facts(&new, &event("admitted"), TaskAdmissionFacts::default()),
         Err(StoreError::NumbersNeedSeed)
     ));
     assert_eq!(row(&store, "active"), execution);
@@ -71,30 +71,50 @@ fn imported_counter_values_and_failed_admissions_preserve_independent_numbering(
     let mut store = Store::open(&storage).expect("open stored counters");
     assert_eq!(
         store
-            .create(&task("one", "same"), &event("admitted"))
+            .create_with_facts(
+                &task("one", "same"),
+                &event("admitted"),
+                TaskAdmissionFacts::default()
+            )
             .expect("imported repository"),
         81
     );
     assert!(
         store
-            .create(&task("duplicate", "same"), &event("admitted"))
+            .create_with_facts(
+                &task("duplicate", "same"),
+                &event("admitted"),
+                TaskAdmissionFacts::default()
+            )
             .is_err()
     );
     assert_eq!(
         store
-            .create(&task("two", "two"), &event("admitted"))
+            .create_with_facts(
+                &task("two", "two"),
+                &event("admitted"),
+                TaskAdmissionFacts::default()
+            )
             .expect("next reserved number"),
         82
     );
     assert_eq!(
         store
-            .create(&task_in("other", "example/other"), &event("admitted"))
+            .create_with_facts(
+                &task_in("other", "example/other"),
+                &event("admitted"),
+                TaskAdmissionFacts::default()
+            )
             .expect("previously advanced repository"),
         100
     );
     assert_eq!(
         store
-            .create(&task_in("fresh", "example/fresh"), &event("admitted"))
+            .create_with_facts(
+                &task_in("fresh", "example/fresh"),
+                &event("admitted"),
+                TaskAdmissionFacts::default()
+            )
             .expect("new repository"),
         1
     );

@@ -186,7 +186,7 @@ async fn configured_profiles_participate_in_work_review_and_groups() {
     );
     let instance = worker.intent.instance().to_owned();
     let bearer = task
-        .reserve_profile_launch(
+        .reserve_grouped_launch(
             &observation,
             LaunchInputs {
                 scratch: None,
@@ -195,7 +195,8 @@ async fn configured_profiles_participate_in_work_review_and_groups() {
                 started_at: 1,
             },
             &[7; 32],
-            worker.intent,
+            Some(worker.intent),
+            "fixture-group".into(),
         )
         .unwrap();
     task.record_send(&instance, 2).unwrap();
@@ -920,13 +921,10 @@ fn finish_profile_run(
             usage: UsageLevel::Normal,
             candidates: &[Candidate {
                 profile,
-                enabled: true,
-                available: true,
                 group_available: true,
                 supported_efforts: &[],
                 counts: RotationCounts::default(),
             }],
-            planner_brief: true,
         },
     )
     .unwrap()
@@ -1113,6 +1111,10 @@ async fn retained_role_endpoints(
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "follow both retained roles from the shared model to one notice"
+)]
 async fn retained_roles_launch_on_a_shared_model_and_leave_a_single_reservation_notice() {
     let profiles = configured_profiles();
     let [author, shared, reviewer, _] = profiles.profiles.as_slice() else {
@@ -1155,7 +1157,14 @@ async fn retained_roles_launch_on_a_shared_model_and_leave_a_single_reservation_
                 profiles: vec![shared.clone()],
                 ..profiles.as_ref().clone()
             }));
-            state.store.create(&task, &crate::event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    &task,
+                    &crate::event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
         }
         let service = Arc::new(service);
         if role == Role::Worker {
@@ -1274,7 +1283,14 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
                 }
             }
             state.settings.profiles = Some(Arc::new(settings));
-            state.store.create(&task, &crate::event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    &task,
+                    &crate::event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
         }
         let row = service.task(id).await.unwrap();
         assert_eq!(row.task.threads().get(role), Some(thread));
@@ -1326,6 +1342,10 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "follow each stored amendment through next and its launch"
+)]
 async fn complexity_amendments_route_a_stored_worker_and_explain_reselection_in_next() {
     let profiles: Profiles = serde_json::from_value(json!({
         "profiles": [
@@ -1365,7 +1385,14 @@ async fn complexity_amendments_route_a_stored_worker_and_explain_reselection_in_
         {
             let mut state = service.state.lock().await;
             state.settings.profiles = Some(Arc::new(profiles.clone()));
-            state.store.create(&task, &crate::event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    &task,
+                    &crate::event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
         }
         let service = Arc::new(service);
         service
@@ -1555,7 +1582,14 @@ async fn paused_reserved_reminders_reselect_from_stored_rows_unless_required() {
                     .unwrap();
             }
             state.settings.profiles = Some(Arc::new(profiles));
-            state.store.create(&task, &crate::event("fixture")).unwrap();
+            state
+                .store
+                .create_with_facts(
+                    &task,
+                    &crate::event("fixture"),
+                    nucleus_store::TaskAdmissionFacts::default(),
+                )
+                .unwrap();
         }
         let run = task.run().unwrap();
         let missing = run.report_reminder_for().unwrap();

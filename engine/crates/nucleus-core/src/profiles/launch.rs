@@ -16,9 +16,6 @@ use crate::{
 pub struct LaunchPolicy<'a> {
     pub usage: UsageLevel,
     pub candidates: &'a [Candidate<'a>],
-    /// The service authenticates the brief at admission and amendment.
-    /// Text in the brief cannot establish that authority by itself.
-    pub planner_brief: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,7 +232,9 @@ fn select_launch(
     };
 
     let brief = BriefPolicy::parse(&task.brief().text).map_err(ProfileLaunchError::Brief)?;
-    let request = brief.request(role).filter(|_| policy.planner_brief);
+    // The service authenticates a brief at admission and amendment, so its
+    // profile request carries planner authority.
+    let request = brief.request(role);
     let complexity = brief.complexity.unwrap_or_default();
     let reselect = reselection_target(task, role, &brief, policy.usage);
     let demand = demand(task, observation, role, &brief, policy.usage, reselect);

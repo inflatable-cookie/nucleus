@@ -271,7 +271,11 @@ async fn record_report(service: &Service, decision: Review) -> String {
         .lock()
         .await
         .store
-        .create(&task, &event("fixture"))
+        .create_with_facts(
+            &task,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     service
         .report(
@@ -764,7 +768,11 @@ async fn changed_review_authority_invalidates_publication_wait_with_same_label()
         .lock()
         .await
         .store
-        .create(&seed, &event("fixture"))
+        .create_with_facts(
+            &seed,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     let (_other_home, other) = registry_fixture(GitHub::new("fixture").unwrap());
     other
@@ -772,7 +780,11 @@ async fn changed_review_authority_invalidates_publication_wait_with_same_label()
         .lock()
         .await
         .store
-        .create(&seed, &event("fixture"))
+        .create_with_facts(
+            &seed,
+            &event("fixture"),
+            nucleus_store::TaskAdmissionFacts::default(),
+        )
         .unwrap();
     for (target, decision) in [(&service, Review::Approve), (&other, Review::Changes)] {
         target

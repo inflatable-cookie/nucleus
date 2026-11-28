@@ -1,15 +1,10 @@
-use std::time::Duration;
-
 use nucleus_core::{Action, Answer, Authority, Command, WaitReason};
 use nucleus_store::TaskRow;
-use tokio::time::Instant;
 
 use crate::{Preflight, Service, ServiceError, event};
 
 #[cfg(test)]
 mod tests;
-
-const RESTORED_BINDING_RECHECK: Duration = Duration::from_secs(15);
 
 pub(super) fn reference(row: &TaskRow) -> String {
     row.task
@@ -39,13 +34,6 @@ impl Service {
             return Ok(Action::Wait(WaitReason::Question));
         }
         let _fence = self.effect(row).await?;
-        let id = &row.task.identity().id;
-        // An old profile may hold a decision that the TypeScript bridge already offered.
-        if self.state.lock().await.store.inbox_binding(id)?.is_some() {
-            return Err(ServiceError::InboxUnavailable {
-                until: Instant::now() + RESTORED_BINDING_RECHECK,
-            });
-        }
         self.native_task_decision(row).await
     }
 

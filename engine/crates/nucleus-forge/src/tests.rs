@@ -50,7 +50,7 @@ fn task_with_approval() -> Task {
         workspace: Observed::Known(Workspace::Clean(sha('a'))),
     };
     let credential = task
-        .reserve_launch(
+        .reserve_grouped_launch(
             &obs,
             LaunchInputs {
                 scratch: None,
@@ -59,6 +59,8 @@ fn task_with_approval() -> Task {
                 input: "review".into(),
             },
             &[7; 32],
+            None,
+            "fixture-group".into(),
         )
         .expect("launch reviewer");
     let instance = task.run().expect("run").launch().instance.clone();

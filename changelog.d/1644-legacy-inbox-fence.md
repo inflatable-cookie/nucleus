@@ -1,0 +1,1 @@
+The engine no longer reads decision bindings left by the retired TypeScript bridge, so a leftover row can't keep a task's Inbox decision from being offered. Dead engine code is also removed: unused observation and store calls, unused selection inputs, and the board's "Waiting for the thread to be free" wording for a wait the engine never reported.

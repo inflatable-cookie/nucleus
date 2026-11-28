@@ -266,8 +266,9 @@ Later decisions carry their own attribution.
       cutover. Each active Rust bridge version had to return a recorded answer
       or confirm withdrawal before the scheduler could offer it in Rust.
     - Milestone 4 retires the TypeScript decision bridge and its Rust client.
-      A restored profile that still holds a legacy decision binding keeps its
-      native offer fenced until the operator authorizes forward recovery.
+      The engine no longer reads the bridge's decision bindings, so a row left
+      in a restored profile holds nothing (planner brief, 2026-11-27,
+      nucleus#1644; the live profile held no rows).
 
 19. **Configurable storage; an external volume is opt-in.** Tom, 2026-11-24: "Need to make sure the rust version uses paths on Stash when it gets going - should all be configurable, need the config in place so we don't churn on the internal SSD", then "An external drive shouldn't be a requirement - most people won't want that. It should be opt-in, default to sensible internal drive locations".
     - Storage exposes the active roots and the configured placement for worktrees, scratch and builds. Existing explicit roots take precedence. `TMPDIR`, `TMP` and `TEMP` for engine commands point at scratch, which also holds run tickets and evidence.

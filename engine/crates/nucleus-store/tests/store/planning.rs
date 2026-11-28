@@ -1,7 +1,7 @@
 use nucleus_store::planning::{
-    DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption, DecisionTarget, Horizon,
-    ItemContent, ItemDisposition, ItemKind, ItemSource, ItemState, LaneDocument, Plan, PlanLane,
-    RecordKind, WriteAt,
+    Decision, DecisionAnswerInput, DecisionInput, DecisionKind, DecisionOption, DecisionTarget,
+    Horizon, Item, ItemContent, ItemDisposition, ItemKind, ItemSource, ItemState, LaneDocument,
+    Plan, PlanLane, PromotionCheck, RecordKind, WriteAt,
 };
 
 use super::*;
@@ -10,6 +10,39 @@ const STAMP: WriteAt<'_> = WriteAt {
     actor: "planner",
     at_ms: 10,
 };
+
+fn promote_item(
+    store: &mut Store,
+    source: &ItemSource,
+    task: &Task,
+    event: &EventDraft,
+    stamp: WriteAt<'_>,
+) -> Result<(Item, i64), StoreError> {
+    let check = PromotionCheck {
+        body: &task.brief().text,
+        version: None,
+        source_body: None,
+    };
+    store.promote_item_with_facts(
+        source,
+        check,
+        task,
+        event,
+        stamp,
+        TaskAdmissionFacts::default(),
+    )
+}
+
+fn answer_decision(
+    store: &mut Store,
+    project: &str,
+    id: &str,
+    input: DecisionAnswerInput,
+    stamp: WriteAt<'_>,
+) -> Result<Decision, StoreError> {
+    let (decision, _) = store.answer_decision_with_notice(project, id, input, stamp, None, None)?;
+    Ok(decision)
+}
 
 #[test]
 fn plan_write_checks_completion_criteria_and_keeps_the_last_valid_order() {
@@ -65,7 +98,11 @@ fn restored_pending_project_import_keeps_its_journal_and_fences_startup() {
     let storage = fixture_storage(scratch.path());
     let mut store = Store::open(&storage).expect("store");
     store
-        .create(&task("1", "fixture#1"), &event("admitted"))
+        .create_with_facts(
+            &task("1", "fixture#1"),
+            &event("admitted"),
+            TaskAdmissionFacts::default(),
+        )
         .expect("admit");
     drop(store);
 
@@ -100,10 +137,10 @@ fn promotion_rolls_back_on_task_conflict_and_retains_the_source() {
     let mut store = Store::open(&storage).expect("store");
     let existing = task("1", "fixture#1");
     store
-        .create(&existing, &event("admitted"))
+        .create_with_facts(&existing, &event("admitted"), TaskAdmissionFacts::default())
         .expect("existing task");
     let lead = store
-        .add_item(
+        .add_item_with_author_project(
             "project",
             "idea".into(),
             ItemKind::Lead,
@@ -112,6 +149,7 @@ fn promotion_rolls_back_on_task_conflict_and_retains_the_source() {
                 body: existing.brief().text.clone(),
                 lanes: vec![],
             },
+            None,
             STAMP,
         )
         .expect("add lead");
@@ -120,12 +158,8 @@ fn promotion_rolls_back_on_task_conflict_and_retains_the_source() {
         item_id: lead.id,
     };
     let duplicate = task("2", "fixture#1");
-    assert!(
-        store
-            .promote_item(&source, &duplicate, &event("admitted"), STAMP)
-            .is_err()
-    );
-    assert!(store.get("2").expect("task read").is_none());
+    assert!(promote_item(&mut store, &source, &duplicate, &event("admitted"), STAMP).is_err());
+    assert!(stored(&store, "2").expect("task read").is_none());
     assert_eq!(
         store
             .item("project", "idea")
@@ -143,9 +177,8 @@ fn promotion_rolls_back_on_task_conflict_and_retains_the_source() {
     );
 
     let admitted = task("3", "fixture#2");
-    let (promoted, number) = store
-        .promote_item(&source, &admitted, &event("admitted"), STAMP)
-        .expect("promote");
+    let (promoted, number) =
+        promote_item(&mut store, &source, &admitted, &event("admitted"), STAMP).expect("promote");
     assert_eq!(number, 2);
     assert_eq!(
         promoted.state,
@@ -216,9 +249,7 @@ fn legacy_duplicate_decision_labels_remain_answerable_by_id() {
         based_on_option_id: None,
         note: None,
     };
-    let result = store
-        .answer_decision("project", "legacy", answer.clone(), STAMP)
-        .unwrap();
+    let result = answer_decision(&mut store, "project", "legacy", answer.clone(), STAMP).unwrap();
     assert_eq!(result.input, input);
     assert_eq!(result.answer.unwrap().input, answer);
 }
@@ -255,7 +286,9 @@ fn task_decision_keeps_one_answer_and_hides_obsolete_questions() {
         identity.entry = Entry::ReviewEntry;
         let mut task = Task::new(identity, "Review entry.".into(), Some(pr.clone()));
         assert!(matches!(task.reconcile(&observed), Action::Ask(_)));
-        store.create(&task, &event("admitted")).expect("task");
+        store
+            .create_with_facts(&task, &event("admitted"), TaskAdmissionFacts::default())
+            .expect("task");
         let target = DecisionTarget {
             task_id: id.into(),
             task_version: 1,
@@ -276,7 +309,7 @@ fn task_decision_keeps_one_answer_and_hides_obsolete_questions() {
             note: None,
         };
         assert!(matches!(
-            store.answer_decision("project", &decision.id, custom, STAMP),
+            answer_decision(&mut store, "project", &decision.id, custom, STAMP),
             Err(StoreError::PlanningInput)
         ));
 
@@ -287,9 +320,9 @@ fn task_decision_keeps_one_answer_and_hides_obsolete_questions() {
             note: Some("Accepted.".into()),
         };
         if id == "answered" {
-            let answered = store
-                .answer_decision("project", &decision.id, answer.clone(), STAMP)
-                .expect("answer");
+            let answered =
+                answer_decision(&mut store, "project", &decision.id, answer.clone(), STAMP)
+                    .expect("answer");
             store
                 .withdraw_task_decision("project", &target, STAMP)
                 .expect("cleanup");
@@ -306,12 +339,11 @@ fn task_decision_keeps_one_answer_and_hides_obsolete_questions() {
                 &observed,
             )
             .expect("cancel");
-            store
-                .save_row(&row(&store, id), &task, &event("cancel"))
-                .expect("cancel row");
+            let current = row(&store, id);
+            save_row(&mut store, &current, &task, &event("cancel")).expect("cancel row");
         }
         assert!(matches!(
-            store.answer_decision("project", &decision.id, answer, STAMP),
+            answer_decision(&mut store, "project", &decision.id, answer, STAMP),
             Err(StoreError::PlanningConflict)
         ));
         assert!(
@@ -334,7 +366,14 @@ fn retained_history_preserves_item_times_and_edit_versions() {
         lanes: vec![],
     };
     store
-        .add_item("project", "i".into(), ItemKind::Papercut, body(0), STAMP)
+        .add_item_with_author_project(
+            "project",
+            "i".into(),
+            ItemKind::Papercut,
+            body(0),
+            None,
+            STAMP,
+        )
         .unwrap();
     let mut last = 0;
     for v in 1..=25 {
@@ -440,11 +479,12 @@ fn versioned_edits_apply_to_leads_at_their_current_version() {
         lanes: vec![],
     };
     store
-        .add_item(
+        .add_item_with_author_project(
             "project",
             "lead".into(),
             ItemKind::Lead,
             content("Lead"),
+            None,
             STAMP,
         )
         .unwrap();
@@ -542,7 +582,7 @@ fn reopen_retains_history_and_fences_stale_versions() {
         ),
     ] {
         store
-            .add_item(
+            .add_item_with_author_project(
                 "project",
                 id.into(),
                 ItemKind::Papercut,
@@ -551,6 +591,7 @@ fn reopen_retains_history_and_fences_stale_versions() {
                     body: "Body".into(),
                     lanes: vec![],
                 },
+                None,
                 STAMP,
             )
             .unwrap();
@@ -598,7 +639,7 @@ fn assess_item_writes_history_and_tell_atomically() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut store = Store::open(&fixture_storage(scratch.path())).expect("store");
     store
-        .add_item(
+        .add_item_with_author_project(
             "project",
             "i-1".into(),
             ItemKind::Lead,
@@ -607,6 +648,7 @@ fn assess_item_writes_history_and_tell_atomically() {
                 body: "Body".into(),
                 lanes: vec![],
             },
+            None,
             STAMP,
         )
         .unwrap();

@@ -145,7 +145,7 @@ pub(crate) const fn retry(wait: Option<WaitReason>) -> (Duration, Priority) {
             | WaitReason::Hold
             | WaitReason::MergeHold,
         ) => (LIVE_CHECK, Priority::Refresh),
-        Some(WaitReason::HostUnknown | WaitReason::RetainedThreadBusy | WaitReason::Question) => {
+        Some(WaitReason::HostUnknown | WaitReason::Question) => {
             (T3_RETRY_DELAY, Priority::Decision)
         }
         Some(WaitReason::ForgeUnknown) => (FORGE_RETRY, Priority::Decision),

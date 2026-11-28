@@ -2693,6 +2693,7 @@ mod tests {
     use nucleus_core::{Authority, Command, Entry, PullRequest, Review};
     use nucleus_forge::GitHub;
     use nucleus_hosts::{Dispatch, RunRequest};
+    use nucleus_store::TaskAdmissionFacts;
     use serde_json::json;
 
     use super::*;
@@ -2720,7 +2721,7 @@ mod tests {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
             .unwrap();
         let id = &task.identity().id;
         service
@@ -2794,7 +2795,7 @@ mod tests {
         let mut task = Task::new(template.identity().clone(), "Scoped fixture".into(), None);
         task.reconcile(&observation);
         let credential = task
-            .reserve_launch(
+            .reserve_grouped_launch(
                 &observation,
                 LaunchInputs {
                     thread: "worker".into(),
@@ -2803,6 +2804,8 @@ mod tests {
                     scratch: Some(scratch.clone()),
                 },
                 &[9; 32],
+                None,
+                "fixture-group".into(),
             )
             .unwrap();
         let instance = task.run().unwrap().launch().instance.clone();
@@ -2835,7 +2838,7 @@ mod tests {
             .create(&reviewer_scratch)
             .unwrap();
         let key = task
-            .reserve_launch(
+            .reserve_grouped_launch(
                 &observation,
                 LaunchInputs {
                     thread: "reviewer".into(),
@@ -2844,6 +2847,8 @@ mod tests {
                     scratch: Some(reviewer_scratch),
                 },
                 &[9; 32],
+                None,
+                "fixture-group".into(),
             )
             .unwrap();
         settle_both_reviewers(&mut task, &mut observation, &head, key.as_bytes(), &scratch);
@@ -2865,7 +2870,7 @@ mod tests {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
             .unwrap();
         let row = service.task(id).await.unwrap();
         assert!(row.task.run().is_none());
@@ -3534,7 +3539,7 @@ mod tests {
                 .lock()
                 .await
                 .store
-                .create(&task, &event("admitted"))
+                .create_with_facts(&task, &event("admitted"), TaskAdmissionFacts::default())
                 .expect("seed");
             let row = service.task(id).await.expect("row");
             let checkout = worktrees
@@ -3602,7 +3607,7 @@ mod tests {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
             .expect("seed");
         let binding = service.binding(&checkout).expect("binding");
         let native_reads = Arc::new(AtomicUsize::new(0));
@@ -3740,7 +3745,7 @@ mod tests {
                 .lock()
                 .await
                 .store
-                .create(&task, &event("fixture"))
+                .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
                 .expect("seed");
             let row = service.task("reviewer").await.expect("reviewing row");
             assert_eq!(row.task.phase(), Phase::Reviewing);
@@ -3830,7 +3835,7 @@ mod tests {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
             .expect("seed");
         let row = service.task("reviewer").await.expect("original row");
         let result = service
@@ -3919,7 +3924,7 @@ mod tests {
                 .lock()
                 .await
                 .store
-                .create(&task, &event("fixture"))
+                .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
                 .expect("seed");
             let row = service.task("reviewer").await.expect("revoked row");
             let result = Box::pin(service.stop_run(
@@ -4118,7 +4123,7 @@ mod tests {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
             .unwrap();
         let advance = async |service: &Service| {
             let row = service.task("worker").await.unwrap();
@@ -4231,7 +4236,7 @@ mod tests {
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
             .unwrap();
         let merged = Arc::new(AtomicBool::new(false));
         let puts = Arc::new(AtomicUsize::new(0));
@@ -4338,7 +4343,7 @@ mod tests {
                 .lock()
                 .await
                 .store
-                .create(&task, &event("fixture"))
+                .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
                 .expect("seed merge");
             let host = service.host.pass(service.storage.scratch().path());
             let row = service.task("reviewer").await.expect("old approval");
@@ -4390,7 +4395,7 @@ mod tests {
                 .lock()
                 .await
                 .store
-                .create(&task, &event("fixture"))
+                .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
                 .unwrap();
 
             let merged = Arc::new(AtomicBool::new(false));
@@ -4493,7 +4498,7 @@ mod tests {
                 .lock()
                 .await
                 .store
-                .create(&task, &event("fixture"))
+                .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
                 .expect("seed");
         }
         let started = tokio::time::Instant::now();
@@ -4649,7 +4654,7 @@ mod tests {
                 .lock()
                 .await
                 .store
-                .create(&task, &event("fixture"))
+                .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
                 .expect("fixture row");
             let row = service
                 .task(&task.identity().id)
@@ -4931,13 +4936,14 @@ mod tests {
             })
             .unwrap();
         let thread = inputs.thread.clone();
-        task.reserve_launch(&observation, inputs, &[4; 32]).unwrap();
+        task.reserve_grouped_launch(&observation, inputs, &[4; 32], None, "fixture-group".into())
+            .unwrap();
         service
             .state
             .lock()
             .await
             .store
-            .create(&task, &event("fixture"))
+            .create_with_facts(&task, &event("fixture"), TaskAdmissionFacts::default())
             .unwrap();
         (service.task(id).await.unwrap(), thread)
     }
