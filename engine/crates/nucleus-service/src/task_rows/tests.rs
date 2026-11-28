@@ -1655,11 +1655,7 @@ async fn native_rows_follow_dependency_wait_run_and_question() {
     );
 }
 
-#[tokio::test]
-async fn a_planner_question_snoozes_once_idle_and_a_person_question_stays_visible() {
-    let fixture = Fixture::new(&pending_task()).await;
-    let service = &fixture.service;
-    let head = &service.fixture().start;
+fn planner_question_task(head: &nucleus_core::Head) -> (Task, String, nucleus_core::Observation) {
     let (mut task, credential, mut observation) = reservation(ID, Entry::ReviewEntry, head);
     let run = task.run().unwrap().launch().clone();
     task.record_send(&run.instance, 1).unwrap();
@@ -1690,6 +1686,15 @@ async fn a_planner_question_snoozes_once_idle_and_a_person_question_stays_visibl
         task.reconcile(&observation),
         Action::Ask(Question::Repair(Repair::MergeBlocked))
     );
+    (task, run.thread, observation)
+}
+
+#[tokio::test]
+async fn a_planner_question_snoozes_once_idle_and_a_person_question_stays_visible() {
+    let fixture = Fixture::new(&pending_task()).await;
+    let service = &fixture.service;
+    let head = &service.fixture().start;
+    let (task, thread, observation) = planner_question_task(head);
     {
         let mut state = service.state.lock().await;
         state
@@ -1705,14 +1710,13 @@ async fn a_planner_question_snoozes_once_idle_and_a_person_question_stays_visibl
     assert_eq!(card["phase"], "merging");
     assert_eq!(card["attention"], "waiting");
     assert_eq!(card["stateLabel"], "Merging · planner");
-    let clock = 1_893_456_000_000;
     service
         .visibility_time
-        .store(clock, std::sync::atomic::Ordering::Relaxed);
-    fixture.child(&run.thread, true);
+        .store(1_893_456_000_000, std::sync::atomic::Ordering::Relaxed);
+    fixture.child(&thread, true);
     fixture.sync().await;
     assert!(fixture.commands().is_empty());
-    fixture.child(&run.thread, false);
+    fixture.child(&thread, false);
     fixture.native.lock().unwrap().child.as_mut().unwrap()["latestRunCompletedAt"] =
         json!("2030-01-01T00:00:00Z");
     fixture.sync().await;
