@@ -57,6 +57,28 @@ fn operator_snooze_is_not_projected_as_board_wait_text() {
 }
 
 #[tokio::test]
+async fn the_row_refresh_route_is_gone() {
+    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
+    seed_task(&service, &task).await;
+    let api = router(
+        Arc::new(service),
+        [Controller {
+            credential: BOARD_KEY,
+            authority: Authority::Operator {
+                actor: "fixture".into(),
+            },
+        }],
+    );
+    let found = get_as(&api, "/v1/tasks/worker", &BOARD_KEY).await;
+    assert_eq!(found.status(), StatusCode::OK);
+    assert_eq!(
+        post_json(&api, "/v1/tasks/worker/acp/refresh", &BOARD_KEY, &json!({})).await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
 async fn only_a_shell_active_role_gets_the_legacy_hint_without_a_hold() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
     let (mut task, _, _) = crate::tests::reservation_at(
@@ -136,7 +158,6 @@ async fn only_a_shell_active_role_gets_the_legacy_hint_without_a_hold() {
                     &nucleus_store::ParentDelivery {
                         version: row.version,
                         command: write.command_id().unwrap().into(),
-                        refresh: false,
                         wire: Some(serde_json::to_string(frozen).unwrap()),
                         legacy_prompt: None,
                         due_ms: 0,

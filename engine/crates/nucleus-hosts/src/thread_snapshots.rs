@@ -89,29 +89,6 @@ impl<'a> ShellCustody<'a> {
             _ => RowChildren::Unknown,
         }
     }
-
-    pub(crate) fn changed_field(&self, other: &Self) -> Option<&'static str> {
-        [
-            "id",
-            "projectId",
-            "worktreePath",
-            "branch",
-            "lineage",
-            "providerInstanceId",
-            "modelSelection",
-            "activeProviderThreadId",
-            "archivedAt",
-            "deletedAt",
-            "activeRunId",
-            "status",
-            "latestRunId",
-            "latestRunCompletedAt",
-            "pendingRuntimeRequest",
-            "pendingBackgroundTasks",
-        ]
-        .into_iter()
-        .find(|&field| self.0.get(field) != other.0.get(field))
-    }
 }
 
 pub(crate) struct ThreadSnapshots {
