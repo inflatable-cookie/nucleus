@@ -17,13 +17,16 @@ const FULL: &str = "Queued · capacity";
 struct Fleet {
     service: Arc<Service>,
     api: Router,
-    servers: [tokio::task::JoinHandle<()>; 2],
-    _home: tempfile::TempDir,
+    project_slots: u32,
+    servers: Servers,
+    home: tempfile::TempDir,
 }
 
-impl Drop for Fleet {
+struct Servers([tokio::task::JoinHandle<()>; 2]);
+
+impl Drop for Servers {
     fn drop(&mut self) {
-        for server in &self.servers {
+        for server in &self.0 {
             server.abort();
         }
     }
@@ -40,7 +43,7 @@ fn brief(weight: Option<&str>, priority: QueuePriority, body: &str) -> String {
 }
 
 /// A service with these heavy, normal and light slots, launching on a fixture host.
-async fn fleet((heavy, normal, light): (u32, u32, u32), project: u32) -> Fleet {
+async fn fleet(slots: (u32, u32, u32), project: u32) -> Fleet {
     let (forge, forge_server) = serve_forge(Router::new().route(
         &format!("/repos/{REPOSITORY}/pulls"),
         get(|| async { Json(Vec::<Value>::new()) }),
@@ -54,6 +57,23 @@ async fn fleet((heavy, normal, light): (u32, u32, u32), project: u32) -> Fleet {
     })
     .await;
     service.host = host;
+    assemble(
+        service,
+        slots,
+        project,
+        Servers([forge_server, native_server]),
+        home,
+    )
+    .await
+}
+
+async fn assemble(
+    service: Service,
+    (heavy, normal, light): (u32, u32, u32),
+    project: u32,
+    servers: Servers,
+    home: tempfile::TempDir,
+) -> Fleet {
     {
         let mut state = service.state.lock().await;
         state.settings.dispatch = Some(DispatchSettings {
@@ -65,7 +85,9 @@ async fn fleet((heavy, normal, light): (u32, u32, u32), project: u32) -> Fleet {
         });
         state.settings.profiles = Some(Arc::new(
             serde_json::from_value(json!({"profiles": [
-                {"name":"Worker","selection":{"id":"worker","provider":"codex","model":"first"}}
+                {"name":"Worker","selection":{"id":"worker","provider":"codex","model":"first"}},
+                {"name":"Reviewer","selection":{"id":"review","provider":"codex","model":"second",
+                    "capability":"mechanical"}}
             ]}))
             .expect("profiles"),
         ));
@@ -83,12 +105,54 @@ async fn fleet((heavy, normal, light): (u32, u32, u32), project: u32) -> Fleet {
     Fleet {
         service,
         api,
-        servers: [forge_server, native_server],
-        _home: home,
+        project_slots: project,
+        servers,
+        home,
     }
 }
 
 impl Fleet {
+    /// Open a new service over the same stored rows, as a process restart does.
+    async fn restart(self, slots: (u32, u32, u32), prepare: impl FnOnce(&mut Service)) -> Self {
+        let Self {
+            service,
+            api,
+            project_slots,
+            servers,
+            home,
+        } = self;
+        drop(api);
+        let Ok(mut old) = Arc::try_unwrap(service) else {
+            panic!("the stopped service is still shared");
+        };
+        let settings = old.settings.clone();
+        let project = old.fixture().clone();
+        let host = nucleus_hosts::T3::new(old.host.endpoint(), "fixture").expect("fixture host");
+        let unused = nucleus_forge::GitHub::new("unused-fixture").expect("unused forge");
+        let forge = std::mem::replace(&mut old.forge, unused);
+        let (callback, command) = (old.callback, old.report_command.clone());
+        drop(old);
+        let mut service = Service::open(&settings, project, host, forge, callback, command)
+            .expect("restarted service");
+        prepare(&mut service);
+        assemble(service, slots, project_slots, servers, home).await
+    }
+
+    /// Store a new task without running any decision for it.
+    async fn queue(&self, id: &str, weight: &str) {
+        self.service
+            .admit(
+                id.into(),
+                id.into(),
+                brief(Some(weight), QueuePriority::Normal, "Fixture"),
+                &Authority::Operator {
+                    actor: "fixture".into(),
+                },
+            )
+            .await
+            .expect("admit task");
+    }
+
     async fn admit(&self, id: &str, weight: Option<&str>, priority: QueuePriority) {
         self.service
             .admit(
@@ -388,4 +452,81 @@ async fn running_work_is_never_preempted_and_a_new_weight_counts_at_once() {
     fleet.amend("first", "light").await;
     fleet.amend("second", "light").await;
     fleet.assert_running(&["first", "second", "third"]).await;
+}
+
+#[tokio::test]
+async fn a_restart_ranks_a_heavy_task_beyond_the_first_scan_page() {
+    let fleet = fleet((0, 0, 0), 32).await;
+    fleet.queue("early-light", "light").await;
+    // One scan page holds 32 tasks, so the heavy task is on the next one.
+    for number in 0..32 {
+        fleet.queue(&format!("filler-{number:02}"), "light").await;
+    }
+    fleet.queue("late-heavy", "heavy").await;
+    fleet.settle().await;
+    fleet.assert_running(&[]).await;
+
+    let fleet = fleet.restart((1, 0, 0), |_| {}).await;
+    fleet.settle().await;
+    fleet.assert_running(&["late-heavy"]).await;
+}
+
+#[tokio::test]
+async fn a_restart_ranks_a_waiting_heavy_reviewer_before_an_earlier_light_task() {
+    let profile = |id: &str, model: &str| -> Profile {
+        serde_json::from_value(json!({"id": id, "provider": "codex", "model": model}))
+            .expect("profile")
+    };
+    let (author, reviewer) = (profile("author", "first"), profile("review", "second"));
+    let fleet = fleet((0, 0, 0), 32).await;
+    fleet.queue("early-light", "light").await;
+    // A stored task between its second worker report and the next review. The
+    // stopped service never decided either task.
+    let (task, binding) = retained_role_task(
+        &fleet.service,
+        "heavy-review",
+        &author,
+        &reviewer,
+        Role::Reviewer,
+        "---\nqueue: {complexity: medium, weight: heavy}\n---\nFix a typo.",
+    );
+    assert_eq!(task.phase(), Phase::Reviewing);
+    assert!(task.run().is_none());
+    fleet
+        .service
+        .state
+        .lock()
+        .await
+        .store
+        .create(&task, &crate::event("fixture"))
+        .expect("stored reviewer");
+
+    let published = task.pull_request().expect("published pull").clone();
+    let mut pull = forge_pull(&published.head);
+    pull["head"]["ref"] = json!(binding.branch);
+    let checks = forge_checks(&published.head);
+    let (forge, forge_server) = serve_forge(
+        Router::new()
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls"),
+                get(|| async { Json(Vec::<Value>::new()) }),
+            )
+            .route(
+                &format!("/repos/{REPOSITORY}/pulls/1"),
+                get(move || async { Json(pull) }),
+            )
+            .route("/graphql", post(move || async { Json(checks) })),
+    )
+    .await;
+    let fleet = fleet
+        .restart((1, 0, 0), |service| service.forge = forge)
+        .await;
+    fleet.settle().await;
+    fleet.assert_running(&["heavy-review"]).await;
+    let row = fleet.service.task("heavy-review").await.expect("review");
+    assert_eq!(
+        row.task.run().expect("review run").launch().role,
+        Role::Reviewer
+    );
+    forge_server.abort();
 }

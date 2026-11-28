@@ -167,6 +167,8 @@ pub(crate) struct Schedule {
     archive_cursor: Option<String>,
     resume: Option<Resume>,
     served_closeout: bool,
+    /// Whether this process has ranked every stored capacity waiter.
+    restored: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,6 +193,7 @@ impl Schedule {
             archive_cursor: None,
             resume: None,
             served_closeout: false,
+            restored: false,
         }
     }
 
@@ -299,6 +302,14 @@ impl Schedule {
             return Ok(false);
         }
         let housekeeping = self.archive_cursor.is_none();
+        // A restart loses the capacity waiters, and the paged scan reaches only
+        // first launches, a page at a time. Rank every waiting run before any
+        // pass can give one a slot.
+        let waiting = if self.restored {
+            Vec::new()
+        } else {
+            store.slot_candidates()?
+        };
         let ids = store.active_ids(self.cursor.as_deref(), SCAN_PAGE)?;
         let archival =
             store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE, parenting)?;
@@ -312,6 +323,13 @@ impl Schedule {
             } else {
                 SCAN_INTERVAL
             };
+        self.restored = true;
+        for seed in waiting {
+            self.wake(&seed.id, now, Priority::Decision);
+            if let Some(admitted) = seed.admission_order {
+                capacity_waiters.insert((seed.weight, seed.queue_priority, admitted, seed.id));
+            }
+        }
         for seed in ids {
             self.tasks.entry(seed.id.clone()).or_insert_with(|| {
                 if let Some(admitted) = seed.admission_order {
@@ -493,6 +511,7 @@ mod tests {
         schedule
             .seed(&store, now, true, &mut capacity_waiters)
             .unwrap();
+        let first_page = active.len();
         for seed in active {
             assert_eq!(
                 schedule.due(&seed.id),
@@ -513,7 +532,9 @@ mod tests {
                 .map(|task| (task.id, task.priority)),
             Some(("archival".into(), Priority::Closeout)),
         );
-        assert_eq!(schedule.due(&format!("active-{SCAN_PAGE:02}")), None);
+        // The next page's waiter is ranked at once, ahead of its page.
+        assert_eq!(schedule.due(&format!("active-{SCAN_PAGE:02}")), Some(now));
+        assert_eq!(capacity_waiters.len(), first_page + 1);
     }
 
     #[test]

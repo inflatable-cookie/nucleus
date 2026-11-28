@@ -198,6 +198,9 @@ heavy runs fit in H, heavy and normal runs in H + M, and all runs in H + M + L.
 Running work is never preempted. The API serves task views from the
 store and memory and pushes invalidations.
 
+A task joins the capacity waiters when it asks for a slot; the freed slot is
+offered to those already waiting and isn't reserved while one prepares its run.
+
 Normalize the relevant observations to one signal per phase. The bound run
 takes precedence over downstream work until its turn is quiescent. A required
 unknown read yields a wait before any action that depends on it. Optional and
@@ -356,7 +359,9 @@ wake that task after their transaction commits. A T3 stream wakes the task when
 its known thread changes. A fresh running hint can defer a routine refresh.
 A disconnect discards hints, and a periodic active scan catches any missed wake.
 The next due time drives the timer even when the scan is idle.
-The backstop pages through the active index with a fixed read budget.
+The backstop pages through the active index with a fixed read budget. The
+first scan after startup also ranks, in one read, every task whose next run
+still needs a slot, whatever its role, before any pass can assign one.
 
 A pass takes tasks that are due and shares one bounded process inventory.
 For each task, read its row, then fetch the exact T3 turn, PR and checkout facts

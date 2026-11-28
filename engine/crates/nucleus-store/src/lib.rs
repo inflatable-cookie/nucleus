@@ -182,12 +182,27 @@ fn declared_weight(brief: Option<&str>) -> TaskWeight {
         .unwrap_or_default()
 }
 
+fn read_seed(row: &Row<'_>) -> rusqlite::Result<TaskSeed> {
+    let priority = match row.get::<_, String>(3)?.as_str() {
+        "promoted" => QueuePriority::Promoted,
+        _ => QueuePriority::Normal,
+    };
+    Ok(TaskSeed {
+        id: row.get(0)?,
+        admission_order: row.get(1)?,
+        closeout: row.get(2)?,
+        queue_priority: priority,
+        weight: declared_weight(row.get::<_, Option<String>>(4)?.as_deref()),
+    })
+}
+
 /// Scheduling facts for one task from the active backstop scan.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TaskSeed {
     /// The durable task ID.
     pub id: String,
-    /// The capacity queue ordinal for tasks awaiting their first role.
+    /// The capacity queue ordinal for tasks awaiting a slot. The paged scan
+    /// reports it only before the first role.
     pub admission_order: Option<i64>,
     /// Whether the task is closing or settling terminal work.
     pub closeout: bool,
@@ -607,20 +622,24 @@ impl Store {
                THEN json_extract(t.brief, '$.text') END
              FROM due JOIN tasks t ON t.id = due.id ORDER BY due.admitted",
         )?;
-        let ids = query.query_map(params![limit, after.unwrap_or_default()], |row| {
-            let priority = match row.get::<_, String>(3)?.as_str() {
-                "promoted" => QueuePriority::Promoted,
-                _ => QueuePriority::Normal,
-            };
-            Ok(TaskSeed {
-                id: row.get(0)?,
-                admission_order: row.get(1)?,
-                closeout: row.get(2)?,
-                queue_priority: priority,
-                weight: declared_weight(row.get::<_, Option<String>>(4)?.as_deref()),
-            })
-        })?;
+        let ids = query.query_map(params![limit, after.unwrap_or_default()], read_seed)?;
         Ok(ids.collect::<Result<_, _>>()?)
+    }
+
+    /// Every task whose next send needs a launch slot, whatever its role. A
+    /// restart ranks all of them before it assigns a slot to any one.
+    ///
+    /// # Errors
+    /// Returns an error if the database cannot read the tasks.
+    pub fn slot_candidates(&self) -> Result<Vec<TaskSeed>, StoreError> {
+        let mut query = self.connection.prepare_cached(
+            "SELECT id, rowid, 0, queue_priority, json_extract(brief, '$.text') FROM tasks
+             WHERE phase IN ('queued', 'working', 'reviewing') AND hold IS NULL AND question IS NULL
+               AND (run IS NULL OR json_extract(run, '$.last_send_at_ms') IS NULL)
+             ORDER BY rowid",
+        )?;
+        let seeds = query.query_map([], read_seed)?;
+        Ok(seeds.collect::<Result<_, _>>()?)
     }
 
     /// Read the admission ordinal used to order capacity waiters across repositories.
