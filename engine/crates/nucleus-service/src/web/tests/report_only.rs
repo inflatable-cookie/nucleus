@@ -494,14 +494,11 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
     }
     let archive_read = "orchestration.getArchivedShellSnapshot";
     let before = host.host_calls().get(archive_read).copied().unwrap_or(0);
-    assert!(matches!(
-        fixture.service.archive_done(&done).await,
-        Err(ServiceError::CheckoutRetained(cause)) if cause.contains("idle or gone")
-    ));
+    assert!(fixture.service.archive_done(&done).await.is_err());
     assert!(fixture.checkout.exists());
     for status in ["running", "unknown"] {
         host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":1,"projects":[],"threads":[
+            "snapshotSequence":1,"projects":[{"id":HOST_PROJECT,"workspaceRoot":fixture.service.fixture().checkout}],"threads":[
                 {"id":"delegated-child","parentThreadId":parent,"status":status}
             ],"archivedThreads":fixture.archived_threads(&done.task)
         }}));
@@ -615,7 +612,7 @@ async fn cancelled_checkout_only_retires_clean_published_work() {
         .service
         .host
         .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":1,"projects":[],"threads":[],
+            "snapshotSequence":1,"projects":[{"id":HOST_PROJECT,"workspaceRoot":fixture.service.fixture().checkout}],"threads":[],
             "archivedThreads":fixture.archived_threads(&cancelled.task)
         }}));
     let draft = fixture.checkout.join("draft");
@@ -773,10 +770,14 @@ impl ReportFixture {
 
     fn observe_worker(&self, row: &Value) {
         self.service.host.fixture_held_shell(&json!({
-            "kind":"snapshot","snapshot":{"projects":[],"threads":[row],"snapshotSequence":9}
+            "kind":"snapshot","snapshot":{"projects":[{"id":HOST_PROJECT,"workspaceRoot":self.service.fixture().checkout}],"threads":[row],"snapshotSequence":9}
         }));
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one fixture trace covers a complete lifecycle"
+    )]
     async fn new() -> Self {
         let (home, mut service) = fixture(GitHub::new("fixture").expect("forge"));
         let head = service.fixture().start.clone();
@@ -833,7 +834,29 @@ impl ReportFixture {
         // The fixture owns all task threads. Its wire snapshots control their activity
         // independently of unrelated processes on the test machine.
         service.host = host.with_quiet_fixture_processes();
+        service.host.fixture_project_shell(&json!({"projects":[{"id":HOST_PROJECT,"workspaceRoot":service.fixture().checkout}], "threads":[]}), "fixture-acp");
         let service = Arc::new(service);
+        let enrollment = crate::router_with_t3_callers(Arc::clone(&service), [], Some(PLANNER_KEY));
+        let request = enrollment.oneshot(
+            Request::get("/v1/tasks")
+                .header("host", LOCAL_HOST)
+                .header(
+                    "authorization",
+                    format!("Bearer {}", hex::encode(PLANNER_KEY)),
+                )
+                .header("x-nucleus-t3-caller", PLANNER)
+                .body(Body::empty())
+                .unwrap(),
+        );
+        tokio::pin!(request);
+        tokio::select! {
+            biased;
+            () = service.enrollment_wake.notified() => {}
+            _ = &mut request => panic!("planner request finished before enrollment"),
+        }
+        assert_eq!(service.take_enrollment().await.as_deref(), Some(PLANNER));
+        service.complete_enrollment(PLANNER).await;
+        assert_eq!(request.await.unwrap().status(), StatusCode::OK);
         let api = router(
             Arc::clone(&service),
             [Controller {

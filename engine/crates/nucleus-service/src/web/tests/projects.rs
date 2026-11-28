@@ -287,6 +287,10 @@ async fn registry() -> Registry {
     registry_with_options(BETA_REPO, false).await
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture trace covers a complete lifecycle"
+)]
 async fn registry_with_options(beta_repo: &str, imported: bool) -> Registry {
     let (home, legacy) = fixture(GitHub::new("fixture").expect("client"));
     let alpha_path = legacy.fixture().checkout.clone();

@@ -10,7 +10,7 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
     let project = service.fixture().clone();
     let old_head = project.start.clone();
     let pr = PullRequest {
-        url: crate::tests::PR.into(),
+        url: format!("https://github.com/{REPOSITORY}/pull/1"),
         head: old_head.clone(),
     };
     let mut task = Task::new(
@@ -35,7 +35,7 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
         Action::Advance(Phase::Working)
     );
     let worker: nucleus_core::profiles::Profile = serde_json::from_value(
-        json!({"id":"worker", "capability":"worker", "provider":"codex", "model":"fixture"}),
+        json!({"id":"fixture", "capability":"worker", "provider":"codex", "model":"fixture"}),
     )
     .unwrap();
     let reviewer: nucleus_core::profiles::Profile = serde_json::from_value(
@@ -49,7 +49,34 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
         Report::Work(pr.into()),
         Phase::Reviewing,
     );
-    crate::profiles::tests::finish_profile_run(
+    let worktrees = service.worktrees();
+    let checkout = worktrees
+        .checkout(&project.checkout, REPOSITORY, "worker")
+        .unwrap();
+    checkout.allocate(&old_head).unwrap();
+    let binding = service.binding(&checkout).unwrap();
+    let reviewer_wire = RunRequest {
+        binding: binding.clone(),
+        dispatch: Dispatch::Create {
+            title: "Reviewer".into(),
+            profile: nucleus_hosts::RoleProfile {
+                instance_id: "provider".into(),
+                model: "other".into(),
+                options: vec![],
+                runtime_mode: "full-access".into(),
+            },
+        },
+        parent: None,
+        text: "Review".into(),
+    }
+    .inputs(
+        &task.next_launch_instance().unwrap(),
+        "thread:reviewer".into(),
+        1,
+    )
+    .unwrap()
+    .input;
+    crate::profiles::tests::finish_profile_run_with_input(
         &mut task,
         &mut observation,
         (&reviewer, "reviewer", "thread:reviewer"),
@@ -60,13 +87,9 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
             finding_titles: vec![],
         },
         Phase::Merging,
+        reviewer_wire,
     );
-    let worktrees = service.worktrees();
-    let checkout = worktrees
-        .checkout(&project.checkout, REPOSITORY, "worker")
-        .unwrap();
-    checkout.allocate(&old_head).unwrap();
-    let binding = service.binding(&checkout).unwrap();
+
     let owned = checkout.path().to_owned();
     crate::tests::git(
         &owned,
@@ -134,6 +157,7 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
     let (forge, forge_server) = serve_forge(api).await;
     service.forge = forge;
 
+    let parent_thread = nucleus_hosts::parent_thread(Path::new(&binding.worktree_path));
     let selection = json!({"instanceId":"provider","model":"fixture"});
     let native_selection = selection.clone();
     let root = project.checkout.clone();
@@ -141,8 +165,17 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
     let accepted = Arc::new(std::sync::Mutex::new(Vec::new()));
     let returns = Arc::new(AtomicBool::new(false));
     let (native_accepted, native_returns) = (Arc::clone(&accepted), Arc::clone(&returns));
+    let parent_runs = Arc::new(std::sync::Mutex::new(
+        crate::profiles::tests::NativeRuns::default(),
+    ));
+    let parent_root = root.clone();
     let (host, native_server) = native_fixture(move |request| {
         let payload = &request["payload"];
+        if request["tag"] == "orchestration.launchThread"
+            || (request["tag"] == "orchestration.subscribeThread" && payload["threadId"] == parent_thread)
+        {
+            return crate::profiles::tests::native_response(request, &parent_root, &mut parent_runs.lock().unwrap());
+        }
         let id = &request["id"];
         let snapshot = match request["tag"].as_str() {
             Some("orchestration.subscribeShell") => json!({"snapshot":{
@@ -157,9 +190,9 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
                     json!([{"id":"native-continuation","status":status,"userMessageId":payloads[0]}])
                 };
                 json!({"projection":{
-                    "thread":{"id":payload["threadId"],"projectId":binding.project_id,
+                    "thread":{"id":payload["threadId"],"projectId":binding.project_id, "parentThreadId":parent_thread,
                         "worktreePath":binding.worktree_path,"branch":binding.branch,
-                        "providerInstanceId":"provider","modelSelection":native_selection},
+                        "providerInstanceId":"provider","modelSelection":if payload["threadId"] == "thread:reviewer" { json!({"instanceId":"provider","model":"other"}) } else { native_selection.clone() }},
                     "runs":runs,"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[]
                 }})
             }
@@ -177,7 +210,8 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
                     "_tag": "Success", "value": {
                         "environment": {"orchestrationProtocolVersion": 2},
                         "providers": [{"instanceId": "provider", "driver":"codex", "enabled": true,
-                            "status": "ready", "models": [{"slug": "fixture"}]}]
+                            "status": "ready", "models": [{"slug": "fixture"}, {"slug":"other"}]},
+                            {"instanceId":"fixture-acp", "driver":"acpRegistry", "enabled":true, "status":"ready", "models":[{"slug":"nucleus"}]}]
                     }
                 }});
             }
@@ -242,7 +276,7 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
         }),
         "fixture-acp",
     );
-    let mut service = Service::open_projects(
+    let service = Service::open_projects(
         settings.lock_profile().unwrap(),
         "fixture-acp".into(),
         host,
@@ -251,6 +285,10 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
         std::env::current_exe().unwrap(),
     )
     .unwrap();
+    service.state.lock().await.settings.profiles = Some(Arc::new(serde_json::from_value(json!({"profiles":[
+        {"name":"Worker", "providerInstanceId":"provider", "selection":{"id":"fixture", "provider":"codex", "model":"fixture"}},
+        {"name":"Reviewer", "providerInstanceId":"provider", "selection":{"id":"reviewer", "provider":"codex", "model":"other"}}
+    ]})).unwrap()));
     assert_eq!(service.task("worker").await.unwrap().task, sent.task);
     assert_eq!(
         advance(&service).await.unwrap(),
@@ -283,6 +321,11 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
     let review = service.task("worker").await.unwrap();
     assert_eq!(review.task.pull_request().unwrap().head, new_head);
     assert!(review.task.verdict().is_none());
+    assert_eq!(
+        advance(&service).await.unwrap(),
+        Action::Wait(WaitReason::Starting)
+    );
+    crate::profiles::tests::publish_parent_shell(&service).await;
     assert_eq!(
         advance(&service).await.unwrap(),
         Action::Launch {

@@ -450,7 +450,7 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     drop(api);
     drop(service);
 
-    let reopened = Arc::new(reopen_fixture(&settings, project, forge()));
+    let reopened = Arc::new(reopen_fixture(&settings, &project, forge()));
     let api = setup(Arc::clone(&reopened));
     observe_task_wait(&reopened, WaitReason::Capacity).await;
     let recorded = reopened
@@ -509,7 +509,7 @@ async fn operator_hold_keeps_its_state_entry_across_restart() {
     assert!(before["latestEventAtMs"].is_u64());
     drop(api);
 
-    let reopened = Arc::new(reopen_fixture(&settings, project, forge()));
+    let reopened = Arc::new(reopen_fixture(&settings, &project, forge()));
     let after = json_body(get_as(&settings_api(&reopened), path, &BOARD_KEY).await).await;
     assert_eq!(after["stateLabel"], before["stateLabel"]);
     assert_eq!(after["stateSinceMs"], before["stateSinceMs"]);
@@ -556,14 +556,7 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
     assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
     drop(api);
 
-    let reopen = || {
-        Arc::new(reopen_fixture_at(
-            &settings,
-            project.clone(),
-            forge(),
-            &endpoint,
-        ))
-    };
+    let reopen = || Arc::new(reopen_fixture_at(&settings, &project, forge(), &endpoint));
     let restarted = reopen();
     let api = setup(Arc::clone(&restarted));
     {

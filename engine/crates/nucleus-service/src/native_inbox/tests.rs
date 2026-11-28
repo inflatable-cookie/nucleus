@@ -487,6 +487,10 @@ fn preview_response(
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture trace covers a complete lifecycle"
+)]
 async fn low_usage_permission_survives_task_edits_and_preserves_independent_holds() {
     use nucleus_core::{Command, profiles::UsageLevel};
 

@@ -1018,6 +1018,10 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture trace covers a complete lifecycle"
+)]
 async fn verified_planners_can_answer_across_projects_but_other_credentials_cannot() {
     let registry = registry().await;
     for actor in ["alpha-planner", "beta-planner"] {
@@ -1084,6 +1088,19 @@ async fn verified_planners_can_answer_across_projects_but_other_credentials_cann
             StatusCode::UNAUTHORIZED
         );
     }
+    let anonymous = registry
+        .api
+        .clone()
+        .oneshot(
+            Request::post(path)
+                .header(HOST, LOCAL_HOST)
+                .header("content-type", "application/json")
+                .body(Body::from(answer.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
     let unverified = registry
         .inline_command(
             "unknown-caller",

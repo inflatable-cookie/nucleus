@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command as Process,
     sync::{
@@ -162,12 +163,9 @@ fn fixture_checkout(root: &Path) -> PathBuf {
         ),
     )
     .unwrap();
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
-    git(
-        &checkout,
-        &["config", "core.sshCommand", ssh.to_str().unwrap()],
-    );
+    let ssh_command = format!("'{}'", ssh.to_str().unwrap().replace('\'', "'\\''"));
+    git(&checkout, &["config", "core.sshCommand", &ssh_command]);
     git(&checkout, &["config", "ssh.variant", "simple"]);
     git(
         &checkout,
@@ -1034,13 +1032,13 @@ pub(super) fn assert_scheduled_wait(
 }
 
 #[tokio::test]
-async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
+async fn interrupted_initialization_recovers_on_the_new_base_before_launch() {
     let (forge, forge_server) = serve_forge(Router::new().route(
         &format!("/repos/{REPOSITORY}/pulls"),
         get(|| async { Json(Vec::<Value>::new()) }),
     ))
     .await;
-    let (_home, service) = fixture(forge);
+    let (_home, mut service) = fixture(forge);
     let repo = service.fixture().checkout.clone();
     let old_head = service.fixture().start.clone();
     let worktrees = service.worktrees();
@@ -1104,12 +1102,19 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     assert!(admin.join("index.lock").exists());
     assert!(service.host.host_calls().is_empty());
 
+    let root = repo.clone();
+    let runs = Arc::new(std::sync::Mutex::new(
+        crate::profiles::tests::NativeRuns::default(),
+    ));
+    let (host, native) = native_fixture(move |request| {
+        crate::profiles::tests::native_response(request, &root, &mut runs.lock().unwrap())
+    })
+    .await;
+    service.host = host;
+    crate::profiles::tests::publish_parent_shell(&service).await;
     let second = run_workspace_recheck(&service, "partial", pass_started).await;
     assert!(
-        matches!(
-            second,
-            Err(ServiceError::Host(nucleus_hosts::HostError::Unavailable))
-        ),
+        matches!(second, Ok(Action::Wait(WaitReason::Starting))),
         "{second:?}"
     );
     let row = service.task("partial").await.unwrap();
@@ -1125,6 +1130,7 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
         .find_map(|entry| std::fs::read_to_string(entry.unwrap().path().join("draft.md")).ok());
     assert_eq!(saved.as_deref(), Some("untracked draft"));
     assert!(sibling_admin.is_dir());
+    native.abort();
     forge_server.abort();
 }
 
@@ -1237,6 +1243,11 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     ))
     .await;
     let (home, mut service) = fixture(forge);
+    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+        total_slots: 1,
+        heavy_slots: 1,
+        ..nucleus_store::DispatchSettings::default()
+    });
     service.set_fixture_acp_provider(Some("fixture-acp"));
     let project = service.fixture().clone();
     let shell = json!({"projects":[{
@@ -1458,6 +1469,11 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         std::env::current_exe().unwrap(),
     )
     .unwrap();
+    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+        total_slots: 1,
+        heavy_slots: 1,
+        ..nucleus_store::DispatchSettings::default()
+    });
     service.state.lock().await.schedule.park("winner");
     let mut outcomes = Vec::new();
     tokio::time::timeout(Duration::from_secs(5), async {

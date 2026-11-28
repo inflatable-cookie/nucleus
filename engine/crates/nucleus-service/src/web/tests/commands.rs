@@ -202,7 +202,7 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
         StatusCode::UNAUTHORIZED,
         "a read key cannot write"
     );
-    let response = get_as(&api, "/v1/tasks/%231/events", key).await;
+    let response = get_as(&api, "/v1/tasks/task-one/events", key).await;
     let mut events = response.into_body().into_data_stream();
     assert_event(&mut events, &["event: refresh"]).await;
     assert_eq!(
@@ -263,21 +263,41 @@ async fn admission_commits_when_t3_is_unreachable() {
     .await;
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(json_body(response).await["phase"], "queued");
-    let pass = service.pass().await.expect("scheduled profile check");
-    assert!(matches!(
-        pass.as_slice(),
-        [crate::PassOutcome {
-            result: Err(ServiceError::Host(nucleus_hosts::HostError::Unavailable)),
-            ..
-        }]
-    ));
-    assert_eq!(
+    let admitted = service.task("fixture-admit").await.expect("committed row");
+    assert_eq!(admitted.version, 1);
+    let mut pass = service.pass().await.expect("scheduled profile check");
+    if pass
+        .iter()
+        .any(|outcome| matches!(outcome.result, Ok(Action::Advance(_))))
+    {
+        service.state.lock().await.schedule.wake(
+            "fixture-admit",
+            tokio::time::Instant::now(),
+            crate::schedule::Priority::Wake,
+        );
+        pass = service.pass().await.expect("scheduled profile check");
+    }
+    assert!(
+        matches!(
+            pass.as_slice(),
+            [crate::PassOutcome {
+                result: Err(ServiceError::Host(nucleus_hosts::HostError::Unavailable)),
+                ..
+            }]
+        ),
+        "{:?}",
+        pass.iter()
+            .map(|outcome| (&outcome.task, &outcome.result))
+            .collect::<Vec<_>>()
+    );
+    assert!(
         service
             .task("fixture-admit")
             .await
-            .expect("committed row")
-            .version,
-        1
+            .unwrap()
+            .task
+            .run()
+            .is_none()
     );
 }
 
@@ -841,7 +861,16 @@ async fn persistent_workspace_error_parks_and_owner_recheck_observes_one_repair(
         get(|| async { Json(Vec::<serde_json::Value>::new()) }),
     ))
     .await;
-    let (_home, service) = fixture(forge);
+    let (_home, mut service) = fixture(forge);
+    let root = service.fixture().checkout.clone();
+    let runs = Arc::new(std::sync::Mutex::new(
+        crate::profiles::tests::NativeRuns::default(),
+    ));
+    let (host, native) = crate::tests::native_fixture(move |request| {
+        crate::profiles::tests::native_response(request, &root, &mut runs.lock().unwrap())
+    })
+    .await;
+    service.host = host.with_quiet_fixture_processes();
     let head = &service.fixture().start;
     let worktrees = service.worktrees();
     let checkout = worktrees
@@ -865,6 +894,7 @@ async fn persistent_workspace_error_parks_and_owner_recheck_observes_one_repair(
         Action::Advance(Phase::Working)
     );
     seed_task(&service, &task).await;
+    crate::profiles::tests::publish_parent_shell(&service).await;
     let service = Arc::new(service);
     let operator = Authority::Operator {
         actor: "operator".into(),
@@ -955,12 +985,22 @@ async fn persistent_workspace_error_parks_and_owner_recheck_observes_one_repair(
 
     std::fs::write(&index, valid_index).unwrap();
     assert_eq!(recheck().await, StatusCode::OK);
+    let first = service.pass().await.unwrap();
+    assert!(matches!(
+        first[0].result,
+        Ok(Action::Wait(WaitReason::Starting))
+    ));
+    crate::profiles::tests::publish_parent_shell(&service).await;
+    service.state.lock().await.schedule.wake(
+        "unreadable",
+        tokio::time::Instant::now(),
+        crate::schedule::Priority::Wake,
+    );
     assert!(matches!(
         service.pass().await.unwrap()[0].result,
         Ok(Action::Launch { .. })
     ));
     assert_eq!(std::fs::read(path.join("keep.txt")).unwrap(), b"local work");
-    assert!(service.host.host_calls().is_empty());
     service
         .command("unreadable", &operator, Command::Hold("Owner hold".into()))
         .await
@@ -968,6 +1008,7 @@ async fn persistent_workspace_error_parks_and_owner_recheck_observes_one_repair(
     assert_eq!(recheck().await, StatusCode::CONFLICT);
     let after = json_body(get_as(&api, card, &BOARD_KEY).await).await;
     assert_eq!(after["hold"]["reason"], "Owner hold");
+    native.abort();
     server.abort();
 }
 

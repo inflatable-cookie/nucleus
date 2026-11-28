@@ -706,6 +706,10 @@ async fn retirement_requires_running_dispatch_quiet_shell_and_published_git_head
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture trace covers a complete lifecycle"
+)]
 async fn task_add_pins_worker_lane_text_and_resolves_brief_prerequisites() {
     use nucleus_store::planning::{LaneDocument, WriteAt};
     let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
@@ -819,6 +823,10 @@ async fn task_add_pins_worker_lane_text_and_resolves_brief_prerequisites() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture trace covers a complete lifecycle"
+)]
 async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() {
     let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
     let reads = Arc::new(AtomicUsize::new(0));

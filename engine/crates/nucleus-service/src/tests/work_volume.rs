@@ -388,6 +388,7 @@ async fn reads_which_never_return_do_not_hold_back_their_task() {
         home,
         mut service,
         forge,
+        _native,
         ..
     } = outage().await;
     let hung = Hung::install(&mut service, home.path());

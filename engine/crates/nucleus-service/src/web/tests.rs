@@ -1035,7 +1035,7 @@ async fn read_paired_task(api: &Router, path: &str, cookie: &str) -> Value {
 
 fn reopen_fixture(
     settings: &nucleus_store::SettingsFile,
-    project: crate::Project,
+    project: &crate::Project,
     forge: GitHub,
 ) -> Service {
     reopen_fixture_at(settings, project, forge, "http://127.0.0.1:9")
@@ -1043,7 +1043,7 @@ fn reopen_fixture(
 
 fn reopen_fixture_at(
     settings: &nucleus_store::SettingsFile,
-    project: crate::Project,
+    project: &crate::Project,
     forge: GitHub,
     endpoint: &str,
 ) -> Service {
