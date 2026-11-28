@@ -1216,7 +1216,7 @@ TypeScript theme converter, which has no dependency on the legacy RPC client.
 the link fragment and exchanges the token for an HttpOnly, SameSite=Strict
 session cookie. The paired browser can reconnect after a service restart.
 Its session expires after 30 idle days and renews at most once per day.
-`nucleus ui --revoke` revokes sessions and pending links. The controller
+A paired browser can pair another device with a short code from Settings → Devices (single-use, five minutes, burnt after five wrong attempts). `nucleus ui --revoke` revokes sessions, pending links and an open code. The controller
 credential stays with the CLI and service.
 
 ## Planning model (milestone 3)
