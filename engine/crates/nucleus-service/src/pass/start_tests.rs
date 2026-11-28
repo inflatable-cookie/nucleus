@@ -31,7 +31,7 @@ fn head(repository: &Path, revision: &str) -> Head {
 /// A registry service whose GitHub origin is served over SSH by a local bare
 /// repository, so the engine runs a real fetch.
 async fn registered() -> Registered {
-    let (home, mut service) = registry_fixture(GitHub::new("unused-fixture").expect("client"));
+    let (home, service) = registry_fixture(GitHub::new("unused-fixture").expect("client"));
     let checkout = service.fixture().checkout.clone();
     std::fs::write(checkout.join("tracked"), "committed\n").expect("tracked file");
     git(&checkout, &["add", "tracked"]);
@@ -72,7 +72,6 @@ async fn registered() -> Registered {
     std::fs::write(checkout.join("untracked"), "kept\n").expect("untracked file");
 
     let host_project = service.fixture().host_project.clone();
-    service.project = None;
     service.state.lock().await.settings.projects = Some(Projects {
         projects: BTreeMap::from([(
             "product".into(),

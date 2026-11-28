@@ -39,9 +39,12 @@ async fn add(service: &Service, id: &str, brief: &str) -> TaskRow {
 
 #[tokio::test]
 async fn an_unreadable_task_has_a_scoped_error_card_and_does_not_block_its_siblings() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, service, _planner_host) = enrolled_fixture(GitHub::new("fixture").unwrap()).await;
     let service = Arc::new(service);
-    let api = controller(Arc::clone(&service));
+    let api = router(
+        Arc::clone(&service),
+        [planner_controller(PLANNER_KEY, "planner")],
+    );
     add(&service, "damaged", ADMIT).await;
     add(&service, "healthy", ADMIT).await;
     add(&service, "dependent", "---\nqueue:\n  complexity: medium\n  dependsOn: [inflatable-cookie/nucleus-fixture#1]\n---\n\n# Dependent").await;
@@ -57,7 +60,7 @@ async fn an_unreadable_task_has_a_scoped_error_card_and_does_not_block_its_sibli
         "UPDATE tasks SET repository='example/foreign', brief=json_set(brief, '$.text', 'Changed') WHERE id='foreign'",
         [],
     ).unwrap();
-    let cards = json_body(get_as(&api, "/v1/tasks", &BOARD_KEY).await).await;
+    let cards = json_body(get_as(&api, "/v1/tasks", &PLANNER_KEY).await).await;
     assert!(
         cards
             .as_array()
@@ -118,7 +121,7 @@ async fn an_unreadable_task_has_a_scoped_error_card_and_does_not_block_its_sibli
 
 #[tokio::test]
 async fn dependencies_admit_resolve_and_edit_without_host_reads() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, service, _planner_host) = enrolled_fixture(GitHub::new("fixture").unwrap()).await;
     let service = Arc::new(service);
     let api = controller(Arc::clone(&service));
     let first = add(&service, "first", ADMIT).await;
@@ -166,10 +169,30 @@ async fn dependencies_admit_resolve_and_edit_without_host_reads() {
 
     let dependent_path = "/v1/tasks/dependent/commands";
     let clear = json!({"set_dependencies":{"version":dependent.version,"depends_on":[]}});
-    assert_eq!(
-        post_json(&api, dependent_path, &PLANNER_KEY, &clear).await,
-        StatusCode::FORBIDDEN,
+    let request = api.clone().oneshot(
+        Request::post(dependent_path)
+            .header("host", LOCAL_HOST)
+            .header(
+                "authorization",
+                format!("Bearer {}", hex::encode(PLANNER_KEY)),
+            )
+            .header("x-nucleus-t3-caller", "unrelated-planner")
+            .header("content-type", "application/json")
+            .body(Body::from(clear.to_string()))
+            .unwrap(),
     );
+    tokio::pin!(request);
+    tokio::select! {
+        biased;
+        () = service.enrollment_wake.notified() => {}
+        _ = &mut request => panic!("unverified request finished before enrollment"),
+    }
+    assert_eq!(
+        service.take_enrollment().await.as_deref(),
+        Some("unrelated-planner")
+    );
+    service.complete_enrollment("unrelated-planner").await;
+    assert_eq!(request.await.unwrap().status(), StatusCode::FORBIDDEN);
     let same = json!({"set_dependencies":{"version":dependent.version,"depends_on":["#1"]}});
     assert_eq!(
         json_body(post_as(&api, dependent_path, &BOARD_KEY, &same).await).await["version"],

@@ -130,14 +130,20 @@ impl Fleet {
             panic!("the stopped service is still shared");
         };
         let settings = old.settings.clone();
-        let project = old.fixture().clone();
         let host = nucleus_hosts::T3::new(old.host.endpoint(), "fixture").expect("fixture host");
         let unused = nucleus_forge::GitHub::new("unused-fixture").expect("unused forge");
         let forge = std::mem::replace(&mut old.forge, unused);
         let (callback, command) = (old.callback, old.report_command.clone());
         drop(old);
-        let mut service = Service::open(&settings, project, host, forge, callback, command)
-            .expect("restarted service");
+        let mut service = Service::open_projects(
+            settings.lock_profile().unwrap(),
+            "fixture-acp".into(),
+            host,
+            forge,
+            callback,
+            command,
+        )
+        .expect("restarted service");
         prepare(&mut service);
         assemble(service, slots, project_slots, servers, home).await
     }
@@ -145,7 +151,8 @@ impl Fleet {
     /// Store a new task without running any decision for it.
     async fn queue(&self, id: &str, weight: &str) {
         self.service
-            .admit(
+            .admit_to(
+                Some(crate::tests::REPOSITORY),
                 id.into(),
                 id.into(),
                 brief(Some(weight), QueuePriority::Normal, "Fixture"),
@@ -159,7 +166,8 @@ impl Fleet {
 
     async fn admit(&self, id: &str, weight: Option<&str>, priority: QueuePriority) {
         self.service
-            .admit(
+            .admit_to(
+                Some(crate::tests::REPOSITORY),
                 id.into(),
                 id.into(),
                 brief(weight, priority, "Fixture"),

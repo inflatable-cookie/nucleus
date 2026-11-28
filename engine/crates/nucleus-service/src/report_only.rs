@@ -1109,10 +1109,10 @@ mod tests {
                 repository: service.fixture().repository.clone(),
                 base: service.fixture().base.clone(),
                 entry: Entry::Brief,
-                origin_thread: None,
+                origin_thread: Some("planner-a".into()),
             },
             "Report brief".into(),
-            "local-fixture".into(),
+            "fixture-product".into(),
             "qa".into(),
             head.clone(),
         );
@@ -1259,6 +1259,10 @@ mod tests {
         })
         .await;
         service.host = host;
+        service.host.fixture_project_shell(&json!({
+            "projects":[{"id":"local-fixture", "workspaceRoot":service.fixture().checkout}],
+            "threads":[{"id":"planner-a", "projectId":"local-fixture", "updatedAt":"2026-11-24T10:00:00Z"}]
+        }), "fixture-acp");
         let row = seed_report_ready(&service).await;
         let err = service
             .advance_planner_notice(&row, PlannerNotice::ReportReady, "Report ready")

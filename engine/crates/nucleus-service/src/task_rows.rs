@@ -137,6 +137,7 @@ pub(super) struct DeliverySnoozeJournal<'a> {
     service: &'a Service,
     task: Option<&'a str>,
     settlement: Option<SnoozeUpdate>,
+    woke_owned: bool,
 }
 
 impl DeliverySnoozeJournal<'_> {
@@ -165,7 +166,7 @@ impl DeliverySnoozeJournal<'_> {
         let Some(SnoozeUpdate::Record(command, intent)) = update else {
             return Ok(());
         };
-        let save = || -> Result<(), nucleus_store::StoreError> {
+        let save = || -> Result<bool, nucleus_store::StoreError> {
             let store = &state.store;
             let owner = store.task_with_title_thread(&intent.thread)?;
             if let Some(task) = owner.as_deref().or(self.task)
@@ -175,7 +176,7 @@ impl DeliverySnoozeJournal<'_> {
                 if confirm_snooze(&mut receipt, Some(intent.until_ms)) {
                     store.save_row_snooze(task, &intent.thread, &receipt)?;
                 }
-                return Ok(());
+                return Ok(true);
             }
             store.record_delivery_snooze(
                 &command,
@@ -183,12 +184,15 @@ impl DeliverySnoozeJournal<'_> {
                 &intent,
                 intent.until_ms,
                 now_ms(),
-            )
+            )?;
+            Ok(false)
         };
-        save().map_err(|error| {
+        let woke_owned = save().map_err(|error| {
             service_log!("operator snooze: {error}");
             HostError::Uncertain
-        })
+        })?;
+        self.woke_owned |= woke_owned;
+        Ok(())
     }
 
     pub(super) async fn settle(self) {
@@ -202,7 +206,7 @@ impl DeliverySnoozeJournal<'_> {
             SnoozeUpdate::Accepted(command, sequence) => state
                 .store
                 .accept_delivery_snooze(&command, sequence)
-                .map(|_| true),
+                .map(|changed| changed || self.woke_owned),
             SnoozeUpdate::Discard(command) => state
                 .store
                 .finish_delivery_snooze(&command, None)
@@ -277,6 +281,7 @@ impl Service {
             service: self,
             task,
             settlement: None,
+            woke_owned: false,
         }
     }
 

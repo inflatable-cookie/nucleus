@@ -128,7 +128,8 @@ async fn the_former_reviewer_import_request_cannot_import_or_change_the_selected
 
 #[tokio::test]
 async fn github_account_settings_require_an_operator_and_explicit_selection() {
-    let (_home, mut service) = fixture(GitHub::new("forge-fixture").expect("client"));
+    let (_home, mut service, _planner_host) =
+        enrolled_fixture(GitHub::new("forge-fixture").expect("client")).await;
     service.github_accounts = Arc::new(crate::github_accounts::GitHubAccounts::with_fixture(
         service.settings.clone(),
         "http://127.0.0.1:9",

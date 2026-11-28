@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command as Process,
     sync::{
@@ -18,8 +19,8 @@ use nucleus_core::{
     Observation, Observed, PullRequest, Role, Run, Workspace,
 };
 use nucleus_hosts::{
-    Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
-    SendOutcome, StopProgress, TaskHost,
+    Binding, ControlDispatch, ReplayAuthorization, RunDispatch, RunObservation, SendOutcome,
+    StopProgress, TaskHost,
 };
 use nucleus_store::{
     AllowanceObservation, Profiles, ProjectSettings, Projects, RepositorySettings, Store,
@@ -136,6 +137,16 @@ pub(super) fn registry_fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     (home, service)
 }
 
+pub(super) fn clear_fixture_projects(settings: &SettingsFile) {
+    let revision = settings.read::<Projects>().unwrap().revision;
+    settings
+        .edit(&revision, |projects: &mut Projects| {
+            *projects = Projects::default();
+            Ok(())
+        })
+        .unwrap();
+}
+
 /// A repository whose origin is the fixture repository, with one base commit.
 fn fixture_checkout(root: &Path) -> PathBuf {
     let checkout = root.join("repo");
@@ -148,54 +159,44 @@ fn fixture_checkout(root: &Path) -> PathBuf {
             "remote",
             "add",
             "origin",
-            &format!("https://github.com/{REPOSITORY}.git"),
+            &format!("git@github.com:{REPOSITORY}.git"),
+        ],
+    );
+    let remote = root.join("remote.git");
+    git(
+        root,
+        &[
+            "clone",
+            "--bare",
+            checkout.to_str().unwrap(),
+            remote.to_str().unwrap(),
+        ],
+    );
+    let ssh = root.join("fixture-ssh");
+    std::fs::write(
+        &ssh,
+        format!(
+            "#!/bin/sh\ncase \"$2\" in\n  \"git-upload-pack '{REPOSITORY}.git'\") exec git-upload-pack \"$(dirname \"$0\")/remote.git\" ;;\n  \"git-receive-pack '{REPOSITORY}.git'\") exec git-receive-pack \"$(dirname \"$0\")/remote.git\" ;;\n  *) exit 1 ;;\nesac\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let ssh_command = format!("'{}'", ssh.to_str().unwrap().replace('\'', "'\\''"));
+    git(&checkout, &["config", "core.sshCommand", &ssh_command]);
+    git(&checkout, &["config", "ssh.variant", "simple"]);
+    git(
+        &checkout,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
         ],
     );
     checkout
 }
 
 pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
-    let home = tempfile::tempdir().expect("fixture volume directory");
-    let root = home.path().canonicalize().expect("portable root");
-    let checkout = fixture_checkout(&root);
-    let start = git(&checkout, &["rev-parse", "HEAD"])
-        .parse()
-        .expect("base head");
-    let settings = SettingsFile::open(&root).expect("portable settings");
-    settings
-        .configure(&settings.read().expect("fixture settings"), |current| {
-            current.enabled = true;
-        })
-        .expect("enable fixture");
-    let profile = RoleProfile {
-        instance_id: "provider".into(),
-        model: "fixture".into(),
-        runtime_mode: "auto".into(),
-        options: Vec::new(),
-    };
-    let project = Project {
-        repository: REPOSITORY.into(),
-        checkout,
-        base: "main".into(),
-        start,
-        host_project: "local-fixture".into(),
-        worker: profile.clone(),
-        reviewer: profile,
-        acp_provider: None,
-        launch_budget: LaunchBudget { slots: 1 },
-    };
-    let host = T3::new("http://127.0.0.1:9", "unused-fixture-key")
-        .expect("no native host for the service fixture");
-    let service = Service::open(
-        &settings,
-        project,
-        host,
-        forge,
-        "127.0.0.1:9".parse().expect("callback"),
-        std::env::current_exe().expect("test binary"),
-    )
-    .expect("scoped service");
-    (home, service)
+    registry_fixture(forge)
 }
 
 pub(super) fn create_fixture_commit(repository: &Path, message: &str) {
@@ -1089,7 +1090,11 @@ pub(super) fn assert_scheduled_wait(
 }
 
 #[tokio::test]
-async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture trace covers a complete lifecycle"
+)]
+async fn interrupted_initialization_recovers_on_the_new_base_before_launch() {
     let (forge, forge_server) = serve_forge(Router::new().route(
         &format!("/repos/{REPOSITORY}/pulls"),
         get(|| async { Json(Vec::<Value>::new()) }),
@@ -1118,7 +1123,7 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     create_fixture_commit(&repo, "Advance the base");
     let new_head: Head = git(&repo, &["rev-parse", "HEAD"]).parse().unwrap();
     assert_ne!(old_head, new_head);
-    service.fixture_mut().start = new_head.clone();
+    git(&repo, &["push", "origin", "main"]);
 
     let (mut task, _, mut observation) = reservation("partial", Entry::Brief, &old_head);
     observation.host = Observed::Known(Host::Current {
@@ -1165,19 +1170,23 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     assert!(admin.join("index.lock").exists());
     assert!(service.host.host_calls().is_empty());
 
+    let root = repo.clone();
+    let runs = Arc::new(std::sync::Mutex::new(
+        crate::profiles::tests::NativeRuns::default(),
+    ));
+    let (host, native) = native_fixture(move |request| {
+        crate::profiles::tests::native_response(request, &root, &mut runs.lock().unwrap())
+    })
+    .await;
+    service.host = host;
+    crate::profiles::tests::publish_parent_shell(&service).await;
     let second = run_workspace_recheck(&service, "partial", pass_started).await;
     assert!(
-        matches!(
-            second,
-            Ok(Action::Launch {
-                role: nucleus_core::Role::Worker,
-                ..
-            })
-        ),
+        matches!(second, Ok(Action::Wait(WaitReason::Starting))),
         "{second:?}"
     );
     let row = service.task("partial").await.unwrap();
-    assert!(row.task.run().is_some());
+    assert!(row.task.run().is_none());
     assert_eq!(git(&path, &["rev-parse", "HEAD"]), new_head.as_str());
     assert!(admin.join("index").is_file());
     assert!(!admin.join("locked").exists());
@@ -1189,7 +1198,7 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
         .find_map(|entry| std::fs::read_to_string(entry.unwrap().path().join("draft.md")).ok());
     assert_eq!(saved.as_deref(), Some("untracked draft"));
     assert!(sibling_admin.is_dir());
-    assert!(service.host.host_calls().is_empty());
+    native.abort();
     forge_server.abort();
 }
 
@@ -1309,6 +1318,11 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     ))
     .await;
     let (home, mut service) = fixture(forge);
+    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+        total_slots: 1,
+        heavy_slots: 1,
+        ..nucleus_store::DispatchSettings::default()
+    });
     service.set_fixture_acp_provider(Some("fixture-acp"));
     let project = service.fixture().clone();
     let shell = json!({"projects":[{
@@ -1331,7 +1345,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
             Some("server.getConfig") => json!({
                 "environment":{"orchestrationProtocolVersion":2},
                 "providers":[
-                    {"instanceId":"provider","enabled":true,"status":"ready","models":[{"slug":"fixture"}]},
+                    {"instanceId":"provider","driver":"codex","enabled":true,"status":"ready","models":[{"slug":"fixture"}]},
                     {"instanceId":"fixture-acp","driver":"acpRegistry","enabled":true,"status":"ready","models":[{"slug":"nucleus"}]}
                 ]
             }),
@@ -1433,15 +1447,17 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     assert!(launches.lock().unwrap().is_empty());
     let outcomes = pass(&service).await;
     if lose_launch_reply {
-        assert!(matches!(
-            outcomes[0].result,
-            Err(ServiceError::ParentRetry { .. })
-        ));
+        assert!(
+            matches!(outcomes[0].result, Err(ServiceError::ParentRetry { .. })),
+            "{:?}",
+            outcomes[0].result
+        );
     } else {
-        assert!(matches!(
-            outcomes[0].result,
-            Ok(Action::Wait(WaitReason::Starting))
-        ));
+        assert!(
+            matches!(outcomes[0].result, Ok(Action::Wait(WaitReason::Starting))),
+            "{:?}",
+            outcomes[0].result
+        );
     }
     assert_eq!(launches.lock().unwrap().len(), 1);
     let preparing = service.task(oldest).await.unwrap();
@@ -1486,7 +1502,14 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
             .unwrap();
         assert_eq!(service.task(oldest).await.unwrap(), preparing);
     } else {
-        let waiting = pass(&service).await;
+        let mut waiting = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while waiting.len() < newest.len() {
+                waiting.extend(pass(&service).await);
+            }
+        })
+        .await
+        .expect("both capacity waiters are examined");
         assert_eq!(waiting.len(), newest.len());
         assert!(waiting.iter().all(|outcome| {
             newest.contains(&outcome.task.as_str())
@@ -1530,17 +1553,29 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     let forge = std::mem::replace(&mut service.forge, GitHub::new("fixture").unwrap());
     drop(service);
     let settings = SettingsFile::open(&home.path().canonicalize().unwrap()).unwrap();
-    let mut service = Service::open(
-        &settings,
-        project,
+    let mut service = Service::open_projects(
+        settings.lock_profile().unwrap(),
+        "fixture-acp".into(),
         host,
         forge,
         "127.0.0.1:9".parse().unwrap(),
         std::env::current_exe().unwrap(),
     )
     .unwrap();
+    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
+        total_slots: 1,
+        heavy_slots: 1,
+        ..nucleus_store::DispatchSettings::default()
+    });
     service.state.lock().await.schedule.park("winner");
-    let outcomes = pass(&service).await;
+    let mut outcomes = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while outcomes.len() < 3 {
+            outcomes.extend(pass(&service).await);
+        }
+    })
+    .await
+    .expect("capacity waiters resume after restart");
     assert_eq!(
         outcomes
             .iter()
@@ -1703,162 +1738,6 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     forge_server.abort();
 }
 
-#[tokio::test]
-async fn full_checkout_budget_does_not_peek_at_t3() {
-    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
-    let (host, native) = native_fixture(|request| {
-        panic!("queued checkout wait called T3: {}", request["tag"]);
-    })
-    .await;
-    service.host = host;
-    service.set_fixture_acp_provider(Some("fixture-acp"));
-    service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
-        heavy_slots: 1,
-        total_slots: 1,
-        project_default_slots: 1,
-        ..nucleus_store::DispatchSettings::default()
-    });
-    assert_eq!(checkouts(&service), 0, "the fresh profile has no checkouts");
-    let head = &service.fixture().start;
-    let checkout_repo = &service.fixture().checkout;
-    let worktrees = service.worktrees();
-    for id in ["first-owned", "second-owned"] {
-        let (shape, _, observation) = reservation(id, Entry::Brief, head);
-        let mut task = Task::new(shape.identity().clone(), "Fixture".into(), None);
-        task.command(
-            Command::Hold("Retain the checkout".into()),
-            &Authority::Operator {
-                actor: "fixture".into(),
-            },
-            &observation,
-        )
-        .unwrap();
-        worktrees
-            .checkout(checkout_repo, REPOSITORY, id)
-            .unwrap()
-            .allocate(head)
-            .unwrap();
-        let mut state = service.state.lock().await;
-        state
-            .store
-            .create_with_facts(
-                &task,
-                &event("fixture"),
-                nucleus_store::TaskAdmissionFacts::default(),
-            )
-            .unwrap();
-        state.schedule.park(id);
-    }
-    let (shape, _, _) = reservation("queued", Entry::Brief, head);
-    let queued = Task::new(shape.identity().clone(), "Fixture".into(), None);
-    {
-        let mut state = service.state.lock().await;
-        assert_eq!(state.store.occupied_slots("").unwrap().total, 0);
-        state
-            .store
-            .create_with_facts(
-                &queued,
-                &event("fixture"),
-                nucleus_store::TaskAdmissionFacts::default(),
-            )
-            .unwrap();
-    }
-    for _ in 0..2 {
-        let outcomes = service.pass().await.unwrap();
-        assert!(matches!(
-            outcomes.as_slice(),
-            [PassOutcome {
-                result: Ok(Action::Wait(WaitReason::Capacity)),
-                ..
-            }]
-        ));
-        let row = service.task("queued").await.unwrap();
-        assert_eq!(row.task, queued);
-        assert_eq!(row.version, 1);
-        let mut state = service.state.lock().await;
-        assert!(state.last_pass_calls.is_empty());
-        state
-            .schedule
-            .wake("queued", Instant::now(), Priority::Wake);
-    }
-    assert!(service.host.host_calls().is_empty());
-    native.abort();
-}
-
-#[tokio::test]
-async fn paused_passes_leave_twenty_runless_rows_and_native_traffic_unchanged() {
-    let (forge, forge_server) = serve_forge(Router::new().route(
-        &format!("/repos/{REPOSITORY}/pulls"),
-        get(|| async { Json(Vec::<Value>::new()) }),
-    ))
-    .await;
-    let (_home, mut service) = fixture(forge);
-    let (host, native_server) = native_fixture(|request| {
-        panic!(
-            "paused idle rows must make no native requests: {}",
-            request["tag"]
-        );
-    })
-    .await;
-    service.host = host;
-    let ids: Vec<_> = (0..20).map(|index| format!("paused-{index:02}")).collect();
-    {
-        let mut state = service.state.lock().await;
-        state
-            .settings
-            .dispatch
-            .get_or_insert_with(Default::default)
-            .mode = DispatchMode::Paused;
-        for id in &ids {
-            let (mut task, _, mut observation) =
-                reservation(id, Entry::Brief, &service.fixture().start);
-            let instance = task.run().unwrap().launch().instance.clone();
-            task.record_send(&instance, 2).unwrap();
-            observation.host = Observed::Known(Host::Current {
-                instance,
-                state: nucleus_core::RunState::Gone,
-            });
-            assert_eq!(
-                task.reconcile(&observation),
-                Action::Relaunch(nucleus_core::Role::Worker)
-            );
-            assert!(task.run().is_none());
-            assert!(task.threads().get(nucleus_core::Role::Worker).is_some());
-            state
-                .store
-                .create_with_facts(
-                    &task,
-                    &event("fixture"),
-                    nucleus_store::TaskAdmissionFacts::default(),
-                )
-                .unwrap();
-        }
-    }
-    for _ in 0..2 {
-        let mut count = 0;
-        while count < ids.len() {
-            let pass = service.pass().await.unwrap();
-            count += pass.len();
-            for outcome in pass {
-                assert!(
-                    matches!(outcome.result, Ok(Action::Wait(WaitReason::Capacity))),
-                    "{}",
-                    outcome.task
-                );
-            }
-            assert!(service.state.lock().await.last_pass_calls.is_empty());
-        }
-        let mut state = service.state.lock().await;
-        for id in &ids {
-            assert_eq!(state.store.history(id, None, 10).unwrap().len(), 1);
-            state.schedule.wake(id, Instant::now(), Priority::Wake);
-        }
-    }
-    assert!(service.host.host_calls().is_empty());
-    native_server.abort();
-    forge_server.abort();
-}
-
 #[derive(Default)]
 pub(super) struct NativeTraffic {
     pub(super) received: AtomicUsize,
@@ -1947,170 +1826,6 @@ async fn native_fixture_inner(
     )
 }
 
-#[tokio::test]
-async fn a_due_task_stays_queued_when_its_row_cannot_be_used() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
-    let (task, _, _) = reservation("bad-scope", Entry::Brief, &service.fixture().start);
-    let mut identity = task.identity().clone();
-    identity.repository = "example/other".into();
-    let task = Task::new(identity, "Fixture".into(), None);
-    {
-        let mut state = service.state.lock().await;
-        state
-            .store
-            .create_with_facts(
-                &task,
-                &event("fixture"),
-                nucleus_store::TaskAdmissionFacts::default(),
-            )
-            .unwrap();
-        state
-            .schedule
-            .wake("bad-scope", Instant::now(), Priority::Wake);
-    }
-    assert!(matches!(service.pass().await, Err(ServiceError::Project)));
-    let mut state = service.state.lock().await;
-    let due = state
-        .schedule
-        .due("bad-scope")
-        .expect("failed task has a retry");
-    assert!(due > Instant::now());
-    assert_eq!(
-        state
-            .schedule
-            .take_ready(due, &BTreeSet::new(), None)
-            .unwrap()
-            .id,
-        "bad-scope"
-    );
-    assert_eq!(
-        state.scheduler_error,
-        Some("the task is outside this engine's configured project")
-    );
-    assert!(state.last_pass_calls.is_empty());
-}
-
-#[tokio::test]
-async fn recorded_role_send_time_does_not_extend_an_observation_outage() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
-    let (mut task, _, _) = reservation("sent", Entry::Brief, &service.fixture().start);
-    let instance = task.run().unwrap().launch().instance.clone();
-    task.record_send(&instance, now_ms()).unwrap();
-    let row = {
-        let mut state = service.state.lock().await;
-        state
-            .store
-            .create_with_facts(
-                &task,
-                &event("fixture"),
-                nucleus_store::TaskAdmissionFacts::default(),
-            )
-            .unwrap();
-        service.lookup(&state, "sent").unwrap()
-    };
-    let deadline = Instant::now() + Duration::from_mins(2);
-    for error in [
-        HostError::Unavailable,
-        HostError::Deferred { until: deadline },
-        HostError::RoleReplyPending { until: deadline },
-    ] {
-        service
-            .schedule_result(&row, &Err(ServiceError::Host(error)), Priority::Effect)
-            .await
-            .unwrap();
-        let mut state = service.state.lock().await;
-        let due = state.schedule.due("sent").unwrap();
-        match error {
-            HostError::Unavailable => assert!(due < deadline),
-            _ => assert_eq!(due, deadline),
-        }
-        assert_eq!(
-            state
-                .schedule
-                .take_ready(due, &BTreeSet::new(), None)
-                .unwrap()
-                .id,
-            "sent"
-        );
-    }
-}
-
-#[tokio::test]
-async fn done_archive_keeps_its_cause_and_respects_host_deferral() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
-    service.set_fixture_acp_provider(Some("fixture-acp"));
-    let (task, _, _) = reservation("archive", Entry::Brief, &service.fixture().start);
-    let task = Task::new(task.identity().clone(), "Fixture".into(), None);
-    let mut snapshot = serde_json::to_value(task).unwrap();
-    snapshot["phase"] = json!("done");
-    let task = serde_json::from_value(snapshot).unwrap();
-    let row = {
-        let mut state = service.state.lock().await;
-        state
-            .store
-            .create_with_facts(
-                &task,
-                &event("fixture"),
-                nucleus_store::TaskAdmissionFacts::default(),
-            )
-            .unwrap();
-        service.lookup(&state, "archive").unwrap()
-    };
-    let until = Instant::now() + Duration::from_mins(1);
-    service
-        .schedule_result(
-            &row,
-            &Err(ServiceError::Host(HostError::Deferred { until })),
-            Priority::Effect,
-        )
-        .await
-        .unwrap();
-    let state = service.state.lock().await;
-    assert_eq!(state.schedule.due("archive"), Some(until));
-    assert!(
-        matches!(state.wait_detail("archive"), Some(WaitDetail::Archive(cause)) if cause.contains("host deferred"))
-    );
-}
-
-#[tokio::test]
-async fn host_backoff_does_not_delay_a_local_task_decision() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
-    let host = service.host.pass(service.storage.scratch().path());
-    assert!(host.profile_catalog().await.is_err());
-    assert!(service.host.request_retry_at().is_some());
-    let (task, _, _) = reservation("local", Entry::Brief, &service.fixture().start);
-    let task = Task::new(task.identity().clone(), "Fixture".into(), None);
-    {
-        let mut state = service.state.lock().await;
-        state
-            .store
-            .create_with_facts(
-                &task,
-                &event("fixture"),
-                nucleus_store::TaskAdmissionFacts::default(),
-            )
-            .unwrap();
-    }
-    service
-        .command(
-            "local",
-            &Authority::Operator {
-                actor: "fixture".into(),
-            },
-            Command::Cancel,
-        )
-        .await
-        .unwrap();
-    let outcomes = tokio::time::timeout(Duration::from_secs(2), service.pass())
-        .await
-        .expect("local work must not wait for T3")
-        .unwrap();
-    assert_eq!(outcomes.len(), 1);
-    assert_eq!(outcomes[0].task, "local");
-    assert_eq!(outcomes[0].result.as_ref().unwrap(), &Action::Nothing);
-    assert!(service.state.lock().await.last_pass_calls.is_empty());
-}
-
 mod close_requests;
 mod work_volume;
 
@@ -2165,3 +1880,5 @@ async fn wait_retention_tracks_the_question_even_when_its_title_stays_the_same()
         .unwrap();
     assert_eq!(state.wait_reason(id), None);
 }
+
+mod scheduling_cases;

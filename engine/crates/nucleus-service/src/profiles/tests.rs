@@ -372,7 +372,7 @@ async fn admit_review_entry(
         .allocate(&pr.head)
         .unwrap();
     service.add_planned_task(
-        None,
+        Some("fixture-product"),
         crate::planning::TaskAdmission {
             id: Some(id.into()),
             reference: None,
@@ -388,9 +388,18 @@ async fn admit_review_entry(
 }
 
 async fn send_review_entry_role(service: &Service, row: &TaskRow, role: Role) -> TaskRow {
+    publish_parent_shell(service).await;
     let host = service.host.fixture_pass();
+    let first = Box::pin(service.advance(row, &host)).await.unwrap();
+    let action = if first == Action::Wait(WaitReason::Starting) {
+        publish_parent_shell(service).await;
+        let host = service.host.fixture_pass();
+        Box::pin(service.advance(row, &host)).await.unwrap()
+    } else {
+        first
+    };
     assert_eq!(
-        Box::pin(service.advance(row, &host)).await.unwrap(),
+        action,
         Action::Launch {
             role,
             via: Launch::Create
@@ -491,28 +500,50 @@ fn an_unknown_reset_pauses_for_a_day_from_the_failure() {
 }
 
 #[derive(Default)]
-struct NativeRuns {
+pub(crate) struct NativeRuns {
+    parents: BTreeMap<String, Value>,
     launches: BTreeMap<String, Value>,
     limited: Option<String>,
 }
 
 impl NativeRuns {
-    fn limit(&mut self, thread: &str) -> Value {
+    fn limit(&mut self, thread: &str, root: &std::path::Path) -> Value {
         self.limited = Some(thread.into());
         let launch = &self.launches[thread];
-        json!({"kind":"snapshot","snapshot":{
-            "snapshotSequence":1, "projects":[], "threads":[{
-                "id":thread, "projectId":"local-fixture",
+        let mut shell = json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1, "projects":[{"id":"local-fixture", "workspaceRoot":root}], "threads":[{
+                "id":thread, "projectId":"local-fixture", "parentThreadId":launch["parentThreadId"],
+                "lineage":{"parentThreadId":launch["parentThreadId"], "rootThreadId":launch["parentThreadId"], "relationshipToParent":"subagent"},
                 "worktreePath":launch["workspaceStrategy"]["worktreePath"],
                 "branch":launch["workspaceStrategy"]["branch"], "status":"failed",
                 "latestRunId":"native-run", "activeRunId":null,
                 "pendingRuntimeRequest":null, "pendingBackgroundTasks":[],
             }]
-        }})
+        }});
+        let rows = shell["snapshot"]["threads"].as_array_mut().unwrap();
+        for parent in self.parents.values() {
+            rows.push(
+                json!({"id":parent["threadId"], "projectId":parent["projectId"],
+                "worktreePath":parent["workspaceStrategy"]["worktreePath"],
+                "branch":parent["workspaceStrategy"]["branch"],
+                "providerInstanceId":"fixture-acp", "modelSelection":parent["modelSelection"],
+                "status":"running", "activeRunId":"parent-run", "latestRunId":"parent-run",
+                "pendingRuntimeRequest":null, "pendingBackgroundTasks":[]}),
+            );
+        }
+        shell
     }
 }
 
-fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRuns) -> Value {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture trace covers a complete lifecycle"
+)]
+pub(crate) fn native_response(
+    request: &Value,
+    root: &std::path::Path,
+    runs: &mut NativeRuns,
+) -> Value {
     let payload = &request["payload"];
     let reply = |value| {
         json!({
@@ -536,7 +567,11 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
                                           "options":[{"id":"default"},{"id":"priority"}]}]
                  }}]},
                 {"instanceId":"claudeAgent","enabled":true,"status":"ready",
-                 "models":[{"slug":"other"}]}
+                 "models":[{"slug":"other"}]},
+                {"instanceId":"fixture-acp","driver":"acpRegistry","enabled":true,"status":"ready",
+                 "models":[{"slug":"nucleus"}]},
+                {"instanceId":"provider","driver":"codex","enabled":true,"status":"ready",
+                 "models":[{"slug":"fixture"}]}
             ]
         })),
         Some("orchestration.subscribeShell") => snapshot(json!({
@@ -544,11 +579,37 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
         })),
         Some("orchestration.launchThread") => {
             let id = payload["threadId"].as_str().expect("launched thread");
-            assert!(runs.launches.insert(id.into(), payload.clone()).is_none());
+            if payload["modelSelection"]["instanceId"] == "fixture-acp" {
+                assert!(runs.parents.insert(id.into(), payload.clone()).is_none());
+            } else {
+                assert!(runs.launches.insert(id.into(), payload.clone()).is_none());
+            }
             reply(json!({"sequence":1}))
+        }
+        Some("orchestration.dispatchCommand") if payload["type"] == "delegated_task.request" => {
+            let instance = payload["commandId"].as_str().unwrap();
+            let parent = &runs.parents[payload["parentThreadId"].as_str().unwrap()];
+            let id = format!("thread:delegated-task:{instance}");
+            let launch = json!({
+                "workspaceStrategy": parent["workspaceStrategy"],
+                "parentThreadId":payload["parentThreadId"],
+                "modelSelection":payload["modelSelection"],
+                "initialMessage":{"messageId":format!("message:delegated-task:{instance}")}
+            });
+            assert!(runs.launches.insert(id, launch).is_none());
+            reply(json!({"sequence":2}))
         }
         Some("orchestration.subscribeThread") => {
             let id = payload["threadId"].as_str().expect("observed thread");
+            if let Some(parent) = runs.parents.get(id) {
+                return snapshot(
+                    json!({"kind":"snapshot", "snapshotSequence":3, "projection":{
+                        "thread":{"id":id,"projectId":"local-fixture", "worktreePath":parent["workspaceStrategy"]["worktreePath"], "branch":parent["workspaceStrategy"]["branch"], "providerInstanceId":"fixture-acp", "modelSelection":parent["modelSelection"]},
+                        "runs":[{"id":"parent-run", "rootNodeId":"parent-root", "status":"running", "userMessageId":parent["initialMessage"]["messageId"]}],
+                        "messages":[], "runtimeRequests":[], "providerThreads":[], "turnItems":[]
+                    }}),
+                );
+            }
             let Some(launch) = runs.launches.get(id) else {
                 return json!({
                     "_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Failure","cause":[
@@ -575,6 +636,9 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
             snapshot(json!({
                 "kind":"snapshot","snapshotSequence":1,"projection":{
                     "thread":{"id":id,"projectId":"local-fixture",
+                              "parentThreadId":launch["parentThreadId"],
+                              "providerInstanceId":launch["modelSelection"]["instanceId"],
+                              "modelSelection":launch["modelSelection"],
                               "worktreePath":launch["workspaceStrategy"]["worktreePath"],
                               "branch":launch["workspaceStrategy"]["branch"]},
                     "runs":[{"id":"native-run","rootNodeId":"root",
@@ -591,18 +655,95 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
     }
 }
 
+pub(crate) async fn publish_parent_shell(service: &Service) {
+    let (threads, root) = {
+        let state = service.state.lock().await;
+        let root = state
+            .settings
+            .projects
+            .as_ref()
+            .unwrap()
+            .projects
+            .values()
+            .flat_map(|project| &project.repositories)
+            .next()
+            .unwrap()
+            .path
+            .clone();
+        let mut threads = Vec::new();
+        for task in state.store.active_ids(None, u32::MAX).unwrap() {
+            let id = &task.id;
+            let Some(parent) = state.store.current_parent_hold(id).unwrap() else {
+                continue;
+            };
+            let wire: Value = serde_json::from_str(&parent.wire).unwrap();
+            let payload = &wire["payload"];
+            if payload["workspaceStrategy"].is_null() {
+                continue;
+            }
+            threads.push(json!({
+                    "id":payload["threadId"], "projectId":payload["projectId"],
+                    "worktreePath":payload["workspaceStrategy"]["worktreePath"], "branch":payload["workspaceStrategy"]["branch"],
+                    "providerInstanceId":"fixture-acp", "modelSelection":{"instanceId":"fixture-acp", "model":"nucleus"},
+                    "status":"running", "activeRunId":"parent-run", "latestRunId":"parent-run",
+                    "pendingRuntimeRequest":null, "pendingBackgroundTasks":[]
+                }));
+        }
+        (threads, root)
+    };
+    service.host.fixture_project_shell(
+        &json!({"snapshotSequence":3,
+            "projects":[{"id":"local-fixture", "workspaceRoot":root}], "threads":threads
+        }),
+        "fixture-acp",
+    );
+}
+
 async fn pass(service: &Service) -> Vec<crate::PassOutcome> {
-    let host = service.host.fixture_pass();
-    let outcomes = service.pass_with_host(&host).await.expect("scheduler pass");
-    for outcome in &outcomes {
-        assert!(
-            outcome.result.is_ok(),
-            "{}: {:?}",
-            outcome.task,
-            outcome.result
-        );
+    if !service.host.projects_synchronized() {
+        publish_parent_shell(service).await;
     }
-    outcomes
+    for _ in 0..64 {
+        let host = service.host.fixture_pass();
+        let outcomes = service.pass_with_host(&host).await.expect("scheduler pass");
+        for outcome in &outcomes {
+            assert!(
+                outcome.result.is_ok(),
+                "{}: {:?}",
+                outcome.task,
+                outcome.result
+            );
+        }
+        if outcomes
+            .iter()
+            .any(|outcome| matches!(outcome.result, Ok(Action::Wait(WaitReason::Starting))))
+        {
+            // The fake host starts accepted parent turns before the next decision.
+            publish_parent_shell(service).await;
+            let mut state = service.state.lock().await;
+            for outcome in &outcomes {
+                if matches!(outcome.result, Ok(Action::Wait(WaitReason::Starting))) {
+                    state
+                        .schedule
+                        .wake(&outcome.task, tokio::time::Instant::now(), Priority::Wake);
+                }
+            }
+            continue;
+        }
+        return outcomes;
+    }
+    panic!("fixture parent did not start")
+}
+
+async fn advance_with_parent(service: &Service, row: &TaskRow) -> Result<Action, ServiceError> {
+    publish_parent_shell(service).await;
+    let first = Box::pin(service.advance(row, &service.host.fixture_pass())).await?;
+    if first == Action::Wait(WaitReason::Starting) {
+        publish_parent_shell(service).await;
+        Box::pin(service.advance(row, &service.host.fixture_pass())).await
+    } else {
+        Ok(first)
+    }
 }
 
 async fn wake(service: &Service, ids: &[&str]) {
@@ -634,7 +775,8 @@ async fn launch_three(service: &Service, native: &Mutex<NativeRuns>) -> Vec<Stri
     let mut threads = Vec::new();
     for id in IDS {
         service
-            .admit(
+            .admit_to(
+                Some(crate::tests::REPOSITORY),
                 id.into(),
                 id.into(),
                 "---\nqueue:\n  complexity: medium\n---\nFixture café".into(),
@@ -757,21 +899,29 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
     let threads = launch_three(&service, &native).await;
     measure_overlap(&service, &traffic).await;
 
-    let shell = native.lock().expect("native runs").limit(&threads[0]);
+    let shell = native
+        .lock()
+        .expect("native runs")
+        .limit(&threads[0], &service.fixture().checkout);
     service.host.fixture_held_shell(&shell);
     wake(&service, &IDS[..1]).await;
     let ended = pass(&service).await;
     assert_eq!(ended.len(), 1);
     assert_eq!(ended[0].task, IDS[0]);
+    assert_eq!(
+        ended[0].result.as_ref().unwrap(),
+        &Action::Relaunch(Role::Worker)
+    );
     // The exhausted run has settled. Observe the next decision on that row.
     wake(&service, &IDS[..1]).await;
     let result = pass(&service).await;
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].task, IDS[0]);
-    assert!(matches!(
-        result[0].result,
-        Ok(Action::Wait(WaitReason::Capacity))
-    ));
+    assert!(
+        matches!(result[0].result, Ok(Action::Wait(WaitReason::Capacity))),
+        "{:?}",
+        result[0].result
+    );
     let limited = service.task(IDS[0]).await.expect("settled limit");
     assert_limit_fact(&service).await;
     assert_eq!(limited.task.phase(), Phase::Working);
@@ -781,10 +931,7 @@ async fn three_overlapping_tasks_share_provider_pauses_and_measure_t3_traffic() 
         limited.task.threads().last_provider_limit.as_deref(),
         Some("Provider usage limit for subscription group shared. Reset at 2099-01-01 00:00 UTC.")
     );
-    assert_eq!(
-        ended[0].result.as_ref().unwrap(),
-        &Action::Relaunch(Role::Worker)
-    );
+
     {
         let mut state = service.state.lock().await;
         assert_eq!(
@@ -838,8 +985,9 @@ async fn a_stored_subscription_pause_reserves_the_next_tier_and_records_the_reas
     .await;
     let (_home, mut service) = fixture(forge);
     let root = service.fixture().checkout.clone();
+    let runs = Arc::new(Mutex::new(NativeRuns::default()));
     let (host, native_server) = native_fixture_with_traffic(
-        move |request| native_response(request, &root, &mut NativeRuns::default()),
+        move |request| native_response(request, &root, &mut runs.lock().unwrap()),
         None,
     )
     .await;
@@ -862,7 +1010,8 @@ async fn a_stored_subscription_pause_reserves_the_next_tier_and_records_the_reas
         );
     }
     service
-        .admit(
+        .admit_to(
+            Some(crate::tests::REPOSITORY),
             id.into(),
             id.into(),
             "---\nqueue: {complexity: low}\n---\nFix a typo.".into(),
@@ -907,12 +1056,30 @@ async fn a_stored_subscription_pause_reserves_the_next_tier_and_records_the_reas
     forge_server.abort();
 }
 
-fn finish_profile_run(
+pub(crate) fn finish_profile_run(
+    task: &mut Task,
+    observation: &mut Observation,
+    profile: (&Profile, &str, &str),
+    report: Report,
+    expected: Phase,
+) {
+    finish_profile_run_with_input(
+        task,
+        observation,
+        profile,
+        report,
+        expected,
+        "fixture wire".into(),
+    );
+}
+
+pub(crate) fn finish_profile_run_with_input(
     task: &mut Task,
     observation: &mut Observation,
     (profile, group, thread): (&Profile, &str, &str),
     report: Report,
     expected: Phase,
+    input: String,
 ) {
     let intent = decide_profile_launch(
         task,
@@ -936,7 +1103,7 @@ fn finish_profile_run(
             LaunchInputs {
                 thread: thread.into(),
                 started_at: 1,
-                input: "fixture wire".into(),
+                input,
                 scratch: None,
             },
             &[7; 32],
@@ -1207,7 +1374,7 @@ async fn retained_roles_launch_on_a_shared_model_and_leave_a_single_reservation_
         );
         if role == Role::Reviewer {
             let wire: Value = serde_json::from_str(&launch.input).unwrap();
-            let prompt = wire["payload"]["initialMessage"]["text"].as_str().unwrap();
+            let prompt = wire["payload"]["task"].as_str().unwrap();
             assert_eq!(prompt.lines().filter(|line| *line == expected).count(), 1);
         }
         // Subsequent scheduler passes would surface a selection error to the serve log.
@@ -1294,10 +1461,7 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
         }
         let row = service.task(id).await.unwrap();
         assert_eq!(row.task.threads().get(role), Some(thread));
-        let actual = service
-            .advance(&row, &service.host.fixture_pass())
-            .await
-            .unwrap();
+        let actual = advance_with_parent(&service, &row).await.unwrap();
         let next = service.task(id).await.unwrap();
         if required {
             assert_eq!(actual, Action::Wait(WaitReason::Capacity));
@@ -1331,7 +1495,7 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
             assert_eq!(launch.subscription_group(), Some("other"));
             if role == Role::Worker {
                 let wire: Value = serde_json::from_str(&launch.input).unwrap();
-                let prompt = wire["payload"]["initialMessage"]["text"].as_str().unwrap();
+                let prompt = wire["payload"]["task"].as_str().unwrap();
                 assert!(prompt.contains("Rebase before revising."));
                 assert!(prompt.contains("Fix the spelling."));
             }
@@ -1342,10 +1506,6 @@ async fn paused_retained_roles_reselect_from_stored_rows_and_required_profiles_w
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "follow each stored amendment through next and its launch"
-)]
 async fn complexity_amendments_route_a_stored_worker_and_explain_reselection_in_next() {
     let profiles: Profiles = serde_json::from_value(json!({
         "profiles": [
@@ -1419,10 +1579,7 @@ async fn complexity_amendments_route_a_stored_worker_and_explain_reselection_in_
         } else {
             assert!(next.get("profileReselections").is_none());
         }
-        let actual = service
-            .advance(&row, &service.host.fixture_pass())
-            .await
-            .unwrap();
+        let actual = advance_with_parent(&service, &row).await.unwrap();
         let via = if reselect {
             Launch::Create
         } else {
@@ -1443,7 +1600,7 @@ async fn complexity_amendments_route_a_stored_worker_and_explain_reselection_in_
         assert_eq!(launch.thread != thread, reselect);
         if reselect {
             let wire: Value = serde_json::from_str(&launch.input).unwrap();
-            let prompt = wire["payload"]["initialMessage"]["text"].as_str().unwrap();
+            let prompt = wire["payload"]["task"].as_str().unwrap();
             assert!(prompt.contains("Rebase before revising."));
             assert!(prompt.contains("Fix the spelling."));
         }
@@ -1622,7 +1779,7 @@ async fn paused_reserved_reminders_reselect_from_stored_rows_unless_required() {
             assert_eq!(launch.profile().unwrap().id, "replacement");
             assert_eq!(launch.subscription_group(), Some("other"));
             let wire: Value = serde_json::from_str(&launch.input).unwrap();
-            let prompt = wire["payload"]["initialMessage"]["text"].as_str().unwrap();
+            let prompt = wire["payload"]["task"].as_str().unwrap();
             assert!(prompt.contains(head.as_str()));
             assert!(prompt.contains(missing));
             assert!(prompt.contains("ended without an authenticated report"));

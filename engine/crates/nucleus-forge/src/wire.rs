@@ -9,6 +9,7 @@ use crate::{AuthenticatedGitHubUser, ForgeError};
 pub(crate) struct Pull {
     pub(crate) number: i32,
     pub(crate) html_url: String,
+    pub(crate) body: Option<String>,
     pub(crate) merged: bool,
     #[serde(deserialize_with = "Deserialize::deserialize")]
     pub(crate) user: Option<AuthenticatedGitHubUser>,

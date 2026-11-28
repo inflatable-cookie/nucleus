@@ -1,25 +1,25 @@
 use super::*;
 use crate::tests::registry_fixture;
 
-const PROJECT: &str = "/v1/planning/local-fixture";
+const PROJECT: &str = "/v1/planning/fixture-product";
 
 pub(super) async fn put_as(api: &Router, path: &str, key: &[u8; 32], body: &Value) -> Response {
+    let mut request = Request::put(path)
+        .header("host", LOCAL_HOST)
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {}", hex::encode(key)));
+    if key == &PLANNER_KEY {
+        request = request.header("x-nucleus-t3-caller", "planner");
+    }
     api.clone()
-        .oneshot(
-            Request::put(path)
-                .header("host", LOCAL_HOST)
-                .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {}", hex::encode(key)))
-                .body(Body::from(body.to_string()))
-                .expect("request"),
-        )
+        .oneshot(request.body(Body::from(body.to_string())).unwrap())
         .await
-        .expect("response")
+        .unwrap()
 }
 
 #[tokio::test]
 async fn dropped_items_keep_the_disposition_and_note_on_readback() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, service, _planner_host) = enrolled_fixture(GitHub::new("fixture").unwrap()).await;
     let api = router(
         Arc::new(service),
         [planner_controller(PLANNER_KEY, "planner")],
@@ -63,7 +63,7 @@ async fn dropped_items_keep_the_disposition_and_note_on_readback() {
 
 #[tokio::test]
 async fn a_lead_promotes_at_the_version_seen_and_keeps_a_chosen_level_only_with_its_task() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, service, _planner_host) = enrolled_fixture(GitHub::new("fixture").unwrap()).await;
     let api = router(
         Arc::new(service),
         [planner_controller(PLANNER_KEY, "planner")],
@@ -147,7 +147,8 @@ async fn a_lead_promotes_at_the_version_seen_and_keeps_a_chosen_level_only_with_
 
 #[tokio::test]
 async fn board_lane_dispositions_survive_native_validation_and_readback() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").expect("client")).await;
     let api = router(
         Arc::new(service),
         [planner_controller(PLANNER_KEY, "planner")],
@@ -175,7 +176,8 @@ async fn board_lane_dispositions_survive_native_validation_and_readback() {
 
 #[tokio::test]
 async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").expect("client")).await;
     let api = router(
         Arc::new(service),
         [
@@ -261,7 +263,7 @@ async fn planning_routes_fence_document_versions_and_admit_tasks_without_host_io
     let task = json_body(get_as(&api, &format!("/v1/tasks/{task_id}"), &PLANNER_KEY).await).await;
     assert_eq!(
         task["source"],
-        json!({"projectId":"local-fixture","itemId":id})
+        json!({"projectId":"fixture-product","itemId":id})
     );
     let promoted = task["brief"]["text"].as_str().unwrap();
     assert!(promoted.contains("title: From planning"));
@@ -480,7 +482,8 @@ async fn review_entry_admission_retires_acceptance_when_the_exact_head_changes()
 
 #[tokio::test]
 async fn planning_decision_history_identifies_authenticated_actors() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").expect("client")).await;
     let api = router(
         Arc::new(service),
         [
@@ -598,7 +601,8 @@ async fn wait_for_git(gate: &crate::project::git_gate::Gate, count: usize) {
 
 #[tokio::test]
 async fn concurrent_promotions_return_one_task_and_publish_one_wake() {
-    let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (home, mut service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").unwrap()).await;
     let gate = gated_git(&mut service, home.path());
     let service = Arc::new(service);
     let api = router(
@@ -649,7 +653,8 @@ async fn concurrent_promotions_return_one_task_and_publish_one_wake() {
 
 #[tokio::test]
 async fn admission_rechecks_scope_after_git_consultation() {
-    let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (home, mut service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").unwrap()).await;
     let gate = gated_git(&mut service, home.path());
     let service = Arc::new(service);
     let api = router(
@@ -676,7 +681,7 @@ async fn admission_rechecks_scope_after_git_consultation() {
 
 #[tokio::test]
 async fn reopen_items_preserves_history_and_rejects_stale_versions() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, service, _planner_host) = enrolled_fixture(GitHub::new("fixture").unwrap()).await;
     let api = router(
         Arc::new(service),
         [planner_controller(PLANNER_KEY, "planner")],
