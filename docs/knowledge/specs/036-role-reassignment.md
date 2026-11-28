@@ -48,7 +48,7 @@ bdd9307a).
   - the version is current.
 - **Preflight.** Before anything is accepted, each requested profile must be
   catalogued, enabled in the pool for its role, capable of the task, in an
-  available subscription group, and pass the independence rule below. A
+  available subscription group. A
   failure refuses the whole control with the reason. Nothing is half-applied.
 - **Effect,** in one transaction:
   - `profileRequests.worker` and `.reviewer` are replaced.
@@ -72,20 +72,8 @@ bdd9307a).
     explicitly authorized ordinary review. Reassignment always clears the agent
     binding and creates a fresh agent on the requested profile, even if the old
     binding used that profile. A profile identity is not an agent identity.
-  - The reviewer's model must differ from the model of the worker whose head is
-    under review.
-  - An earlier author's model is allowed only when the operator names that
-    profile explicitly through `reassign_roles`.
-  - The same rule applies when the review result is verified (the adapter's
-    independence guard), not only when the reviewer is selected. #1725's first
-    reassigned review was held because only selection had the exception.
-  - Automatic selection keeps today's rule, which excludes every author model.
-    This is never an automatic fallback. Admission now also refuses a required
-    same-model worker/reviewer pair before the task exists
-    ([Spec 030](030-routing-changes.md)); this runtime guard stays because the
-    actual author or catalog can change after admission.
-  - The reviewer prompt lists every prior author model and agent, so the
-    reviewer knows which content it is independent of.
+  - Model choice follows [Spec 070 ruling 64](070-small-engine.md#rulings).
+    The task and review prompt disclose shared models.
 - **Gates unchanged.** Exact-head review, formal reviews, merge gates, revision
   budget and every brief acceptance requirement stay as they are.
 - **Visibility.** Task detail shows the reassignment event. The Pipeline shows
@@ -98,17 +86,17 @@ bdd9307a).
 | 1 | Reassign while any run is unreleased or a reviewer is active | Refused with the reason; nothing changes |
 | 2 | Stale version | Refused |
 | 3 | Requested profile matches an old reviewer binding, including an actual earlier author | Accepted only as a fresh agent; old author never reused |
-| 4 | Requested reviewer shares the current author's model | Refused at preflight |
-| 5 | A fresh agent of an earlier author's model (#1725: Luna), explicitly requested | Accepted; recorded; the review prompt lists prior authors |
-| 6 | Automatic reviewer selection after an earlier author's model | Still excluded |
+| 4 | Required reviewer shares the current author's model | Accepted and recorded |
+| 5 | A fresh reviewer on an earlier author's model is required | Accepted and disclosed in the review prompt |
+| 6 | Automatic reviewer selection after an earlier author's model | Prefer a different model when a usable one is available |
 | 7 | Requested worker unavailable or in a paused group | Refused at preflight with the group and reason |
 | 8 | Worker plus reviewer swap (#1725: Sol worker, Luna reviewer) | One transaction; replacement worker gets the instruction once; PR and head kept; next review uses Luna |
 | 9 | Replacement worker can't be created after acceptance | Instruction recorded refused with the reason; task to needs_attention; nothing silently dropped |
 | 10 | History | Earlier runs, reviews, agents and models unchanged |
 
 After steps retirement (Tom, 2026-10-07), historical review-only stage records
-must not become author exclusions. Current and retired workers, revision
-agents and actual work/publish records remain excluded. Saved partial reading
+remain review evidence. Current and retired workers, revision agents and
+actual work/publish records provide the author evidence. Saved partial reading
 is evidence of that same reviewer's work, not completion or another agent's
 reading. No automatic checkpoint continuation is restored.
 

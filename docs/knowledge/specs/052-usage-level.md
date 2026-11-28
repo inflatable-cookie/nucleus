@@ -261,7 +261,7 @@ ran every worker and reviewer on Heavyweight or Frontier.
   included (Tom, 2026-11-22: "I want to use high to make use of Sol as worker,
   but still have lower bracket profiles do the review"); since 2026-11-23 that
   step applies at High only to Heavyweight and Frontier workers. No reviewer
-  floor parks review: when no independent profile carries the reviewer's
+  floor parks review: when no usable profile carries the reviewer's
   bracket, the nearest permitted bracket above serves, and otherwise the most
   capable permitted profile. A critical task prefers a reviewer at least as
   capable as the worker when one is permitted, and falls back the same way
@@ -272,9 +272,8 @@ ran every worker and reviewer on Heavyweight or Frontier.
 - **Nothing waits for profile approval.** An explicit request applies on the
   role's next run. The Low submission gate still holds work that needs
   admission approval.
-- **Other roles.** Reviewers keep the independence rule, and a retained
-  reviewer below the bracket the level asks of it is replaced on the next
-  round. Coordinator and recovery runs always use Mechanical when an eligible
+- **Other roles.** A retained reviewer below the bracket the level asks of it
+  is replaced on the next round. Coordinator and recovery runs always use Mechanical when an eligible
   Mechanical profile is available, and otherwise the lowest permitted bracket
   that has one, at every level including Maximum (Tom, 2026-11-19: "Coordinator
   should always be mechanical if available, worker shouldn't have an offset at
@@ -288,9 +287,9 @@ ran every worker and reviewer on Heavyweight or Frontier.
   profiles ([Spec 053](053-demand-based-selection.md)).
 - **A fully paused bracket steps up** (Spec 070 ruling 51). When subscription
   pauses block every otherwise eligible profile within the ordinary ceiling,
-  automatic selection uses the nearest available tier above it. Role and model
-  independence rules still apply, including the usage level's request rules
-  for Heavyweight and Frontier. A required profile still waits for its group.
+  automatic selection tries the nearest available tier above it. Heavyweight
+  and Frontier still follow the usage level's request rules. A required
+  profile waits for its group.
   Each launch tries ordinary selection first, and the reservation audit records
   the reason and brackets when it steps up.
 - **Frontier is a capability bracket, not a cost** (Tom, 2026-11-09: "Can we
@@ -340,7 +339,7 @@ ran every worker and reviewer on Heavyweight or Frontier.
   never keeps showing an expired level.
 - **Diagnostics.** When usage bounds leave a role without an automatic
   profile, `next` names the bracket and offers `route`. It also reports
-  catalog, subscription, exclusion and reviewer-independence constraints.
+  catalog and subscription constraints and any shared-model launch.
 - **Effective policy on reads.** Tom chose this explanation as the Nucleus
   priority on 2026-10-19 (decision 83556116; papercut b6804a4b): an owner read
   a stored flag as absolute and rerouted a correct automatic Maximum pick.

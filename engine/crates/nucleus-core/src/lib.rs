@@ -12,9 +12,9 @@ pub use decision::{
     RunState, WaitReason, Workspace, decide,
 };
 pub use model::{
-    Acceptance, Authority, Brief, CallbackCredential, Entry, Head, Hold, HoldBy, Identity,
-    InvalidHead, LaunchInputs, OperatorDecline, Phase, PreparedLaunch, PullRequest, Question,
-    QuestionDelivery, QueuePriority, Repair, Report, ReportAcceptance, ReportArtifact,
+    Acceptance, AuthorDeclaration, Authority, Brief, CallbackCredential, Entry, Head, Hold, HoldBy,
+    Identity, InvalidHead, LaunchInputs, OperatorDecline, Phase, PreparedLaunch, PullRequest,
+    Question, QuestionDelivery, QueuePriority, Repair, Report, ReportAcceptance, ReportArtifact,
     ReportDelivery, ReportFailure, ReportTask, Review, Role, Run, Task, Threads, Verdict,
     WorkReport,
 };

@@ -1197,6 +1197,7 @@ impl Service {
             pr,
             discovered_skill,
             model: &profile.model,
+            shared_model: selection.and_then(|selected| selected.intent.shared_model()),
             lanes: &lanes,
             dependencies: &dependencies,
             command: &self.report_command,
@@ -1592,29 +1593,38 @@ impl Service {
         if !pins.is_empty() {
             detail.insert("laneDocumentPins".into(), serde_json::json!(pins));
         }
-        if let Some(selected) = selection
-            && let Some(ceiling) = selected.intent.step_up_from()
-        {
-            detail.insert(
-                "profileStepUp".into(),
-                serde_json::json!({
-                    "ordinaryCeiling": ceiling,
-                    "selectedCapability": selected.intent.profile().capability,
-                    "reason": "Every eligible profile within the ordinary ceiling is paused."
-                }),
-            );
-        }
-        if let Some(selected) = selection
-            && let Some(worker) = selected.intent.critical_fallback_worker()
-        {
-            let receipt = CriticalReviewFallback {
-                at_ms: run.launch().started_at,
-                run_instance: run.launch().instance.clone(),
-                worker_profile_id: worker.into(),
-                reviewer_profile_id: selected.intent.profile().id.clone(),
-                reason: "No available independent reviewer with a known capability at least as high as the worker. Ordinary reviewer selection used.".into(),
-            };
-            detail.insert("criticalReviewFallback".into(), serde_json::json!(receipt));
+        if let Some(selected) = selection {
+            let intent = &selected.intent;
+            if let Some(ceiling) = intent.step_up_from() {
+                detail.insert(
+                    "profileStepUp".into(),
+                    serde_json::json!({
+                        "ordinaryCeiling": ceiling,
+                        "selectedCapability": intent.profile().capability,
+                        "reason": "Every eligible profile within the ordinary ceiling is paused."
+                    }),
+                );
+            }
+            if let Some(worker) = intent.critical_fallback_worker() {
+                let receipt = CriticalReviewFallback {
+                    at_ms: run.launch().started_at,
+                    run_instance: run.launch().instance.clone(),
+                    worker_profile_id: worker.into(),
+                    reviewer_profile_id: intent.profile().id.clone(),
+                    reason: "The selected reviewer is below the worker's capability bracket."
+                        .into(),
+                };
+                detail.insert("criticalReviewFallback".into(), serde_json::json!(receipt));
+            }
+            if let Some(message) = intent.shared_model() {
+                detail.insert(
+                    "sharedModel".into(),
+                    serde_json::json!({
+                        "runInstance": intent.instance(),
+                        "message": message
+                    }),
+                );
+            }
         }
         if !detail.is_empty() {
             audit.detail = serde_json::Value::Object(detail).to_string();
@@ -1983,6 +1993,13 @@ impl Service {
                         replay_policy(Some(head), &fresh)
                             .filter(|&superseded| !superseded || run.revoked())
                     } else {
+                        if identity.entry == nucleus_core::Entry::ReviewEntry
+                            && (task.review_author().is_none()
+                                || !matches!(self.read_forge(task, checkout).await?.0,
+                                    Forge::Open { pr, .. } if task.pull_request() == Some(&pr)))
+                        {
+                            return Ok(None);
+                        }
                         (self.observe_checkout(checkout).await? != Workspace::Absent)
                             .then_some(false)
                     }
@@ -3760,7 +3777,9 @@ mod tests {
                 reserved.identity().clone(),
                 reserved.brief().text.clone(),
                 reserved.pull_request().cloned(),
-            );
+            )
+            .with_author_declaration(crate::tests::author_declaration())
+            .expect("declare the external author");
             let _ = task.reconcile(&observation);
             service
                 .state

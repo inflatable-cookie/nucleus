@@ -255,9 +255,10 @@ Each execution appends one immutable `proofExecutions` record naming the
 executor run, agent, workspace, profile/model, operation, selector, input
 hashes, repository/PR/branch/head, brief version and digest, the owner
 authorisation and its result. The source-author declaration on the review entry
-is never changed. Reviewer selection and `verifyReview` exclude the executor's
-recorded models and agents in addition to the source author, so a later review
-is independent of both without reminting the author.
+is never changed. Reviewer selection and `verifyReview` exclude agents that
+executed the proof or authored the source. Selection prefers a usable reviewer
+on a different model from the executor and source author. Shared-model
+fallbacks and required requests follow [Spec 070 ruling 64](070-small-engine.md#rulings).
 
 An executor run that is superseded after it actually ran keeps its execution
 record (task 560). When its agent's late report arrives, the reported status,

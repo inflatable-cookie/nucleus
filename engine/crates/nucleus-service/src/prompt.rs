@@ -146,6 +146,7 @@ pub(super) struct Prompt<'a> {
     pub(super) pr: Option<&'a PullRequest>,
     pub(super) discovered_skill: Option<&'a Path>,
     pub(super) model: &'a str,
+    pub(super) shared_model: Option<&'a str>,
     pub(super) lanes: &'a LaneContext,
     pub(super) dependencies: &'a DependencyStatus,
     pub(super) command: &'a Path,
@@ -198,7 +199,7 @@ impl Prompt<'_> {
         let title = crate::titles::brief_title(task);
         let report_only = task.report_task();
         let assignment = match (&self.role, self.pr, self.replaced_thread, self.via) {
-            (Role::Reviewer, ..) => "Independent review",
+            (Role::Reviewer, ..) => "Exact-head review",
             (Role::Worker, ..) if report_only.is_some() => "Report-only delivery",
             (Role::Worker, Some(_), ..) => "Continue work in the existing checkout and PR",
             (Role::Worker, None, Some(_), _) => "Replacement worker in the existing checkout",
@@ -261,6 +262,20 @@ impl Prompt<'_> {
             );
         }
         if self.role == Role::Reviewer {
+            if let Some(message) = self.shared_model {
+                let _ = writeln!(text, "{message}");
+            }
+            if let Some(author) = task.review_author() {
+                let _ = writeln!(
+                    text,
+                    "Declared external author: {} ({})\nDeclared author models: {}\nAttested by: {}\nProvenance: {}",
+                    author.github_author,
+                    author.authoring_system,
+                    author.models.join(", "),
+                    author.attested_by,
+                    author.provenance
+                );
+            }
             let worker = task.threads();
             let author = worker.profile(Role::Worker);
             let _ = writeln!(
@@ -537,6 +552,7 @@ mod tests {
             pr: None,
             discovered_skill: None,
             model: "fixture",
+            shared_model: None,
             lanes: &EMPTY_LANES,
             dependencies: &EMPTY_DEPENDENCIES,
             command: Path::new("/bin/nucleus engine"),
@@ -606,7 +622,7 @@ mod tests {
         .text;
         assert!(text.contains(&format!("PR: {PR}\nPR head: {HEAD}")));
         assert!(text.contains(FOREGROUND_RULE));
-        assert!(text.contains("Never read the\nworker's private transcript."));
+        assert!(text.contains("Never read the worker's private transcript."));
         assert!(!text.contains("### Worker"));
         assert!(!text.contains("Ready for review:"));
         for (label, expected) in [

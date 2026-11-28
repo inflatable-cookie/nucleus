@@ -28,7 +28,10 @@ const eventually = async (check, message) => {
 const text = () => dom.window.document.body.textContent ?? '';
 const control = label => dom.window.document.querySelector(`[aria-label="${label}"]`);
 const click = async label => {
-  await eventually(() => control(label), `visible control: ${label}`);
+  await eventually(
+    () => control(label)?.matches(':not(:disabled, [aria-disabled="true"])'),
+    `enabled control: ${label}`,
+  );
   control(label).click();
 };
 try {

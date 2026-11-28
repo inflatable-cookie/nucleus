@@ -143,6 +143,10 @@ pub enum ServiceError {
     DependencyEdit(&'static str),
     #[error("task input is invalid")]
     Input,
+    #[error("only the operator can attest external author models")]
+    AuthorDeclarationOperator,
+    #[error("{0}")]
+    AuthorDeclaration(&'static str),
     #[error("queue.complexity is required: very_low, low, medium, high or very_high")]
     ComplexityRequired,
     #[error("brief is {bytes} UTF-8 bytes and exceeds the {MAX_BRIEF_BYTES}-byte limit")]
@@ -581,6 +585,7 @@ impl Service {
                 repository: repository.map(str::to_owned),
                 brief,
                 review: None,
+                author_declaration: None,
                 planning_commit: None,
             },
             caller,

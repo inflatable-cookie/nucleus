@@ -1461,6 +1461,14 @@ impl Store {
         Ok(receipts.collect::<Result<_, _>>()?)
     }
 
+    /// Read the latest shared-model notice from the reservation audit.
+    ///
+    /// # Errors
+    /// Returns an error if history cannot be read.
+    pub fn last_shared_model(&self, id: &str) -> Result<Option<String>, StoreError> {
+        self.last_event_text(id, "$.sharedModel.message", Some("run_reserved"))
+    }
+
     /// Read the lifecycle audit records in task order.
     ///
     /// # Errors
@@ -1482,19 +1490,28 @@ impl Store {
     /// # Errors
     /// Returns an error if history cannot be read or holds an invalid commit.
     pub fn merge_commit(&self, id: &str) -> Result<Option<Head>, StoreError> {
-        let commit: Option<String> = self
-            .connection
-            .prepare_cached(
-                "SELECT json_extract(detail, '$.mergeCommit') FROM events
-                 WHERE task_id = ?1
-                   AND json_type(CASE WHEN json_valid(detail) THEN detail END, '$.mergeCommit') = 'text'
-                 ORDER BY sequence DESC LIMIT 1",
-            )?
-            .query_row([id], |row| row.get::<_, String>(0))
-            .optional()?;
-        Ok(commit
+        Ok(self
+            .last_event_text(id, "$.mergeCommit", None)?
             .map(|commit| serde_json::from_value(Value::String(commit)))
             .transpose()?)
+    }
+
+    fn last_event_text(
+        &self,
+        id: &str,
+        path: &str,
+        kind: Option<&str>,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection
+            .prepare_cached(
+                "SELECT json_extract(detail, ?2) FROM events
+             WHERE task_id = ?1 AND (?3 IS NULL OR kind = ?3)
+               AND json_type(CASE WHEN json_valid(detail) THEN detail END, ?2) = 'text'
+             ORDER BY sequence DESC LIMIT 1",
+            )?
+            .query_row(params![id, path, kind], |row| row.get(0))
+            .optional()?)
     }
 }
 

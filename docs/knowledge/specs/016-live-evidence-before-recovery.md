@@ -269,8 +269,9 @@ new route: the exhausted old route is never an intermediate dispatch candidate,
 and no worker turn or verdict is created. With `reviewer` omitted the existing
 behaviour is unchanged. A profile the usage level's permission rule holds still needs its real
 per-role reason. An absent, unavailable, disabled, wrong-role,
-wrong-scope, incompatible-thinking, opaque, same-author, excluded or changed
-profile refuses the whole control; Nucleus never substitutes another model. The
+wrong-scope, incompatible-thinking, opaque, excluded or changed profile refuses
+the whole control. A required reviewer profile may share an author model
+under [Spec 070 ruling 64](070-small-engine.md#rulings). The
 replacement owns its complete personal reading, checks and five-gate verdict —
 nothing is inherited from the stopped reviewer.
 

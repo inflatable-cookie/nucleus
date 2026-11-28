@@ -48,8 +48,8 @@ sends the next review to the reviewer agent that issued it.
   may read beyond the delta when the delta warrants it.
 - **When it is fresh instead.** Tom's 2026-11-17 ruling supersedes the former
   three-round rotation: one reviewer stays with the task. A replacement is for
-  a reader proved gone or ruled out by its model, independence or exhausted
-  context. A temporarily unavailable, busy or unobservable reader is held,
+  a reader proved gone, a changed profile binding or exhausted context. Model
+  choice follows [Spec 070 ruling 64](070-small-engine.md#rulings). A temporarily unavailable, busy or unobservable reader is held,
   and a missing report is recovered from that same reader.
   A swap by any of these conditions records which one failed — `round`,
   `participant`, `runtime`, `context` or `error` — with the observed evidence in

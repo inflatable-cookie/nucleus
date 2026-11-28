@@ -725,6 +725,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       ...row,
       createdAtMs: 1_700_000_000_000,
       brief: { text: briefText, version: briefVersion, digest: Array(32).fill(1) },
+      sharedModel: id === "running" ? "Worker shares fixture-model with the reviewer: required worker profile" : undefined,
       pullRequest:
         id === "running"
           ? { url: "https://github.com/example/board-fixture/pull/1", head }
@@ -821,6 +822,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
   assert.ok(detail.querySelector('[aria-label="Step Working: current · 13m"]'));
   assert.match(text(), /fixture-worker-model/);
   assert.match(text(), /fixture-review-model/);
+  assert.match(detail.textContent ?? "", /Worker shares fixture-model with the reviewer: required worker profile/);
   assert.ok(detail.querySelector('[aria-label="Step Review: todo · Round 2"]'));
   await eventually(() => text().includes("3m / 1h"), "task allowance");
   const beforeList = reads("/api/engine/tasks");

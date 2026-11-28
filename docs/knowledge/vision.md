@@ -121,9 +121,7 @@ Tom's rulings (2026-10-13, told directly to the Nucleus simplification thread):
   task must get it going again through Nucleus's controls; diagnosis without a
   resumed task misses the point.
 
-These are design requirements. Installed behaviour still enforces the earlier
-reviewer-independence gates and budgets until the simplification lands; they
-are not permission to bypass a gate today.
+Model choice follows [Spec 070 ruling 64](specs/070-small-engine.md#rulings).
 
 ## Retained reviewers review changes
 

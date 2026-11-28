@@ -1,7 +1,7 @@
 use std::{io, path::PathBuf};
 
 use clap::Subcommand;
-use nucleus_core::{Head, profiles::Complexity};
+use nucleus_core::{AuthorDeclaration, Head, profiles::Complexity};
 use nucleus_store::planning::{DecisionInput, DecisionOption, MAX_TEXT_BYTES, PlanLane, valid_key};
 use reqwest::{Method, Url};
 use serde_json::{Value, json};
@@ -160,6 +160,9 @@ pub(super) enum Action {
         /// Review an existing GitHub PR at its expected head.
         #[arg(long, num_args = 2, value_names = ["PR_URL", "HEAD"])]
         review: Vec<String>,
+        /// Read the operator's external author declaration as JSON.
+        #[arg(long, requires = "review", value_name = "FILE")]
+        author_declaration: Option<PathBuf>,
         /// Match this exact published integration tip at report-only admission.
         #[arg(long)]
         planning_commit: Option<Head>,
@@ -409,6 +412,7 @@ impl Action {
                 id,
                 reference,
                 review,
+                author_declaration,
                 planning_commit,
             } => (
                 Method::POST,
@@ -417,6 +421,7 @@ impl Action {
                 Some(json!({
                     "id": id, "reference": reference, "repository": repository, "brief": stdin_brief()?,
                     "planningCommit": planning_commit,
+                    "authorDeclaration": author_declaration.map(read_author_declaration).transpose()?,
                     "review": match review.as_slice() {
                         [url, head] => Some(json!({"url": url, "head": head})),
                         _ => None,
@@ -454,6 +459,11 @@ impl Action {
         };
         Ok((method, planning_path(project.as_deref(), &path)?, body))
     }
+}
+
+fn read_author_declaration(path: PathBuf) -> Result<AuthorDeclaration> {
+    let bytes = read_with_limit(std::fs::File::open(path)?, u64::try_from(MAX_TEXT_BYTES)?)?;
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 fn project_and_args<const N: usize>(

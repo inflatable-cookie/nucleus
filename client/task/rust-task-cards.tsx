@@ -127,6 +127,7 @@ export function ProgressCard({
           {recheck}
         </View>
       )}
+      {detail.sharedModel && <Text style={metaText(c)}>{detail.sharedModel}</Text>}
       {dependencies}
       {(roles_.length > 0 || allowance) && <Divider c={c} />}
       {roles_.map((role) => {
