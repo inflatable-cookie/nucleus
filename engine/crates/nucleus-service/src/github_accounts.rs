@@ -285,6 +285,15 @@ impl GitHubAccounts {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_fixture_store(
+        mut self,
+        store: Arc<dyn CredentialStore + Send + Sync>,
+    ) -> Self {
+        self.store = store;
+        self
+    }
+
+    #[cfg(test)]
     pub(crate) fn seed_reviewer_fixture(
         &self,
         account: &GitHubAccount,
