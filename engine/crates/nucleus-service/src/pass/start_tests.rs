@@ -88,6 +88,8 @@ async fn registered() -> Registered {
                     host_project_title: None,
                     planner_threads: Vec::new(),
                 }],
+                require_up_to_date_base: false,
+                pre_merge_check: None,
             },
         )]),
         ..Projects::default()

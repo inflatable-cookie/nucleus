@@ -644,6 +644,8 @@ async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
                         name: project.into(),
                         archived: false,
                         repositories: vec![],
+                        require_up_to_date_base: false,
+                        pre_merge_check: None,
                     },
                 );
             }

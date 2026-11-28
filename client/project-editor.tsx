@@ -45,6 +45,15 @@ export type { ProjectEditActions } from "./project-editor/index";
  */
 
 const NONE = "__none__";
+
+function preMergeCheckProblem(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/\p{Cc}/u.test(trimmed)) return "Pre-merge check must be a single line";
+  if (new TextEncoder().encode(trimmed).length > 1000)
+    return "Pre-merge check is over 1000 UTF-8 bytes";
+  return null;
+}
 export function ProjectEditor({
   c,
   compact = false,
@@ -202,6 +211,12 @@ function OpenedProject({
   const [members, setMembers] = useState<ProjectRepository[]>(
     project.repositories,
   );
+  const [requireUpToDateBase, setRequireUpToDateBase] = useState(
+    Boolean(project.requireUpToDateBase),
+  );
+  const [preMergeCheck, setPreMergeCheck] = useState(
+    project.preMergeCheck ?? "",
+  );
   const [planner, setPlanner] = useState<string | null>(
     project.planner?.agentId ?? null,
   );
@@ -212,12 +227,25 @@ function OpenedProject({
   const [openRepo, setOpenRepo] = useState<string | null>(null);
   // Writes read the newest draft when they run, so a rename and a repository change
   // queued together never undo each other; versions follow every reply.
-  const draft = useRef({ name, members });
-  draft.current = { name, members };
+  const draft = useRef({
+    name,
+    members,
+    requireUpToDateBase,
+    preMergeCheck,
+  });
+  draft.current = { name, members, requireUpToDateBase, preMergeCheck };
   const version = useRef(project.version);
   version.current = Math.max(version.current, project.version);
+  const storedName = useRef(project.name);
+  storedName.current = project.name;
+  const storedUpToDate = useRef(Boolean(project.requireUpToDateBase));
+  storedUpToDate.current = Boolean(project.requireUpToDateBase);
+  const storedPreMergeCheck = useRef<string | null>(project.preMergeCheck ?? null);
+  storedPreMergeCheck.current = project.preMergeCheck ?? null;
   const took = (result: Project) => {
     version.current = Math.max(version.current, result.version);
+    storedUpToDate.current = Boolean(result.requireUpToDateBase);
+    storedPreMergeCheck.current = result.preMergeCheck ?? null;
     return result;
   };
   // The server's values come back only when nothing is waiting, so a re-read after one save never replaces a newer draft.
@@ -226,25 +254,42 @@ function OpenedProject({
     if (!saves.quiet()) return;
     setName(project.name);
     setMembers(project.repositories);
+    setRequireUpToDateBase(Boolean(project.requireUpToDateBase));
+    setPreMergeCheck(project.preMergeCheck ?? "");
     setPlanner(project.planner?.agentId ?? null);
   }, [
     saves.landed,
     project.name,
     serverMembers,
+    project.requireUpToDateBase,
+    project.preMergeCheck,
     project.planner?.agentId,
   ]);
 
   // A repository change while the name is held back (empty) keeps the stored name.
-  const storedName = useRef(project.name);
-  storedName.current = project.name;
   const projectInput = (): ProjectUpsertInput => {
-    const { name: nextName, members: list } = draft.current;
+    const {
+      name: nextName,
+      members: list,
+      requireUpToDateBase: nextUpToDate,
+      preMergeCheck: nextCheck,
+    } = draft.current;
     const trimmed = nextName.trim();
+    const trimmedCheck = nextCheck.trim();
+    const validCheck = preMergeCheckProblem(nextCheck)
+      ? storedPreMergeCheck.current
+      : trimmedCheck || null;
     return {
       key: project.key,
       name: projectNameProblem(trimmed) ? storedName.current : trimmed,
       repositories: list,
       ...(list.length > 1 ? { primary: list[0] } : {}),
+      ...(nextUpToDate || storedUpToDate.current
+        ? { requireUpToDateBase: nextUpToDate }
+        : {}),
+      ...(validCheck !== null || storedPreMergeCheck.current !== null
+        ? { preMergeCheck: validCheck }
+        : {}),
     };
   };
   const saveProject = (delay = 0) =>
@@ -262,6 +307,23 @@ function OpenedProject({
       return;
     }
     saves.release("name");
+    saveProject(600);
+  };
+  const toggleUpToDateBase = () => {
+    const next = !requireUpToDateBase;
+    setRequireUpToDateBase(next);
+    draft.current = { ...draft.current, requireUpToDateBase: next };
+    saveProject();
+  };
+  const changePreMergeCheck = (text: string) => {
+    setPreMergeCheck(text);
+    draft.current = { ...draft.current, preMergeCheck: text };
+    const problem = preMergeCheckProblem(text);
+    if (problem) {
+      saves.hold("preMergeCheck", problem);
+      return;
+    }
+    saves.release("preMergeCheck");
     saveProject(600);
   };
   const changeMembers = (list: ProjectRepository[]) => {
@@ -360,6 +422,36 @@ function OpenedProject({
               {planner && <Button small c={c} text="Clear" label="Clear claimed planner" disabled={disabled} onPress={() => choosePlanner(NONE)} />}
             </View>
         </View>
+      </Pair>
+      <Pair>
+        <View style={{ gap: space.xxs, alignItems: "flex-start" }}>
+          <FieldCaption
+            c={c}
+            text="Up-to-date base"
+            help="Before merging, require the approved head to contain the current base tip. If the base has moved, Nucleus returns the task to its worker to rebase before fresh review."
+          />
+          <Button
+            matchField
+            c={c}
+            checked={requireUpToDateBase}
+            text={requireUpToDateBase ? "On" : "Off"}
+            label="Up-to-date base"
+            disabled={disabled}
+            onPress={toggleUpToDateBase}
+          />
+        </View>
+        <Field
+          c={c}
+          label="Pre-merge check"
+          help="Optional single-line command the worker runs after rebasing onto a moved base and reports before fresh review. Nucleus runs no pre-merge process itself."
+          a11yLabel="Pre-merge check"
+          placeholder="effigy farmyard/host:check"
+          value={preMergeCheck}
+          disabled={disabled}
+          invalid={Boolean(preMergeCheckProblem(preMergeCheck))}
+          onChange={changePreMergeCheck}
+          onBlur={saves.flush}
+        />
       </Pair>
       {Boolean(actions.focus?.error) && (
         <Text

@@ -773,6 +773,8 @@ async fn stored_label_fixture() -> (tempfile::TempDir, Service) {
                         name: "Longhorn".into(),
                         archived: false,
                         repositories: Vec::new(),
+                        require_up_to_date_base: false,
+                        pre_merge_check: None,
                     },
                 );
                 Ok(())

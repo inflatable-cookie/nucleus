@@ -130,9 +130,19 @@ impl Task {
     /// Apply local decisions against the same observation that justified them.
     /// External effects remain the service's responsibility.
     pub fn reconcile(&mut self, observation: &Observation) -> Action {
+        self.reconcile_with_pre_merge_check(observation, None)
+    }
+
+    /// Apply local decisions against the same observation, naming the project's
+    /// pre-merge check in any base-moved worker recovery instruction.
+    pub fn reconcile_with_pre_merge_check(
+        &mut self,
+        observation: &Observation,
+        pre_merge_check: Option<&str>,
+    ) -> Action {
         let action = decide(self, observation);
         match &action {
-            Action::Advance(phase) => self.advance(*phase, observation),
+            Action::Advance(phase) => self.advance(*phase, observation, pre_merge_check),
             Action::Revoke => {
                 if let Some(run) = &mut self.run {
                     run.revoked = true;
@@ -184,7 +194,7 @@ impl Task {
         self.reconcile(observation)
     }
 
-    fn advance(&mut self, phase: Phase, observation: &Observation) {
+    fn advance(&mut self, phase: Phase, observation: &Observation, pre_merge_check: Option<&str>) {
         if observation.resolves_repair(self) {
             self.question = None;
         }
@@ -249,7 +259,7 @@ impl Task {
             author.worker_head = Some(work.pull_request.head.clone());
         }
         if phase == Phase::Working
-            && let Some((head, instruction)) = observation.merge_recovery(self)
+            && let Some((head, instruction)) = observation.merge_recovery(self, pre_merge_check)
         {
             self.request_work(instruction, Some(head.clone()));
             return;
@@ -329,7 +339,7 @@ impl Task {
                 ..
             }
         ) {
-            self.advance(Phase::Done, observation);
+            self.advance(Phase::Done, observation, None);
             true
         } else {
             false

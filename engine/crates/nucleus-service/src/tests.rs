@@ -94,6 +94,8 @@ pub(super) fn registry_fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
                         host_project_title: Some("Fixture".into()),
                         planner_threads: Vec::new(),
                     }],
+                    require_up_to_date_base: false,
+                    pre_merge_check: None,
                 },
             )]);
             Ok(())

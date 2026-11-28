@@ -451,6 +451,8 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
       name: string;
       repositories: Array<{ origin: string | null; path?: string }>;
       create?: boolean;
+      requireUpToDateBase?: boolean;
+      preMergeCheck?: string | null;
     }) => {
       const id = keys.id(input.key);
       const saved = await editProjects((value) => {
@@ -467,10 +469,24 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
           throw new Error(
             "Repositories register on a planner's first dispatch. Move one here from another project instead.",
           );
+        const updated = {
+          ...existing,
+          name: input.name,
+          ...(input.requireUpToDateBase !== undefined
+            ? { requireUpToDateBase: input.requireUpToDateBase }
+            : {}),
+        };
+        if (input.preMergeCheck !== undefined) {
+          if (input.preMergeCheck === null) {
+            delete updated.preMergeCheck;
+          } else {
+            updated.preMergeCheck = input.preMergeCheck;
+          }
+        }
         return {
           projects: {
             ...value.projects,
-            [id]: { ...existing, name: input.name },
+            [id]: updated,
           },
         };
       });

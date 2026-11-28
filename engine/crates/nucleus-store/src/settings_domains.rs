@@ -294,6 +294,10 @@ pub struct ProjectSettings {
     pub archived: bool,
     #[serde(default)]
     pub repositories: Vec<RepositorySettings>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub require_up_to_date_base: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_merge_check: Option<String>,
 }
 
 /// A project message preference. The occurrence lets a restart finish its replacement notice.
@@ -389,6 +393,16 @@ impl SettingsValue for Projects {
                         .is_none_or(|removed| !removed.cleanup_pending),
                 "project",
                 "each project needs a stable ID and name",
+            )?;
+            check(
+                project.pre_merge_check.as_deref().is_none_or(|cmd| {
+                    !cmd.is_empty()
+                        && cmd.trim() == cmd
+                        && cmd.len() <= 1000
+                        && !cmd.chars().any(char::is_control)
+                }),
+                "preMergeCheck",
+                "pre-merge check must be a single non-empty line",
             )?;
             for repo in &project.repositories {
                 check(

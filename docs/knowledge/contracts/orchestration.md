@@ -232,7 +232,22 @@ Merge uses the exact head last reviewed and approved, or exact-head acceptance
 recorded by the authorized person. GitHub supplies the expected-head check and
 CI check rollup: required checks gate when any are marked required, and every
 reported check on that head gates when none are marked required (a pull request
-with no reported checks merges). A result that might have merged is reconciled
+with no reported checks merges).
+
+A project may opt in to **Up-to-date base** in Settings → Projects, optionally
+naming a single-line **Pre-merge check** command
+([Spec 070 ruling 70](../specs/070-small-engine.md#rulings)). Before the merge
+write, Nucleus compares the approved head against the current base tip through
+GitHub's compare endpoint (at most once per merge attempt; projects that have
+not opted in make no extra call). If the head does not contain the base tip
+(`behind` or `diverged`), Nucleus skips the merge write and takes the existing
+base-moved recovery path, returning the task to its worker with the rebase
+instruction—and naming the project's pre-merge check when configured—so the
+worker rebases, runs the check, reports its result and pushes a new head for
+fresh exact-head review. Nucleus runs no pre-merge process and holds no merge
+turn ([Spec 070 ruling 13](../specs/070-small-engine.md#rulings)).
+
+A result that might have merged is reconciled
 by observing the actual PR and merge commit before any further effect. Keep the
 observed head, merge commit and reason with the task's outcome. See
 [command authority](../../../engine/crates/nucleus-core/src/command.rs) and

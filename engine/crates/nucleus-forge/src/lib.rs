@@ -709,6 +709,7 @@ impl GitHub {
         &self,
         task: &Task,
         target: &PullTarget,
+        require_up_to_date_base: bool,
     ) -> Result<MergeAttempt, ForgeError> {
         if !target
             .branches
@@ -750,7 +751,12 @@ impl GitHub {
                     .and_then(|pull| pull.forge(CheckState::Unknown)),
             });
         }
-        if latest.base.sha != base {
+        if latest.base.sha != base
+            || (require_up_to_date_base
+                && !self
+                    .contains(&target.branches, &latest.base.sha, &head)
+                    .await?)
+        {
             return Ok(MergeAttempt {
                 write: MergeWrite::Skipped,
                 observed: latest.forge(CheckState::BaseMoved),

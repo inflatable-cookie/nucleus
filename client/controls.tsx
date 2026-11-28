@@ -1758,6 +1758,7 @@ export function Disclosure({
 }
 export function Field({
   label,
+  help,
   a11yLabel,
   value,
   onChange,
@@ -1771,6 +1772,7 @@ export function Field({
   invalid = false,
 }: {
   label: string;
+  help?: string;
   a11yLabel?: string;
   value: string;
   onChange: (s: string) => void;
@@ -1788,7 +1790,7 @@ export function Field({
   // The box stays at the control height; the wrapper's hit slop keeps a 44-point reach that focuses the input.
   return (
     <View style={{ gap: space.xxs, minWidth: 0 }}>
-      {!hideLabel && label ? <FieldCaption c={c} text={label} /> : null}
+      {!hideLabel && label ? <FieldCaption c={c} text={label} help={help} /> : null}
       <Pressable
         accessible={false}
         focusable={false}

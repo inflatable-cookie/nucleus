@@ -971,6 +971,25 @@ impl Service {
         Ok(in_flight < slots.saturating_mul(2))
     }
 
+    async fn reconcile_applied(&self, kind: &str, task: &Task, observation: &Observation) -> Task {
+        let pre_merge_check = if kind == "merge_returned_to_work" {
+            self.project_for(task.identity())
+                .await
+                .ok()
+                .and_then(|route| {
+                    route
+                        .require_up_to_date_base
+                        .then_some(route.pre_merge_check)
+                        .flatten()
+                })
+        } else {
+            None
+        };
+        let mut updated = task.clone();
+        let _ = updated.reconcile_with_pre_merge_check(observation, pre_merge_check.as_deref());
+        updated
+    }
+
     pub(super) async fn apply(
         &self,
         row: &TaskRow,
@@ -1032,8 +1051,7 @@ impl Service {
             Action::Ask(_) => "question_asked",
             _ => return Ok(action),
         };
-        let mut updated = row.task.clone();
-        let _ = updated.reconcile(observation);
+        let mut updated = self.reconcile_applied(kind, &row.task, observation).await;
         let mut audit = event(kind);
         if kind == "provider_limit" {
             audit.detail =
@@ -2070,7 +2088,7 @@ impl Service {
         }
         let attempt = self
             .forge
-            .merge(task, target)
+            .merge(task, target, route.require_up_to_date_base)
             .await
             .inspect_err(|error| record_forge_failure(self, error))?;
         if let MergeWrite::Deferred { until } = attempt.write {
