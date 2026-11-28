@@ -471,16 +471,17 @@ impl Fixture {
     }
 
     async fn parent_record(&self, row: &TaskRow) -> nucleus_store::ParentDelivery {
-        let mut records = self
+        let record = self
             .service
             .state
             .lock()
             .await
             .store
-            .parent_deliveries(ID, row.version)
+            .current_parent_hold(ID)
+            .unwrap()
             .unwrap();
-        assert_eq!(records.len(), 1);
-        records.pop().unwrap()
+        assert_eq!(record.version, row.version);
+        record
     }
 }
 
@@ -829,19 +830,6 @@ async fn lost_pinned_parent_reply_reopens_the_original_intent_and_wire() {
     assert_eq!(board["attention"], "waiting");
     assert_eq!(board["waitDetail"], "The T3 task turn will retry.");
     assert!(board["nextCheckAt"].as_u64().unwrap() > now_ms());
-    // Older engines marked an inconclusive delivery as held against a runtime.
-    // Open that exact on-disk shape under the new engine and retry its wire.
-    let db = rusqlite::Connection::open(service.storage.database().path().join("engine.sqlite"))
-        .unwrap();
-    assert_eq!(
-        db.execute(
-            "UPDATE parent_deliveries SET result='held', runtime='old-runtime' WHERE command=?1",
-            [&command]
-        )
-        .unwrap(),
-        1
-    );
-    drop(db);
     fixture.restart();
     let service = &fixture.service;
     fixture.publish_shell();
@@ -969,11 +957,7 @@ fn due_frozen_delivery(
     row: &TaskRow,
 ) -> nucleus_store::ParentDelivery {
     use nucleus_store::ParentResult::Pending;
-    let mut original = store
-        .parent_deliveries(ID, row.version)
-        .unwrap()
-        .pop()
-        .unwrap();
+    let mut original = store.current_parent_hold(ID).unwrap().unwrap();
     assert_eq!(original.result, Pending);
     assert!(original.due_ms > 0);
     store
@@ -1873,6 +1857,23 @@ async fn a_retained_role_waiting_on_background_work_keeps_one_hold_after_restart
         run["completedAt"] = Value::Null;
     }
     fixture.restart();
+    {
+        let service = &fixture.service;
+        let mut state = service.state.lock().await;
+        state.registry_mode = true;
+        assert_eq!(
+            service.acp_turn_view(&state, &row).unwrap(),
+            (
+                crate::acp::frozen_parent(&first)
+                    .unwrap()
+                    .unwrap()
+                    .prompt()
+                    .map(str::to_owned),
+                false,
+            )
+        );
+        state.registry_mode = false;
+    }
     fixture.publish_shell();
 
     let (result, calls) =
@@ -2295,6 +2296,27 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
         .visibility_time
         .store(clock, std::sync::atomic::Ordering::Relaxed);
     let row = create_visibility_row(&fixture, &task).await;
+    let write = fixture.prepare_hold("Starting reviewer", None);
+    let prompt = write.freeze().prompt().unwrap().to_owned();
+    let hold = nucleus_store::ParentDelivery {
+        version: row.version,
+        command: write.command_id().unwrap().into(),
+        refresh: false,
+        wire: Some(serde_json::to_string(write.freeze()).unwrap()),
+        legacy_prompt: None,
+        due_ms: 0,
+        result: nucleus_store::ParentResult::Pending,
+    };
+    assert!(
+        fixture
+            .service
+            .state
+            .lock()
+            .await
+            .store
+            .freeze_parent_delivery(ID, &hold)
+            .unwrap()
+    );
     fixture.child("worker", true);
     fixture.sync().await;
     assert_eq!(fixture.commands(), ["thread.snooze", "thread.unsnooze"]);
@@ -2316,7 +2338,7 @@ async fn a_handover_holds_the_parent_and_uses_the_child_completion_deadline() {
         assert_eq!(service.working_row_count(&state).unwrap(), 1);
         assert_eq!(
             fixture.service.acp_turn_view(&state, &row).unwrap(),
-            (None, true)
+            (Some(prompt), false)
         );
     }
     fixture.child("reviewer", true);

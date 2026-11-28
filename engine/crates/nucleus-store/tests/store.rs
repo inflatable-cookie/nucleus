@@ -217,15 +217,12 @@ fn a_parent_retry_keeps_the_first_recorded_prompt() {
 
     revert_parent_schema(&storage);
     let store = Store::open(&storage).unwrap();
-    let records = store.parent_deliveries("fixture", 1).unwrap();
-    assert_eq!(records.len(), 2);
-    assert_eq!(records[0].command, "new-hold");
+    let hold = store.current_parent_hold("fixture").unwrap().unwrap();
+    assert_eq!(hold.command, "new-hold");
     assert_eq!(
-        records[0].legacy_prompt.as_deref(),
+        hold.legacy_prompt.as_deref(),
         Some("Starting reviewer round 2")
     );
-    assert_eq!(records[1].command, "legacy-hold");
-    assert_eq!(records[1].legacy_prompt, None);
 }
 
 #[test]
@@ -260,12 +257,13 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
     let store = Store::open(&storage).unwrap();
     for (id, version) in versions {
         use nucleus_store::ParentResult::Pending;
-        let records = store.parent_deliveries(id, version).unwrap();
-        let unsettled: Vec<_> = records
-            .iter()
+        let hold = store.current_parent_hold(id).unwrap();
+        let refresh = store.current_parent_refresh(id, version).unwrap();
+        let unsettled = hold
+            .as_ref()
+            .or(refresh.as_ref())
             .filter(|record| record.result == Pending)
-            .map(|record| (record.command.as_str(), record.result))
-            .collect();
+            .map(|record| record.command.as_str());
         let expected = match id {
             "ambiguous"
             | "legacy_unresolved"
@@ -273,17 +271,15 @@ fn delivery_fences_follow_pending_attempts_across_reopen() {
             | "refused_replay"
             | "refused"
             | "legacy_refused"
-            | "failed" => {
-                vec![("thread-hold-1", Pending)]
-            }
-            "refresh_pending" => vec![("thread-refresh-1", Pending)],
-            "later_send" => vec![("thread-hold-3", Pending)],
-            _ => vec![],
+            | "failed" => Some("thread-hold-1"),
+            "refresh_pending" => Some("thread-refresh-1"),
+            "later_send" => Some("thread-hold-3"),
+            _ => None,
         };
         assert_eq!(unsettled, expected, "{id}");
         assert_eq!(
             store.pending_parent_preparation(id, version).unwrap(),
-            !expected.is_empty() && id != "refresh_pending",
+            expected.is_some() && id != "refresh_pending",
             "{id}"
         );
         assert!(!store.pending_parent_preparation(id, version + 1).unwrap());
@@ -982,7 +978,7 @@ fn migrating_version_two_keeps_rows_and_adds_the_slot_index() {
          DROP TABLE planning_task_sources; DROP TABLE planning_history; DROP TABLE planning_decisions;
          DROP TABLE planning_items; DROP TABLE planning_lanes; DROP TABLE planning_plans;
          DROP TABLE task_titles; DROP TABLE inbox_bindings; DROP TABLE profile_assignments; DROP TABLE profile_assignment_totals;
-         DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; DROP TABLE parent_deliveries; PRAGMA user_version = 2;",
+         DROP TABLE acp_sessions; DROP INDEX occupied_launch_slots; DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 2;",
     )
     .expect("restore version two schema");
     let store = Store::open(&storage).expect("migrate version two");
@@ -1021,7 +1017,7 @@ fn migrating_version_nine_preserves_assigned_numbers_and_the_allocator() {
         "ALTER TABLE tasks DROP COLUMN report_task;
          ALTER TABLE tasks DROP COLUMN work_continuation;
          DROP TABLE inbox_titles;
-         DROP TABLE parent_deliveries; PRAGMA user_version = 9;",
+         DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 9;",
     )
     .expect("restore version nine schema with the allocator in place");
     drop(db);
@@ -1045,7 +1041,7 @@ fn migrating_version_ten_keeps_the_task_and_persists_a_new_work_instruction() {
     store.create(&task, &event("admitted")).unwrap();
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; PRAGMA user_version = 10;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; ALTER TABLE tasks DROP COLUMN work_continuation; DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 10;")
         .unwrap();
     drop(db);
 
@@ -1109,7 +1105,7 @@ fn dependency_tables_open_from_the_previous_live_schema() {
          DROP TABLE project_tell_deliveries; DROP TABLE project_tell_requests;
          DROP INDEX planning_usage_permission;
          ALTER TABLE tasks DROP COLUMN report_task; DROP TABLE inbox_titles;
-         DROP TABLE parent_deliveries; PRAGMA user_version = 9;",
+         DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version = 9;",
     )
     .unwrap();
     let version: i32 = db
@@ -1706,24 +1702,21 @@ fn version_eleven_decodes_delivery_history_once() {
         ("sent", Some(nucleus_store::ParentResult::Accepted)),
         ("preflight", None),
     ] {
-        let version = row(&store, id).version;
-        let deliveries = store.parent_deliveries(id, version).unwrap();
-        assert_eq!(deliveries.first().map(|delivery| delivery.result), result);
-        if let Some(first) = deliveries
-            .first()
-            .filter(|delivery| !delivery.command.is_empty())
-        {
-            assert_eq!(first.legacy_prompt.as_deref(), Some("original"));
+        let hold = store.current_parent_hold(id).unwrap();
+        assert_eq!(hold.as_ref().map(|delivery| delivery.result), result);
+        if let Some(hold) = hold {
+            assert_eq!(hold.legacy_prompt.as_deref(), Some("original"));
         }
     }
     drop(store);
     let reopened = Store::open(&storage).unwrap();
     assert_eq!(
         reopened
-            .parent_deliveries("live", row(&reopened, "live").version)
+            .current_parent_hold("live")
             .unwrap()
-            .len(),
-        1
+            .unwrap()
+            .command,
+        "legacy"
     );
 }
 
@@ -1753,8 +1746,120 @@ fn schema_twelve_preserves_existing_snooze_ownership() {
 
 fn revert_parent_schema(storage: &EngineStorage) {
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; DROP TABLE parent_deliveries; PRAGMA user_version=11;")
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries; PRAGMA user_version=11;")
         .unwrap();
+}
+
+fn restore_v15_parent_tables(db: &Connection) {
+    db.execute_batch("DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries;")
+        .unwrap();
+    db.execute_batch(include_str!("../src/parent_delivery_v15.sql"))
+        .unwrap();
+}
+
+#[test]
+fn schema_sixteen_preserves_the_current_hold_and_refresh_independently() {
+    use nucleus_store::{ParentDelivery, ParentResult};
+
+    let home = tempfile::tempdir().unwrap();
+    let storage = fixture_storage(home.path());
+    let mut store = Store::open(&storage).unwrap();
+    for id in ["task", "unknown"] {
+        store.create(&task(id, id), &event("admitted")).unwrap();
+    }
+    let initial = row(&store, "task");
+    let version = store
+        .save_row(&initial, &initial.task, &event("role_changed"))
+        .unwrap();
+    drop(store);
+
+    let path = storage.database().path().join("engine.sqlite");
+    let wire = r#"{"binding":{"project_id":"example","worktree_path":"/fixture","branch":"task"},"method":"continue","payload":{"type":"message.dispatch","commandId":"current-hold","text":"Current prompt [hold]"},"provider":"fixture","checkpoint":{"after_run":"parent-run","recorded_at_ms":111,"short_turns":0,"preparing_launch":true}}"#;
+    seed_v15_parent_deliveries(&Connection::open(&path).unwrap(), version, wire);
+
+    let store = Store::open(&storage).unwrap();
+    let hold = store.current_parent_hold("task").unwrap().unwrap();
+    assert_eq!(hold.version, initial.version);
+    assert_eq!(hold.command, "current-hold");
+    assert_eq!(hold.wire.as_deref(), Some(wire));
+    assert_eq!((hold.due_ms, hold.result), (123, ParentResult::Pending));
+    assert!(
+        store
+            .pending_parent_preparation("task", initial.version)
+            .unwrap()
+    );
+    assert!(!store.pending_parent_preparation("task", version).unwrap());
+    assert!(store.current_parent_hold("unknown").unwrap().is_none());
+    let refresh = store
+        .current_parent_refresh("task", version)
+        .unwrap()
+        .unwrap();
+    assert_eq!(refresh.command, "current-refresh");
+    assert_eq!(refresh.legacy_prompt.as_deref(), Some("Original refresh"));
+    assert_eq!(
+        (refresh.due_ms, refresh.result),
+        (456, ParentResult::Accepted)
+    );
+    assert!(
+        store
+            .current_parent_refresh("task", initial.version)
+            .unwrap()
+            .is_none()
+    );
+
+    let replacement = ParentDelivery {
+        version,
+        command: "replacement".into(),
+        refresh: false,
+        wire: None,
+        legacy_prompt: None,
+        due_ms: 789,
+        result: ParentResult::Pending,
+    };
+    assert!(!store.freeze_parent_delivery("task", &hold).unwrap());
+    assert!(store.freeze_parent_delivery("task", &replacement).unwrap());
+    assert!(!store.freeze_parent_delivery("task", &replacement).unwrap());
+    assert!(matches!(
+        store.finish_parent_delivery("task", version, &hold, ParentResult::Accepted, 0),
+        Err(StoreError::StaleTask)
+    ));
+    assert_eq!(
+        store.current_parent_hold("task").unwrap().unwrap().command,
+        "replacement"
+    );
+    assert_eq!(
+        store
+            .current_parent_refresh("task", version)
+            .unwrap()
+            .unwrap()
+            .command,
+        refresh.command
+    );
+
+    let db = Connection::open(path).unwrap();
+    assert!(
+        db.execute(
+            "INSERT INTO parent_deliveries SELECT * FROM parent_deliveries",
+            []
+        )
+        .is_err()
+    );
+}
+
+fn seed_v15_parent_deliveries(db: &Connection, version: i64, wire: &str) {
+    restore_v15_parent_tables(db);
+    db.pragma_update(None, "user_version", 15).unwrap();
+    db.execute(
+        "INSERT INTO parent_deliveries (task_id, version, command, refresh, runtime, wire, legacy_prompt, due_ms, result) VALUES
+         ('task', 1, 'older-hold', 0, NULL, NULL, NULL, 0, 'accepted'),
+         ('task', 1, 'older-refresh', 1, NULL, NULL, NULL, 0, 'accepted'),
+         ('task', 1, 'current-hold', 0, 'old-runtime', ?1, NULL, 123, 'held'),
+         ('task', ?2, '', 0, NULL, NULL, NULL, 0, 'held'),
+         ('task', ?2, 'current-refresh', 1, NULL, NULL, 'Original refresh', 456, 'accepted'),
+         ('unknown', 1, '', 0, NULL, NULL, NULL, 0, 'held')",
+        rusqlite::params![wire, version],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -1938,6 +2043,7 @@ fn migrating_version_twelve_defaults_queue_priority_without_rewriting_rows() {
     drop(store);
 
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    restore_v15_parent_tables(&db);
     db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; ALTER TABLE tasks DROP COLUMN queue_priority; PRAGMA user_version = 12;")
         .unwrap();
     drop(db);
@@ -1991,6 +2097,7 @@ fn migrating_version_thirteen_keeps_existing_holds_and_stores_merge_holds() {
     store.create(&legacy, &event("admitted")).unwrap();
     drop(store);
     let db = Connection::open(storage.database().path().join("engine.sqlite")).unwrap();
+    restore_v15_parent_tables(&db);
     db.execute_batch("ALTER TABLE tasks DROP COLUMN merge_hold; PRAGMA user_version = 13;")
         .unwrap();
     drop(db);

@@ -57,7 +57,7 @@ pub use usage::{ProfileUsage, SubscriptionPause, UsageWindow};
 pub use volume::{PinnedVolume, StorageDirectory};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"N070");
-const SCHEMA_VERSION: i32 = 15;
+const SCHEMA_VERSION: i32 = 16;
 const TASK_SCHEMA: &str = include_str!("tasks.sql");
 const DATABASE_FILE: &str = "engine.sqlite";
 const TASK_COLUMNS: &str = "id, reference, repository, base, entry, brief, phase, threads, run, pr, verdict, attempts, question, hold, origin_thread, report_task, work_continuation, queue_priority, merge_hold";
@@ -433,7 +433,7 @@ impl Store {
             )?;
         }
         if version < 12 {
-            tx.execute_batch(include_str!("parent_delivery.sql"))?;
+            tx.execute_batch(include_str!("parent_delivery_v15.sql"))?;
             tx.execute_batch(include_str!("parent_delivery_legacy.sql"))?;
         }
         // Earlier schemas rebuild tasks from TASK_SCHEMA above.
@@ -468,6 +468,7 @@ impl Store {
                 ALTER TABLE completion_notices_v15 RENAME TO completion_notices;",
             )?;
         }
+        parent_delivery::migrate(tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
@@ -1879,6 +1880,10 @@ mod completion_notice_tests {
 
         let root = home.path().canonicalize().unwrap().join("engine");
         let db = rusqlite::Connection::open(root.join("data/databases/engine.sqlite")).unwrap();
+        db.execute_batch("DROP TABLE parent_deliveries; DROP TABLE parent_refresh_deliveries;")
+            .unwrap();
+        db.execute_batch(include_str!("parent_delivery_v15.sql"))
+            .unwrap();
         db.execute_batch(
             "CREATE TABLE completion_notices_v14 (task_id TEXT PRIMARY KEY REFERENCES tasks(id), retry INTEGER CHECK (retry IN (0,1))) STRICT;
              INSERT INTO completion_notices_v14 (task_id, retry) SELECT task_id, retry FROM completion_notices WHERE recipient = '' AND retry IS NOT NULL;
