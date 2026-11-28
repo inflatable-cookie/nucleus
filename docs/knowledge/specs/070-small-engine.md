@@ -1,8 +1,7 @@
 # Spec 070 — A small task engine, in Rust
 
-Status: approved (Tom, 2026-11-23: "Approve, let's get this working."). It is built
-alongside the current engine, switched on for new tasks, and the old engine is
-deleted once its tasks drain.
+Status: approved (Tom, 2026-11-23: "Approve, let's get this working."). The Rust
+engine is now the current engine and serves approved tasks.
 Replaces the control plane of Specs 050, 066, 067 and 068. Spec 069's lesson stays:
 cost grows with active work only.
 Audience: engine implementers, reviewers and planners
@@ -23,7 +22,8 @@ had its own clear command, ID and refusals. On the same day, a brief timeout too
 four commands to clear (nucleus#1560), and one task had no command at all, because
 every route led into the same proof-gated launch (praxis#391).
 
-The Rust engine has its own [production source line budget](#validation).
+The production source line limit is recorded below. Repository validation
+selectors are owned by [AGENTS.md](../../../AGENTS.md).
 
 The new engine:
 
@@ -89,7 +89,7 @@ Later decisions carry their own attribution.
    observed only with evidence from that exact run. Otherwise the card labels
    any recorded assignment and leaves missing details unknown. Previously
    journalled hold payloads replay with their original text.
-8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots and usage levels; no machine-load gate, ruling 21), projects (repositories, planners and lanes), storage and host settings are part of milestone 2. They're reshaped to the new model: settings for machinery that no longer exists are dropped. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly" (meaning the Projects section of Settings; planning can be improved too, see [Planning model](#planning-model-milestone-3)). The Projects section keeps:
+8. **The settings carry over.** Tom, 2026-11-23: "we need to make sure the vast majority of the settings view comes over - all the profile management, limits, projects, etc need to transition over.. adapted to the new model". Profiles and model selection, dispatch limits (slots and usage levels; no machine-load gate, ruling 21), projects (repositories, planners and lanes), storage and host settings are part of the current engine settings, reshaped for this model; settings for retired machinery are dropped. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly" (meaning the Projects section of Settings; planning can be improved too, see [Planning model](#planning-model)). The Projects section keeps:
    - each project's name;
    - its repositories (origin, path, base branch);
    - its verified planners, shown from their live bindings;
@@ -120,9 +120,9 @@ Later decisions carry their own attribution.
    operator session can edit. Usage strips show up to the last 50 assignments
    in the selected view across both roles or for one role.
 
-   **Limits (Tom, 2026-11-24).** Dispatch owns the heavy and total slot counts (ruling 66), the per-project default and a sparse map of overrides keyed by project. Limits is the shared editor for all three. Edits to the slot counts and project default use the Dispatch revision displayed in Settings. A conflict refreshes the values for a new edit. A run needs room under the total and project limits, counting the project's member repositories together. Heavy work also needs room under the heavy limit. A task waiting only on the heavy limit shows `Waiting for a heavy slot (5/5)` on the board and in `next`; its T3 title keeps `capacity`. A first worker checkout also needs room under twice the effective project limit. An existing managed checkout counts while its task is nonterminal, including when the task is held or awaiting recovery. An absent checkout occupies no workspace capacity. Review entry and existing work continue through their own gates. The Rust Limits editor shows usage, the Heavy and Total slot counts, the project default and project overrides. It omits Concurrent host calls and the Advanced disclosure. The TypeScript editor remains available during drain.
+   **Limits (Tom, 2026-11-24).** Dispatch owns the heavy and total slot counts (ruling 66), the per-project default and a sparse map of overrides keyed by project. Limits is the shared editor for all three. Edits to the slot counts and project default use the Dispatch revision displayed in Settings. A conflict refreshes the values for a new edit. A run needs room under the total and project limits, counting the project's member repositories together. Heavy work also needs room under the heavy limit. A task waiting only on the heavy limit shows `Waiting for a heavy slot (5/5)` on the board and in `next`; its T3 title keeps `capacity`. A first worker checkout also needs room under twice the effective project limit. An existing managed checkout counts while its task is nonterminal, including when the task is held or awaiting recovery. An absent checkout occupies no workspace capacity. Review entry and existing work continue through their own gates. The Limits editor shows usage, the Heavy and Total slot counts, the project default and project overrides. It omits Concurrent host calls and the Advanced disclosure.
 
-   Fresh installs start at 5 heavy slots, 32 total and 5 per project. Dispatch version 4 keeps the version 3 heavy count and sums the three old counts into `totalSlots`. A profile with a single global count passes through version 3, which assigns up to 5 of that count to heavy. During cutover, `limits.import` read five capacity and retention meta keys from a fenced TypeScript copy and published them to Dispatch under the stopped profile lock. Projects without an imported override inherit the per-project default. The active CLI retires this command in milestone 4.
+   Fresh installs start at 5 heavy slots, 32 total and 5 per project. Dispatch version 4 keeps the version 3 heavy count and sums the three old counts into `totalSlots`. A profile with a single global count passes through version 3, which assigns up to 5 of that count to heavy. The one-time `limits.import` read the fenced TypeScript settings into Dispatch. The command is retired.
 
    Tom retired Papercuts slots, Stall threshold, Hold reminder, Hold escalation and Host outage notice on 2026-11-24. Ruling 12 retires Lane drain and Lane drain escalation. Default host stays. Tom, 2026-11-26: “those mechanics were valid - we may only support T3 now, but I was aiming on adding support for most ADEs so it would have still come into place”. Its options are the registered hosts plus the planner's host, never a static list of supported host kinds. A stored kind absent from registration stays unavailable and is not rewritten. The import carries retention settings ahead of the scheduler pruning change.
 
@@ -198,12 +198,12 @@ Later decisions carry their own attribution.
    schedule after a mutation. Status shares one native client for registration,
    Inbox state and favicon.
 
-12. **Planning moves in at milestone 3, simpler.** Tom, 2026-11-23: "Yes, they will need to go in in milestone 3. Planning can be optimised, made a bit simpler, tasks shouldn't _need_ to be a lead first before promotion - leads should be ideas that can be turned into tasks, papercuts are issues that can be turned into tasks (still using the same surface just with a type), if you're just adding a task it can go straight on the board though. QA doesn't come across - we've already removed it from the TS version with QA sessions going in as normal task record". The rules:
-   - Plans, lanes and lane documents, decisions, leads and papercuts move into the Rust service in milestone 3, as plain local records under ruling 11. Existing records are imported once from a rehearsed copy.
+12. **Planning is plain record-keeping, with direct task admission.** Tom, 2026-11-23: "Yes, they will need to go in in milestone 3. Planning can be optimised, made a bit simpler, tasks shouldn't _need_ to be a lead first before promotion - leads should be ideas that can be turned into tasks, papercuts are issues that can be turned into tasks (still using the same surface just with a type), if you're just adding a task it can go straight on the board though. QA doesn't come across - we've already removed it from the TS version with QA sessions going in as normal task record". The rules:
+   - Plans, lanes and lane documents, decisions, leads and papercuts are plain local records in the Rust service under ruling 11. Existing records were imported once from a rehearsed copy.
    - Leads and papercuts keep their names and share one surface, told apart by a type (`lead` or `papercut`). A lead is an idea and a papercut is an issue. Either can be promoted to a task, but neither is required: a task can be created directly and goes straight onto the board. Tom: "I didn't mean to literally rename leads and papercuts!!"
-   - During cutover, `project.import` restored registry membership, plans and lane documents from the fenced TypeScript copy. It moved imported items and their history to stable project keys, kept repository task numbers and reported conflicts before publishing. The active CLI retires this command in milestone 4. An interrupted publication still fences startup. If a restored profile holds a pending journal, the operator must authorize forward recovery of the recorded Projects settings before serving it.
+   - The one-time `project.import` restored registry membership, plans and lane documents from the fenced TypeScript copy. It moved items and history to stable project keys, kept repository task numbers and reported conflicts before publishing. The import command is retired. A restored profile with a pending import journal still requires operator-authorized recovery of the recorded Projects settings before service startup.
    - Milestone QA is not ported as its own record. A QA run is an ordinary task with a report, like any other.
-   - The planning system may be simplified as it moves. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly". See [Planning model](#planning-model-milestone-3).
+   - The planning system may be simplified as it moves. Tom, 2026-11-23: "Feel free to tidy up / improve the project management system as that's transferred - it's currently OK, but a bit fiddly". See [Planning model](#planning-model).
 
 13. **No Nucleus-held merge turn.** Tom, 2026-11-23, approving the planner's surface review ("Sounds good, go for it"). The engine merges at the exact approved head and lets GitHub's mergeability and required checks decide. A project's pre-merge validation is a GitHub check (CI or a required status), not a Nucleus turn. There is no per-repository integration turn, prospective-merge candidate, warm checkout, `task.pre_merge` hook manifest or closeout reservation. Tonight's old-engine deadlock (concurrent merge intents each waiting for a turn none could take) is the reason.
 
@@ -237,7 +237,7 @@ Later decisions carry their own attribution.
 15. **A small CLI and skill.**
     - The CLI covers the five commands and the planning verbs, takes plain arguments, and identifies its caller by binding token, with no host identity lookup.
     - The skill shrinks to a page or two.
-    - This sets the target for milestone 4's documentation rewrite.
+    - The CLI and installed skill document the built commands; the engine README documents operation.
 16. **Diagnostics you can read.**
     - The audit keeps a small set of typed events (the milestones the ACP session shows, plus faults).
     - One health endpoint reports queue depth per host lane, the oldest waits and host status, readable without opening the database.
@@ -264,29 +264,19 @@ Later decisions carry their own attribution.
       opens it on request.
     - The title shows pending operator decisions first, then the host's running tasks, then `All quiet`. `Paused: ` covers Pause, Dispatch hold and Stop. The engine derives the counts locally and updates only the title metadata using a new receipt generation when the text changes.
     - The ACP agent has an inbox session alongside task sessions, carrying over Specs 032 and 065: one pinned inbox session per host. Each operator decision appears as a native form answered in place, and the answer reaches the asker on the ordinary answer path. A task session never takes a decision; it names the decision and points to the Inbox.
-    - Before native Rust Inbox setup, the scheduler sent Rust operator questions
-      through the TypeScript decision store. Both pins could coexist during
-      cutover. Each active Rust bridge version had to return a recorded answer
-      or confirm withdrawal before the scheduler could offer it in Rust.
-    - Milestone 4 retires the TypeScript decision bridge and its Rust client.
-      The engine no longer reads the bridge's decision bindings, so a row left
-      in a restored profile holds nothing (planner brief, 2026-11-27,
-      nucleus#1644; the live profile held no rows).
 
 19. **Configurable storage; an external volume is opt-in.** Tom, 2026-11-24: "Need to make sure the rust version uses paths on Stash when it gets going - should all be configurable, need the config in place so we don't churn on the internal SSD", then "An external drive shouldn't be a requirement - most people won't want that. It should be opt-in, default to sensible internal drive locations".
     - Storage exposes the active roots and the configured placement for worktrees, scratch and builds. Existing explicit roots take precedence. `TMPDIR`, `TMP` and `TEMP` for engine commands point at scratch, which also holds run tickets and evidence.
     - New runs reserve `<scratch-root>/r/<12-hex run key>`. The key is derived from the run instance, and the absolute directory is frozen with the launch. The assignment and custody checks use that directory. Older reservations keep their original paths. This keeps room for local Unix sockets under the assigned `TMPDIR`.
     - Placement follows Barge's resource classes and is entirely optional. Tom, 2026-11-24: "We shouldn't be using a `nucleus-engine` folder in the root of stash - we're trying to keep it clean … Happy for it to be on Stash, but it needs to be organised as per Barge's class system, and it needs to be entirely optional."
-      - The engine home (database, settings, keys, local configuration and schema backups, and the service log) is durable state that no Barge class holds, so it always stays on the internal drive. It defaults to `~/.nucleus`, where the TypeScript engine kept its data; during the transition the Rust home is `~/.nucleus/engine`.
+      - The engine home (database, settings, keys, local configuration and schema backups, and the service log) is durable state that no Barge class holds, so it always stays on the internal drive. It defaults to `~/.nucleus/engine`.
       - Bulky expendable data goes where Barge places its class: worktrees in the `worktrees` class (`worktrees/nucleus`), scratch and run evidence in the `scratch` class (`scratch/nucleus`), and install builds in the `builds` class (`builds/nucleus`). The engine asks Barge for those class paths when the operator enables Barge placement. Without Barge, they use the internal platform defaults.
       - Nothing is written at a volume's root. When Barge placement is on and a class's volume is absent, the engine refuses to start rather than falling back to the internal drive.
       - Ruling 59 retires the volume-pinned profile. A profile that still stores a pin is refused by name.
     - The rule covers the engine's own roots. A project's registered checkout and its Git common directory belong to the project and stay where the operator keeps them, as with the TypeScript engine's Stash worktrees today. Git's small per-worktree metadata and the task's commit objects land in that common directory. The bulk (worktree files, build output, dependencies, scratch, logs and the database) stays on the configured roots. The engine never makes its own clone of a project to satisfy this (planner decision, 2026-11-24).
 20. **One binary.** Tom, 2026-11-24: "The single binary is perfect yes".
-    - The engine ships as one `nucleus` binary with subcommands: `serve` runs the service, `acp` runs the stdio ACP agent, `ensure` starts the service when it isn't healthy, and the other subcommands are the CLI.
-    - `serve` can name its process `nucleusd` so the daemon is recognisable in process lists. There's no second binary.
-    - The CLI, the ACP agent and the service then share one build and can't drift apart.
-    - Milestone 3 does the fold. The pilot's `nucleus-engine` and `nucleus-acp` binaries and the Python startup helper are interim. When `ensure` moves into the binary, the service opens its storage before binding its port, so a caller sees only "refused" or "healthy".
+    - **Built:** the engine ships as one `nucleus` binary with subcommands: `serve` runs the service, `acp` runs the stdio ACP agent, `ensure` starts the service when it isn't healthy, and the other subcommands are the CLI. The CLI, ACP agent and service share this build.
+    - **Pending:** naming the `serve` process `nucleusd`. No second binary is planned. The service currently runs as `nucleus serve`.
 21. **No machine-load gate.** Tom, 2026-11-24: "running tasks on the queue isn't the load issue, it's them running tests, etc, which is ultimately a separate problem. We shouldn't hold up doing task work because the machine is loaded".
     - Dispatch never reads the machine's load average. Slots and the allowance are the only dispatch limits.
     - Heavy test runs are dealt with where they happen (each repository's test selection and concurrency), not by holding task launches.
@@ -321,7 +311,6 @@ Later decisions carry their own attribution.
     - Task commands accept any verified controller (ruling 65). A command missing PR-head evidence reads it within the request and checks the same task revision and caller before committing. If the proof times out or fails, the caller receives the cause. Nucleus does not queue the command for later replay. Notices try the task's origin first and fall back to another verified planner in the project after positive evidence rules the origin out. An unresolved origin read leaves delivery pending.
     - The remote and exact-root checks run automatically at registration. A mismatch refuses with a readable reason.
     - Limits edits slot counts in Dispatch. Planning edits lanes. Projects shows the live planners. Dispatch uses the verified repository route automatically.
-    - During the transition, one global setting stops the TypeScript engine taking new work. Its existing tasks drain.
 24. **Host setup commands.** Tom, 2026-11-24: "we'll need the `nucleus t3 install/uninstall/status` surface for setting up the ACP, etc".
     - `nucleus t3 install` registers the Nucleus ACP provider through T3's provider mutation, idempotently, with no T3 restart and other providers untouched. `uninstall` removes only that provider. `status` reports the provider, launcher, engine health, version and storage roots.
     - Install keeps the launcher under the engine home. Explicit `install --adopt` can update the launcher of an existing local `nucleus-rust` instance in place. A conflicting registration otherwise stays untouched.
@@ -340,7 +329,7 @@ Later decisions carry their own attribution.
     - Request for T3: server-attested provenance on a request response (UI versus MCP or relay, bound to host, thread, request and choice). When a host provides it, the engine requires the UI source for operator-only decisions.
 
 27. **Inbox commands.** Tom, 2026-11-24: "I could send `ui` as a message and it would spawn the UI in the browser. I need that, and I would like to expand it to a full command interface via the ACP", then approved this set: "That looks great. Go for it".
-    - The pinned Rust Inbox currently accepts `ui`. To change slots, enter `ui` and open Settings → Limits. The approved command set for the port is: `ui`, `settings` and `help`; `status`, `tasks [project]`, `task <ref>` and `decisions`; `pause`, `hold`, `stop` and `resume` (the board's pause modes); `hold <ref> [reason]`, `release <ref>`, `cancel <ref>`, `move <ref> <phase>`, `accept <ref>` and `decline <ref>`; `level <low|normal|high>`, `slots <n> [project]` and `tell <project|all> <text>`.
+    - **Built:** the pinned Rust Inbox accepts `ui`, which opens the board. Change slots in Settings → Limits. **Pending:** the approved command set for the port is `ui`, `settings` and `help`; `status`, `tasks [project]`, `task <ref>` and `decisions`; `pause`, `hold`, `stop` and `resume` (the board's pause modes); `hold <ref> [reason]`, `release <ref>`, `cancel <ref>`, `move <ref> <phase>`, `accept <ref>` and `decline <ref>`; `level <low|normal|high>`, `slots <n> [project]` and `tell <project|all> <text>`.
     - The port uses one parser for the same service APIs as the CLI and board. Reads and browser commands run at once. Mutations confirm first. Each message is served once, and unknown input replies with help.
     - Commands come only from operator messages typed in the T3 UI. Installed T3 records those as `createdBy: user`, `creationSource: web` with no sender, while agent sends through MCP or the `t3` CLI are stamped `agent`/`mcp`.
     - A mutation is confirmed by typing `yes` as the next message (planner decision, 2026-11-24). One command can be pending; it expires after two minutes and any other message cancels it. Typed `accept` and `decline` answers are recorded as attested. Native form answers keep the ruling 26 trust level and are recorded as unattested.
@@ -358,11 +347,10 @@ Later decisions carry their own attribution.
 
 30. **T3 owns the engine's lifetime.** (Parent-hold delivery parts amended by ruling 57.) Tom, 2026-11-24, asked the engine to
     start with T3 and exit after the last host disconnects. The pinned Inbox
-    uses the ACP ensure path on reconnect. Shutdown waits 300 seconds, matching
-    TypeScript's `idleTimeoutMs` in `service/standalone.ts`. A reconnect within
-    the grace period cancels shutdown. After the grace period the engine
-    reaches a durable safe point, releases the profile lock and listener, and
-    exits. Normal startup reconciliation checks existing tasks.
+    uses the ACP ensure path on reconnect. **Pending:** shutdown after 300
+    seconds, cancelled by a reconnect during the grace period. The current
+    service remains running until stopped. Normal startup reconciliation checks
+    existing tasks.
 
     Tom, 2026-11-24, confirmed the [Spec 069 restart rule](069-scheduler.md#2-host-health-is-the-connections).
     A roll leaves live workers and reviewers running in T3. An uncertain
@@ -423,10 +411,8 @@ Later decisions carry their own attribution.
     around, but stop running the daemon, acp and legacy tests". The TS service
     and roll owner are stopped, the T3 `nucleus` provider is disabled, and its
     Inbox thread is archived. Its last database is kept as a read-only backup.
-    The TS code stays in the repository until milestone 4 deletes it. The
-    board's client screens and their tests stay live because the Rust board
-    reuses them. The old engine's test families leave milestone QA
-    and the affected-test selection.
+    The shared board client and its active tests remain because the Rust board
+    reuses them.
 
 32. **Role prompts stay lean.** Tom, 2026-11-24, after Rust worker assignments
     passed T3's 120,000-character limit: "worker and reviewer prompts need to
@@ -746,7 +732,7 @@ Later decisions carry their own attribution.
 
     > Spec 070 caps the Rust engine at 30,000 lines. It was 33,000 on 24 Nov and is 41,800 now. An independent costed review found only ~300–550 lines removable without changing what Nucleus does; the growth is mostly features you asked for (native Inbox, GitHub accounts, reply routes, recovery). Reaching 30k would mean giving up Nucleus running workers/reviewers in T3 itself. How should we treat the budget?
 
-    Tom chose “Freeze at today's size (Recommended)”. Later on 2026-11-26 he amended the ceiling: “We don't need to be that tight with budget - let's cap at 50k”. The ceiling and PR accounting rule are in [Validation](#validation).
+    Tom chose “Freeze at today's size (Recommended)”. Later on 2026-11-26 he amended the ceiling: “We don't need to be that tight with budget - let's cap at 50k”. The Rust production line ceiling is 50,000. Each engine PR reports its net production-line delta and justifies growth under [Production Rust budget](#production-rust-budget).
 
     > Separately, three optional features each cost 600–1,200 lines and could go without touching core execution. Do you want to retire any of them?
 
@@ -766,10 +752,10 @@ Later decisions carry their own attribution.
 
 54. **Merge with merge commits; honour brief merge holds.** On 2026-11-26 a brief's `queue.mergeHold` was ignored and its PR was squash-merged. The project's release tag had to sit on the certified candidate commit, which was then not on main. The Rust port had dropped both TypeScript behaviours. Tom, asked to confirm merge commits: "It sounds like merge commits are the right choice for the reason this incident brings up - squashes change the commit". Nucleus merges with a merge commit, so the exact reviewed head is an ancestor of the base. Squash and rebase merges are not used. A brief's `queue.mergeHold: true` with a required `queue.mergeHoldReason` holds only the merge step until the owning planner or the operator releases it (Specs 040 and 058). Admission refuses unknown `queue` keys and names them. Amendments can keep or remove existing legacy keys and refuse any additions or changes to unknown keys by name.
 
-55. **Completion notices are opt-out and queue behind the planner's turn.** Tom, 2026-11-27: "Can we make task completion notifications opt-out rather than opt-in, and have them queue by default so they land when the planner has finished its turn?" This replaces ruling 42's opt-in. Every task sends its completion notice to the dispatching thread when it reaches Done or Cancelled, unless its brief sets `queue.notifyOriginOnCloseout: false`. A task admitted before this change follows the rule in force at its closeout, so it gets the notice too. The fallback, the one-notice-per-task rule, the uncertain-delivery rule and the notice text stay as ruling 42 has them. Notices go as a queued message (`queue_after_active`): T3 holds a notice until the planner's current turn ends and never steers it into a running turn, so it doesn't interrupt the planner.
+55. **Completion notices are opt-out and queue behind the planner's turn.** Built. Tom, 2026-11-27: "Can we make task completion notifications opt-out rather than opt-in, and have them queue by default so they land when the planner has finished its turn?" This replaces ruling 42's opt-in. Every task sends its completion notice to the dispatching thread when it reaches Done or Cancelled, unless its brief sets `queue.notifyOriginOnCloseout: false`. A task admitted before this change follows the rule in force at its closeout, so it gets the notice too. The fallback, the one-notice-per-task rule, the uncertain-delivery rule and the notice text stay as ruling 42 has them. Notices go as a queued message (`queue_after_active`): T3 holds a notice until the planner's current turn ends and never steers it into a running turn, so it doesn't interrupt the planner.
     Report-only tasks keep their report notice. A report-only task whose report notice was already attempted gets no completion notice at Done or Cancelled, so the planner is never told twice. A report-only task cancelled before it reported still gets the completion notice, unless its brief opts out.
 
-56. **Any agent can watch a task for its completion.** Tom, 2026-11-27, asked whether a planner can subscribe to another task's completion after it has started: "Yeah, the latter case is what i'm after, a general subscription model for any agent to receive notifications of a task completing". Any agent thread can run `nucleus watch <task>` to receive that task's completion notice, whichever project the task belongs to, and `nucleus unwatch <task>` to stop. Watching is read-only, so it needs no access to the task's project beyond reading its reference and title. When the task reaches Done or Cancelled, every watcher gets the ruling 55 notice once, through the same queued delivery. A watcher that is also the dispatching thread gets one notice, not two. If a watcher's thread is archived or gone, its notice is dropped and recorded in the task's history. Tom, 2026-11-27: "if a watcher's thread has gone then it _should_ be dropped.. the point of this opt-in subscription is to allow interested parties to see when a task finishes, not as a general workflow mechanism. The thread's project planner probably won't be interested". This is the one exception to ruling 41's never-dropped rule. The dispatching thread's own notice (ruling 55) still falls back. Watching a task that has already finished returns its outcome at once and sends nothing. The watch ends when the task does.
+56. **Any agent can watch a task for its completion.** Built. Tom, 2026-11-27, asked whether a planner can subscribe to another task's completion after it has started: "Yeah, the latter case is what i'm after, a general subscription model for any agent to receive notifications of a task completing". Any agent thread can run `nucleus watch <task>` to receive that task's completion notice, whichever project the task belongs to, and `nucleus unwatch <task>` to stop. Watching is read-only, so it needs no access to the task's project beyond reading its reference and title. When the task reaches Done or Cancelled, every watcher gets the ruling 55 notice once, through the same queued delivery. A watcher that is also the dispatching thread gets one notice, not two. If a watcher's thread is archived or gone, its notice is dropped and recorded in the task's history. Tom, 2026-11-27: "if a watcher's thread has gone then it _should_ be dropped.. the point of this opt-in subscription is to allow interested parties to see when a task finishes, not as a general workflow mechanism. The thread's project planner probably won't be interested". This is the one exception to ruling 41's never-dropped rule. The dispatching thread's own notice (ruling 55) still falls back. Watching a task that has already finished returns its outcome at once and sends nothing. The watch ends when the task does.
 
 57. **One re-sendable parent hold per task.** Tom approved Z1 on 2026-11-27 (nucleus#1638). A live task wants its read-only hold during admitted delegated launch preparation, while a role reservation is unsent or awaits its reply, or while a bound role thread has an active turn or background work in the held shell. A task hold, operator decline or stopped Dispatch ends it. The engine records one hold per task with its command ID, fingerprinted prompt and the latest parent run it follows. An ACP turn stays open while the task wants the hold and its prompt exactly matches the recorded prompt. An attached turn can keep its prompt across a restart until the first synchronized shell arrives. Older ACP clients receive the active-child hint only when the shell shows an active role and no hold is recorded.
     - Unconfirmed sends retry the same command ID. T3 deduplicates that ID. A proven rejection allows a fresh ID.
@@ -980,85 +966,42 @@ There are only two:
    the worktree, including when the only tracked changes are deletions at the
    exact published head. A clean cancelled checkout can retire after proof of publication.
 
-## Engine shape
-
-A Cargo workspace inside this repository, at `engine/`:
-
-| Crate | Role |
-|---|---|
-| `nucleus-core` | Types, the decision table and the state transitions. No I/O. |
-| `nucleus-store` | SQLite for tasks and the event log, through a small schema of its own. |
-| `nucleus-hosts` | The host trait and the T3 adapter. No BB or Paseo adapters (ruling 5). |
-| `nucleus-forge` | GitHub: the PR, checks, merge at the exact head, and reviews. |
-| `nucleus-work` | Worktrees under `workRoot`, or from a Barge pool when the setting is on. |
-| `nucleus-acp` | The host-neutral ACP agent (stdio JSON-RPC): one session per task, presenting its state and carrying the five commands, and a host-scoped Inbox session offering native forms. A thin client of the service (rulings 6 and 18). |
-| `nucleus-service` | The pass loop, the JSON API for the board and the ACP agent, and callbacks. |
-| `nucleus-cli` | The single `nucleus` binary: `serve`, `acp`, `ensure` and the CLI verbs (ruling 20). |
-
-Reuse, to be confirmed by the build when it reads their contracts:
-
-- **Longhorn:**
-  - `longhorn-config` for settings and the Storage page values (versioned domains,
-    atomic writes, backups);
-  - `longhorn-storage-layout` for roots;
-  - `longhorn-git-workspace` for git operations;
-  - `longhorn-operation` for action lifecycle, if it fits idempotent labels;
-  - `longhorn-support-log` and `longhorn-redact` for logs;
-  - `longhorn-update-install` for installing a verified build on roll.
-  - Use the exact Longhorn worktree-identity API. Tom's interim pin (relayed
-    2026-11-23) is `rev = "049392e27f93d642839b82c28d217c1f353e569e"` until
-    the `v0.6.0` tag is available.
-- **Barge:** the storage library and the worktree lease contract (lease, return, run).
-- **Toolchain:** the rs-toolchain gates (clippy, rustfmt, nextest, cargo-deny), run
-  through Effigy.
-
-## Validation
-
-For a scheduler or board latency investigation, start the engine with
-`NUCLEUS_TRACE_SCHEDULER=1` to log state-lock acquisition wait and hold times
-separately for the scheduler pass and task list. The first-service record
-after Dispatch resumes includes the task, phase, selected priority, due and
-service times, and queue depth.
+## Production Rust budget
 
 Tom, 2026-11-24: "How are we doing on complexity? No horrible extra narrow fixes as issues come up? We need to stop this version from descending into madness like the TS version did."
 
 Every fix states its general rule and what it replaces. An independent review
 checks for special cases, duplicate paths and dead code before the milestone 3
-cutover. The ceiling is 50,000 production Rust lines by `scripts/count-engine-rust.py`.
-The measured baseline at `1d92ea014` is 41,785.
+cutover. The ceiling is 50,000 production Rust lines. The measured baseline at
+`1d92ea014` is 41,785.
 
 Count nonblank lines of operator-shipped Rust after removing comments, tests,
 fixtures and generated source. Keep lines with code alongside comments, the
-nonblank contents of multiline literals and production platform variants.
-The counter reads tracked crate `src` files from each commit's own Git tree
-and follows module declarations to exclude test-only source files.
+nonblank contents of multiline literals and production platform variants. The
+counter reads tracked crate `src` files from each commit's own Git tree and
+follows module declarations to exclude test-only source files.
 
 In a Python 3.11 virtual environment, install the pinned parser with
-`python -m pip install tree-sitter==0.25.2 tree-sitter-rust==0.24.2`.
-From the repo root, run this on the committed PR head:
+`python -m pip install tree-sitter==0.25.2 tree-sitter-rust==0.24.2`. From the
+repository root, run this on the committed PR head:
 
 ```sh
 python scripts/count-engine-rust.py "$(git merge-base origin/main HEAD)" HEAD
 ```
 
-Use the checkout containing the counter for both revisions. You can pass older
-commit IDs even if those commits predate the counter. Every engine PR reports its net
-production Rust delta. Justify any growth in the PR body, explaining why
-existing code cannot supply the behavior. Land an offsetting
-cut first if the PR would cross 50,000. Each consolidation PR covers at most
-three production modules and identifies the rule that replaces the removed code.
+Use the checkout containing the counter for both revisions. Older commit IDs
+are valid even if they predate the counter. Every engine PR reports its net
+production Rust delta and justifies growth in the PR body by explaining why
+existing code cannot supply the behavior. Land an offsetting cut before a PR
+would cross the ceiling. Each consolidation PR covers at most three production
+modules and identifies the rule that replaces the removed code. Repository
+validation selectors are documented in [AGENTS.md](../../../AGENTS.md).
 
-Tom approved Rust for the engine on 2026-11-23. That replaces the 2026-10-04 "no
-Cargo builds" rule for the `engine/` workspace only:
+## Pass and persistence
 
-- **Each change:** `effigy engine:check`, `engine:clippy`, and `engine:nextest` for the affected crates.
-- **Milestone QA:** runs the whole workspace.
-- **Shared build cache:** Oxide leases reusable Cargo intermediates and keeps
-  final outputs scoped to each checkout. The check, Clippy, and nextest selectors
-  use Oxide, as does the release build. Staging copies the binary and bundles the
-  board into a revision directory under the configured builds root, outside Oxide storage.
-  The current and rollback launchers use these release copies. See
-  [engine release staging](../../../engine/README.md#stage-an-engine-release).
+Adapter reads run outside the store lock. A pass applies its observations under the task's version fence; host activity also checks the run instance. A stale observation is discarded and wakes the current task. Store changes and audit events commit together, including send intent before a native write. Effects and commands take their per-task fence after preflight.
+
+Host request failures defer reads for 15 seconds, doubling up to four minutes. Scheduler retry deadlines and displayed waits stay in memory; durable task rows hold task state, while parent-delivery receipts and deadlines are persisted separately. A free slot allows a launch, and waiting for a slot does not spend an attempt.
 
 ### Parent delivery storage and upgrade
 
@@ -1099,45 +1042,6 @@ a compatibility ledger. Installed releases move forward. Earlier engines reject
 a newer schema, and restoring an older backup is an explicit operator-directed
 recovery with dispatch held until native effects after that backup are
 reconciled.
-
-## Migration
-
-1. **Milestone 1:** one task runs work → review → merge → close through the new engine
-   on T3, behind a setting, and is checked by hand. Tom, 2026-11-23: "Yes, you can
-   create a throwaway repo on inflatable-cookie". The live proof uses the private,
-   synthetic `inflatable-cookie/nucleus-fixture` repository and its own T3 project.
-   For this proof only, the engine uses standalone top-level role threads and its default
-   worktree allocator. Milestone 2 parents them under the task's ACP session (ruling 6).
-2. **Milestone 2:** the board reads the new engine's API, and its settings (profiles, limits, projects, storage) work against the new engine (ruling 8). New tasks for one project go
-   to the new engine. The first project is Barge (Tom, 2026-11-23), starting with one small docs or test task once the repository binding, real profile launches, the installed ACP provider and per-project routing are in place. Tasks are presented through the core ACP session (ruling 6), one row per task, before the first real project.
-3. **Milestone 3:** new tasks for every project go to the new engine. The old engine
-   takes no new work. Planning records move into the new service (ruling 12).
-4. **Milestone 4:** once the old engine's tasks drain, it is deleted. AGENTS.md, the
-   skill and the contracts are rewritten for the new commands.
-   The old engine's tasks have drained: its final database holds only finished and cancelled
-   tasks. Tom, 2026-11-25: "Yeah, queue those tasks.. it should probably go before level up though
-   otherwise we'll be assessing redundant code". The deletion follows the builder's current queue and runs
-   before the quality pass, in this order:
-   - a dependency audit separating the TypeScript code the Rust board reuses from engine-only code, together with
-     the parity inventory. For each missing port, record its TypeScript source path and function at
-     `737246d22` and the governing ruling, if one exists. The planner lists these ports for Tom to prioritise; they don't block deletion.
-     Files the Rust board or its tooling still imports stay in use;
-   - retiring `nucleus worktree` (Tom, 2026-11-25: "Yes, retire"). Its callers were Paseo setup and teardown hooks.
-     The consumer sweep removed or replaced those hooks before the CLI route was deleted. The planner excluded an
-     archived checkout and a Paseo-only setup that requires a private sibling source. Rust tasks allocate Git checkouts.
-     Repositories use Effigy's pinned source declarations for sibling dependencies (ruling 33);
-   - retiring the TypeScript decision bridge and importers;
-   - removing `nucleus-legacy`, the read-only archive tool (Tom, 2026-11-25: "Remove nucleus-legacy, we've already migrated")
-     and the disabled TypeScript `nucleus-acp` launcher. The read-only
-     TypeScript database backup stays on disk. The old ACP entrypoint stops
-     starting the TypeScript service and roll owner. The Rust T3 provider and its
-     `nucleus-rust-acp` launcher stay installed;
-   - deletion in batches of at most three modules. The retired Engine dependency cycle
-     uses one review after its external imports and board inputs clear. Each commit
-     builds the shipped board, and the complete deletion passes typecheck and affected tests;
-   - the documentation rewrite.
-
-A task never moves between engines.
 
 ### Standalone board
 
@@ -1226,7 +1130,7 @@ Its session expires after 30 idle days and renews at most once per day.
 A paired browser can pair another device with a short code from Settings → Devices (single-use, five minutes, burnt after five wrong attempts). `nucleus ui --revoke` revokes sessions, pending links and an open code. The controller
 credential stays with the CLI and service.
 
-## Planning model (milestone 3)
+## Planning model
 
 Planning is plain record-keeping in the Rust service. It never calls a host (ruling 11), and it replaces about 35 TypeScript commands with these records and verbs.
 
@@ -1245,6 +1149,19 @@ the disposition default to deprecated.
 
 **Verbs:** `plan.get` and `plan.set`; `lane.put` and `lane.status`; `item.add`, `item.edit`, `item.park`, `item.drop`, `item.reopen` and `item.promote`; `task.add`; `decision.add` and `decision.answer`.
 
+Without a project selector, planning commands use the verified caller's project
+when it has one; a caller without a project names the target explicitly. An
+explicit selector resolves an exact project key first, then a unique
+case-insensitive display name, repository origin or final path segment;
+ambiguous matches are refused. Under ruling 65, any verified controller may
+name any active project.
+Admission uses the caller's verified repository unless the command names
+another verified repository in that project. `item.promote` reads the current
+item, verifies the selected repository and commits the task, source link and
+item history together.
+
+An admitted task never moves between engines.
+
 **What gets simpler**
 
 - **Promotion is one step.** `item.promote` admits a task from the item's body, using the brief frontmatter if present, and links the two. Concurrent or repeated promotion returns the linked task and its number without a second admission wake or capacity charge. Admission rechecks the selected scope after consulting Git before publishing the task. A promoted papercut without a frontmatter title takes its task title from the linked item. A planner's promotion is the authorization (Tom confirmed, 2026-11-24). The separate check and approve steps, with their relayed notes, are gone. The operator can still hold any task.
@@ -1257,63 +1174,3 @@ the disposition default to deprecated.
 - **No ceremony records.** Lane keeps, drain prompts and idle marks are gone. The open lane lists unfinished tasks in its project. Membership comes from the brief, the promoted source item and the report delivery lane. Pinned documents alone do not attach a task. The board shows a lane with no open tasks, and a plan with no `now` lane is idle. Notes are short sentences with no hard 200-character cap.
 - **The author comes from the caller's binding**, not from a free-text agent ID that breaks a later check.
 - **Triage and milestone QA records are not ported** (ruling 12).
-
-The Rust engine keeps these records by project in schema 8. A T3 planner can
-omit the project from planning commands (planner ruling, 2026-11-24), for example
-`nucleus plan.get`, `nucleus item.list` or `nucleus item.add papercut "Title"`.
-The project comes from the caller's verified T3 binding. An explicit first
-argument accepts the exact project key or a unique case-insensitive display
-name, and the planner must be bound to that project. Exact keys take precedence.
-Planning record reads and writes use that live binding. Task admission also
-checks the cached checkout before using the repository.
-The loopback API retains `/v1/planning/{project}` and exposes the same handlers
-under `/v1/planning-current` with an optional `project` query parameter.
-
-`plan.get` returns the order and lane documents. Use version zero for a new
-plan or lane and the returned version for the next edit. `lane.status` updates
-the disposition independently. The browser keeps the selected project with the
-lane key on document reads, edits and status actions. Lane keys can repeat
-across projects. `item.list` and `decision.list` read the current records.
-New decisions require at least two options with distinct IDs and labels.
-Labels are compared after trimming. The board retains each option's ID from
-the read through the answer, including older decisions whose labels repeat.
-Decision answers on the board may use free text for ordinary decisions. An edited
-choice records its source option when available. Task-owned decisions apply an
-automatic gate and accept only an exact option; the store rejects free text for
-them. Answer notices include the custom text and its source option when present.
-Answering requires an explicit project. The operator uses the operator binding.
-Under ruling 67, the asking planner can record the operator's chat answer with
-`decision.answer PROJECT ID OPTION --relayed "<operator's exact words>"`.
-Ordinary decisions also accept `--answer TEXT` in place of `OPTION`. A gate
-decision uses the task's origin planner and requires the exact option ID. The
-record keeps the quote verbatim and attributes it to the operator via the
-recording thread. Ruling 52 queues an answer notice for the asking thread when
-someone else records the answer. A decision that belongs to a task question
-accepts one answer for the bound task version, then wakes the ordinary answer
-path.
-
-`task.add` reads a brief from stdin. `item.promote` admits the current item
-body and commits the task, source link and item history together. When the
-board names a repository, promotion verifies and uses that repository in the
-item's project. The reply gives the admitted task's public reference. A retry
-returns the task already admitted from that item.
-
-During cutover, the offline `item.import` command copied the retained Planning
-items and profile settings from a fenced TypeScript backup. The active CLI
-retires this command in milestone 4.
-
-A stored profile with no enabled flag defaults to enabled. Dispatch checks the
-flag for each new reservation and uses the demand and capability rules in
-[Spec 053](053-demand-based-selection.md). The T3 adapter translates canonical
-mode, effort and options against the matching provider instance and model. It
-uses the same thinking carrier precedence as the
-[TypeScript adapter](t3code-host-adapter.md#model-options) and leaves canonical
-feature defaults to the provider. A profile with an option the adapter or model
-cannot express stays out of dispatch.
-
-## Out of scope until milestone 3
-
-- Papercuts, leads, decisions and plans keep their current store and CLI until they
-  move in (ruling 12). Until then the engine reads leads only to admit a promoted task.
-- Usage levels, model selection and budgets carry over as plain settings, not as new
-  state. They're part of milestone 2's settings (ruling 8).
