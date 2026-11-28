@@ -222,6 +222,7 @@ export function listenForPlanningIssues(
 
 const history = z.array(
   z.object({
+    sequence: z.number().int(),
     actor: z.string(),
     actorLabel: z.string().default("Agent thread"),
     recipientLabel: z.string().optional(),
@@ -236,6 +237,7 @@ const historySnapshot = z.object({
   disposition: z.enum(["completed", "deprecated"]).optional(),
   recipient: z.string().optional(),
   cause: z.string().optional(),
+  send: z.number().int().optional(),
 });
 
 async function laneRevision(
@@ -512,6 +514,7 @@ export function createRustPlanning(
             entry.action === "drop" ? (snapshot?.disposition ?? "deprecated") : null,
           recipient: entry.action === "assess" ? (snapshot?.recipient ?? null) : null,
           recipientLabel: entry.action === "assess" ? (entry.recipientLabel ?? null) : null,
+          send: entry.action === "assess" ? entry.sequence : (snapshot?.send ?? null),
         };
       }),
     };

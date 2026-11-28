@@ -141,7 +141,11 @@ export function planningEngine(now: () => number = Date.now) {
     project: string,
     item: StoredItem,
     filed: { actor: string; atMs: number },
-    steps: Array<{ actor: string; atMs: number; action: string; item: StoredItem; note?: string; recipient?: string }> = [],
+    steps: Array<{
+      actor: string; atMs: number; action: string; item: StoredItem; note?: string; recipient?: string;
+      /** An assessment outcome's cause, and the history sequence of its send. */
+      cause?: string; send?: number;
+    }> = [],
   ) {
     record(project, item.id, filed.actor, filed.atMs, "add", { ...item, state: "open" });
     for (const step of steps) {
@@ -149,6 +153,8 @@ export function planningEngine(now: () => number = Date.now) {
         ...step.item,
         ...(step.note ? { note: step.note } : {}),
         ...(step.recipient ? { recipient: step.recipient } : {}),
+        ...(step.cause ? { cause: step.cause } : {}),
+        ...(step.send ? { send: step.send } : {}),
       };
       record(project, item.id, step.actor, step.atMs, step.action, snapshot);
     }

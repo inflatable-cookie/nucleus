@@ -185,11 +185,10 @@ test("lead · open: Send to planner has one button with no repository or complex
 test("papercut · open: the panel shows why no planner can start, until the message reaches one", async () => {
   const cause = "Can't start a planner: no T3 project matches example/orchard-web";
   const item = papercut({ id: "i-cold", title: "No planner yet" });
-  // The engine records the cause on the history snapshot, beside the item's fields.
-  const waiting = { ...item, cause };
+  // An outcome names the history entry of its send: the second one here, after filing.
   const blocked = [
     { actor: "Operator", atMs: now - 3 * HOUR, action: "assess", item, recipient: "new planner thread" },
-    { actor: "Nucleus", atMs: now - 2 * HOUR, action: "assess_blocked", item: waiting },
+    { actor: "Nucleus", atMs: now - 2 * HOUR, action: "assess_blocked", item, cause, send: 2 },
   ];
   const engine = planningEngine();
   engine.seed("orchard", item, { actor: "planner", atMs: now - DAY }, blocked);
@@ -203,11 +202,41 @@ test("papercut · open: the panel shows why no planner can start, until the mess
   const reached = planningEngine();
   reached.seed("orchard", item, { actor: "planner", atMs: now - DAY }, [
     ...blocked,
-    { actor: "Nucleus", atMs: now - HOUR, action: "assess_reached", item },
+    { actor: "Nucleus", atMs: now - HOUR, action: "assess_reached", item, send: 2 },
   ]);
   const later = await open(reached, "i-cold", "orchard", "papercut");
   assert.match(later.ui.text(), /With planner since /);
   assert.ok(!later.ui.text().includes(cause), "a resolved cause leaves the panel");
+});
+
+test("papercut · open: an earlier send's progress never replaces the latest send's result", async () => {
+  const item = papercut({ id: "i-again", title: "Sent twice" });
+  const earlier = "Can't start a planner: T3's model list hasn't arrived yet";
+  const latest = "Can't start a planner: no T3 project matches example/orchard-web";
+  const sent = (atMs: number) => ({ actor: "Operator", atMs, action: "assess", item, recipient: "new planner thread" });
+  const progress = (atMs: number, send: number, cause?: string) => ({
+    actor: "Nucleus",
+    atMs,
+    action: cause ? "assess_blocked" : "assess_reached",
+    item,
+    send,
+    cause,
+  });
+  // History sequences: filed 1, first send 2, its wait 3, Send again 4, its refusal 5.
+  const interleaved = [
+    sent(now - 5 * HOUR),
+    progress(now - 4 * HOUR, 2, earlier),
+    sent(now - 3 * HOUR),
+    progress(now - 2 * HOUR, 4, latest),
+  ];
+  for (const after of [progress(now - HOUR, 2), progress(now - HOUR, 2, "Can't start a planner: T3 rejected the new thread")]) {
+    const engine = planningEngine();
+    engine.seed("orchard", item, { actor: "planner", atMs: now - DAY }, [...interleaved, after]);
+    const { ui } = await open(engine, "i-again", "orchard", "papercut");
+    assert.ok(ui.text().includes(latest), "the latest send's cause stays");
+    assert.ok(!ui.text().includes(earlier) && !ui.text().includes("rejected the new thread"));
+    mounted.pop()!();
+  }
 });
 
 test("lead · open: a stale view refuses Send to planner and reloads", async () => {

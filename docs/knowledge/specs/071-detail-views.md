@@ -24,10 +24,11 @@ Tom accepted the planner's recommendations on 2026-11-26:
      planner model in Settings → Limits, which defaults to Claude Opus 5.5 at
      high thinking.
    - A planner that can't start yet records why on the item and in the log, and
-     the item shows it under "With planner since". The send retries while the
-     cause can clear on its own. It stops when no T3 project matches, that T3
-     project is bound to another repository, or the project is archived or has no
-     repository. Send again retries it.
+     the item shows the latest send's cause under "With planner since". An earlier
+     send still records its own progress without changing that. The send retries
+     while the cause can clear on its own. It stops when no T3 project matches,
+     that T3 project is bound to another repository, or the project is archived or
+     has no repository. Send again retries it.
 
 ## Lifecycle journal facts
 

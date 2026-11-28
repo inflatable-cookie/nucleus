@@ -415,35 +415,54 @@ impl Store {
         Ok(saved)
     }
 
-    /// Record on the item why its assessment send is waiting for a planner, or with no
-    /// cause, that it reached one. Returns the item when this changed what it shows.
+    /// Record on the item why an assessment send is waiting for a planner, or with no
+    /// cause, that it reached one. Each entry names the history entry of its send.
+    /// Returns the item when this changed what that send shows.
     ///
     /// # Errors
     /// Returns an error if the item or its history cannot be read or written.
     pub fn record_assess_outcome(
         &mut self,
-        project: &str,
-        tell: &str,
+        send: &crate::TellDelivery,
         cause: Option<&str>,
         stamp: WriteAt<'_>,
     ) -> Result<Option<String>, StoreError> {
+        let project = &send.to_project;
         let tx = self.planning_write()?;
-        let latest = tx
+        // A send queued by an earlier engine left no key on its history entry. That entry
+        // and its message were written together, with one time and the item named first.
+        let origin = tx
             .query_row(
-                "SELECT id, json_extract(snapshot, '$.cause') FROM planning_history
-                 WHERE project = ?1 AND kind = 'item'
-                 AND json_extract(snapshot, '$.tell') = ?2 ORDER BY sequence DESC LIMIT 1",
-                params![project, tell],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                "SELECT sequence, id FROM planning_history
+                 WHERE project = ?1 AND kind = 'item' AND action = 'assess'
+                 AND (json_extract(snapshot, '$.tell') = ?2
+                      OR (json_extract(snapshot, '$.tell') IS NULL AND at_ms = ?3
+                          AND (instr(?4, 'Assess Lead ' || id || ' in ') = 1
+                               OR instr(?4, 'Assess Papercut ' || id || ' in ') = 1)))",
+                params![project, send.request_key, send.recorded_at, send.text],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()?;
-        // A retry with the same cause adds nothing, and only a waiting send can arrive.
-        let Some((id, _)) = latest.filter(|(_, recorded)| recorded.as_deref() != cause) else {
+        let Some((origin, id)) = origin else {
             return Ok(None);
         };
+        let recorded = tx
+            .query_row(
+                "SELECT json_extract(snapshot, '$.cause') FROM planning_history
+                 WHERE project = ?1 AND kind = 'item' AND id = ?2
+                 AND json_extract(snapshot, '$.send') = ?3 ORDER BY sequence DESC LIMIT 1",
+                params![project, id, origin],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        // A retry with the same cause adds nothing, and only a waiting send can arrive.
+        if recorded.as_deref() == cause {
+            return Ok(None);
+        }
         let item: Item = required(&tx, ItemRecord, project, &id)?;
         let mut snapshot = serde_json::to_value(&item)?;
-        snapshot["tell"] = tell.into();
+        snapshot["send"] = origin.into();
         let action = if let Some(cause) = cause {
             snapshot["cause"] = cause.into();
             "assess_blocked"

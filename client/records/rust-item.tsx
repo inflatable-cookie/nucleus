@@ -110,11 +110,11 @@ function latestAssess(item: ItemDetail): ItemHistoryEntry | undefined {
   return undefined;
 }
 
-/** Why the latest assessment send is still waiting for a planner, if it is. */
-function assessCause(item: ItemDetail): string | null {
-  const last = item.history.findLast((entry) =>
-    ["assess", "assess_blocked", "assess_reached", "drop", "promote", "reopen"].includes(entry.action));
-  return last?.action === "assess_blocked" ? last.note : null;
+/** Why the latest assessment send can't reach a planner yet. An earlier send's progress says nothing about it. */
+function assessCause(item: ItemDetail, latest: ItemHistoryEntry | undefined): string | null {
+  if (!latest) return null;
+  const outcome = item.history.findLast((entry) => entry.action !== "assess" && entry.send === latest.send);
+  return outcome?.action === "assess_blocked" ? outcome.note : null;
 }
 
 /** The item's history as activity, newest first. Imports and unknown actions keep their own word. */
@@ -372,7 +372,7 @@ export function RustItemDialog({
           c={c}
           item={item}
           assessed={assessed}
-          cause={assessCause(item)}
+          cause={assessCause(item, assessed)}
           busy={busy}
           onAssess={() => {
             void (async () => {

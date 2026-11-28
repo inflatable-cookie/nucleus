@@ -4871,6 +4871,27 @@ impl UnboundProject {
             .collect()
     }
 
+    /// Each recorded outcome with the zero-based number of the send it belongs to.
+    async fn outcomes(&self) -> Vec<(String, usize)> {
+        let (_, entries) = item_latest_version(&self.registry.api, &self.project, &self.item).await;
+        let sends: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry["action"] == "assess")
+            .map(|entry| entry["sequence"].clone())
+            .collect();
+        entries
+            .iter()
+            .filter(|entry| !entry["snapshot"]["send"].is_null())
+            .map(|entry| {
+                let send = &entry["snapshot"]["send"];
+                (
+                    entry["action"].as_str().unwrap().to_owned(),
+                    sends.iter().position(|sequence| sequence == send).unwrap(),
+                )
+            })
+            .collect()
+    }
+
     async fn queued(&self) -> bool {
         let state = self.registry.service.state.lock().await;
         state.store.next_tell().unwrap().is_some()
@@ -5074,6 +5095,101 @@ async fn item_assess_waits_for_t3_to_identify_the_repository() {
     )]);
     unbound.registry.advance_tell().await.expect("launch");
     unbound.assert_launched("gamma-native", &model).await;
+}
+
+#[tokio::test]
+async fn item_assess_progress_stays_with_its_own_send() {
+    let unbound = UnboundProject::new().await;
+    let model = json!({"instanceId": "codex", "model": "gpt-5"});
+    let unidentified = t3_project("gamma-native", &unbound.root, None, &model);
+    unbound.shell(std::slice::from_ref(&unidentified));
+    unbound.send_to_planner().await;
+    unbound.registry.advance_tell().await.expect("first waits");
+
+    // Send again while the first still waits; the newer send is due first.
+    unbound.shell(&[t3_project(
+        "other-native",
+        &unbound.root,
+        Some("github.com/example/third"),
+        &model,
+    )]);
+    unbound.send_to_planner().await;
+    unbound.registry.advance_tell().await.expect("second stops");
+    unbound.shell(&[t3_project(
+        "gamma-native",
+        &unbound.root,
+        Some(BETA_KEY),
+        &model,
+    )]);
+    unbound
+        .registry
+        .advance_tell()
+        .await
+        .expect("first launches");
+
+    unbound.assert_launched("gamma-native", &model).await;
+    // Only the launched send is still due, to confirm delivery. The newer one stays stopped.
+    let due = unbound
+        .registry
+        .service
+        .state
+        .lock()
+        .await
+        .store
+        .next_tell();
+    assert!(matches!(
+        due.unwrap().unwrap().state,
+        nucleus_store::TellState::Accepted(_)
+    ));
+    assert_eq!(
+        unbound.outcomes().await,
+        [
+            ("assess_blocked".into(), 0),
+            ("assess_blocked".into(), 1),
+            ("assess_reached".into(), 0),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn item_assess_records_causes_for_sends_queued_by_the_earlier_engine() {
+    let unbound = UnboundProject::new().await;
+    unbound.shell(&[]);
+    for _ in 0..2 {
+        unbound.send_to_planner().await;
+        // The two sends need distinct times, as two clicks have.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // The earlier engine's history entry held only the item and its recipient.
+    let database = unbound
+        .registry
+        .service
+        .storage
+        .database()
+        .path()
+        .join("engine.sqlite");
+    let rewritten = rusqlite::Connection::open(database)
+        .unwrap()
+        .execute(
+            "UPDATE planning_history SET snapshot = json_remove(snapshot, '$.tell')
+             WHERE action = 'assess'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(rewritten, 2);
+
+    for _ in 0..2 {
+        unbound.registry.advance_tell().await.expect("stop");
+    }
+    assert!(!unbound.queued().await);
+    assert_eq!(
+        unbound.outcomes().await,
+        [("assess_blocked".into(), 0), ("assess_blocked".into(), 1)]
+    );
+    assert_eq!(
+        unbound.progress().await.last().unwrap().1.as_deref(),
+        Some("Can't start a planner: no T3 project matches example/second")
+    );
 }
 
 async fn watch_via(api: &Router, actor: &str, selector: &str, verb: &str) -> Response {

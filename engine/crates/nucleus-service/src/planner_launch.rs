@@ -260,12 +260,12 @@ impl Service {
             actor: "Nucleus",
             at_ms: now_ms(),
         };
-        let changed = self.state.lock().await.store.record_assess_outcome(
-            &row.to_project,
-            &row.request_key,
-            cause,
-            stamp,
-        )?;
+        let changed = self
+            .state
+            .lock()
+            .await
+            .store
+            .record_assess_outcome(row, cause, stamp)?;
         if let Some(item) = changed {
             service_log!(
                 "item {item} in {}: {}",
