@@ -355,16 +355,6 @@ impl T3 {
         }
     }
 
-    /// Observe the exact message without treating queue acceptance as delivery.
-    /// # Errors
-    /// Returns an error if the thread or message cannot be read.
-    pub async fn notice_state(
-        &self,
-        delivery: &QuestionDelivery,
-    ) -> Result<NoticeState, HostError> {
-        Ok(self.observe_notice(delivery).await?.state)
-    }
-
     /// Reconcile any preceding send and authorize a new dispatch when eligible.
     /// # Errors
     /// Returns an error when the request is unreadable.

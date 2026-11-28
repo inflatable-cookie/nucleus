@@ -422,7 +422,7 @@ async fn a_large_planner_thread_uses_compact_bounded_readback_and_keeps_unknown_
         Err(HostError::Uncertain)
     ));
     assert_eq!(
-        client.notice_state(&delivery).await.unwrap(),
+        client.observe_notice(&delivery).await.unwrap().state,
         crate::NoticeState::Started
     );
     let requests = server.await.unwrap();
@@ -601,7 +601,7 @@ fn reserve_with_parent(
     .inputs(&instance, thread, 1)
     .expect("inputs");
     let _ = task
-        .reserve_launch(&observation, inputs, &[4; 32])
+        .reserve_grouped_launch(&observation, inputs, &[4; 32], None, "fixture-group".into())
         .expect("reserve");
     (task, observation, instance)
 }
@@ -1119,6 +1119,40 @@ async fn a_retained_read_cannot_infer_absence_when_the_held_shell_lists_the_thre
         Err(HostError::HeldThreadMissing { revision: Some(16) })
     ));
     assert_eq!(native.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_retained_role_is_gone_only_on_absence_or_a_tombstone() {
+    let checkout = checkout_fixture();
+    let binding = binding(checkout.path());
+    let mut deleted = snapshot(&binding, "worker", "completed", false);
+    deleted["projection"]["thread"]["deletedAt"] = json!("2026-11-27T09:00:00Z");
+    let running = snapshot(&binding, "worker", "running", false);
+    let probe = "orchestration.subscribeThread";
+    let (host, native) = server(vec![
+        (probe, missing_thread(THREAD)),
+        (probe, Response::Snapshot(deleted)),
+        (probe, Response::Snapshot(running)),
+    ])
+    .await;
+    // A running role stays queueable: the continuation waits in T3's queue.
+    for state in [
+        RetainedThread::Gone,
+        RetainedThread::Gone,
+        RetainedThread::Queueable,
+    ] {
+        assert_eq!(
+            quiet_pass(&host)
+                .observe_retained_role(&binding, THREAD)
+                .await
+                .unwrap(),
+            Host::Retained {
+                thread: THREAD.into(),
+                state,
+            }
+        );
+    }
+    assert_eq!(native.await.unwrap().len(), 3);
 }
 
 #[test]
@@ -1650,7 +1684,7 @@ async fn next_review_dispatches_to_a_settled_thread_with_an_operator_snooze() {
     .inputs(&instance, THREAD.into(), 2)
     .expect("continuation inputs");
     let _ = task
-        .reserve_launch(&observation, inputs, &[4; 32])
+        .reserve_grouped_launch(&observation, inputs, &[4; 32], None, "fixture-group".into())
         .expect("reserve continuation");
     let permit = pass
         .authorize_send(task.run().expect("run"))
@@ -1735,7 +1769,8 @@ fn reserved_worker_continuation(
     let mut wire: Value = serde_json::from_str(&inputs.input).unwrap();
     stored(&mut wire);
     inputs.input = wire.to_string();
-    task.reserve_launch(&observation, inputs, &[7; 32]).unwrap();
+    task.reserve_grouped_launch(&observation, inputs, &[7; 32], None, "fixture-group".into())
+        .unwrap();
     (task, instance)
 }
 
@@ -1848,7 +1883,7 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     let (mut task, mut observation, _) = retained_reviewer(binding.clone());
     observation.host = Observed::Known(Host::Retained {
         thread: THREAD.into(),
-        state: RetainedThread::Idle,
+        state: RetainedThread::Queueable,
     });
     let instance = task.next_launch_instance().unwrap();
     let parent = crate::parent_thread(checkout.path());
@@ -1862,7 +1897,9 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     }
     .inputs(&instance, THREAD.into(), 3)
     .unwrap();
-    let _ = task.reserve_launch(&observation, inputs, &[7; 32]).unwrap();
+    let _ = task
+        .reserve_grouped_launch(&observation, inputs, &[7; 32], None, "fixture-group".into())
+        .unwrap();
 
     let mut window = snapshot(&binding, "unrelated-running-review", "running", false);
     window["hasMoreHistory"] = json!(true);
@@ -2207,17 +2244,13 @@ async fn planner_notice_sends_through_snooze_and_queue_acceptance_is_not_deliver
         observed.authorization.is_none(),
         "settling after acceptance permits no write"
     );
+    let interrupted = client.observe_notice(&notice).await;
     assert_eq!(
-        client
-            .notice_state(&notice)
-            .await
-            .expect("interrupted before start"),
+        interrupted.expect("interrupted before start").state,
         NoticeState::Undelivered
     );
-    assert_eq!(
-        client.notice_state(&notice).await.expect("started"),
-        NoticeState::Started
-    );
+    let started = client.observe_notice(&notice).await;
+    assert_eq!(started.expect("started").state, NoticeState::Started);
     let frames = server.await.expect("fixture trace");
     assert_eq!(frames[1].payload.get(), notice.payload.as_str());
     let payload: Value = serde_json::from_str(&notice.payload).expect("message wire");
@@ -2308,12 +2341,11 @@ async fn a_promoted_steer_needs_delivery_of_its_own_provider_item() {
         (probe, Response::Snapshot(delivered)),
     ])
     .await;
+    let pending = client.observe_notice(&notice).await;
+    assert_eq!(pending.expect("unread steer").state, NoticeState::Queued);
+    let delivered = client.observe_notice(&notice).await;
     assert_eq!(
-        client.notice_state(&notice).await.expect("unread steer"),
-        NoticeState::Queued
-    );
-    assert_eq!(
-        client.notice_state(&notice).await.expect("delivered steer"),
+        delivered.expect("delivered steer").state,
         NoticeState::Started
     );
     server.await.expect("fixture trace");

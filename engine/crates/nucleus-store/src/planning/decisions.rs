@@ -190,22 +190,6 @@ impl Store {
         Ok(true)
     }
 
-    /// Record the answer. Task-linked decisions require the exact question row to remain current.
-    ///
-    /// # Errors
-    /// Returns an error for a missing, obsolete, or withdrawn decision, unknown option, or database failure.
-    pub fn answer_decision(
-        &mut self,
-        project: &str,
-        id: &str,
-        input: DecisionAnswerInput,
-        stamp: WriteAt<'_>,
-    ) -> Result<Decision, StoreError> {
-        Ok(self
-            .answer_decision_with_notice(project, id, input, stamp, None)?
-            .0)
-    }
-
     /// Record the answer and optionally queue one direct tell notice in the same transaction.
     ///
     /// # Errors
