@@ -117,7 +117,7 @@ test("Settings keeps shared sections and the operator GitHub section behind the 
       "the visible short labels fit one line",
     );
   }
-  assert.match(settingsScreen, /settingsViews\.map\(\(?view\)? =>/);
+  assert.match(settingsScreen, /settingsViews\s*\.map\(\(?view\)? =>/);
   for (const view of settingsViews)
     assert.ok(
       settingsScreen.includes(`settingsTab === "${view.id}" &&`),

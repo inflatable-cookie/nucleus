@@ -118,9 +118,9 @@ export function DevicesSettings({
             selectable
             accessibilityLabel="Device pairing code"
             style={{
+              ...typeScale.page,
               color: expired ? c.foregroundMuted : c.foreground,
               fontFamily: "monospace",
-              fontSize: 22,
               fontWeight: "600",
               letterSpacing: 2,
             }}
