@@ -55,6 +55,7 @@ use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Action, Authority, Command, CommandError, Forge, Identity, Observation, Observed,
     OperatorDecline, Phase, QueuePriority, Report, Task, WaitReason, Workspace,
+    profiles::{SlotBlock, Slots, TaskWeight},
 };
 use nucleus_forge::{Branches, ForgeError, GitHub};
 use nucleus_hosts::{HostCalls, HostError, RunActivity, T3, T3_RETRY_DELAY, ThreadHint};
@@ -288,6 +289,8 @@ enum WaitDetail {
     ConfirmingDelivery(&'static str),
     Observation(&'static str),
     Blocked(String),
+    /// A capacity wait on a task weight cap; the text is its whole label.
+    SlotCap(String),
     Archive(String),
     OperatorSnoozed {
         version: i64,
@@ -309,7 +312,7 @@ struct State {
     waits: BTreeMap<String, TaskWait>,
     role_observations: BTreeMap<String, (String, nucleus_core::RunState)>,
     acp_refresh_requests: BTreeMap<String, i64>,
-    capacity_waiters: BTreeSet<(QueuePriority, i64, String)>,
+    capacity_waiters: schedule::CapacityWaiters,
     group_waits: BTreeMap<String, profiles::GroupPause>,
     observed_forge: BTreeMap<String, (i64, Forge)>,
     forge_requested: BTreeSet<String>,
@@ -932,28 +935,78 @@ impl Service {
         identity: &Identity,
         recovery: bool,
     ) -> Result<bool, ServiceError> {
+        if !self.project_capacity(state, identity, recovery)? {
+            return Ok(false);
+        }
+        // A task which has gone holds no weight of its own.
+        let weight = state
+            .store
+            .row(&identity.id)?
+            .map_or_else(TaskWeight::default, |row| row.task.weight());
+        Ok(self.slot_block(state, &identity.id, weight)?.is_none())
+    }
+
+    fn project_capacity(
+        &self,
+        state: &State,
+        identity: &Identity,
+        recovery: bool,
+    ) -> Result<bool, ServiceError> {
         let route = self.resolve_project(state, identity)?;
-        let fallback_slots = self.project.as_ref().map_or_else(
-            || nucleus_store::DispatchSettings::default().global_slots,
-            |project| project.launch_budget.slots,
-        );
         let project_slots = match route.slots {
             Some(slots) => slots,
             None if recovery => u32::MAX,
             None => return Ok(false),
         };
-        let slots = state
-            .settings
-            .dispatch
-            .as_ref()
-            .map_or(fallback_slots, |dispatch| dispatch.global_slots);
-        if state.store.occupied_slots(&identity.id)? >= slots {
-            return Ok(false);
-        }
         Ok(state
             .store
             .occupied_project_slots(&identity.id, &route.repositories)?
             < project_slots)
+    }
+
+    /// The global cap which keeps another run of this weight from starting.
+    fn slot_block(
+        &self,
+        state: &State,
+        id: &str,
+        weight: TaskWeight,
+    ) -> Result<Option<SlotBlock>, ServiceError> {
+        let limits = state.settings.dispatch.as_ref().map_or_else(
+            || {
+                self.project.as_ref().map_or_else(
+                    || nucleus_store::DispatchSettings::default().slots(),
+                    |project| Slots::split(project.launch_budget.slots),
+                )
+            },
+            nucleus_store::DispatchSettings::slots,
+        );
+        Ok(limits.blocks(state.store.occupied_slots(id)?, weight))
+    }
+
+    /// The label of a task which only its weight cap keeps from launching.
+    fn slot_wait(&self, state: &State, task: &Task) -> Result<Option<String>, ServiceError> {
+        let identity = task.identity();
+        if !state.dispatch_mode().allows_launch(task.first_launch())
+            || !self.project_capacity(state, identity, false)?
+        {
+            return Ok(None);
+        }
+        let Some(SlotBlock::Weight {
+            weight,
+            running,
+            limit,
+        }) = self.slot_block(state, &identity.id, task.weight())?
+        else {
+            return Ok(None);
+        };
+        let slot = if weight == TaskWeight::Heavy {
+            "heavy"
+        } else {
+            "normal"
+        };
+        Ok(Some(format!(
+            "Waiting for a {slot} slot ({running}/{limit})"
+        )))
     }
 
     async fn watch_housekeeping(&self) {
@@ -1390,6 +1443,9 @@ impl Service {
                 .get(id)
                 .filter(|pause| pause.remaining(now_ms()))
                 .map(|pause| WaitDetail::Blocked(pause.cause()));
+        }
+        if wait == Some(WaitReason::Capacity) && detail.is_none() {
+            detail = self.slot_wait(&state, &row.task)?.map(WaitDetail::SlotCap);
         }
         let prior_wait = state.wait_reason(id);
         let changed = state.observe_wait_detail(&row.task, wait, detail)?;
@@ -2007,10 +2063,12 @@ impl Service {
         state.observed_forge.remove(id);
         state.forge_requested.remove(id);
         state.activity.remove(id);
-        if occupied_slot(&prior.task) && !occupied_slot(task) {
+        let reweighed = prior.task.brief() != task.brief() && prior.task.weight() != task.weight();
+        if occupied_slot(&prior.task) && (!occupied_slot(task) || reweighed) {
             self.wake_capacity(state, Instant::now());
         }
-        if prior.task.queue_priority() != task.queue_priority() && state.remove_capacity_waiter(id)
+        if (prior.task.queue_priority() != task.queue_priority() || reweighed)
+            && state.remove_capacity_waiter(id)
         {
             let _ = state.enqueue_capacity(task);
         }
@@ -2458,9 +2516,10 @@ impl State {
         if !self
             .capacity_waiters
             .iter()
-            .any(|(_, _, waiting)| waiting == id)
+            .any(|(_, _, _, waiting)| waiting == id)
         {
             self.capacity_waiters.insert((
+                task.weight(),
                 task.queue_priority(),
                 self.store.admission_order(id)?,
                 id.clone(),
@@ -2472,7 +2531,7 @@ impl State {
     fn remove_capacity_waiter(&mut self, id: &str) -> bool {
         let before = self.capacity_waiters.len();
         self.capacity_waiters
-            .retain(|(_, _, waiting)| waiting != id);
+            .retain(|(_, _, _, waiting)| waiting != id);
         self.capacity_waiters.len() != before
     }
 
@@ -2574,7 +2633,9 @@ impl State {
         self.schedule.take_ready(
             now,
             visited,
-            self.capacity_waiters.iter().map(|(_, _, id)| id.as_str()),
+            self.capacity_waiters
+                .iter()
+                .map(|(_, _, _, id)| id.as_str()),
         )
     }
 
@@ -2605,11 +2666,12 @@ impl Service {
         let candidate = state
             .capacity_waiters
             .iter()
-            .map(|(_, _, id)| id)
+            .map(|(_, _, _, id)| id)
             .find(|id| {
                 !state.group_waits.contains_key(*id)
                     && state.store.row(id).ok().flatten().is_some_and(|row| {
-                        row.task.hold().is_none()
+                        state.dispatch_mode().allows_launch(row.task.first_launch())
+                            && row.task.hold().is_none()
                             && row.task.question().is_none()
                             && !state.store.dependency_blocked(id).unwrap_or(true)
                             && !state.has_open_usage_decision(&row.task).unwrap_or(true)

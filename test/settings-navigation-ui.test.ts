@@ -39,7 +39,11 @@ const board = {
   backup: { newestSnapshotAt: "2026-11-07T21:00:00Z", localError: null },
 };
 const capacity = {
+  revision: "limits-0",
   effective: {
+    heavySlots: 5,
+    normalSlots: 22,
+    lightSlots: 5,
     globalLimit: 32,
     projectLimit: 5,
     hostCallLimit: 6,
