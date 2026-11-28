@@ -34,7 +34,7 @@ const answerFields = {
 
 export const decisionAnswer = defineRpc({ name: "decision.answer", input: z.union([
   z.object({ ...answerFields, optionId: z.string().min(1) }).strict(),
-  z.object({ ...answerFields, answer: z.string().trim().min(1).max(48000) }).strict(),
+  z.object({ ...answerFields, answer: z.string().trim().min(1).max(48000), basedOnOptionId: z.string().min(1).optional() }).strict(),
 ]), output: decisionViewSchema });
 
 export const decisionWithdraw = defineRpc({ name: "decision.withdraw", input: z.object({

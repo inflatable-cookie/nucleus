@@ -55,6 +55,8 @@ async fn legacy_process_decisions_are_closed_as_superseded_without_a_census() {
         .unwrap();
     let answer = DecisionAnswerInput {
         option_id: "checked".into(),
+        answer: None,
+        based_on_option_id: None,
         note: None,
     };
     let recorded = store
@@ -1143,6 +1145,25 @@ impl DecisionNoticeFixture {
         json_body(response).await
     }
 
+    async fn assert_gate_rejects_free_text(&self, project: &str, decision_id: &str) {
+        use tower::ServiceExt as _;
+        let request = axum::http::Request::builder()
+            .method(Method::POST)
+            .uri(format!(
+                "/v1/planning/{project}/decisions/{decision_id}/answer"
+            ))
+            .header(axum::http::header::HOST, "127.0.0.1:9")
+            .header(
+                "authorization",
+                format!("Bearer {}", hex::encode(OPERATOR_KEY)),
+            )
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"answer":"custom answer"}"#))
+            .unwrap();
+        let response = self.api.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
     async fn answer_via_inbox(&self, project: &str, decision_id: &str, option_id: &str) {
         let key = self.service.native_inbox.as_ref().unwrap().credential;
         self.service
@@ -1255,6 +1276,8 @@ async fn check_inbox_and_replay(fixture: &DecisionNoticeFixture, project: &str) 
             &first.id,
             DecisionAnswerInput {
                 option_id: "ship".into(),
+                answer: None,
+                based_on_option_id: None,
                 note: None,
             },
             &operator,
@@ -1270,6 +1293,8 @@ async fn check_inbox_and_replay(fixture: &DecisionNoticeFixture, project: &str) 
                 &first.id,
                 DecisionAnswerInput {
                     option_id: "hold".into(),
+                    answer: None,
+                    based_on_option_id: None,
                     note: Some(note.into()),
                 },
                 &operator,
@@ -1331,6 +1356,9 @@ async fn check_task_linked_wake_and_notify(fixture: &DecisionNoticeFixture, proj
     let task_id = "gated-task";
     fixture.service.state.lock().await.schedule.park(task_id);
     let decision_id = format!("usage-permission-{task_id}");
+    fixture
+        .assert_gate_rejects_free_text(project, &decision_id)
+        .await;
     fixture
         .answer_via_inbox(project, &decision_id, USAGE_APPROVE)
         .await;
@@ -1400,6 +1428,9 @@ async fn check_task_question_wake_and_notify(fixture: &DecisionNoticeFixture, pr
         .await
         .schedule
         .park("review-entry-task");
+    fixture
+        .assert_gate_rejects_free_text(project, "task-review-entry-task-1")
+        .await;
     fixture
         .answer_via_inbox(project, "task-review-entry-task-1", ACCEPT)
         .await;
@@ -1590,4 +1621,37 @@ async fn decision_answer_notifies_author_falls_back_dedupes_replays_and_wakes_ta
     check_task_question_wake_and_notify(&fixture, &project).await;
     check_tell_failure_rolls_back_answer_atomically(&fixture, &project).await;
     check_capped_planner_still_records_and_queues_notice(&fixture, &project).await;
+    let decision = fixture
+        .service
+        .add_decision(
+            &project,
+            decision_input("Custom ruling?"),
+            &Authority::Planner {
+                actor: "next-planner".into(),
+            },
+        )
+        .await
+        .unwrap();
+    fixture
+        .service
+        .answer_decision(
+            &project,
+            &decision.id,
+            DecisionAnswerInput {
+                option_id: String::new(),
+                answer: Some("Ship after checks".into()),
+                based_on_option_id: Some("ship".into()),
+                note: None,
+            },
+            &Authority::Operator {
+                actor: "operator".into(),
+            },
+        )
+        .await
+        .unwrap();
+    fixture.advance_tell().await.unwrap();
+    fixture.advance_tell().await.unwrap();
+    let sends = fixture.sends.lock().unwrap();
+    let text = sends.last().unwrap()["text"].as_str().unwrap();
+    assert!(text.contains("Ship after checks (based on ship)"));
 }

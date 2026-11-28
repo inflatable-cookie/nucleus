@@ -1,14 +1,17 @@
 import { Markdown } from "../markdown";
-import { useContext, useState } from "react";
+import { useContext, useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import { useRpc } from "../shell";
+import { Icon, useRpc } from "../shell";
 import { BoardLiveContext } from "../board-live";
 import {
   Button,
   ConfirmReplaceAnswer,
   DetailSection,
+  HelpTip,
+  HelpPopover,
   SurfacePress,
+  row,
   muted,
   type Colors,
 } from "../controls";
@@ -26,13 +29,7 @@ import {
   type RecordNoticeValue,
 } from "../task/parts";
 import { RecordModal } from "./record-modal";
-import {
-  type as typeScale,
-  space,
-  radius,
-  roles,
-  toneWash,
-} from "../design";
+import { type as typeScale, space, radius, roles, toneWash } from "../design";
 
 /**
  * The decision dialog (Spec 032). It owns its answer, withdraw reason, pending option and
@@ -75,10 +72,12 @@ export function DecisionDialog({
     answerDecision = useRpc(api.decisionAnswer);
   const [decisionDetailsOpen, setDecisionDetailsOpen] = useState(false);
   const [decisionAnswerText, setDecisionAnswerText] = useState("");
-  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const [pendingDecisionOption, setPendingDecisionOption] = useState<
     string | null
   >(null);
+  const [answerHelpOpen, setAnswerHelpOpen] = useState(false);
+  const answerAnchor = useRef<View | null>(null);
   const decisionDetailQuery = useQuery({
     queryKey: ["nucleus", "decision", openDecisionId, project],
     queryFn: () => fetchDecision({ ...scope, id: openDecisionId! }),
@@ -91,16 +90,69 @@ export function DecisionDialog({
     : null;
   const choices = decisionDetailPresentation?.choices ?? [];
   const recommended = decisionDetailPresentation?.recommended;
-  const identified = decisionDetailPresentation?.identified ?? false;
+  const gate = decisionDetail?.gate ?? false;
+  const choiceText = (choice: (typeof choices)[number]) =>
+    choice.label.replace(/\s*\(recommended\)\s*$/i, "");
+  const choiceKey = (choice: (typeof choices)[number]) =>
+    choice.optionId ?? choice.label;
+  const selected = choices.find(
+    (choice) => choiceKey(choice) === selectedChoice,
+  );
+  const pendingChoice = choices.find(
+    (choice) => choiceKey(choice) === pendingDecisionOption,
+  );
+  const edited = Boolean(
+    selected && decisionAnswerText !== choiceText(selected),
+  );
   const typedAnswer = decisionAnswerText.trim();
-  const optionId = choices.find((choice) => choice.optionId === selectedOptionId)?.optionId;
-  const answer = identified
-    ? optionId ? { optionId } : null
-    : typedAnswer ? { answer: typedAnswer } : null;
+  const answer = !typedAnswer
+    ? null
+    : selected?.optionId && !edited
+      ? { optionId: selected.optionId }
+      : {
+          answer: typedAnswer,
+          ...(selected?.optionId ? { basedOnOptionId: selected.optionId } : {}),
+        };
   const recordedAnswer = decisionDetail?.answer;
-  const recordedOption = recordedAnswer && "optionId" in recordedAnswer
-    ? choices.find((choice) => choice.optionId === recordedAnswer.optionId)
-    : undefined;
+  const recordedOption =
+    recordedAnswer && "optionId" in recordedAnswer
+      ? choices.find((choice) => choice.optionId === recordedAnswer.optionId)
+      : choices.find(
+          (choice) =>
+            !choice.optionId && choiceText(choice) === recordedAnswer?.text,
+        );
+  const selectChoice = (index: number) => {
+    const choice = choices[index];
+    if (!choice) return;
+    if (
+      decisionAnswerText.trim() &&
+      decisionAnswerText !== choiceText(choice) &&
+      (!selected || edited)
+    ) {
+      setPendingDecisionOption(choiceKey(choice));
+      return;
+    }
+    setSelectedChoice(choiceKey(choice));
+    setDecisionAnswerText(choiceText(choice));
+  };
+  const submitAnswer = () => {
+    if (!answer || busy || !decisionDetail || (gate && !("optionId" in answer)))
+      return;
+    void act(async () => {
+      await answerDecision({
+        ...scope,
+        id: decisionDetail.id,
+        version: decisionDetail.version,
+        ...answer,
+        answeredBy: "operator (board)",
+        relayed: false,
+        note: "",
+      });
+      setRecordNotice({ kind: "ok", text: "Answered" });
+      setDecisionAnswerText("");
+      setSelectedChoice(null);
+    }, "record");
+  };
   const decisionDetailsContent = decisionDetail
     ? [
         ...new Set(
@@ -134,8 +186,8 @@ export function DecisionDialog({
           <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             {decisionDetail.status}
             {decisionDetail.stale ? " · stale" : ""} ·{" "}
-            {decisionProjectLabel(decisionDetail)} ·{" "}
-            {decisionDetail.askerLabel ?? UNKNOWN_ASKER_LABEL} ·{" "}
+            {decisionDetail.projectName ?? decisionProjectLabel(decisionDetail)}{" "}
+            · {decisionDetail.askerLabel ?? UNKNOWN_ASKER_LABEL} ·{" "}
             {decisionAge(decisionDetail.createdAt)}
           </Text>
         ) : undefined
@@ -170,7 +222,10 @@ export function DecisionDialog({
             </Text>
           )}
           <DetailSection title="Question" c={c}>
-            <Markdown text={decisionDetail.headline ?? decisionDetail.question} c={c} />
+            <Markdown
+              text={decisionDetail.headline ?? decisionDetail.question}
+              c={c}
+            />
           </DetailSection>
           {decisionDetailsContent && (
             <CollapsibleSection
@@ -184,58 +239,187 @@ export function DecisionDialog({
           )}
           {choices.length > 0 && (
             <DetailSection title="Choices" c={c}>
-              <View style={{ gap: space.xs }}>
-                {choices.map((choice) => (
-                  <SurfacePress
-                    key={choice.optionId ?? choice.label}
-                    c={c}
-                    label={`Use option: ${choice.displayLabel}${choice.label === recommended ? ", recommended" : ""}`}
-                    selected={choice.optionId ? selectedOptionId === choice.optionId : decisionAnswerText === choice.label}
-                    onPress={() => {
-                      if (choice.optionId) {
-                        setSelectedOptionId(choice.optionId);
-                        return;
-                      }
-                      if (
-                        decisionAnswerText.trim() &&
-                        decisionAnswerText !== choice.label
-                      )
-                        setPendingDecisionOption(choice.label);
-                      else setDecisionAnswerText(choice.label);
-                    }}
-                    style={{
-                      paddingHorizontal: space.xs,
-                      paddingVertical: space.xs,
-                      backgroundColor: roles(c).raised,
-                    }}
-                  >
-                    <Text
+              <View accessibilityRole="radiogroup" style={{ gap: space.xs }}>
+                {choices.map((choice, index) => {
+                  const chosen =
+                    decisionDetail.status === "answered" &&
+                    recordedOption === choice;
+                  const active =
+                    decisionDetail.status === "open" &&
+                    selectedChoice === choiceKey(choice);
+                  const dimmed =
+                    decisionDetail.status === "answered" &&
+                    Boolean(recordedOption) &&
+                    !chosen;
+                  return (
+                    <SurfacePress
+                      key={choice.optionId ?? choice.label}
+                      c={c}
+                      role="radio"
+                      selectionWash={false}
+                      label={`Use option: ${choice.displayLabel}${choice.label === recommended ? ", recommended" : ""}${active && edited ? ", edited" : ""}`}
+                      selected={active || chosen}
+                      disabled={decisionDetail.status !== "open"}
+                      onPress={() => selectChoice(index)}
+                      onKeyDown={(event) => {
+                        if (
+                          [
+                            "ArrowDown",
+                            "ArrowRight",
+                            "ArrowUp",
+                            "ArrowLeft",
+                          ].includes(event.key)
+                        ) {
+                          event.preventDefault();
+                          const radios =
+                            event.currentTarget.parentElement?.querySelectorAll<HTMLElement>(
+                              '[role="radio"]',
+                            );
+                          const direction =
+                            event.key === "ArrowDown" ||
+                            event.key === "ArrowRight"
+                              ? 1
+                              : -1;
+                          radios?.[
+                            (index + direction + choices.length) %
+                              choices.length
+                          ]?.focus();
+                        } else if (
+                          event.key === " " ||
+                          event.key === "Spacebar"
+                        ) {
+                          event.preventDefault();
+                          selectChoice(index);
+                        } else if (event.key === "Enter") {
+                          event.preventDefault();
+                          submitAnswer();
+                        }
+                      }}
                       style={{
-                        color: c.foreground,
-                        fontSize: typeScale.metadata.fontSize,
-                        lineHeight: typeScale.metadata.lineHeight,
+                        ...row,
+                        alignItems: "flex-start",
+                        flexWrap: "nowrap",
+                        gap: space.xs,
+                        padding: space.sm,
+                        borderWidth: 1,
+                        borderColor: active || chosen ? c.accent : c.border,
+                        backgroundColor:
+                          active || chosen
+                            ? toneWash(c.accent, roles(c).raised)
+                            : roles(c).raised,
+                        opacity: dimmed ? 0.55 : 1,
                       }}
                     >
-                      {choice.label === recommended
-                        ? "★ Recommended · "
-                        : ""}
-                      {choice.displayLabel}
-                      {choice.consequence ? ` — ${choice.consequence}` : ""}
-                    </Text>
-                  </SurfacePress>
-                ))}
+                      <View>
+                        <Icon
+                          name={
+                            chosen
+                              ? "CircleCheck"
+                              : active
+                                ? edited
+                                  ? "CircleDashed"
+                                  : "CircleDot"
+                                : "Circle"
+                          }
+                          size={16}
+                          color={
+                            active || chosen ? c.accent : c.foregroundMuted
+                          }
+                        />
+                      </View>
+                      <View style={{ flex: 1, gap: space.xxs }}>
+                        <View
+                          style={{ ...row, flexWrap: "wrap", gap: space.xs }}
+                        >
+                          <Text
+                            style={{
+                              color: c.foreground,
+                              fontSize: typeScale.body.fontSize,
+                              lineHeight: typeScale.body.lineHeight,
+                              flexShrink: 1,
+                            }}
+                          >
+                            {choice.displayLabel}
+                          </Text>
+                          {choice.label === recommended && (
+                            <Text
+                              style={{
+                                color: c.accent,
+                                fontSize: typeScale.metadata.fontSize,
+                                fontWeight: "600",
+                              }}
+                            >
+                              Recommended
+                            </Text>
+                          )}
+                          {(chosen || (active && edited)) && (
+                            <Text
+                              style={{
+                                color: c.accent,
+                                fontSize: typeScale.metadata.fontSize,
+                                fontWeight: "600",
+                              }}
+                            >
+                              {chosen ? "Chosen" : "Edited"}
+                            </Text>
+                          )}
+                        </View>
+                        {choice.consequence ? (
+                          <Text
+                            style={{
+                              ...muted(c),
+                              fontSize: typeScale.metadata.fontSize,
+                            }}
+                          >
+                            {choice.consequence}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </SurfacePress>
+                  );
+                })}
               </View>
               <ConfirmReplaceAnswer
                 c={c}
-                option={pendingDecisionOption}
+                option={pendingChoice ? choiceText(pendingChoice) : null}
                 onCancel={() => setPendingDecisionOption(null)}
                 onConfirm={() => {
-                  setDecisionAnswerText(pendingDecisionOption ?? "");
+                  if (pendingChoice) {
+                    setSelectedChoice(choiceKey(pendingChoice));
+                    setDecisionAnswerText(choiceText(pendingChoice));
+                  }
                   setPendingDecisionOption(null);
                 }}
               />
+              {decisionDetail.status === "answered" && recordedAnswer && (
+                <Text
+                  style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+                >
+                  {!recordedOption ? `${recordedAnswer.text} · ` : ""}
+                  {recordedAnswer.answeredBy} ·{" "}
+                  {recordedAnswer.answeredBy.toLowerCase().includes("inbox")
+                    ? "Inbox"
+                    : "Board"}{" "}
+                  · {new Date(recordedAnswer.answeredAt).toLocaleString()}
+                  {recordedAnswer.note ? ` · ${recordedAnswer.note}` : ""}
+                </Text>
+              )}
             </DetailSection>
           )}
+          {choices.length === 0 &&
+            decisionDetail.status === "answered" &&
+            recordedAnswer && (
+              <Text
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+              >
+                {recordedAnswer.text} · {recordedAnswer.answeredBy} ·{" "}
+                {recordedAnswer.answeredBy.toLowerCase().includes("inbox")
+                  ? "Inbox"
+                  : "Board"}{" "}
+                · {new Date(recordedAnswer.answeredAt).toLocaleString()}
+                {recordedAnswer.note ? ` · ${recordedAnswer.note}` : ""}
+              </Text>
+            )}
           {(decisionDetail.overtakenBy?.length ?? 0) > 0 && (
             <View
               style={{
@@ -278,141 +462,119 @@ export function DecisionDialog({
               ))}
             </View>
           )}
-          <DetailSection title="Links" c={c}>
-            {!decisionDetail.links.tasks.length &&
-              !decisionDetail.links.leads.length &&
-              !decisionDetail.links.papercuts.length && (
-                <Text style={muted(c)}>None</Text>
-              )}
-            {decisionDetail.links.tasks.map((id) => {
-              const label = taskLinkLabel(id);
-              return label ? (
-                <Pressable
-                  key={`task-${id}`}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open linked task ${label}`}
-                  onPress={() => onOpenTask(id)}
-                >
+          {decisionDetail.links.tasks.length +
+            decisionDetail.links.leads.length +
+            decisionDetail.links.papercuts.length >
+            0 && (
+            <DetailSection title="Links" c={c}>
+              {decisionDetail.links.tasks.map((id) => {
+                const label = taskLinkLabel(id);
+                return label ? (
+                  <Pressable
+                    key={`task-${id}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open linked task ${label}`}
+                    onPress={() => onOpenTask(id)}
+                  >
+                    <Text
+                      style={{
+                        color: c.accent,
+                        fontSize: typeScale.metadata.fontSize,
+                        lineHeight: typeScale.metadata.lineHeight,
+                      }}
+                    >
+                      Task · {label}
+                    </Text>
+                  </Pressable>
+                ) : (
                   <Text
+                    key={`task-${id}`}
+                    selectable
                     style={{
-                      color: c.accent,
+                      ...muted(c),
                       fontSize: typeScale.metadata.fontSize,
-                      lineHeight: typeScale.metadata.lineHeight,
                     }}
                   >
-                    Task · {label}
+                    Task · {id}
                   </Text>
-                </Pressable>
-              ) : (
+                );
+              })}
+              {decisionDetail.links.leads.map((id) => (
                 <Text
-                  key={`task-${id}`}
+                  key={`lead-${id}`}
                   selectable
                   style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
                 >
-                  Task · {id}
+                  Lead · {id}
                 </Text>
-              );
-            })}
-            {decisionDetail.links.leads.map((id) => (
-              <Text
-                key={`lead-${id}`}
-                selectable
-                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-              >
-                Lead · {id}
-              </Text>
-            ))}
-            {decisionDetail.links.papercuts.map((id) => (
-              <Text
-                key={`cut-${id}`}
-                selectable
-                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-              >
-                Papercut · {id}
-              </Text>
-            ))}
-          </DetailSection>
-          {decisionDetail.status !== "open" && (
-            <DetailSection
-              title={
-                decisionDetail.status === "answered"
-                  ? "Answer"
-                  : decisionDetail.status === "withdrawn"
-                    ? "Withdrawn"
-                    : "Superseded"
-              }
-              c={c}
-            >
-              {decisionDetail.answer && (
-                <>
-                  <Text
-                    selectable
-                    style={{
-                      color: c.foreground,
-                      fontSize: typeScale.body.fontSize,
-                      lineHeight: typeScale.body.lineHeight,
-                    }}
-                  >
-                    {recordedOption?.displayLabel ?? decisionDetail.answer.text}
-                  </Text>
-                  <Text
-                    style={{
-                      ...muted(c),
-                      fontSize: typeScale.metadata.fontSize,
-                    }}
-                  >
-                    {decisionDetail.answer.answeredBy} ·{" "}
-                    {new Date(
-                      decisionDetail.answer.answeredAt,
-                    ).toLocaleString()}
-                    {decisionDetail.answer.relayed
-                      ? " · relayed"
-                      : " · operator authority"}
-                  </Text>
-                </>
-              )}
-              {decisionDetail.withdrawal && (
-                <>
-                  <Text
-                    selectable
-                    style={{
-                      color: c.foreground,
-                      fontSize: typeScale.body.fontSize,
-                      lineHeight: typeScale.body.lineHeight,
-                    }}
-                  >
-                    {decisionDetail.withdrawal.reason}
-                  </Text>
-                  <Text
-                    style={{
-                      ...muted(c),
-                      fontSize: typeScale.metadata.fontSize,
-                    }}
-                  >
-                    {decisionDetail.withdrawal.withdrawnBy} ·{" "}
-                    {new Date(
-                      decisionDetail.withdrawal.withdrawnAt,
-                    ).toLocaleString()}
-                  </Text>
-                </>
-              )}
-              {decisionDetail.supersededBy && (
+              ))}
+              {decisionDetail.links.papercuts.map((id) => (
                 <Text
+                  key={`cut-${id}`}
+                  selectable
                   style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
                 >
-                  Replaced by {decisionDetail.supersededBy}
+                  Papercut · {id}
                 </Text>
-              )}
+              ))}
             </DetailSection>
           )}
+          {decisionDetail.status !== "open" &&
+            decisionDetail.status !== "answered" && (
+              <DetailSection
+                title={
+                  decisionDetail.status === "withdrawn"
+                    ? "Withdrawn"
+                    : "Superseded"
+                }
+                c={c}
+              >
+                {decisionDetail.withdrawal && (
+                  <>
+                    <Text
+                      selectable
+                      style={{
+                        color: c.foreground,
+                        fontSize: typeScale.body.fontSize,
+                        lineHeight: typeScale.body.lineHeight,
+                      }}
+                    >
+                      {decisionDetail.withdrawal.reason}
+                    </Text>
+                    <Text
+                      style={{
+                        ...muted(c),
+                        fontSize: typeScale.metadata.fontSize,
+                      }}
+                    >
+                      {decisionDetail.withdrawal.withdrawnBy} ·{" "}
+                      {new Date(
+                        decisionDetail.withdrawal.withdrawnAt,
+                      ).toLocaleString()}
+                    </Text>
+                  </>
+                )}
+                {decisionDetail.supersededBy && (
+                  <Text
+                    style={{
+                      ...muted(c),
+                      fontSize: typeScale.metadata.fontSize,
+                    }}
+                  >
+                    Replaced by {decisionDetail.supersededBy}
+                  </Text>
+                )}
+              </DetailSection>
+            )}
           {decisionDetail.status === "open" && (
             <DetailSection title="Answer" c={c}>
-              {!identified && <TextInput
+              <TextInput
                 accessibilityLabel="Operator answer"
                 multiline
                 value={decisionAnswerText}
+                editable={!gate}
                 onChangeText={setDecisionAnswerText}
-                placeholder="The operator's ruling, delivered to the asking agent"
+                placeholder="Pick an option or write your answer"
                 placeholderTextColor={c.foregroundMuted}
                 style={{
                   minHeight: 72,
@@ -424,36 +586,41 @@ export function DecisionDialog({
                   borderRadius: radius.control,
                   padding: space.xs,
                 }}
-              />}
-              <Button
-                small
-                c={c}
-                text="Answer"
-                disabled={busy || !answer}
-                onPress={() => {
-                  if (!answer) return;
-                  void act(async () => {
-                    await answerDecision({
-                      ...scope,
-                      id: decisionDetail.id,
-                      version: decisionDetail.version,
-                      ...answer,
-                      answeredBy: "operator (board)",
-                      relayed: false,
-                      note: "",
-                    });
-                    setRecordNotice({ kind: "ok", text: "Answered" });
-                    setDecisionAnswerText("");
-                    setSelectedOptionId(null);
-                  }, "record");
-                }}
               />
-              <Text
-                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-              >
-                Answering carries operator authority and notifies the asking
-                agent's thread once per answer.
-              </Text>
+              <View ref={answerAnchor} style={{ ...row, gap: space.xs }}>
+                <Button
+                  c={c}
+                  text="Answer"
+                  selected
+                  disabled={
+                    busy || !answer || (gate && !("optionId" in answer))
+                  }
+                  onPress={submitAnswer}
+                />
+                <HelpTip
+                  c={c}
+                  label="Answer"
+                  text={
+                    gate
+                      ? "This answer applies a gate, so it uses the option as written."
+                      : "Answering carries operator authority and notifies the asking agent's thread once per answer."
+                  }
+                  open={answerHelpOpen}
+                  onOpenChange={setAnswerHelpOpen}
+                />
+                {answerHelpOpen && (
+                  <HelpPopover
+                    c={c}
+                    anchor={answerAnchor}
+                    label="Answer"
+                    text={
+                      gate
+                        ? "This answer applies a gate, so it uses the option as written."
+                        : "Answering carries operator authority and notifies the asking agent's thread once per answer."
+                    }
+                  />
+                )}
+              </View>
             </DetailSection>
           )}
         </>
