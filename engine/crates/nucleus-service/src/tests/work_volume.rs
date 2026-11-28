@@ -20,10 +20,28 @@ struct Outage {
     head: Head,
     report: (String, [u8; 32], Value),
     forge: tokio::task::JoinHandle<()>,
+    _native: NativeServer,
+}
+
+struct NativeServer(tokio::task::JoinHandle<()>);
+
+impl Drop for NativeServer {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 async fn outage() -> Outage {
     let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let root = service.fixture().checkout.clone();
+    let runs = Arc::new(std::sync::Mutex::new(
+        crate::profiles::tests::NativeRuns::default(),
+    ));
+    let (host, native) = native_fixture(move |request| {
+        crate::profiles::tests::native_response(request, &root, &mut runs.lock().unwrap())
+    })
+    .await;
+    service.host = host.with_quiet_fixture_processes();
     let head = service.fixture().start.clone();
     let (forge, _, server) = forge_fixture_for_branch(&head, "ns-worker").await;
     service.forge = forge;
@@ -80,6 +98,7 @@ async fn outage() -> Outage {
             work,
         ),
         forge: server,
+        _native: NativeServer(native),
     }
 }
 
@@ -135,7 +154,20 @@ async fn report_is_accepted(api: &Router, (path, key, body): &(String, [u8; 32],
 async fn pass_until(service: &Service, mut done: impl FnMut(&PassOutcome) -> bool) {
     tokio::time::timeout(Duration::from_mins(1), async {
         loop {
+            crate::profiles::tests::publish_parent_shell(service).await;
             let outcomes = service.pass().await.expect("pass");
+            {
+                let mut state = service.state.lock().await;
+                for outcome in &outcomes {
+                    if matches!(outcome.result, Ok(Action::Wait(WaitReason::Starting))) {
+                        state.schedule.wake(
+                            &outcome.task,
+                            tokio::time::Instant::now(),
+                            Priority::Wake,
+                        );
+                    }
+                }
+            }
             if outcomes.iter().any(&mut done) {
                 return;
             }
@@ -193,6 +225,7 @@ async fn holds_and_resumes(gone: Gone) {
         head,
         report,
         forge,
+        _native,
     } = outage().await;
     let service = Arc::new(service);
     let api = api(&service);
@@ -424,6 +457,7 @@ async fn a_stuck_allocation_holds_its_task_until_it_ends_and_then_resumes() {
         head,
         report,
         forge,
+        _native,
     } = outage().await;
     let hung = Hung::install(&mut service, home.path());
     hung.0.only.set("add").unwrap();

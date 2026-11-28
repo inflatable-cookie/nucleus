@@ -253,7 +253,7 @@ async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_serv
     assert_eq!(saved["value"]["heavySlots"], 3);
     assert_eq!(saved["value"]["mode"], "held");
     assert_event(&mut events, &["event: settings"]).await;
-    let admission = json!({"id":"board-task","reference":"D1","brief":"---\nqueue:\n  complexity: low\n---\n# Standalone task"});
+    let admission = json!({"repository":REPOSITORY, "id":"board-task","reference":"D1","brief":"---\nqueue:\n  complexity: low\n---\n# Standalone task"});
     let response =
         browser_request(&api, Method::POST, tasks, Some(&operator), Some(&admission)).await;
     assert_eq!(response.status(), StatusCode::CREATED);
@@ -350,7 +350,7 @@ async fn mounted_task_detail_uses_the_paired_stored_task() {
         .next()
         .unwrap()
         .to_owned();
-    let admission = json!({"id":"board-task", "reference":"D1", "brief":"---\nqueue:\n  complexity: low\n---\n# Standalone task"});
+    let admission = json!({"repository":REPOSITORY, "id":"board-task", "reference":"D1", "brief":"---\nqueue:\n  complexity: low\n---\n# Standalone task"});
     let response = api
         .clone()
         .oneshot(
@@ -408,7 +408,7 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
     let list = "/api/engine/tasks";
     let detail = "/api/engine/tasks/age";
     let next = "/api/engine/tasks/age/next";
-    let admitted = json!({"id":"age","reference":"age","brief":"---\nqueue:\n  complexity: low\n---\n# Initial title"});
+    let admitted = json!({"repository":REPOSITORY, "id":"age","reference":"age","brief":"---\nqueue:\n  complexity: low\n---\n# Initial title"});
     let response = browser_request(&api, Method::POST, list, Some(&cookie), Some(&admitted)).await;
     assert_eq!(response.status(), StatusCode::CREATED);
     let queued = read_paired_task(&api, detail, &cookie).await;
@@ -537,20 +537,51 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
             planner_controller(PLANNER_KEY, "planner"),
         ]
     };
+    let endpoint = service.host.endpoint().to_owned();
     let settings = service.settings.clone();
     let project = service.fixture().clone();
     let file = service.storage.database().path().join("web-sessions.json");
-    let setup = |service| router_with_board(Arc::new(service), controllers(), &assets).unwrap();
-    let api = setup(service);
+    let setup = |service| router_with_board(service, controllers(), &assets).unwrap();
+    let api = setup(Arc::new(service));
     let cookie = pair_board(&api, &BOARD_KEY).await;
+    assert_eq!(
+        post_as(&api, "/v1/board/revoke", &PLANNER_KEY, &json!({}))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
     let cookie_secret = cookie.split_once('=').unwrap().1;
     let stored = std::fs::read_to_string(&file).unwrap();
     assert!(!stored.contains(cookie_secret));
     assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
     drop(api);
 
-    let reopen = || reopen_fixture(&settings, project.clone(), forge());
-    let api = setup(reopen());
+    let reopen = || {
+        Arc::new(reopen_fixture_at(
+            &settings,
+            project.clone(),
+            forge(),
+            &endpoint,
+        ))
+    };
+    let restarted = reopen();
+    let api = setup(Arc::clone(&restarted));
+    {
+        let empty = json!({});
+        let request = post_as(&api, "/v1/board/revoke", &PLANNER_KEY, &empty);
+        tokio::pin!(request);
+        tokio::select! {
+            biased;
+            () = restarted.enrollment_wake.notified() => {}
+            _ = &mut request => panic!("restarted planner request finished before enrollment"),
+        }
+        assert_eq!(
+            restarted.take_enrollment().await.as_deref(),
+            Some("planner")
+        );
+        restarted.complete_enrollment("planner").await;
+        assert_eq!(request.await.status(), StatusCode::FORBIDDEN);
+    }
     let session_path = "/api/engine/session";
     let session = browser_request(&api, Method::GET, session_path, Some(&cookie), None).await;
     assert_eq!(json_body(session).await["canEditSettings"], true);
@@ -559,12 +590,6 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
         .into_body()
         .into_data_stream();
     assert_event(&mut events, &["event: refresh"]).await;
-    assert_eq!(
-        post_as(&api, "/v1/board/revoke", &PLANNER_KEY, &json!({}))
-            .await
-            .status(),
-        StatusCode::FORBIDDEN
-    );
     assert_eq!(
         json_body(post_as(&api, "/v1/board/revoke", &BOARD_KEY, &json!({})).await).await["revoked"],
         1
@@ -577,6 +602,7 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
     );
     drop(events);
     drop(api);
+    drop(restarted);
     let api = setup(reopen());
     let revoked = browser_request(&api, Method::GET, session_path, Some(&cookie), None).await;
     assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
@@ -998,7 +1024,7 @@ async fn an_unmapped_error_shows_its_cause_backs_off_and_accepts_recheck() {
 
 #[tokio::test]
 async fn board_pair_code_pairs_device_with_issuer_authority_and_revokes() {
-    let (_home, _service, api) = board_pair_fixture();
+    let (_home, _service, api, _planner_host) = board_pair_fixture().await;
     assert_eq!(
         browser_request(&api, Method::POST, "/api/engine/pair/code", None, None)
             .await
@@ -1083,7 +1109,7 @@ async fn board_pair_code_pairs_device_with_issuer_authority_and_revokes() {
 
 #[tokio::test]
 async fn board_pair_code_burns_after_five_wrong_attempts_and_expires() {
-    let (_home, service, api) = board_pair_fixture();
+    let (_home, service, api, _planner_host) = board_pair_fixture().await;
     let operator = pair_board(&api, &BOARD_KEY).await;
 
     let burned = issue_pair_code(&api, &operator).await;
@@ -1112,7 +1138,7 @@ async fn board_pair_code_burns_after_five_wrong_attempts_and_expires() {
 
 #[tokio::test]
 async fn board_pair_code_redeem_enforces_host_origin_and_board_header() {
-    let (_home, _service, api) = board_pair_fixture();
+    let (_home, _service, api, _planner_host) = board_pair_fixture().await;
     let operator = pair_board(&api, &BOARD_KEY).await;
     let code = issue_pair_code(&api, &operator).await;
     let payload = json!({"code": code}).to_string();

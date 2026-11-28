@@ -9,7 +9,58 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
     let (home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
     let project = service.fixture().clone();
     let old_head = project.start.clone();
-    let (task, _) = code_task_at_merge("worker", &old_head);
+    let pr = PullRequest {
+        url: crate::tests::PR.into(),
+        head: old_head.clone(),
+    };
+    let mut task = Task::new(
+        nucleus_core::Identity {
+            id: "worker".into(),
+            reference: "worker".into(),
+            repository: REPOSITORY.into(),
+            base: "main".into(),
+            entry: Entry::Brief,
+            origin_thread: None,
+        },
+        "---\ncomplexity: normal\n---\nResolve the fixture conflict.".into(),
+        None,
+    );
+    let mut observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(Workspace::Clean(old_head.clone())),
+    };
+    assert_eq!(
+        task.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    let worker: nucleus_core::profiles::Profile = serde_json::from_value(
+        json!({"id":"worker", "capability":"worker", "provider":"codex", "model":"fixture"}),
+    )
+    .unwrap();
+    let reviewer: nucleus_core::profiles::Profile = serde_json::from_value(
+        json!({"id":"reviewer", "capability":"worker", "provider":"codex", "model":"other"}),
+    )
+    .unwrap();
+    crate::profiles::tests::finish_profile_run(
+        &mut task,
+        &mut observation,
+        (&worker, "worker", "thread:worker"),
+        Report::Work(pr.into()),
+        Phase::Reviewing,
+    );
+    crate::profiles::tests::finish_profile_run(
+        &mut task,
+        &mut observation,
+        (&reviewer, "reviewer", "thread:reviewer"),
+        Report::Review {
+            head: old_head.clone(),
+            decision: Review::Approve,
+            summary: "Approved the original head".into(),
+            finding_titles: vec![],
+        },
+        Phase::Merging,
+    );
     let worktrees = service.worktrees();
     let checkout = worktrees
         .checkout(&project.checkout, REPOSITORY, "worker")
@@ -125,7 +176,7 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
                 return json!({"_tag": "Exit", "requestId": id, "exit": {
                     "_tag": "Success", "value": {
                         "environment": {"orchestrationProtocolVersion": 2},
-                        "providers": [{"instanceId": "provider", "enabled": true,
+                        "providers": [{"instanceId": "provider", "driver":"codex", "enabled": true,
                             "status": "ready", "models": [{"slug": "fixture"}]}]
                     }
                 }});
@@ -205,8 +256,6 @@ async fn conflict_continues_the_bound_worker_once_across_a_lost_reply_and_restar
         advance(&service).await.unwrap(),
         Action::Wait(WaitReason::Running)
     );
-    // The rest of this fixture models the no-ACP path; the probe above was the ACP case.
-    service.set_fixture_acp_provider(None);
 
     crate::tests::git(&owned, &["reset", "--hard", new_head.as_str()]);
     published.store(true, Ordering::Relaxed);

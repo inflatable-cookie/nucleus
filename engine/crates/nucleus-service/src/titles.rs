@@ -909,7 +909,7 @@ mod tests {
     fn task_labels_use_at_most_four_words() {
         use WaitReason as W;
         let task = task();
-        let (_, service) = fixture(GitHub::new("fixture").unwrap());
+        let (_home, service) = fixture(GitHub::new("fixture").unwrap());
         let (review, _, _) = crate::tests::reserved_reviewer("review", &service.fixture().start);
         let confirming = WaitDetail::ConfirmingDelivery("Checking GitHub");
         let waits = [
@@ -996,7 +996,7 @@ mod tests {
 
     #[test]
     fn waiting_labels_describe_the_current_activity() {
-        let (_, service) = fixture(GitHub::new("fixture").unwrap());
+        let (_home, service) = fixture(GitHub::new("fixture").unwrap());
         let (mut task, _, observation) =
             crate::tests::reservation("waiting", Entry::Brief, &service.fixture().start);
         let label = |task: &Task, wait, detail| task_state_label(task, Some(wait), detail);
@@ -1300,7 +1300,7 @@ mod tests {
 
         apply_stable_inbox_count(&service, provider, &root, &inbox).await;
 
-        let project = service.fixture().host_project.clone();
+        let project = "fixture-product".to_owned();
         let stamp = |actor, at_ms| WriteAt { actor, at_ms };
         {
             let mut state = service.state.lock().await;

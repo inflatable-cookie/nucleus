@@ -1115,5 +1115,156 @@ async fn verified_planners_can_answer_across_projects_but_other_credentials_cann
             "{actor}: {}",
             json_body(response).await
         );
+        let repeated = caller_request(
+            &registry.api,
+            Method::POST,
+            &format!("/v1/tasks/{task}/commands"),
+            actor,
+            answer.clone(),
+        )
+        .await;
+        assert_eq!(repeated.status(), StatusCode::CONFLICT);
     }
+}
+
+#[tokio::test]
+async fn acp_planner_writer_is_fenced_after_its_thread_is_archived() {
+    let registry = registry().await;
+    let response = registry
+        .inline_command(
+            "alpha-planner",
+            caller_request(
+                &registry.api,
+                Method::GET,
+                "/v1/tasks",
+                "alpha-planner",
+                Value::Null,
+            ),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    seed_planner_task(&registry.service, "handover", "alpha-planner").await;
+    let mint = caller_request(
+        &registry.api,
+        Method::POST,
+        "/v1/tasks/handover/acp",
+        "alpha-planner",
+        json!({}),
+    )
+    .await;
+    assert_eq!(mint.status(), StatusCode::OK);
+    let mint = json_body(mint).await;
+    let binding: nucleus_core::acp::Binding =
+        serde_json::from_slice(&std::fs::read(mint["bindingPath"].as_str().unwrap()).unwrap())
+            .unwrap();
+    let writer = binding.command_credential.unwrap();
+    let path = "/v1/tasks/handover/commands";
+    let hold = json!({"hold":"Keep the first plan"});
+    let fence = registry.service.fence("handover").await;
+    assert_eq!(
+        post_json(&registry.api, path, &writer, &hold).await,
+        StatusCode::CONFLICT
+    );
+    drop(fence);
+    assert_eq!(
+        post_json(&registry.api, path, &writer, &hold).await,
+        StatusCode::OK
+    );
+    registry.archived.store(true, Ordering::Relaxed);
+    let archived = json!({"kind":"thread.updated", "sequence":17, "thread":{
+        "id":"alpha-planner", "projectId":"alpha-native", "archivedAt":"2026-11-23T18:10:00Z"
+    }});
+    registry.service.host.fixture_shell_delta(&archived);
+    registry
+        .service
+        .wake_from_host(nucleus_hosts::ThreadHint::fixture(&archived).unwrap())
+        .await;
+    let response = post_as(&registry.api, path, &writer, &json!("release")).await;
+    assert!(matches!(
+        response.status(),
+        StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED
+    ));
+    let row = registry.service.task("handover").await.unwrap();
+    assert_eq!(row.version, 2);
+    assert!(row.task.hold().is_some());
+}
+
+#[tokio::test]
+async fn reassign_commits_once_and_invalidates_planner_at_publication() {
+    let registry = registry().await;
+    for actor in ["alpha-planner", "beta-planner"] {
+        let response = registry
+            .inline_command(
+                actor,
+                caller_request(&registry.api, Method::GET, "/v1/tasks", actor, Value::Null),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let (alpha, beta, epoch) = {
+        let state = registry.service.state.lock().await;
+        (
+            state
+                .live_planner_project("alpha-planner")
+                .unwrap()
+                .to_owned(),
+            state
+                .live_planner_project("beta-planner")
+                .unwrap()
+                .to_owned(),
+            state.planner_authority_epoch,
+        )
+    };
+    let dispatch =
+        json_body(get_as(&registry.api, "/v1/settings/dispatch", &BOARD_KEY).await).await;
+    let initial = json_body(get_as(&registry.api, "/v1/settings/projects", &BOARD_KEY).await).await;
+    let reassign =
+        json!({"revision": initial["settings"]["revision"], "origin":REPOSITORY, "toProject":beta});
+    let reads = registry.reads.load(Ordering::Relaxed);
+    let wake = registry.service.planner_wake.notified();
+    let moved = post_as(
+        &registry.api,
+        "/v1/settings/projects/reassign",
+        &BOARD_KEY,
+        &reassign,
+    )
+    .await;
+    assert_eq!(moved.status(), StatusCode::OK);
+    let moved = json_body(moved).await;
+    tokio::time::timeout(std::time::Duration::from_secs(1), wake)
+        .await
+        .unwrap();
+    assert!(
+        moved["settings"]["value"]["projects"][&alpha]["repositories"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        moved["settings"]["value"]["projects"][&beta]["repositories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|repo| repo["origin"] == REPOSITORY)
+    );
+    assert_eq!(
+        post_as(
+            &registry.api,
+            "/v1/settings/projects/reassign",
+            &BOARD_KEY,
+            &reassign
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        json_body(get_as(&registry.api, "/v1/settings/dispatch", &BOARD_KEY).await).await,
+        dispatch
+    );
+    let state = registry.service.state.lock().await;
+    assert_eq!(state.planner_authority_epoch, epoch + 1);
+    assert!(state.planner_authority.is_empty());
+    assert!(state.live_planner_project("alpha-planner").is_none());
+    assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
 }

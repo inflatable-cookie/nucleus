@@ -342,6 +342,10 @@ async fn exercise_terminal_orphan_cleanup(
         Some(tree) => crate::tests::described_native_fixture(native, home.path(), tree.0[1]),
         None => crate::tests::verified_native_fixture(native, home.path()),
     };
+    assert!(
+        service.host.runtime_identity().is_some(),
+        "fixture native runtime identity"
+    );
     let route = service.project_for(terminal.task.identity()).await.unwrap();
     let branch = base.file_name().unwrap().to_str().unwrap();
     let binding = route.thread_binding(&base, branch).unwrap();
@@ -424,7 +428,7 @@ async fn assert_cleanup_history(
             })
     };
     for (index, &pid) in pids.iter().enumerate() {
-        assert!(sent(pid, "SIGTERM"));
+        assert!(sent(pid, "SIGTERM"), "history: {history:?}");
         assert_eq!(sent(pid, "SIGKILL"), index < 2);
         let probe = tokio::process::Command::new("/bin/ps")
             .args(["-p", &pid.to_string(), "-o", "stat="])
@@ -704,7 +708,16 @@ async fn retirement_requires_running_dispatch_quiet_shell_and_published_git_head
 #[tokio::test]
 async fn task_add_pins_worker_lane_text_and_resolves_brief_prerequisites() {
     use nucleus_store::planning::{LaneDocument, WriteAt};
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let root = service.fixture().checkout.clone();
+    let runs = Arc::new(std::sync::Mutex::new(
+        crate::profiles::tests::NativeRuns::default(),
+    ));
+    let (host, native_server) = native_fixture(move |request| {
+        crate::profiles::tests::native_response(request, &root, &mut runs.lock().unwrap())
+    })
+    .await;
+    service.host = host;
     let project = service.fixture();
     let lane_text = "Use the two-project fixture for acceptance.";
     let key = "product";
@@ -768,16 +781,30 @@ async fn task_add_pins_worker_lane_text_and_resolves_brief_prerequisites() {
         .save(&row, working, &event("advanced"))
         .await
         .unwrap();
-    Box::pin(service.reserve(
+    crate::profiles::tests::publish_parent_shell(&service).await;
+    let first = Box::pin(service.reserve(
         &working,
         &checkout,
-        observation,
+        observation.clone(),
         Role::Worker,
         Launch::Create,
         &service.host.fixture_pass(),
     ))
     .await
     .unwrap();
+    if first == Action::Wait(WaitReason::Starting) {
+        crate::profiles::tests::publish_parent_shell(&service).await;
+        Box::pin(service.reserve(
+            &working,
+            &checkout,
+            observation,
+            Role::Worker,
+            Launch::Create,
+            &service.host.fixture_pass(),
+        ))
+        .await
+        .unwrap();
+    }
     let pinned = service.task("pinned").await.unwrap();
     let launch = pinned.task.run().unwrap().launch();
     let path = launch
@@ -788,6 +815,7 @@ async fn task_add_pins_worker_lane_text_and_resolves_brief_prerequisites() {
     assert_eq!(std::fs::read_to_string(path).unwrap(), lane_text);
     assert!(launch.input.contains("design version 1"));
     assert!(launch.input.contains(lane_text));
+    native_server.abort();
 }
 
 #[tokio::test]
@@ -795,8 +823,14 @@ async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() 
     let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
     let reads = Arc::new(AtomicUsize::new(0));
     let native_reads = Arc::clone(&reads);
+    let root = service.fixture().checkout.clone();
+    let runs = Arc::new(std::sync::Mutex::new(
+        crate::profiles::tests::NativeRuns::default(),
+    ));
     let (host, server) = native_fixture(move |request| {
-        assert_eq!(request["tag"], "server.getConfig");
+        if request["tag"] != "server.getConfig" {
+            return crate::profiles::tests::native_response(request, &root, &mut runs.lock().unwrap());
+        }
         native_reads.fetch_add(1, Ordering::Relaxed);
         let models: Vec<_> = ["model-first", "model-second"].into_iter().map(|slug| json!({
             "slug": slug, "capabilities": {"optionDescriptors": [
@@ -807,6 +841,7 @@ async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() 
             "environment":{"orchestrationProtocolVersion":2},
             "providers":[
                 {"instanceId":"custom-codex","driver":"codex","enabled":true,"status":"ready","models":models},
+                {"instanceId":"fixture-acp","driver":"acpRegistry","enabled":true,"status":"ready","models":[{"slug":"nucleus"}]},
                 {"instanceId":"claudeAgent","enabled":false,"status":"disabled","models":[{"slug":"offline"}]}
             ]
         }}})
@@ -819,6 +854,7 @@ async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() 
             {"name":"Offline","group":"Other plan","selection":{"id":"offline","capability":"worker","provider":"claude","model":"offline"}}
         ]
     })).expect("profile settings")));
+    crate::profiles::tests::publish_parent_shell(&service).await;
     let pass = service.host.fixture_pass();
     let worktrees = service.worktrees();
     let mut selected = Vec::new();
@@ -855,16 +891,29 @@ async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() 
         let checkout = worktrees
             .checkout(&service.fixture().checkout, REPOSITORY, id)
             .expect("checkout");
-        Box::pin(service.reserve(
+        let first = Box::pin(service.reserve(
             &row,
             &checkout,
-            observation,
+            observation.clone(),
             Role::Worker,
             Launch::Create,
             &pass,
         ))
         .await
-        .expect("reserve configured worker");
+        .expect("start parent");
+        if first == Action::Wait(WaitReason::Starting) {
+            crate::profiles::tests::publish_parent_shell(&service).await;
+            Box::pin(service.reserve(
+                &row,
+                &checkout,
+                observation,
+                Role::Worker,
+                Launch::Create,
+                &pass,
+            ))
+            .await
+            .expect("reserve configured worker");
+        }
         let frozen = service.task(id).await.expect("frozen row");
         let launch = frozen.task.run().expect("run").launch();
         let profile = launch.profile().expect("canonical choice");
@@ -1033,6 +1082,16 @@ async fn review_recovers_its_checkout_before_creating_a_reservation() {
             &service.fixture().checkout,
             &["config", "protocol.https.allow", "never"],
         );
+        let root = service.fixture().checkout.clone();
+        let runs = Arc::new(std::sync::Mutex::new(
+            crate::profiles::tests::NativeRuns::default(),
+        ));
+        let (host, native_server) = native_fixture(move |request| {
+            crate::profiles::tests::native_response(request, &root, &mut runs.lock().unwrap())
+        })
+        .await;
+        service.host = host;
+        crate::profiles::tests::publish_parent_shell(&service).await;
         let head = if available {
             service.fixture().start.clone()
         } else {
@@ -1059,7 +1118,12 @@ async fn review_recovers_its_checkout_before_creating_a_reservation() {
         let row = service.task("reviewer").await.expect("reviewing row");
         assert_eq!(row.task.phase(), Phase::Reviewing);
         let host = service.host.pass(service.storage.scratch().path());
-        let step = Box::pin(service.advance(&row, &host)).await;
+        let mut step = Box::pin(service.advance(&row, &host)).await;
+        if matches!(step, Ok(Action::Wait(WaitReason::Starting))) {
+            crate::profiles::tests::publish_parent_shell(&service).await;
+            let host = service.host.pass(service.storage.scratch().path());
+            step = Box::pin(service.advance(&row, &host)).await;
+        }
         let next = service.task("reviewer").await.expect("result row");
         if available {
             assert_eq!(
@@ -1085,6 +1149,7 @@ async fn review_recovers_its_checkout_before_creating_a_reservation() {
             assert!(crate::workspace_cause(&step).starts_with("git fetch "));
             assert_eq!(row, next);
         }
+        native_server.abort();
         server.abort();
     }
 }

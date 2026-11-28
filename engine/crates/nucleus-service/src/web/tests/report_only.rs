@@ -940,7 +940,7 @@ impl ReportFixture {
         .render()
         .text;
         assert!(prompt.contains("Report-only delivery"));
-        assert!(prompt.contains("lane.put 'local-fixture' 'qa' VERSION --ticket"));
+        assert!(prompt.contains("lane.put 'fixture-product' 'qa' VERSION --ticket"));
         assert!(prompt.contains("report_ready"));
         assert!(!prompt.contains("Ready for review"));
         if let Some(instruction) = task

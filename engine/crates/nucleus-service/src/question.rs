@@ -509,6 +509,34 @@ mod tests {
         server.abort();
     }
 
+    async fn register_planners(service: &Service, names: &[&str]) {
+        let current = service.settings.read::<nucleus_store::Projects>().unwrap();
+        let (updated, _) = service
+            .settings
+            .edit(
+                &current.revision,
+                |projects: &mut nucleus_store::Projects| {
+                    projects
+                        .projects
+                        .get_mut("fixture-product")
+                        .unwrap()
+                        .repositories[0]
+                        .planner_threads = names.iter().map(|name| (*name).to_owned()).collect();
+                    Ok(())
+                },
+            )
+            .unwrap();
+        service.state.lock().await.settings.projects = Some(updated.value);
+        let project = service.fixture();
+        service.host.fixture_project_shell(
+            &json!({
+                "projects":[{"id":project.host_project,"workspaceRoot":project.checkout}],
+                "threads":[]
+            }),
+            "fixture-acp",
+        );
+    }
+
     #[tokio::test]
     async fn exact_origin_wins_and_fallback_respects_rank_and_unknown() {
         for (origin, strongest, expected) in [
@@ -523,6 +551,7 @@ mod tests {
             let (host, server) =
                 native_fixture(move |request| snapshot_reply(request, strongest, &checkout)).await;
             service.host = host;
+            register_planners(&service, &[strongest]).await;
             service.set_fixture_acp_provider(Some("fixture-acp"));
             let task = Task::new(
                 Identity {
@@ -576,6 +605,7 @@ mod tests {
             ]}})
         }).await;
         service.host = host;
+        register_planners(&service, &["planner"]).await;
         let first = seed_question(&service).await;
         service
             .notify_question(&first)
@@ -614,11 +644,18 @@ mod tests {
         let (host, server) =
             native_fixture(move |request| snapshot_reply(request, "outside", &checkout)).await;
         service.host = host;
+        register_planners(&service, &["outside"]).await;
         let row = seed_question(&service).await;
         assert!(matches!(
             service.notify_question(&row).await,
-            Err(ServiceError::Host(HostError::Binding))
+            Ok(Action::Wait(WaitReason::Question))
         ));
+        assert!(
+            !service
+                .host
+                .host_calls()
+                .contains_key("orchestration.dispatchCommand")
+        );
         assert_eq!(
             service.task("notice").await.expect("no dispatch recorded"),
             row
@@ -627,8 +664,37 @@ mod tests {
     }
 
     async fn seed_question(service: &Service) -> TaskRow {
-        let (mut task, credential, mut observation) =
+        seed_question_from(service, None).await
+    }
+
+    async fn seed_question_from(service: &Service, origin: Option<&str>) -> TaskRow {
+        let (reserved, credential, mut observation) =
             crate::tests::reservation("notice", Entry::Brief, &service.fixture().start);
+        let (mut task, credential) = if let Some(origin) = origin {
+            let mut identity = reserved.identity().clone();
+            identity.origin_thread = Some(origin.into());
+            let mut task = Task::new(identity, reserved.brief().text.clone(), None);
+            assert_eq!(
+                task.reconcile(&observation),
+                Action::Advance(nucleus_core::Phase::Working)
+            );
+            let launch = reserved.run().unwrap().launch();
+            let credential = task
+                .reserve_launch(
+                    &observation,
+                    nucleus_core::LaunchInputs {
+                        thread: launch.thread.clone(),
+                        started_at: launch.started_at,
+                        input: launch.input.clone(),
+                        scratch: launch.scratch.clone(),
+                    },
+                    &[3; 32],
+                )
+                .unwrap();
+            (task, credential)
+        } else {
+            (reserved, credential)
+        };
         let instance = task.run().expect("worker").launch().instance.clone();
         task.record_report(
             &instance,
@@ -721,6 +787,7 @@ mod tests {
         })
         .await;
         service.host = host;
+        register_planners(&service, &["planner-b", "planner-a"]).await;
 
         let row = seed_question(&service).await;
         service.notify_question(&row).await.unwrap();
@@ -733,6 +800,13 @@ mod tests {
 
         // Once planner-a is archived, the question rebinds to planner-b.
         gone.store(true, Ordering::Relaxed);
+        let archived = json!({"kind":"thread.updated", "sequence":17, "thread":{
+            "id":"planner-a", "projectId":"local-fixture", "archivedAt":"2026-11-24T11:00:00Z"
+        }});
+        service.host.fixture_shell_delta(&archived);
+        service
+            .wake_from_host(nucleus_hosts::ThreadHint::fixture(&archived).unwrap())
+            .await;
         service.notify_question(&bound).await.unwrap();
         let rebound = service.task("notice").await.unwrap();
         assert_eq!(
@@ -784,6 +858,7 @@ mod tests {
             })
             .await;
             service.host = host;
+            register_planners(&service, &["planner-a"]).await;
 
             let row = seed_question(&service).await;
             let mut delivery = T3::prepare_notice(
@@ -870,7 +945,7 @@ mod tests {
         let (host, server) = prime_then_503_host("planner-a", &checkout).await;
         service.host = host;
 
-        let row = seed_question(&service).await;
+        let row = seed_question_from(&service, Some("planner-a")).await;
         let err = service.notify_question(&row).await.unwrap_err();
         assert!(matches!(err, ServiceError::Host(HostError::Unavailable)));
         let cleared = service.task("notice").await.unwrap();
@@ -915,8 +990,15 @@ mod tests {
         })
         .await;
         service.host = host;
+        service.host.fixture_project_shell(
+            &json!({
+                "projects":[{"id":"local-fixture", "workspaceRoot":service.fixture().checkout}],
+                "threads":[shell("planner-a", "2026-11-02T00:00:00.000Z")]
+            }),
+            "fixture-acp",
+        );
 
-        let row = seed_question(&service).await;
+        let row = seed_question_from(&service, Some("planner-a")).await;
         let err = service.notify_question(&row).await.unwrap_err();
         assert!(matches!(err, ServiceError::Host(HostError::Unavailable)));
         let after = service.task("notice").await.unwrap();

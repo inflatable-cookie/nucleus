@@ -51,7 +51,6 @@ mod settings_cases;
 const PR: &str = "https://github.com/inflatable-cookie/nucleus-fixture/pull/1";
 const BOARD_KEY: [u8; 32] = [2; 32];
 const PLANNER_KEY: [u8; 32] = [5; 32];
-const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
 fn without_transcript(lifecycle: &Value) -> serde_json::Map<String, Value> {
@@ -431,7 +430,7 @@ fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Controlle
     let controllers: Vec<_> = controllers.into_iter().collect();
     let t3 = controllers
         .iter()
-        .any(|c| matches!(&c.authority, Authority::Planner { actor } if actor == "planner"));
+        .any(|c| matches!(&c.authority, Authority::Planner { .. }));
     crate::router_with_t3_callers(service, controllers, t3.then_some(PLANNER_KEY))
 }
 
@@ -443,7 +442,7 @@ fn router_with_board(
     let controllers: Vec<_> = controllers.into_iter().collect();
     let t3 = controllers
         .iter()
-        .any(|c| matches!(&c.authority, Authority::Planner { actor } if actor == "planner"));
+        .any(|c| matches!(&c.authority, Authority::Planner { .. }));
     crate::router_with_board_and_t3_callers(service, controllers, assets, t3.then_some(PLANNER_KEY))
 }
 
@@ -468,7 +467,7 @@ async fn enrolled_fixture(
                 "projects":[{"id":"local-fixture", "workspaceRoot":root}], "threads":[]
             }}),
             Some("orchestration.subscribeThread") => json!({"kind":"snapshot", "snapshotSequence":1, "projection": {
-                "thread":{"id":request["payload"]["threadId"], "projectId":"local-fixture"}, "runs":[], "messages":[]
+                "thread":{"id":request["payload"]["threadId"], "projectId":"local-fixture", "archivedAt":(request["payload"]["threadId"] == "unrelated-planner").then_some("2026-11-24T10:00:00Z")}, "runs":[], "messages":[]
             }}),
             _ => panic!("unexpected planner fixture request: {request}"),
         };
@@ -771,16 +770,6 @@ fn subscription_launch_task() -> (Task, Observation) {
     (task, observation)
 }
 
-async fn dispatch_with_project_slots(api: &Router, overrides: Value) -> Value {
-    let path = "/v1/settings/dispatch";
-    let starting = json_body(get_as(api, path, &BOARD_KEY).await).await;
-    let mut update = json!({"revision": starting["revision"], "value": starting["value"]});
-    update["value"]["projectSlotOverrides"] = overrides;
-    let response = put_settings(api, path, &BOARD_KEY, &update).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    json_body(response).await
-}
-
 fn settings_api(service: &Arc<Service>) -> Router {
     router(
         Arc::clone(service),
@@ -794,7 +783,7 @@ fn settings_api(service: &Arc<Service>) -> Router {
             Controller {
                 credential: PLANNER_KEY,
                 authority: Authority::Planner {
-                    actor: "fixture-planner".into(),
+                    actor: "planner".into(),
                 },
             },
         ],
@@ -802,17 +791,17 @@ fn settings_api(service: &Arc<Service>) -> Router {
 }
 
 async fn put_settings(api: &Router, path: &str, key: &[u8; 32], input: &Value) -> Response {
+    let mut request = Request::put(path)
+        .header(HOST, LOCAL_HOST)
+        .header(AUTHORIZATION, format!("Bearer {}", hex::encode(key)))
+        .header("content-type", "application/json");
+    if key == &PLANNER_KEY {
+        request = request.header("x-nucleus-t3-caller", "planner");
+    }
     api.clone()
-        .oneshot(
-            Request::put(path)
-                .header(HOST, LOCAL_HOST)
-                .header(AUTHORIZATION, format!("Bearer {}", hex::encode(key)))
-                .header("content-type", "application/json")
-                .body(Body::from(input.to_string()))
-                .expect("settings request"),
-        )
+        .oneshot(request.body(Body::from(input.to_string())).unwrap())
         .await
-        .expect("settings response")
+        .unwrap()
 }
 
 fn hold_archived_workspace(service: &Service, task: &Task, checkout: &std::path::Path) {
@@ -1049,7 +1038,16 @@ fn reopen_fixture(
     project: crate::Project,
     forge: GitHub,
 ) -> Service {
-    let host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+    reopen_fixture_at(settings, project, forge, "http://127.0.0.1:9")
+}
+
+fn reopen_fixture_at(
+    settings: &nucleus_store::SettingsFile,
+    project: crate::Project,
+    forge: GitHub,
+    endpoint: &str,
+) -> Service {
+    let host = T3::new(endpoint, "fixture").unwrap();
     host.fixture_project_shell(&json!({"projects": [{"id": project.host_project, "workspaceRoot": project.checkout}], "threads": []}), "fixture-acp");
     Service::open_projects(
         settings.lock_profile().unwrap(),
@@ -1063,8 +1061,8 @@ fn reopen_fixture(
 }
 
 async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyDataStream) {
-    let plan = "/api/engine/planning/local-fixture/plan";
-    let lane = "/api/engine/planning/local-fixture/lanes/board";
+    let plan = "/api/engine/planning/fixture-product/plan";
+    let lane = "/api/engine/planning/fixture-product/lanes/board";
     let cookie = Some(session);
     let initial = json_body(browser_request(api, Method::GET, plan, cookie, None).await).await;
     assert_eq!(initial["version"], 0);
@@ -1090,8 +1088,8 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     assert_eq!(updated["documents"][0]["document"], "## Steps");
     // The paired board mounts the same planning handlers as the controller API.
     for path in [
-        "/api/engine/planning/local-fixture/decisions",
-        "/api/engine/planning/local-fixture/items",
+        "/api/engine/planning/fixture-product/decisions",
+        "/api/engine/planning/fixture-product/items",
     ] {
         let listed = json_body(browser_request(api, Method::GET, path, cookie, None).await).await;
         assert_eq!(listed, json!([]), "{path}");
@@ -1103,7 +1101,7 @@ async fn assert_browser_lanes(api: &Router, session: &str, events: &mut BodyData
     let added = browser_request(
         api,
         Method::POST,
-        "/api/engine/planning/local-fixture/decisions",
+        "/api/engine/planning/fixture-product/decisions",
         cookie,
         Some(&decision),
     )
@@ -1149,7 +1147,7 @@ async fn assert_browser_item(api: &Router, cookie: Option<&str>, events: &mut Bo
     let added = browser_request(
         api,
         Method::POST,
-        "/api/engine/planning/local-fixture/items",
+        "/api/engine/planning/fixture-product/items",
         cookie,
         Some(&item),
     )
@@ -1161,7 +1159,7 @@ async fn assert_browser_item(api: &Router, cookie: Option<&str>, events: &mut Bo
         browser_request(
             api,
             Method::GET,
-            "/api/engine/planning/local-fixture/items",
+            "/api/engine/planning/fixture-product/items",
             cookie,
             None,
         )
@@ -1174,7 +1172,7 @@ async fn assert_browser_item(api: &Router, cookie: Option<&str>, events: &mut Bo
     assert_eq!(item["updatedAtMs"], item["createdAtMs"]);
 
     let id = item["id"].as_str().expect("papercut ID");
-    let path = format!("/api/engine/planning/local-fixture/items/{id}");
+    let path = format!("/api/engine/planning/fixture-product/items/{id}");
     let wrong_project = format!("/api/engine/planning/other-project/items/{id}");
     let version = item["version"].as_i64().expect("papercut version");
     let edit =
@@ -1205,7 +1203,7 @@ async fn assert_browser_item(api: &Router, cookie: Option<&str>, events: &mut Bo
         browser_request(
             api,
             Method::GET,
-            "/api/engine/planning/local-fixture/items",
+            "/api/engine/planning/fixture-product/items",
             cookie,
             None,
         )
@@ -1227,7 +1225,7 @@ async fn assert_browser_lead_complexity(
     let added = browser_request(
         api,
         Method::POST,
-        "/api/engine/planning/local-fixture/items",
+        "/api/engine/planning/fixture-product/items",
         cookie,
         Some(&lead),
     )
@@ -1243,7 +1241,7 @@ async fn assert_browser_lead_complexity(
             .expect("lead")
             .clone()
     };
-    let items = "/api/engine/planning/local-fixture/items";
+    let items = "/api/engine/planning/fixture-product/items";
     let listed = json_body(browser_request(api, Method::GET, items, cookie, None).await).await;
     let current = listed_lead(&listed);
     assert_eq!(current["complexity"], "medium");
@@ -2062,8 +2060,14 @@ fn assert_delay((low, high): (std::time::Duration, std::time::Duration), expecte
     );
 }
 
-fn board_pair_fixture() -> (tempfile::TempDir, Arc<Service>, Router) {
-    let (home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+async fn board_pair_fixture() -> (
+    tempfile::TempDir,
+    Arc<Service>,
+    Router,
+    tokio::task::JoinHandle<()>,
+) {
+    let (home, service, host) =
+        enrolled_fixture(GitHub::new("unused-forge-fixture").expect("client")).await;
     let assets = home.path().join("board");
     std::fs::create_dir(&assets).expect("board assets dir");
     std::fs::write(assets.join("index.html"), "<!doctype html>").expect("index");
@@ -2088,7 +2092,7 @@ fn board_pair_fixture() -> (tempfile::TempDir, Arc<Service>, Router) {
         &assets,
     )
     .expect("board router");
-    (home, service, api)
+    (home, service, api, host)
 }
 
 async fn issue_pair_code(api: &Router, cookie: &str) -> String {

@@ -371,7 +371,7 @@ async fn admit_review_entry(
         .allocate(&pr.head)
         .unwrap();
     service.add_planned_task(
-        None,
+        Some("fixture-product"),
         crate::planning::TaskAdmission {
             id: Some(id.into()),
             reference: None,
@@ -387,9 +387,18 @@ async fn admit_review_entry(
 }
 
 async fn send_review_entry_role(service: &Service, row: &TaskRow, role: Role) -> TaskRow {
+    publish_parent_shell(service).await;
     let host = service.host.fixture_pass();
+    let first = Box::pin(service.advance(row, &host)).await.unwrap();
+    let action = if first == Action::Wait(WaitReason::Starting) {
+        publish_parent_shell(service).await;
+        let host = service.host.fixture_pass();
+        Box::pin(service.advance(row, &host)).await.unwrap()
+    } else {
+        first
+    };
     assert_eq!(
-        Box::pin(service.advance(row, &host)).await.unwrap(),
+        action,
         Action::Launch {
             role,
             via: Launch::Create
@@ -490,7 +499,8 @@ fn an_unknown_reset_pauses_for_a_day_from_the_failure() {
 }
 
 #[derive(Default)]
-struct NativeRuns {
+pub(crate) struct NativeRuns {
+    parents: BTreeMap<String, Value>,
     launches: BTreeMap<String, Value>,
     limited: Option<String>,
 }
@@ -511,7 +521,11 @@ impl NativeRuns {
     }
 }
 
-fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRuns) -> Value {
+pub(crate) fn native_response(
+    request: &Value,
+    root: &std::path::Path,
+    runs: &mut NativeRuns,
+) -> Value {
     let payload = &request["payload"];
     let reply = |value| {
         json!({
@@ -535,7 +549,11 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
                                           "options":[{"id":"default"},{"id":"priority"}]}]
                  }}]},
                 {"instanceId":"claudeAgent","enabled":true,"status":"ready",
-                 "models":[{"slug":"other"}]}
+                 "models":[{"slug":"other"}]},
+                {"instanceId":"fixture-acp","driver":"acpRegistry","enabled":true,"status":"ready",
+                 "models":[{"slug":"nucleus"}]},
+                {"instanceId":"provider","driver":"codex","enabled":true,"status":"ready",
+                 "models":[{"slug":"fixture"}]}
             ]
         })),
         Some("orchestration.subscribeShell") => snapshot(json!({
@@ -543,11 +561,37 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
         })),
         Some("orchestration.launchThread") => {
             let id = payload["threadId"].as_str().expect("launched thread");
-            assert!(runs.launches.insert(id.into(), payload.clone()).is_none());
+            if payload["modelSelection"]["instanceId"] == "fixture-acp" {
+                assert!(runs.parents.insert(id.into(), payload.clone()).is_none());
+            } else {
+                assert!(runs.launches.insert(id.into(), payload.clone()).is_none());
+            }
             reply(json!({"sequence":1}))
+        }
+        Some("orchestration.dispatchCommand") if payload["type"] == "delegated_task.request" => {
+            let instance = payload["commandId"].as_str().unwrap();
+            let parent = &runs.parents[payload["parentThreadId"].as_str().unwrap()];
+            let id = format!("thread:delegated-task:{instance}");
+            let launch = json!({
+                "workspaceStrategy": parent["workspaceStrategy"],
+                "parentThreadId":payload["parentThreadId"],
+                "modelSelection":payload["modelSelection"],
+                "initialMessage":{"messageId":format!("message:delegated-task:{instance}")}
+            });
+            assert!(runs.launches.insert(id, launch).is_none());
+            reply(json!({"sequence":2}))
         }
         Some("orchestration.subscribeThread") => {
             let id = payload["threadId"].as_str().expect("observed thread");
+            if let Some(parent) = runs.parents.get(id) {
+                return snapshot(
+                    json!({"kind":"snapshot", "snapshotSequence":3, "projection":{
+                        "thread":{"id":id,"projectId":"local-fixture", "worktreePath":parent["workspaceStrategy"]["worktreePath"], "branch":parent["workspaceStrategy"]["branch"], "providerInstanceId":"fixture-acp", "modelSelection":parent["modelSelection"]},
+                        "runs":[{"id":"parent-run", "rootNodeId":"parent-root", "status":"running", "userMessageId":parent["initialMessage"]["messageId"]}],
+                        "messages":[], "runtimeRequests":[], "providerThreads":[], "turnItems":[]
+                    }}),
+                );
+            }
             let Some(launch) = runs.launches.get(id) else {
                 return json!({
                     "_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Failure","cause":[
@@ -574,6 +618,9 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
             snapshot(json!({
                 "kind":"snapshot","snapshotSequence":1,"projection":{
                     "thread":{"id":id,"projectId":"local-fixture",
+                              "parentThreadId":launch["parentThreadId"],
+                              "providerInstanceId":launch["modelSelection"]["instanceId"],
+                              "modelSelection":launch["modelSelection"],
                               "worktreePath":launch["workspaceStrategy"]["worktreePath"],
                               "branch":launch["workspaceStrategy"]["branch"]},
                     "runs":[{"id":"native-run","rootNodeId":"root",
@@ -590,18 +637,81 @@ fn native_response(request: &Value, root: &std::path::Path, runs: &mut NativeRun
     }
 }
 
+pub(crate) async fn publish_parent_shell(service: &Service) {
+    let (threads, root) = {
+        let state = service.state.lock().await;
+        let root = state
+            .settings
+            .projects
+            .as_ref()
+            .unwrap()
+            .projects
+            .values()
+            .flat_map(|project| &project.repositories)
+            .next()
+            .unwrap()
+            .path
+            .clone();
+        let mut threads = Vec::new();
+        for task in state.store.active().unwrap() {
+            let id = &task.identity().id;
+            let Some(parent) = state.store.current_parent_hold(id).unwrap() else {
+                continue;
+            };
+            let wire: Value = serde_json::from_str(&parent.wire).unwrap();
+            let payload = &wire["payload"];
+            if payload["workspaceStrategy"].is_null() {
+                continue;
+            }
+            threads.push(json!({
+                    "id":payload["threadId"], "projectId":payload["projectId"],
+                    "worktreePath":payload["workspaceStrategy"]["worktreePath"], "branch":payload["workspaceStrategy"]["branch"],
+                    "providerInstanceId":"fixture-acp", "modelSelection":{"instanceId":"fixture-acp", "model":"nucleus"},
+                    "status":"running", "activeRunId":"parent-run", "latestRunId":"parent-run",
+                    "pendingRuntimeRequest":null, "pendingBackgroundTasks":[]
+                }));
+        }
+        (threads, root)
+    };
+    service.host.fixture_project_shell(
+        &json!({"snapshotSequence":3,
+            "projects":[{"id":"local-fixture", "workspaceRoot":root}], "threads":threads
+        }),
+        "fixture-acp",
+    );
+}
+
 async fn pass(service: &Service) -> Vec<crate::PassOutcome> {
-    let host = service.host.fixture_pass();
-    let outcomes = service.pass_with_host(&host).await.expect("scheduler pass");
-    for outcome in &outcomes {
-        assert!(
-            outcome.result.is_ok(),
-            "{}: {:?}",
-            outcome.task,
-            outcome.result
-        );
+    for _ in 0..4 {
+        publish_parent_shell(service).await;
+        let host = service.host.fixture_pass();
+        let outcomes = service.pass_with_host(&host).await.expect("scheduler pass");
+        for outcome in &outcomes {
+            assert!(
+                outcome.result.is_ok(),
+                "{}: {:?}",
+                outcome.task,
+                outcome.result
+            );
+        }
+        if outcomes
+            .iter()
+            .any(|outcome| matches!(outcome.result, Ok(Action::Wait(WaitReason::Starting))))
+        {
+            // The fake host starts accepted parent turns before the next decision.
+            let mut state = service.state.lock().await;
+            for outcome in &outcomes {
+                if matches!(outcome.result, Ok(Action::Wait(WaitReason::Starting))) {
+                    state
+                        .schedule
+                        .wake(&outcome.task, tokio::time::Instant::now(), Priority::Wake);
+                }
+            }
+            continue;
+        }
+        return outcomes;
     }
-    outcomes
+    panic!("fixture parent did not start")
 }
 
 async fn wake(service: &Service, ids: &[&str]) {
@@ -908,7 +1018,7 @@ async fn a_stored_subscription_pause_reserves_the_next_tier_and_records_the_reas
     forge_server.abort();
 }
 
-fn finish_profile_run(
+pub(crate) fn finish_profile_run(
     task: &mut Task,
     observation: &mut Observation,
     (profile, group, thread): (&Profile, &str, &str),

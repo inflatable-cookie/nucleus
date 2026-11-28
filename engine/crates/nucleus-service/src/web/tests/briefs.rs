@@ -35,7 +35,7 @@ async fn assert_task_transport_limits(api: &Router, command_path: &str, exact: &
         (command_path, json!({"amend": text})),
         (
             "/v1/tasks",
-            json!({"id":"too-big", "reference":"too-big", "brief":text}),
+            json!({"repository":REPOSITORY, "id":"too-big", "reference":"too-big", "brief":text}),
         ),
     ] {
         let response = post_as(api, path, &BOARD_KEY, &input).await;
@@ -90,7 +90,8 @@ async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
     let exact = brief_with_bytes(MAX_BRIEF_BYTES);
     let oversized = format!("{exact}x");
 
-    let add = json!({"id":"boundary", "reference":"boundary", "brief":exact});
+    let add =
+        json!({"repository":REPOSITORY, "id":"boundary", "reference":"boundary", "brief":exact});
     assert!(add.to_string().len() > DEFAULT_BODY_LIMIT);
     assert_eq!(
         post_as(&api, "/v1/tasks", &PLANNER_KEY, &add)
@@ -98,7 +99,8 @@ async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
             .status(),
         StatusCode::CREATED
     );
-    let invalid = json!({"id":"too-big", "reference":"too-big", "brief":oversized});
+    let invalid =
+        json!({"repository":REPOSITORY, "id":"too-big", "reference":"too-big", "brief":oversized});
     assert_brief_size_refusal(
         browser_request(
             &api,

@@ -1720,8 +1720,7 @@ fn service_error_status(error: &ServiceError) -> StatusCode {
             | nucleus_store::StorageError::Layout
             | nucleus_store::StorageError::ConfinedDirectory(_),
         ) => StatusCode::BAD_REQUEST,
-        ServiceError::QuestionPlanner
-        | ServiceError::AuthorDeclarationOperator
+        ServiceError::AuthorDeclarationOperator
         | ServiceError::WatchAgentRequired
         | ServiceError::UnboundCheckout { planner: true, .. }
         | ServiceError::PlannerEnrollmentRefused(_)

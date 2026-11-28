@@ -19,7 +19,7 @@ use nucleus_store::{DispatchMode, NamedProfile, Profiles, SubscriptionPause, Tas
 use crate::{Service, ServiceError, State, now_ms};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(super) struct SelectedLaunch {
     pub(super) intent: ProfileLaunch,

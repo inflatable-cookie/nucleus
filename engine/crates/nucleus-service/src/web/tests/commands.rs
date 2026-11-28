@@ -151,14 +151,14 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
     let api = router(
         Arc::new(service),
         [Controller {
-            credential: PLANNER_KEY,
+            credential: BOARD_KEY,
             authority: Authority::Operator {
                 actor: "fixture".into(),
             },
         }],
     );
     let path = "/v1/tasks/nucleus-fixture%231/acp";
-    let mint = json_body(post_as(&api, path, &PLANNER_KEY, &json!({})).await).await;
+    let mint = json_body(post_as(&api, path, &BOARD_KEY, &json!({})).await).await;
     assert!(mint["credential"].is_null());
     let file = std::path::Path::new(mint["bindingPath"].as_str().expect("binding path"));
     let binding: nucleus_core::acp::Binding =
@@ -209,7 +209,7 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
         post_json(
             &api,
             "/v1/tasks/task-two/commands",
-            &PLANNER_KEY,
+            &BOARD_KEY,
             &json!("cancel")
         )
         .await,
@@ -226,7 +226,7 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
         StatusCode::OK
     );
     assert_event(&mut events, &[r#""taskId":"task-one""#]).await;
-    let rotated = json_body(post_as(&api, path, &PLANNER_KEY, &json!({})).await).await;
+    let rotated = json_body(post_as(&api, path, &BOARD_KEY, &json!({})).await).await;
     assert_eq!(rotated["sessionId"], mint["sessionId"]);
     assert_eq!(
         get_as(&api, "/v1/tasks/task-one", key).await.status(),
@@ -242,8 +242,11 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
 
 #[tokio::test]
 async fn admission_commits_when_t3_is_unreachable() {
-    let (_home, service, _planner_host) =
+    let (_home, mut service, _planner_host) =
         enrolled_fixture(GitHub::new("unused-forge-fixture").expect("client")).await;
+    let host = T3::new("http://127.0.0.1:9", "fixture").unwrap();
+    host.fixture_project_shell(&json!({"projects":[{"id":"local-fixture", "workspaceRoot":service.fixture().checkout}], "threads":[]}), "fixture-acp");
+    service.host = host;
     let service = Arc::new(service);
     let api = router(
         Arc::clone(&service),

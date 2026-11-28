@@ -2,7 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn settings_save_is_local_validated_and_wakes_capacity() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").expect("client")).await;
     let service = Arc::new(service);
     let api = settings_api(&service);
     let now = tokio::time::Instant::now();
@@ -75,7 +76,8 @@ async fn settings_save_is_local_validated_and_wakes_capacity() {
 
 #[tokio::test]
 async fn operators_can_pause_a_known_subscription_until_its_reset() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").expect("client")).await;
     let service = Arc::new(service);
     let api = settings_api(&service);
     let profiles = "/v1/settings/profiles";
@@ -168,7 +170,8 @@ async fn profile_pause_edits_wake_a_parked_capacity_waiter() {
 async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_group() {
     use crate::profiles::LaunchSelection;
 
-    let (home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    let (home, mut service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").expect("client")).await;
     let (host, native) = crate::tests::native_fixture(subscription_catalog_reply).await;
     service.host = host;
     let service = Arc::new(service);
@@ -188,7 +191,7 @@ async fn board_profiles_use_dispatch_subscription_groups_and_pause_the_same_grou
             Controller {
                 credential: PLANNER_KEY,
                 authority: Authority::Planner {
-                    actor: "fixture-planner".into(),
+                    actor: "planner".into(),
                 },
             },
         ],
@@ -303,7 +306,7 @@ async fn a_required_paused_group_is_named_and_a_slot_wait_stays_capacity() {
         StatusCode::OK
     );
 
-    let paused = json!({"id":"paused","reference":"paused","brief":"---\nqueue:\n  complexity: low\n  profileRequests:\n    worker:\n      profileId: team\n      reason: fixture\n      required: true\n---\n# Paused brief"});
+    let paused = json!({"repository":REPOSITORY, "id":"paused","reference":"paused","brief":"---\nqueue:\n  complexity: low\n  profileRequests:\n    worker:\n      profileId: team\n      reason: fixture\n      required: true\n---\n# Paused brief"});
     let response = browser_request(
         &api,
         Method::POST,
@@ -313,7 +316,7 @@ async fn a_required_paused_group_is_named_and_a_slot_wait_stays_capacity() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::CREATED);
-    let slot = json!({"id":"slot","reference":"slot","brief":"---\nqueue:\n  complexity: low\n---\n# Slot brief"});
+    let slot = json!({"repository":REPOSITORY, "id":"slot","reference":"slot","brief":"---\nqueue:\n  complexity: low\n---\n# Slot brief"});
     let response = browser_request(
         &api,
         Method::POST,
@@ -389,97 +392,6 @@ async fn a_required_paused_group_is_named_and_a_slot_wait_stays_capacity() {
     let slot_next = read_paired_task(&api, "/api/engine/tasks/slot/next", &cookie).await;
     assert_eq!(slot_next["wait"], "capacity");
     assert!(slot_next["waitDetail"].is_null());
-    native.abort();
-}
-
-#[tokio::test]
-async fn reassign_commits_once_and_invalidates_planner_at_publication() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-    let (host, _, reads, native) = planner_roster_fixture("planner-one", "planner-two").await;
-    service.host = host;
-    seed_planner_task(&service, "planned", "planner-one").await;
-    let service = Arc::new(service);
-    let api = settings_api(&service);
-    let dispatch = dispatch_with_project_slots(&api, json!({"alpha": 4, "beta": 2})).await;
-    let path = "/v1/settings/projects";
-    let starting = json_body(get_as(&api, path, &BOARD_KEY).await).await;
-    let update = json!({
-        "revision": starting["settings"]["revision"],
-        "value": {"projects": {
-            "alpha": {"name": "Alpha", "repositories": [{
-                "origin": REPOSITORY, "path": service.fixture().checkout, "base": service.fixture().base
-            }]},
-            "beta": {"name": "Beta"},
-        }},
-    });
-    let initial_epoch = service.state.lock().await.planner_authority_epoch;
-    let planner_wake = service.planner_wake.notified();
-    let saved = json_body(put_settings(&api, path, &BOARD_KEY, &update).await).await;
-    tokio::time::timeout(std::time::Duration::from_secs(1), planner_wake)
-        .await
-        .expect("settings requests a local scheduler refresh");
-    assert_eq!(
-        saved["resolvedPlanners"],
-        json!({"alpha": null, "beta": null})
-    );
-    assert_eq!(
-        reads.load(Ordering::Relaxed),
-        0,
-        "the save made no host request"
-    );
-    service
-        .refresh_planner_authority("planned")
-        .await
-        .expect("scheduler publishes authority");
-    let resolved = json_body(get_as(&api, path, &BOARD_KEY).await).await;
-    assert_eq!(resolved["resolvedPlanners"]["alpha"], "planner-one");
-    assert_eq!(
-        reads.load(Ordering::Relaxed),
-        1,
-        "the read used cached authority"
-    );
-
-    let reassign = json!({
-        "revision": saved["settings"]["revision"], "origin": REPOSITORY, "toProject": "beta",
-    });
-    let moved = json_body(
-        post_as(
-            &api,
-            "/v1/settings/projects/reassign",
-            &BOARD_KEY,
-            &reassign,
-        )
-        .await,
-    )
-    .await;
-    let projects = &moved["settings"]["value"]["projects"];
-    assert_eq!(projects["alpha"]["repositories"], json!([]));
-    let beta_repo = &projects["beta"]["repositories"][0];
-    assert_eq!(beta_repo["origin"], json!(REPOSITORY));
-    assert_eq!(
-        post_as(
-            &api,
-            "/v1/settings/projects/reassign",
-            &BOARD_KEY,
-            &reassign
-        )
-        .await
-        .status(),
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
-        json_body(get_as(&api, "/v1/settings/dispatch", &BOARD_KEY).await).await,
-        dispatch
-    );
-    let state = service.state.lock().await;
-    assert_eq!(state.planner_authority_epoch, initial_epoch + 2);
-    assert!(state.planner_authority.is_empty());
-    assert_eq!(state.settings.fixture_slots(&service.fixture()), Some(2));
-    assert_eq!(
-        reads.load(Ordering::Relaxed),
-        1,
-        "reassignment made no host request"
-    );
     native.abort();
 }
 

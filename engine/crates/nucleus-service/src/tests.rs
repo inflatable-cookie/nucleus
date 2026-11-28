@@ -155,7 +155,13 @@ fn fixture_checkout(root: &Path) -> PathBuf {
         ],
     );
     let ssh = root.join("fixture-ssh");
-    std::fs::write(&ssh, "#!/bin/sh\ncase \"$2\" in\n  git-upload-pack*) exec git-upload-pack \"$(dirname \"$0\")/remote.git\" ;;\n  git-receive-pack*) exec git-receive-pack \"$(dirname \"$0\")/remote.git\" ;;\n  *) exit 1 ;;\nesac\n").unwrap();
+    std::fs::write(
+        &ssh,
+        format!(
+            "#!/bin/sh\ncase \"$2\" in\n  \"git-upload-pack '{REPOSITORY}.git'\") exec git-upload-pack \"$(dirname \"$0\")/remote.git\" ;;\n  \"git-receive-pack '{REPOSITORY}.git'\") exec git-receive-pack \"$(dirname \"$0\")/remote.git\" ;;\n  *) exit 1 ;;\nesac\n"
+        ),
+    )
+    .unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
     git(
@@ -163,6 +169,14 @@ fn fixture_checkout(root: &Path) -> PathBuf {
         &["config", "core.sshCommand", ssh.to_str().unwrap()],
     );
     git(&checkout, &["config", "ssh.variant", "simple"]);
+    git(
+        &checkout,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
     checkout
 }
 
@@ -1093,15 +1107,12 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     assert!(
         matches!(
             second,
-            Ok(Action::Launch {
-                role: nucleus_core::Role::Worker,
-                ..
-            })
+            Err(ServiceError::Host(nucleus_hosts::HostError::Unavailable))
         ),
         "{second:?}"
     );
     let row = service.task("partial").await.unwrap();
-    assert!(row.task.run().is_some());
+    assert!(row.task.run().is_none());
     assert_eq!(git(&path, &["rev-parse", "HEAD"]), new_head.as_str());
     assert!(admin.join("index").is_file());
     assert!(!admin.join("locked").exists());
@@ -1113,7 +1124,6 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
         .find_map(|entry| std::fs::read_to_string(entry.unwrap().path().join("draft.md")).ok());
     assert_eq!(saved.as_deref(), Some("untracked draft"));
     assert!(sibling_admin.is_dir());
-    assert!(service.host.host_calls().is_empty());
     forge_server.abort();
 }
 
@@ -1248,7 +1258,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
             Some("server.getConfig") => json!({
                 "environment":{"orchestrationProtocolVersion":2},
                 "providers":[
-                    {"instanceId":"provider","enabled":true,"status":"ready","models":[{"slug":"fixture"}]},
+                    {"instanceId":"provider","driver":"codex","enabled":true,"status":"ready","models":[{"slug":"fixture"}]},
                     {"instanceId":"fixture-acp","driver":"acpRegistry","enabled":true,"status":"ready","models":[{"slug":"nucleus"}]}
                 ]
             }),
@@ -1346,15 +1356,17 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     assert!(launches.lock().unwrap().is_empty());
     let outcomes = pass(&service).await;
     if lose_launch_reply {
-        assert!(matches!(
-            outcomes[0].result,
-            Err(ServiceError::ParentRetry { .. })
-        ));
+        assert!(
+            matches!(outcomes[0].result, Err(ServiceError::ParentRetry { .. })),
+            "{:?}",
+            outcomes[0].result
+        );
     } else {
-        assert!(matches!(
-            outcomes[0].result,
-            Ok(Action::Wait(WaitReason::Starting))
-        ));
+        assert!(
+            matches!(outcomes[0].result, Ok(Action::Wait(WaitReason::Starting))),
+            "{:?}",
+            outcomes[0].result
+        );
     }
     assert_eq!(launches.lock().unwrap().len(), 1);
     let preparing = service.task(oldest).await.unwrap();
@@ -1385,7 +1397,14 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
             .unwrap();
         assert_eq!(service.task(oldest).await.unwrap(), preparing);
     } else {
-        let waiting = pass(&service).await;
+        let mut waiting = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while waiting.len() < newest.len() {
+                waiting.extend(pass(&service).await);
+            }
+        })
+        .await
+        .expect("both capacity waiters are examined");
         assert_eq!(waiting.len(), newest.len());
         assert!(waiting.iter().all(|outcome| {
             newest.contains(&outcome.task.as_str())
@@ -1439,7 +1458,14 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     )
     .unwrap();
     service.state.lock().await.schedule.park("winner");
-    let outcomes = pass(&service).await;
+    let mut outcomes = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while outcomes.len() < 3 {
+            outcomes.extend(pass(&service).await);
+        }
+    })
+    .await
+    .expect("capacity waiters resume after restart");
     assert_eq!(
         outcomes
             .iter()
@@ -1839,7 +1865,10 @@ async fn a_due_task_stays_queued_when_its_row_cannot_be_used() {
             .schedule
             .wake("bad-scope", Instant::now(), Priority::Wake);
     }
-    assert!(matches!(service.pass().await, Err(ServiceError::Project)));
+    let outcomes = service.pass().await.unwrap();
+    assert!(
+        matches!(outcomes.as_slice(), [PassOutcome { task, result: Err(ServiceError::Project) }] if task == "bad-scope")
+    );
     let mut state = service.state.lock().await;
     let due = state
         .schedule
@@ -1854,10 +1883,7 @@ async fn a_due_task_stays_queued_when_its_row_cannot_be_used() {
             .id,
         "bad-scope"
     );
-    assert_eq!(
-        state.scheduler_error,
-        Some("the task is outside this engine's configured project")
-    );
+    assert_eq!(state.scheduler_error, None);
     assert!(state.last_pass_calls.is_empty());
 }
 

@@ -187,8 +187,6 @@ pub enum ServiceError {
         "GitHub did not confirm the PR head required by this command. Read Next before retrying."
     )]
     CommandHeadUnconfirmed,
-    #[error("the question is assigned to a different planner")]
-    QuestionPlanner,
     #[error("planner authority is not yet known. Retry shortly.")]
     PlannerAuthorityUnknown,
     #[error("the caller is no longer the responsible planner for this task")]
@@ -2710,21 +2708,10 @@ impl State {
         {
             return Err(StoreError::AllowanceNotExhausted.into());
         }
-        let planner_answer = match (&command, actor) {
-            (Command::Answer(_), Authority::Planner { actor }) => Some(actor.as_str()),
-            _ => None,
-        };
-        let awaiting_planner = if let Some(actor) = planner_answer {
-            match task.question_delivery() {
-                Some(binding) if binding.thread != actor => {
-                    return Err(ServiceError::QuestionPlanner);
-                }
-                Some(_) => false,
-                None => true,
-            }
-        } else {
-            false
-        };
+        let awaiting_planner = matches!(
+            (&command, actor),
+            (Command::Answer(_), Authority::Planner { .. })
+        ) && task.question_delivery().is_none();
         let authority = self.command_authority(task, actor);
         let was_terminal = task.phase().is_terminal();
         let ready = match task.command(command, actor, observation) {
