@@ -395,6 +395,101 @@ impl From<PullRequest> for WorkReport {
     }
 }
 
+impl WorkReport {
+    pub(crate) fn claims_code_change(&self) -> bool {
+        self.code_changed
+            || self.summary.as_ref().is_some_and(|summary| {
+                summary
+                    .to_ascii_lowercase()
+                    .split(['.', ';', '\n', '!', '?'])
+                    .flat_map(|sentence| sentence.split(" and "))
+                    .any(claims_code_change)
+            })
+    }
+}
+
+// Require an affirmative action and an explicit source object. Evidence
+// summaries often mention the code fix after naming what the worker added.
+fn claims_code_change(statement: &str) -> bool {
+    let mut words = statement
+        .split_whitespace()
+        .map(|word| word.trim_matches(|character: char| !character.is_ascii_alphanumeric()));
+    let first = words.find(|word| !matches!(*word, "" | "i" | "we" | "the"));
+    let source = |word| {
+        matches!(
+            word,
+            "code"
+                | "source"
+                | "implementation"
+                | "commit"
+                | "commits"
+                | "bug"
+                | "bugfix"
+                | "function"
+                | "handler"
+                | "patch"
+                | "parser"
+                | "diff"
+                | "logic"
+        )
+    };
+    let changed = |word| {
+        matches!(
+            word,
+            "added"
+                | "changed"
+                | "committed"
+                | "fixed"
+                | "implemented"
+                | "made"
+                | "modified"
+                | "patched"
+                | "published"
+                | "pushed"
+                | "refactored"
+                | "removed"
+                | "rewrote"
+                | "shipped"
+                | "updated"
+        )
+    };
+    let Some(first) = first else { return false };
+    if source(first) {
+        return words
+            .find(|word| !matches!(*word, "changes" | "was" | "were" | "has" | "have" | "been"))
+            .is_some_and(changed);
+    }
+    if !changed(first) {
+        return false;
+    }
+    let object = words.take_while(|word| {
+        !matches!(
+            *word,
+            "about" | "after" | "by" | "for" | "from" | "in" | "of" | "to" | "with" | "without"
+        )
+    });
+    let mut claims_change = false;
+    for word in object {
+        if matches!(
+            word,
+            "body"
+                | "description"
+                | "documentation"
+                | "evidence"
+                | "example"
+                | "examples"
+                | "no"
+                | "notes"
+                | "proof"
+                | "summary"
+        ) {
+            return false;
+        }
+        claims_change |= source(word);
+    }
+    claims_change
+}
+
 /// An exact version and digest of a durable lane document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1183,6 +1278,38 @@ impl Task {
             self.attempts = 0;
             self.pr = Some(pr.clone());
             self.threads.same_head_revision_summary = None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod work_report_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_summaries_distinguish_code_claims_from_evidence() {
+        for (summary, expected) in [
+            ("Published the requested code fix.", true),
+            ("We pushed a new commit.", true),
+            ("Fixed the parser bug.", true),
+            ("The implementation was updated.", true),
+            ("Added proof and changed the code.", true),
+            ("Published proof of the requested code fix.", false),
+            (
+                "Updated the PR description to explain the code change.",
+                false,
+            ),
+            ("Added test output for the code change.", false),
+            ("Updated the code example in the PR description.", false),
+            ("The code was not changed.", false),
+        ] {
+            let report: WorkReport = serde_json::from_value(serde_json::json!({
+                "url": "https://github.com/example/fixture/pull/1",
+                "head": "a".repeat(40),
+                "summary": summary,
+            }))
+            .expect("ordinary work report");
+            assert_eq!(report.claims_code_change(), expected, "{summary}");
         }
     }
 }

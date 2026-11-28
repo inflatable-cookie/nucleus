@@ -681,6 +681,23 @@ impl GitHub {
         Ok(pull)
     }
 
+    /// Read the current description when the verified PR is open at this head.
+    ///
+    /// # Errors
+    /// Returns an error when GitHub cannot verify the pull request identity.
+    pub async fn open_description(
+        &self,
+        target: &PullTarget,
+        head: &Head,
+    ) -> Result<Option<String>, ForgeError> {
+        let pull = self.pull(target).await?;
+        Ok(
+            (pull.state == PullState::Open && !pull.merged && pull.head.sha == *head)
+                .then_some(pull.body)
+                .flatten(),
+        )
+    }
+
     /// Recheck the merge decision against fresh GitHub facts, submit its exact
     /// SHA once, then read back. Any later attempt starts with a new read.
     ///

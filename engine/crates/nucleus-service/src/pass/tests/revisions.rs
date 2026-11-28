@@ -1,7 +1,57 @@
 use nucleus_core::RetainedThread;
 
 use super::*;
-use crate::tests::{create_fixture_commit, git, reserved_reviewer};
+use crate::tests::{create_fixture_commit, forge_pull, git, reserved_reviewer};
+
+const OLD_DESCRIPTION: &str = "Validation is pending.";
+const UPDATED_DESCRIPTION: &str = "Validation completed with the scoped regression test.";
+
+#[derive(Clone, Copy)]
+enum Revision {
+    Proof,
+    Description,
+    NewHead,
+    Contradiction,
+}
+
+impl Revision {
+    fn assert_review(self, prompt: &str, summary: &str) {
+        let same_head = !matches!(self, Self::NewHead);
+        assert_eq!(prompt.contains("Worker report at the same head"), same_head);
+        if same_head {
+            assert!(prompt.contains(summary));
+        }
+        if matches!(self, Self::Description) {
+            assert!(prompt.contains(&format!(
+                "----- BEGIN PR DESCRIPTION -----\n{UPDATED_DESCRIPTION}\n----- END PR DESCRIPTION -----"
+            )));
+            assert!(!prompt.contains(OLD_DESCRIPTION));
+        }
+    }
+}
+
+async fn revision_forge(
+    head: &Head,
+) -> (
+    GitHub,
+    Arc<std::sync::Mutex<&'static str>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let mut pull = forge_pull(head);
+    pull["head"]["ref"] = json!("ns-revision");
+    let description = Arc::new(std::sync::Mutex::new(OLD_DESCRIPTION));
+    let current = Arc::clone(&description);
+    let router = Router::new().route(
+        &format!("/repos/{REPOSITORY}/pulls/1"),
+        get(move || async move {
+            let mut pull = pull;
+            pull["body"] = json!(*current.lock().unwrap());
+            Json(pull)
+        }),
+    );
+    let (forge, server) = serve_forge(router).await;
+    (forge, description, server)
+}
 
 async fn after_changes(service: &Service, head: &Head) -> (TaskRow, Observation) {
     let (mut task, key, mut observation) = reserved_reviewer("revision", head);
@@ -39,9 +89,11 @@ async fn after_changes(service: &Service, head: &Head) -> (TaskRow, Observation)
     (service.task("revision").await.unwrap(), observation)
 }
 
-async fn revision(summary: &str, new_head: bool, code_changed: bool) {
-    let (_home, service) = fixture(GitHub::new("unused-fixture").unwrap());
+async fn revision(summary: &str, kind: Revision) {
+    let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
     let reviewed_head = &service.fixture().start;
+    let (forge, description, server) = revision_forge(reviewed_head).await;
+    service.forge = forge;
     let (row, mut observation) = after_changes(&service, reviewed_head).await;
     let worktrees = service.worktrees();
     let project = service.fixture();
@@ -61,7 +113,7 @@ async fn revision(summary: &str, new_head: bool, code_changed: bool) {
         .await
         .unwrap();
     let row = service.task("revision").await.unwrap();
-    let head = if new_head {
+    let head = if matches!(kind, Revision::NewHead) {
         std::fs::write(
             checkout.path().join("fix.rs"),
             "const FIXED: bool = true;\n",
@@ -79,7 +131,23 @@ async fn revision(summary: &str, new_head: bool, code_changed: bool) {
         url: row.task.pull_request().unwrap().url.clone(),
         head: head.clone(),
     };
-    let instance = report_revision(&service, &row, &pr, summary, code_changed).await;
+    if matches!(kind, Revision::Description) {
+        let target = task_branches(&row.task, &checkout)
+            .unwrap()
+            .target(&pr.url)
+            .unwrap();
+        assert_eq!(
+            service
+                .forge
+                .open_description(&target, reviewed_head)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(OLD_DESCRIPTION)
+        );
+        *description.lock().unwrap() = UPDATED_DESCRIPTION;
+    }
+    let instance = report_revision(&service, &row, &pr, summary).await;
     observation.host = Observed::Known(Host::Current {
         instance,
         state: RunState::Ended,
@@ -96,7 +164,7 @@ async fn revision(summary: &str, new_head: bool, code_changed: bool) {
         .await
         .unwrap();
     let row = service.task("revision").await.unwrap();
-    if code_changed && !new_head {
+    if matches!(kind, Revision::Contradiction) {
         assert!(matches!(action, Action::Ask(_)));
         let Some(nucleus_core::Question::Work { prompt, .. }) = row.task.question() else {
             panic!("expected a durable planner question");
@@ -108,19 +176,14 @@ async fn revision(summary: &str, new_head: bool, code_changed: bool) {
             decide(&row.task, &observation),
             Action::Wait(WaitReason::Question)
         );
-        return;
+    } else {
+        assert_eq!(action, Action::Advance(Phase::Reviewing));
+        assert!(row.task.question().is_none());
+        let prompt = reviewer_prompt(&service, &row, &checkout, observation, &head).await;
+        kind.assert_review(&prompt, summary);
     }
-    assert_eq!(action, Action::Advance(Phase::Reviewing));
-    assert!(row.task.question().is_none());
-    assert_reviewer_prompt(
-        &service,
-        &row,
-        &checkout,
-        observation,
-        &head,
-        (!new_head).then_some(summary),
-    )
-    .await;
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
 }
 
 async fn report_revision(
@@ -128,7 +191,6 @@ async fn report_revision(
     row: &TaskRow,
     pr: &PullRequest,
     summary: &str,
-    code_changed: bool,
 ) -> String {
     let instance = row.task.run().unwrap().launch().instance.clone();
     let mut sent = row.task.clone();
@@ -138,12 +200,9 @@ async fn report_revision(
         &std::fs::read(ticket::path(service.storage.scratch(), &instance)).unwrap(),
     )
     .unwrap();
-    let mut payload = json!({"work": {
-        "url": pr.url, "head": pr.head, "revision": true, "summary": summary,
+    let payload = json!({"work": {
+        "url": pr.url, "head": pr.head, "summary": summary,
     }});
-    if code_changed {
-        payload["work"]["code_changed"] = json!(true);
-    }
     service
         .report(
             "revision",
@@ -167,14 +226,13 @@ async fn report_revision(
     instance
 }
 
-async fn assert_reviewer_prompt(
+async fn reviewer_prompt(
     service: &Service,
     row: &TaskRow,
     checkout: &Checkout<'_>,
     mut observation: Observation,
     head: &Head,
-    summary: Option<&str>,
-) {
+) -> String {
     observation.host = Observed::Known(Host::Retained {
         thread: "thread:reviewer".into(),
         state: RetainedThread::Idle,
@@ -200,41 +258,41 @@ async fn assert_reviewer_prompt(
     let prompt = wire["payload"]["text"].as_str().unwrap();
     assert!(prompt.contains(&format!("PR head: {head}")));
     assert!(prompt.contains("Read the current PR description from the forge"));
-    assert_eq!(
-        prompt.contains("Worker report at the same head"),
-        summary.is_some()
-    );
-    if let Some(summary) = summary {
-        assert!(prompt.contains(summary));
-    }
+    prompt.to_owned()
 }
 
 #[tokio::test]
 async fn same_head_proof_returns_to_review_with_the_worker_summary() {
     Box::pin(revision(
-        "Head unchanged. Added the missing proof for the scoped checks.",
-        false,
-        false,
+        "Head unchanged. Published proof of the requested code fix.",
+        Revision::Proof,
     ))
     .await;
 }
 
 #[tokio::test]
-async fn same_head_description_fix_returns_to_review_and_requests_the_current_body() {
+async fn same_head_description_fix_returns_to_review_with_the_current_body() {
     Box::pin(revision(
-        "Head unchanged. Corrected the PR description's validation section.",
-        false,
-        false,
+        "Head unchanged. Updated the PR description to explain the code fix.",
+        Revision::Description,
     ))
     .await;
 }
 
 #[tokio::test]
 async fn new_head_revision_returns_to_review_at_the_new_head() {
-    Box::pin(revision("Published the requested code fix.", true, true)).await;
+    Box::pin(revision(
+        "Published the requested code fix.",
+        Revision::NewHead,
+    ))
+    .await;
 }
 
 #[tokio::test]
 async fn same_head_code_change_claim_asks_the_planner() {
-    Box::pin(revision("Published the requested code fix.", false, true)).await;
+    Box::pin(revision(
+        "Published the requested code fix.",
+        Revision::Contradiction,
+    ))
+    .await;
 }

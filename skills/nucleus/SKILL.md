@@ -173,8 +173,7 @@ Observe the remote branch or PR before retrying an uncertain write. Recheck the
 clean checkout and the real open non-draft PR at the exact pushed head before
 reporting `work`. If a resume adds proof or corrects the PR description at the
 same head, report `work` as usual. Say that the head is unchanged and name the
-evidence or correction in the summary. The optional `code_changed: true` field
-records an explicit claim of published code changes.
+evidence or correction in the summary.
 If sent a read-only identity check, report the observed identity
 from that branch and PR. Push finished authorized work before reporting a blocker
 when possible. Nucleus owns review routing, merge and cleanup.

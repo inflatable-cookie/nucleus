@@ -399,7 +399,7 @@ fn settled(
                     .is_some_and(|work| work.require_new_head_from.as_ref() == Some(&pr.head))
                 {
                     Signal::Question(Question::Repair(Repair::RevisionHasSameHead))
-                } else if reported.code_changed && task.changes_requested_at(&pr.head) {
+                } else if task.changes_requested_at(&pr.head) && reported.claims_code_change() {
                     Signal::Question(Question::Work {
                         prompt: "The worker reported code changes, but the PR is still at the previously reviewed head.".into(),
                         options: Vec::new(),
