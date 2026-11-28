@@ -439,7 +439,7 @@ fn a_stale_review_report_refreshes_the_head_without_applying_a_verdict() {
 }
 
 #[test]
-fn changes_continue_the_worker_and_require_a_new_head() {
+fn changes_continue_the_worker_and_allow_review_at_the_same_head() {
     let (mut task, obs) = working();
     let bearer = start(&mut task, &obs, Role::Worker, "worker", "work-1");
     report(&mut task, &bearer, Report::Work(pr('a').into()));
@@ -469,22 +469,16 @@ fn changes_continue_the_worker_and_require_a_new_head() {
     );
     let bearer = start(&mut task, &worker, Role::Worker, "worker", "work-2");
     report(&mut task, &bearer, Report::Work(pr('a').into()));
-    let ended = host(&task, review, RunState::Ended);
+    let ended = host(&task, review.clone(), RunState::Ended);
+    assert_eq!(task.reconcile(&ended), Action::Advance(Phase::Reviewing));
     assert_eq!(
-        task.reconcile(&ended),
-        Action::Ask(Question::Repair(Repair::RevisionHasSameHead))
-    );
-    assert_eq!(
-        task.reconcile(&open('a', CheckState::Ready)),
-        Action::Wait(WaitReason::Question)
-    );
-    assert_eq!(
-        task.reconcile(&observation()),
-        Action::Wait(WaitReason::Question)
-    );
-    assert_eq!(
-        task.reconcile(&open('b', CheckState::Ready)),
-        Action::Advance(Phase::Working)
+        decide(&task, &retained(review, "reviewer", RetainedThread::Idle)),
+        Action::Launch {
+            role: Role::Reviewer,
+            via: Launch::Continue {
+                thread: "reviewer".into()
+            }
+        }
     );
     assert_eq!(task.question(), None);
 }

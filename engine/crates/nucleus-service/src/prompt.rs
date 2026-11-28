@@ -262,6 +262,13 @@ impl Prompt<'_> {
             );
         }
         if self.role == Role::Reviewer {
+            if let Some(summary) = task.same_head_revision_summary() {
+                let _ = writeln!(
+                    text,
+                    "\nWorker report at the same head\n----- BEGIN WORK REPORT -----\n{summary}\n----- END WORK REPORT -----"
+                );
+            }
+            text.push_str("Read the current PR description from the forge, including when the PR head is unchanged.\n");
             if let Some(message) = self.shared_model {
                 let _ = writeln!(text, "{message}");
             }
@@ -399,6 +406,9 @@ impl Prompt<'_> {
         }
         match self.role {
             Role::Worker => {
+                if self.pr.is_some() {
+                    text.push_str("For added proof or a PR description correction at the same head, report work as usual and say in the summary that the head is unchanged and what you added or corrected. To explicitly claim published code changes, include code_changed: true in the work object.\n");
+                }
                 let example = serde_json::json!({"work": {
                     "url": self.pr.map_or("https://github.com/OWNER/REPO/pull/NUMBER", |pr| &pr.url),
                     "head": "FULL_SHA",

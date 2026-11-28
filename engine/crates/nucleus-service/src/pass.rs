@@ -2678,6 +2678,7 @@ mod start_tests;
 mod tests {
     mod provider_helpers;
     mod retirement;
+    mod revisions;
 
     use std::sync::{
         Arc,

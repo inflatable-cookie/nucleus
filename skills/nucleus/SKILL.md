@@ -169,7 +169,11 @@ review evidence in the PR without exposing credentials or local paths.
 
 Observe the remote branch or PR before retrying an uncertain write. Recheck the
 clean checkout and the real open non-draft PR at the exact pushed head before
-reporting `work`. If sent a read-only identity check, report the observed identity
+reporting `work`. If a resume adds proof or corrects the PR description at the
+same head, report `work` as usual. Say that the head is unchanged and name the
+evidence or correction in the summary. The optional `code_changed: true` field
+records an explicit claim of published code changes.
+If sent a read-only identity check, report the observed identity
 from that branch and PR. Push finished authorized work before reporting a blocker
 when possible. Nucleus owns review routing, merge and cleanup.
 
@@ -185,7 +189,8 @@ any author model you share. Never read the worker's private transcript. Review
 the assigned exact head using the pinned checkout, public PR and comments,
 author evidence and recorded earlier verdicts.
 Read the named inputs yourself, inspect the diff and run the covering checks.
-On re-review, verify each claimed fix and reconsider affected subjects. Required
+On re-review, read the current PR description from the forge, even if the head
+is unchanged. Verify each claimed fix and reconsider affected subjects. Required
 proof must be sufficient for approval. Treat live-store counts as planner
 evidence and name any remaining planner check.
 

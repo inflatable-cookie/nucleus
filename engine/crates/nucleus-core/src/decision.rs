@@ -1,6 +1,4 @@
-use crate::model::{
-    Head, Phase, PullRequest, Question, Repair, Report, Review, Role, Task, Verdict,
-};
+use crate::model::{Head, Phase, PullRequest, Question, Repair, Report, Review, Role, Task};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Observed<T> {
@@ -399,9 +397,13 @@ fn settled(
                     .work_continuation
                     .as_ref()
                     .is_some_and(|work| work.require_new_head_from.as_ref() == Some(&pr.head))
-                    || matches!(&task.verdict, Some(Verdict::Reviewed { head, decision: Review::Changes, .. }) if *head == pr.head)
                 {
                     Signal::Question(Question::Repair(Repair::RevisionHasSameHead))
+                } else if reported.code_changed && task.changes_requested_at(&pr.head) {
+                    Signal::Question(Question::Work {
+                        prompt: "The worker reported code changes, but the PR is still at the previously reviewed head.".into(),
+                        options: Vec::new(),
+                    })
                 } else {
                     Signal::WorkerReported
                 }

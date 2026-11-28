@@ -373,13 +373,16 @@ pub enum Report {
     },
 }
 
-/// A worker's PR and the optional summary supplied with older and newer callbacks.
+/// A worker's PR and optional evidence about the work performed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkReport {
     #[serde(flatten)]
     pub pull_request: PullRequest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// An explicit claim that the revision changed published code.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub code_changed: bool,
 }
 
 impl From<PullRequest> for WorkReport {
@@ -387,6 +390,7 @@ impl From<PullRequest> for WorkReport {
         Self {
             pull_request,
             summary: None,
+            code_changed: false,
         }
     }
 }
@@ -626,6 +630,8 @@ pub struct Threads {
     pub(crate) complexity_raised_at: Option<NonZeroU64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) applied_review_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) same_head_revision_summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) settled_scratch: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -945,6 +951,12 @@ impl Task {
             .map(|work| work.instruction.as_str())
     }
 
+    /// The worker's report for the current same-head review round.
+    #[must_use]
+    pub fn same_head_revision_summary(&self) -> Option<&str> {
+        self.threads.same_head_revision_summary.as_deref()
+    }
+
     /// Read the report-only delivery state, if the task opted in at admission.
     #[must_use]
     pub const fn report_task(&self) -> Option<&ReportTask> {
@@ -1155,6 +1167,10 @@ impl Task {
             .is_some_and(|verdict| verdict.approves(self.identity.entry, head))
     }
 
+    pub(crate) fn changes_requested_at(&self, target: &Head) -> bool {
+        matches!(&self.verdict, Some(Verdict::Reviewed { head, decision: Review::Changes, .. }) if head == target)
+    }
+
     pub(crate) fn observe_pr(&mut self, pr: &PullRequest) {
         if self
             .question
@@ -1166,6 +1182,7 @@ impl Task {
         if self.pr.as_ref() != Some(pr) {
             self.attempts = 0;
             self.pr = Some(pr.clone());
+            self.threads.same_head_revision_summary = None;
         }
     }
 }
