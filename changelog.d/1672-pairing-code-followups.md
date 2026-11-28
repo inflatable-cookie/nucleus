@@ -1,0 +1,1 @@
+- Board docs describe short-code device pairing, and its component test runs with the affected and milestone test sets.

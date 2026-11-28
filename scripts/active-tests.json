@@ -20,6 +20,7 @@
   "test/decision-dialog-ui.test.ts",
   "test/decision-pill.test.ts",
   "test/decision-read.test.ts",
+  "test/device-pairing-ui.test.ts",
   "test/dropdown-select.test.ts",
   "test/focus-modality.test.ts",
   "test/hold-prompt-ui.test.ts",
