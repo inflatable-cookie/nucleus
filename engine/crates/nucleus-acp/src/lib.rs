@@ -54,11 +54,12 @@ impl Drop for Turn {
 }
 
 /// Serve the Nucleus ACP protocol on standard input and output.
-/// A configured launcher can recover the same local engine endpoint.
+/// A configured launcher can recover the engine at the named endpoint, or the
+/// one its bindings use when no endpoint is named.
 ///
 /// # Errors
 /// Returns an error when startup, binding validation or stdio fails.
-pub async fn run(endpoint: SocketAddr, ensure_launcher: Option<PathBuf>) -> io::Result<()> {
+pub async fn run(endpoint: Option<SocketAddr>, ensure_launcher: Option<PathBuf>) -> io::Result<()> {
     let launch_cwd = env::current_dir().ok();
     if let Some(workspace) = &launch_cwd
         && let Ok(SessionBinding::Task(binding)) = client::binding(workspace)

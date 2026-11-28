@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 
 use crate::{
     CONTROL_KEY, MAX_INPUT, Result, control_key, loopback, open_settings, private_file, read,
-    request, secret,
+    request, secret, serve_log,
 };
 
 const INSTALL_BEARER: &str = "NUCLEUS_ENGINE_T3_INSTALL_BEARER";
@@ -319,27 +319,113 @@ fn install_launcher(
                 "existing launcher differs; --adopt requires a matching T3 registration".into(),
             );
         }
-        let mut staged = tempfile::NamedTempFile::new_in(directory)?;
-        staged.write_all(script.as_bytes())?;
-        staged
-            .as_file()
-            .set_permissions(fs::Permissions::from_mode(0o700))?;
-        staged.as_file().sync_all()?;
-        let published = if prior.is_some() {
-            staged.persist(launcher)
-        } else {
-            staged.persist_noclobber(launcher)
-        };
-        match published {
-            Ok(_) => setup_directory.sync_all()?,
-            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.error.into()),
-        }
+        publish_launcher(&setup_directory, launcher, &script, prior.is_some())?;
     }
     if local_launcher(launcher)?.as_deref() != Some(script.as_bytes()) {
         return Err("the existing nucleus-rust launcher differs from this install".into());
     }
     Ok(setup_directory)
+}
+
+/// Atomically write an owner-only launcher. Without `replace`, a launcher that
+/// appeared meanwhile is kept.
+fn publish_launcher(directory: &File, launcher: &Path, script: &str, replace: bool) -> Result<()> {
+    let parent = launcher.parent().ok_or("invalid launcher directory")?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    staged.write_all(script.as_bytes())?;
+    staged
+        .as_file()
+        .set_permissions(fs::Permissions::from_mode(0o700))?;
+    staged.as_file().sync_all()?;
+    let published = if replace {
+        staged.persist(launcher)
+    } else {
+        staged.persist_noclobber(launcher)
+    };
+    match published {
+        Ok(_) => directory.sync_all()?,
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.error.into()),
+    }
+    Ok(())
+}
+
+/// Keep the installed provider launcher on this release's command lines. A
+/// release roll swaps paths in the old launcher without generating it again.
+/// A failure is logged and does not stop the caller.
+pub(super) fn refresh_launcher(storage: &EngineStorage, endpoint: SocketAddr) {
+    let launcher = storage.bin().path().join(LAUNCHER);
+    match rewrite_launcher(storage, endpoint, &launcher) {
+        Ok(false) => {}
+        Ok(true) => serve_log::line(format_args!(
+            "Rewrote {} for this Nucleus release",
+            launcher.display()
+        )),
+        Err(error) => serve_log::line(format_args!(
+            "Could not refresh {}: {error}",
+            launcher.display()
+        )),
+    }
+}
+
+/// Rewrite a marked launcher that differs from the generator. Its control key,
+/// serve launcher and endpoint are the install's, so they come from the file.
+fn rewrite_launcher(
+    storage: &EngineStorage,
+    endpoint: SocketAddr,
+    launcher: &Path,
+) -> Result<bool> {
+    let Some(prior) = private_launcher(launcher)? else {
+        return Ok(false);
+    };
+    if !prior.starts_with(MARKER.as_bytes()) {
+        return Ok(false);
+    }
+    let installed = std::str::from_utf8(&prior)?;
+    // A command for another engine address leaves this install's launcher alone.
+    if endpoint.ip() != Ipv4Addr::LOCALHOST
+        || !installed.contains(&format!(" --endpoint {endpoint} ensure "))
+    {
+        return Ok(false);
+    }
+    let argument = |flag| {
+        quoted_argument(installed, flag).ok_or_else(|| format!("the launcher has no {flag} path"))
+    };
+    let directory = launcher.parent().ok_or("invalid launcher directory")?;
+    let script = launcher_script(
+        storage,
+        endpoint.port(),
+        directory,
+        &argument("--control-key-file")?,
+        &argument("--serve-launcher")?,
+        &env::current_exe()?.canonicalize()?,
+    )?;
+    if installed == script {
+        return Ok(false);
+    }
+    let setup_directory = open_setup_directory(launcher)?.ok_or("provider directory is missing")?;
+    // Another setup command or refresh owns the file for now.
+    if lock_setup(&setup_directory).is_err() || private_launcher(launcher)?.as_ref() != Some(&prior)
+    {
+        return Ok(false);
+    }
+    publish_launcher(&setup_directory, launcher, &script, true)?;
+    Ok(true)
+}
+
+/// Read the path after `flag`, as `quote` wrote it.
+fn quoted_argument(script: &str, flag: &str) -> Option<PathBuf> {
+    let (_, mut rest) = script.split_once(&format!(" {flag} '"))?;
+    let mut value = String::new();
+    loop {
+        let (part, after) = rest.split_once('\'')?;
+        value.push_str(part);
+        let Some(after) = after.strip_prefix(r"\''") else {
+            return Some(value.into());
+        };
+        value.push('\'');
+        rest = after;
+    }
 }
 
 fn launcher_script(
@@ -607,6 +693,57 @@ mod tests {
             local_launcher(&launcher).unwrap().as_deref(),
             Some(script.as_bytes())
         );
+    }
+
+    #[test]
+    fn a_stale_marked_launcher_is_rewritten_once_to_the_generators_output() {
+        let directory = tempfile::tempdir().expect("profile");
+        let home = directory.path().canonicalize().expect("canonical profile");
+        let settings = SettingsFile::open(&home).expect("settings");
+        let storage = settings.configured_storage().expect("storage");
+        let launcher = storage.bin().path().join(LAUNCHER);
+        let key = home.join("controller 'key'");
+        fs::write(&key, "ab".repeat(32)).expect("key fixture");
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).expect("key mode");
+        let serve = home.join("serve 'engine'");
+        executable(&serve);
+        let release = env::current_exe().unwrap().canonicalize().unwrap();
+        let endpoint = SocketAddr::from((Ipv4Addr::LOCALHOST, 4319));
+        drop(
+            install_launcher(&storage, endpoint, &launcher, &key, &serve, &release, false)
+                .expect("publish"),
+        );
+        let generated = fs::read_to_string(&launcher).expect("launcher");
+        assert!(!rewrite_launcher(&storage, endpoint, &launcher).expect("current"));
+
+        // A roll swaps the release path and keeps the old command line.
+        let stale = generated.replace(
+            &format!(
+                "--endpoint {endpoint} acp --ensure-launcher {}",
+                quote(&launcher).unwrap()
+            ),
+            "acp",
+        );
+        assert_ne!(stale, generated);
+        fs::write(&launcher, &stale).expect("stale launcher");
+        let other = SocketAddr::from((Ipv4Addr::LOCALHOST, 4320));
+        assert!(!rewrite_launcher(&storage, other, &launcher).expect("other engine"));
+        assert_eq!(fs::read_to_string(&launcher).expect("kept"), stale);
+        let held = open_setup_directory(&launcher).unwrap().unwrap();
+        lock_setup(&held).expect("hold the setup lock");
+        assert!(!rewrite_launcher(&storage, endpoint, &launcher).expect("locked"));
+        drop(held);
+        assert!(rewrite_launcher(&storage, endpoint, &launcher).expect("rewrite"));
+        assert_eq!(fs::read_to_string(&launcher).expect("current"), generated);
+        assert_eq!(fs::metadata(&launcher).unwrap().mode() & 0o777, 0o700);
+        let inode = fs::metadata(&launcher).unwrap().ino();
+        assert!(!rewrite_launcher(&storage, endpoint, &launcher).expect("repeat"));
+        assert_eq!(fs::metadata(&launcher).unwrap().ino(), inode);
+
+        let unmarked = stale.replace(MARKER, "#!/bin/sh\n");
+        fs::write(&launcher, &unmarked).expect("unmarked launcher");
+        assert!(!rewrite_launcher(&storage, endpoint, &launcher).expect("unmarked"));
+        assert_eq!(fs::read_to_string(&launcher).expect("kept"), unmarked);
     }
 
     #[tokio::test]

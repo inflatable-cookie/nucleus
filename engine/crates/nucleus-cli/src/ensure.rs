@@ -17,7 +17,7 @@ use tokio::time::{Instant, sleep};
 
 use crate::{
     Result, open_settings, private_file, require_private_file,
-    t3_setup::{canonical_file, engine_health, read_key_file, same_engine},
+    t3_setup::{canonical_file, engine_health, read_key_file, refresh_launcher, same_engine},
 };
 
 #[derive(clap::Args)]
@@ -58,6 +58,7 @@ pub(super) async fn run(endpoint: SocketAddr, args: Args) -> Result<()> {
     }
     let storage = open_settings(args.home.as_deref())?.storage()?;
     let key = read_key_file(&args.control_key_file)?;
+    refresh_launcher(&storage, endpoint);
     if probe(endpoint, &key, &storage).await? == Health::Ready {
         return Ok(());
     }

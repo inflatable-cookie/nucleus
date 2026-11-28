@@ -16,12 +16,21 @@ const REFUSAL_GRACE: Duration = Duration::from_secs(2);
 /// Whether an HTTP request failed to connect because the socket refused it.
 #[must_use]
 pub fn connection_refused(error: &reqwest::Error) -> bool {
-    error.is_connect()
-        && std::iter::successors(error.source(), |&cause| cause.source()).any(|cause| {
-            cause
-                .downcast_ref::<io::Error>()
-                .is_some_and(|error| error.kind() == io::ErrorKind::ConnectionRefused)
-        })
+    error.is_connect() && caused_by(error, io::ErrorKind::ConnectionRefused)
+}
+
+/// Whether a request found no engine to connect to. A timeout or a reset does
+/// not show that the listener is gone.
+pub(crate) fn connect_failed(error: &reqwest::Error) -> bool {
+    error.is_connect() && !error.is_timeout() && !caused_by(error, io::ErrorKind::ConnectionReset)
+}
+
+fn caused_by(error: &reqwest::Error, kind: io::ErrorKind) -> bool {
+    std::iter::successors(error.source(), |&cause| cause.source()).any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|error| error.kind() == kind)
+    })
 }
 
 /// Run the installed provider launcher's existing engine startup path.
@@ -48,7 +57,9 @@ pub async fn ensure_launcher(launcher: &Path) -> io::Result<()> {
 }
 
 pub(crate) struct Recovery {
-    endpoint: SocketAddr,
+    /// The endpoint named on the command line. Without one, the launcher's
+    /// engine is whichever one this process's bindings name.
+    endpoint: Option<SocketAddr>,
     launcher: PathBuf,
     outage: Mutex<Outage>,
 }
@@ -61,7 +72,7 @@ struct Outage {
 }
 
 impl Recovery {
-    pub(crate) fn new(endpoint: SocketAddr, launcher: PathBuf) -> Self {
+    pub(crate) fn new(endpoint: Option<SocketAddr>, launcher: PathBuf) -> Self {
         Self {
             endpoint,
             launcher,
@@ -70,7 +81,7 @@ impl Recovery {
     }
 
     pub(crate) fn observe(&self, endpoint: SocketAddr, refused: bool) {
-        if endpoint != self.endpoint {
+        if self.endpoint.is_some_and(|named| named != endpoint) {
             return;
         }
         let mut outage = self.outage.lock().expect("engine recovery lock");
@@ -112,3 +123,6 @@ fn log_attempt(attempt: u32, outcome: &str) {
     });
     let _ = io::stderr().write_all(format!("{event}\n").as_bytes());
 }
+
+#[cfg(test)]
+mod tests;

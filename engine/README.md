@@ -117,8 +117,10 @@ Staging signs the copied executable with the fixed identifier
 same certificate across releases so Keychain can recognize the engine.
 
 At activation, point the CLI runtime link and the service and ACP launchers
-at the staged `nucleus`. The [registry launcher](#registry-serve-launcher) uses its matching board assets. The managed
-skill link at `<engine-home>/skills/nucleus` points to that release's skill
+at the staged `nucleus`. The new release then
+[refreshes the ACP command lines](#set-up-t3). The
+[registry launcher](#registry-serve-launcher) uses its matching board assets.
+The managed skill link at `<engine-home>/skills/nucleus` points to that release's skill
 directory. Configure each provider to discover the stable link once. On later
 rolls, update the stable target with the runtime and keep the provider's skill
 path. The engine embeds its run protocol when a provider has yet to discover
@@ -509,17 +511,30 @@ The ACP launcher calls `nucleus ensure` for the same profile and endpoint
 as `nucleus serve`. It reuses a healthy listener only when its controller
 credential and database path match. When the port is absent, it serializes
 startup and passes the lock to the detached engine. A running ACP client
-also calls the launcher after at least two seconds of connection refusals.
-It logs each recovery attempt to `acp.log` and backs off between attempts.
+also calls the launcher after at least two seconds of failed connections to
+its engine. A timed out or reset connection does not count. The engine is the
+one at `--endpoint`, or the one the session binding names when the flag is
+omitted. Failed and slow request lines in `acp.log` show this classification
+as `refused`. The client logs each recovery attempt there and backs off
+between attempts.
 
 Keep the serve launcher's log under the configured log root. On SIGINT,
 SIGTERM or SIGHUP, `serve` logs the signal and its uptime and shuts down.
 If the scheduler stops, `serve` logs the cause and exits with an error so
 clients can restart it.
-Once `serve` holds the profile lock, it records the run before initializing
-the service. The next start reports the last log time and how the previous
-run ended, including errors and SIGKILL during initialization. The pass
-logs once when one task has held it for a minute, naming the task and the step.
+`serve` runs as a thin parent and an engine child. The child holds the profile
+lock and the port. The parent forwards SIGINT, SIGTERM and SIGHUP, waits for
+the child and logs its exit code or signal, uptime and peak resident memory.
+It then exits with the same code, or dies by the same signal. Signal either
+process to stop the engine. A SIGKILL of the parent alone leaves the engine
+running without an exit record.
+
+Once the engine holds the profile lock, it records the run before initializing
+the service. The next start reports the last log time, how the previous run
+ended and the parent's exit record, including errors and SIGKILL during
+initialization. If both processes die together, there is no exit record. The
+pass logs once when one task has held it for a minute, naming the task and the
+step.
 
 ### Set up T3
 
@@ -582,9 +597,12 @@ place. Other provider IDs and running sessions are left alone.
 
 The launcher ensures the engine on `127.0.0.1` and execs Rust ACP over
 stdio with the profile's binding directory and `loadSession: true`.
-Refresh the installed launcher with `t3 install --adopt` when upgrading
-to ACP client recovery. Clients get recovery on their next launch. Install
-waits for the exact T3 registration, the `nucleus` model probe and the
+When `ensure` or `serve` starts, it rewrites a marked ACP launcher that differs
+from this release's output and logs the change. It keeps the launcher's control
+key and serve launcher paths. It leaves unmarked launchers, and launchers for
+another endpoint, unchanged. The engine does not generate the serve launcher
+and never rewrites it. Clients get new command lines on their next launch.
+Install waits for the exact T3 registration, the `nucleus` model probe and the
 engine's observation of the pinned Rust Inbox. During the TS transition, a
 still-pinned TS Inbox defers Rust Inbox setup. Rerun install once that Inbox
 is retired. The Rust provider can already be ready at that point.
