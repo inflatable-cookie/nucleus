@@ -1538,9 +1538,10 @@ for (const compact of [false, true]) {
         () => Boolean(ui.query("History, 1")),
         "Rust task counts did not load",
       );
+      // nucleus#1667: Projects tops the menu, above Needs you.
       assert.deepEqual(navigationLabels(ui).map(viewName), [
-        "Needs you",
         "Projects",
+        "Needs you",
         "Planning",
         "Leads",
         "Papercuts",
@@ -1557,9 +1558,33 @@ for (const compact of [false, true]) {
       const gaps = menu.filter(
         (node) => node.type === "View" && node.props.style?.height === space.md,
       );
-      assert.equal(gaps.length, 2);
+      assert.equal(gaps.length, 3);
       for (const gap of gaps)
         assert.equal(gap.props.style.backgroundColor, undefined);
+      // A gap after Projects, after Needs you, and before Working.
+      assert.deepEqual(
+        menu.map((node) =>
+          gaps.includes(node)
+            ? "gap"
+            : viewName(String(node.props.accessibilityLabel)),
+        ),
+        [
+          "Projects",
+          "gap",
+          "Needs you",
+          "gap",
+          "Planning",
+          "Leads",
+          "Papercuts",
+          "Queue",
+          "gap",
+          "Working",
+          "In review",
+          "Merging",
+          "Closing",
+          "History",
+        ],
+      );
       assert.ok(ui.get("Needs you, 1"));
       assert.ok(ui.get("Queue, 3"));
       assert.ok(ui.get("Working, 1"));

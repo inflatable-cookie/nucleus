@@ -51,7 +51,7 @@ import {
 } from "./design";
 import { useFocusVisible } from "./focus-modality";
 
-type ScopeStorage = {
+export type ScopeStorage = {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem?(key: string): void;
