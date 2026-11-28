@@ -435,6 +435,7 @@ async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise
             key.as_bytes(),
             Report::Work(nucleus_core::WorkReport {
                 pull_request: pr.clone(),
+                code_changed: false,
                 summary: Some(
                     "Fixed the synthetic change.
 
@@ -4454,6 +4455,7 @@ async fn start_full_cycle_task(
             1,
             Report::Work(nucleus_core::WorkReport {
                 pull_request: pr1.clone(),
+                code_changed: false,
                 summary: Some("Initial work".into()),
             }),
         ),
@@ -4520,6 +4522,7 @@ async fn finish_full_cycle_task(
             3,
             Report::Work(nucleus_core::WorkReport {
                 pull_request: pr2.clone(),
+                code_changed: false,
                 summary: Some("Addressed review".into()),
             }),
         ),
@@ -4675,6 +4678,7 @@ async fn seed_pre_1601_task(service: &Service, head: &nucleus_core::Head) {
             Report::Work(nucleus_core::WorkReport {
                 pull_request: pr.clone(),
                 summary: Some("Pre-1601 work".into()),
+                code_changed: false,
             }),
         )
         .unwrap();

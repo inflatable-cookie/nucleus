@@ -192,9 +192,13 @@ lacks the matching installed role sections, the engine includes them. See
 A worker reports the real open non-draft PR and exact pushed head from its assigned
 branch to its assigned base. Finding a branch or PR is evidence of identity.
 A readiness report comes from the current worker. On continuation or revision,
-keep the existing checkout, source custody and PR. A recorded same-head result
-supplies context without substituting for new work or a new verdict. Report-only
-work delivers the bound lane artifact at the exact key, version and digest.
+keep the existing checkout, source custody and PR. A same-head revision after
+changes are requested returns to exact-head review with its worker summary. The
+reviewer reads the current PR description. The assignment includes a fresh
+copy from the verified PR head when it fits. An explicit code-change claim in
+the worker summary at the reviewed head asks the planner to resolve the
+contradiction. Report-only work delivers the bound lane artifact at the exact
+key, version and digest.
 Its planner accepts that version with `complete`. See
 [report-only milestone QA](milestone-qa.md) and
 [report verification](../../../engine/crates/nucleus-core/src/command.rs).

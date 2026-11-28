@@ -928,6 +928,7 @@ impl ReportFixture {
             branch: checkout.branch(),
             checkout_head: Some(&self.head),
             pr: None,
+            pr_description: None,
             discovered_skill: None,
             model: "fixture",
             shared_model: None,

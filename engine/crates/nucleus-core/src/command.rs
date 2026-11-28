@@ -232,6 +232,15 @@ impl Task {
         if let Some(pr) = observation.pr() {
             self.observe_pr(pr);
         }
+        if phase != Phase::Reviewing {
+            self.threads.same_head_revision_summary = None;
+        } else if let Some(Report::Work(work)) = &report
+            && self.changes_requested_at(&work.pull_request.head)
+        {
+            self.threads
+                .same_head_revision_summary
+                .clone_from(&work.summary);
+        }
         if phase == Phase::Reviewing
             && let (Some(author), Some(Report::Work(work))) =
                 (&mut self.threads.review_author, &report)
@@ -880,6 +889,9 @@ impl Task {
             run.revoked = true;
         }
         self.phase = phase;
+        if phase != Phase::Reviewing {
+            self.threads.same_head_revision_summary = None;
+        }
         self.attempts = 0;
         self.question = None;
         self.work_continuation = None;

@@ -99,6 +99,33 @@ fn pull(head: char, merged: bool) -> Value {
     })
 }
 
+#[tokio::test]
+async fn review_description_is_bound_to_the_verified_open_head() {
+    let mut open = pull('a', false);
+    open["body"] = json!("Current review evidence");
+    let mut closed = open.clone();
+    closed["state"] = json!("closed");
+    let (forge, calls) = server(vec![Some(open.clone()), Some(open), Some(closed)]);
+    let target = branches().target(PR_URL).expect("target");
+    assert_eq!(
+        forge
+            .open_description(&target, &sha('a'))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("Current review evidence")
+    );
+    assert_eq!(
+        forge.open_description(&target, &sha('b')).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        forge.open_description(&target, &sha('a')).await.unwrap(),
+        None
+    );
+    assert_eq!(calls.join().expect("fixture calls").len(), 3);
+}
+
 fn checks(head: char, state: &str) -> Value {
     json!({"data": {"repository": {"pullRequest": {
         "headRefOid": sha(head), "baseRefName": "main", "baseRefOid": sha('b'), "isDraft": false,

@@ -8,8 +8,8 @@ use std::{
 use longhorn_redact::{RedactionRules, Redactor};
 use nucleus_core::{
     Action, CallbackCredential, CheckState, CloseWorkspace, Forge, Head, Host, Launch,
-    LaunchInputs, Observation, Observed, Phase, Report, Role, Run, RunState, Task, WaitReason,
-    Workspace, decide,
+    LaunchInputs, Observation, Observed, Phase, Report, Role, Run, RunState, Task, Verdict,
+    WaitReason, Workspace, decide,
 };
 use nucleus_forge::{Branches, ForgeError, MergeWrite, PullTarget};
 use nucleus_hosts::{
@@ -781,11 +781,7 @@ impl Service {
         let route = self.project_for(identity).await?;
         route.binding(checkout)?;
         let review_entry = task.identity().entry == nucleus_core::Entry::ReviewEntry;
-        let branches = if review_entry {
-            Branches::for_review_entry(&identity.repository, &identity.base)?
-        } else {
-            Branches::new(&identity.repository, &identity.base, checkout.branch())?
-        };
+        let branches = task_branches(task, checkout)?;
         let target = match recorded_source(task) {
             Some(pr) => Some(branches.target(&pr.url)?),
             None if review_entry => return Err(ForgeError::Identity.into()),
@@ -1184,6 +1180,7 @@ impl Service {
             None
         };
         let (lanes, dependencies) = self.prompt_context(row, &route).await?;
+        let description = self.revision_description(task, checkout, role, pr).await;
         let assignment = Prompt {
             row,
             role,
@@ -1195,6 +1192,7 @@ impl Service {
             branch: checkout.branch(),
             checkout_head,
             pr,
+            pr_description: description.as_deref(),
             discovered_skill,
             model: &profile.model,
             shared_model: selection.and_then(|selected| selected.intent.shared_model()),
@@ -1739,6 +1737,27 @@ impl Service {
             return self.apply(&sent, &observation, next).await;
         }
         Ok(action)
+    }
+
+    async fn revision_description(
+        &self,
+        task: &Task,
+        checkout: &Checkout<'_>,
+        role: Role,
+        pr: Option<&nucleus_core::PullRequest>,
+    ) -> Option<String> {
+        let pr = pr.filter(|_| role == Role::Reviewer)?;
+        if !matches!(task.verdict(), Some(Verdict::Reviewed { head, decision: nucleus_core::Review::Changes, .. }) if *head == pr.head)
+        {
+            return None;
+        }
+        self.check_forge_ready().ok()?;
+        let target = task_branches(task, checkout).ok()?.target(&pr.url).ok()?;
+        // The reviewer can fetch the body directly if it cannot travel in the assignment.
+        capture_forge(self, self.forge.open_description(&target, &pr.head).await)
+            .ok()?
+            .filter(|body| body.len() <= 4_096)
+            .map(|body| crate::presentation::excerpt(&body, usize::MAX))
     }
 
     async fn send(
@@ -2624,6 +2643,15 @@ fn seen_from<T>(value: Option<T>) -> Observed<T> {
     value.map_or(Observed::Unknown, Observed::Known)
 }
 
+fn task_branches(task: &Task, checkout: &Checkout<'_>) -> Result<Branches, ForgeError> {
+    let identity = task.identity();
+    if identity.entry == nucleus_core::Entry::ReviewEntry {
+        Branches::for_review_entry(&identity.repository, &identity.base)
+    } else {
+        Branches::new(&identity.repository, &identity.base, checkout.branch())
+    }
+}
+
 fn recorded_source(task: &Task) -> Option<&nucleus_core::PullRequest> {
     if task.identity().entry != nucleus_core::Entry::ReviewEntry
         && let Some(run) = task.run()
@@ -2678,6 +2706,7 @@ mod start_tests;
 mod tests {
     mod provider_helpers;
     mod retirement;
+    mod revisions;
 
     use std::sync::{
         Arc,
