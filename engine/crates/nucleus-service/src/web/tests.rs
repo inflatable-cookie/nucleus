@@ -427,17 +427,98 @@ async fn assert_event(events: &mut BodyDataStream, expected: &[&str]) {
     }
 }
 
+fn router(service: Arc<Service>, controllers: impl IntoIterator<Item = Controller>) -> Router {
+    let controllers: Vec<_> = controllers.into_iter().collect();
+    let t3 = controllers
+        .iter()
+        .any(|c| matches!(&c.authority, Authority::Planner { actor } if actor == "planner"));
+    crate::router_with_t3_callers(service, controllers, t3.then_some(PLANNER_KEY))
+}
+
+fn router_with_board(
+    service: Arc<Service>,
+    controllers: impl IntoIterator<Item = Controller>,
+    assets: &std::path::Path,
+) -> std::io::Result<Router> {
+    let controllers: Vec<_> = controllers.into_iter().collect();
+    let t3 = controllers
+        .iter()
+        .any(|c| matches!(&c.authority, Authority::Planner { actor } if actor == "planner"));
+    crate::router_with_board_and_t3_callers(service, controllers, assets, t3.then_some(PLANNER_KEY))
+}
+
+/// Enroll a T3 caller through the same first-contact API as a planner thread.
+async fn enrolled_fixture(
+    forge: GitHub,
+) -> (tempfile::TempDir, Service, tokio::task::JoinHandle<()>) {
+    let (home, mut service) = registry_fixture(forge);
+    let checkout = service.fixture().checkout;
+    crate::tests::git(
+        &checkout,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+    let root = checkout.clone();
+    let (host, server) = crate::tests::native_fixture(move |request| {
+        let value = match request["tag"].as_str() {
+            Some("orchestration.subscribeShell") => json!({"kind":"snapshot", "snapshot": {
+                "projects":[{"id":"local-fixture", "workspaceRoot":root}], "threads":[]
+            }}),
+            Some("orchestration.subscribeThread") => json!({"kind":"snapshot", "snapshotSequence":1, "projection": {
+                "thread":{"id":request["payload"]["threadId"], "projectId":"local-fixture"}, "runs":[], "messages":[]
+            }}),
+            _ => panic!("unexpected planner fixture request: {request}"),
+        };
+        json!({"_tag":"Chunk", "requestId":request["id"], "values":[value, {"kind":"synchronized"}]})
+    }).await;
+    host.fixture_project_shell(
+        &json!({"projects":[{"id":"local-fixture", "workspaceRoot":checkout}], "threads":[]}),
+        "fixture-acp",
+    );
+    service.host = host;
+    let service = Arc::new(service);
+    let api = crate::router_with_t3_callers(Arc::clone(&service), [], Some(PLANNER_KEY));
+    let request = api.clone().oneshot(
+        Request::get("/v1/tasks")
+            .header("host", LOCAL_HOST)
+            .header(
+                "authorization",
+                format!("Bearer {}", hex::encode(PLANNER_KEY)),
+            )
+            .header("x-nucleus-t3-caller", "planner")
+            .body(Body::empty())
+            .unwrap(),
+    );
+    tokio::pin!(request);
+    tokio::select! {
+        biased;
+        () = service.enrollment_wake.notified() => {}
+        _ = &mut request => panic!("planner request finished before enrollment"),
+    }
+    assert_eq!(service.take_enrollment().await.as_deref(), Some("planner"));
+    service.complete_enrollment("planner").await;
+    assert_eq!(request.await.unwrap().status(), StatusCode::OK);
+    drop(api);
+    let service = Arc::try_unwrap(service)
+        .ok()
+        .expect("fixture service is unshared");
+    (home, service, server)
+}
+
 async fn get_as(api: &Router, path: &str, key: &[u8; 32]) -> Response {
+    let mut request = Request::get(path)
+        .header("host", LOCAL_HOST)
+        .header("authorization", format!("Bearer {}", hex::encode(key)));
+    if key == &PLANNER_KEY {
+        request = request.header("x-nucleus-t3-caller", "planner");
+    }
     api.clone()
-        .oneshot(
-            Request::get(path)
-                .header("host", LOCAL_HOST)
-                .header("authorization", format!("Bearer {}", hex::encode(key)))
-                .body(Body::empty())
-                .expect("request"),
-        )
+        .oneshot(request.body(Body::empty()).unwrap())
         .await
-        .expect("response")
+        .unwrap()
 }
 
 async fn post_json(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> StatusCode {
@@ -445,17 +526,17 @@ async fn post_json(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> 
 }
 
 async fn post_as(api: &Router, target: &str, key: &[u8; 32], body: &Value) -> Response {
+    let mut request = Request::post(target)
+        .header("host", LOCAL_HOST)
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {}", hex::encode(key)));
+    if key == &PLANNER_KEY {
+        request = request.header("x-nucleus-t3-caller", "planner");
+    }
     api.clone()
-        .oneshot(
-            Request::post(target)
-                .header("host", LOCAL_HOST)
-                .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {}", hex::encode(key)))
-                .body(Body::from(body.to_string()))
-                .expect("request"),
-        )
+        .oneshot(request.body(Body::from(body.to_string())).unwrap())
         .await
-        .expect("response")
+        .unwrap()
 }
 
 async fn planner_roster_fixture(

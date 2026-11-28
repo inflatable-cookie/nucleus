@@ -176,7 +176,8 @@ async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_t
 
 #[tokio::test]
 async fn standalone_board_serves_assets_and_local_apis_without_a_typescript_service() {
-    let (home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (home, service, _planner_host) =
+        enrolled_fixture(GitHub::new("unused-forge-fixture").expect("client")).await;
     let assets = home.path().join("board");
     std::fs::create_dir(&assets).expect("assets directory");
     std::fs::write(assets.join("index.html"), "<script src='/app.js'></script>")
@@ -520,7 +521,7 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
     use std::os::unix::fs::PermissionsExt;
 
     let forge = || GitHub::new("unused-fixture-forge").expect("fixture forge");
-    let (home, service) = registry_fixture(forge());
+    let (home, service, _planner_host) = enrolled_fixture(forge()).await;
     let assets = home.path().join("board");
     std::fs::create_dir(&assets).unwrap();
     std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
@@ -652,7 +653,8 @@ async fn board_pairing_at_capacity_reclaims_the_least_recently_used_device() {
 
 #[tokio::test]
 async fn planner_extend_via_http_raises_the_exhausted_allowance_once() {
-    let (_root, mut service) = fixture(GitHub::new("unused").unwrap());
+    let (_root, mut service, _planner_host) =
+        enrolled_fixture(GitHub::new("unused").unwrap()).await;
     let (host, _, _, native) = planner_roster_fixture("planner", "other").await;
     service.host = host;
     let (asked, limit) = exhaust_legacy_allowance(&service).await;

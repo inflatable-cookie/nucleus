@@ -1016,3 +1016,104 @@ async fn a_cold_promotion_keeps_imported_items_addressable_after_enrollment() {
     assert_eq!(promote().await.status(), StatusCode::OK);
     assert_eq!(registry.reads.load(Ordering::Relaxed), 1);
 }
+
+#[tokio::test]
+async fn verified_planners_can_answer_across_projects_but_other_credentials_cannot() {
+    let registry = registry().await;
+    for actor in ["alpha-planner", "beta-planner"] {
+        let response = registry
+            .inline_command(
+                actor,
+                caller_request(&registry.api, Method::GET, "/v1/tasks", actor, Value::Null),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let head = registry.service.fixture().start;
+    let forge = Observed::Known(Forge::Merged {
+        pr: nucleus_core::PullRequest {
+            url: PR.into(),
+            head: head.clone(),
+        },
+        commit: head.clone(),
+    });
+    for id in ["same-project-answer", "cross-project-answer"] {
+        let (reserved, _, _) = reservation(id, Entry::Brief, &head);
+        let mut task = Task::new(reserved.identity().clone(), "Synthetic change".into(), None);
+        let mut observation = Observation {
+            host: Observed::Unknown,
+            workspace: Observed::Unknown,
+            forge: Observed::Unknown,
+        };
+        assert_eq!(
+            task.reconcile(&observation),
+            Action::Advance(Phase::Working)
+        );
+        observation.forge = forge.clone();
+        assert!(matches!(
+            task.reconcile(&observation),
+            Action::Ask(Question::Accept { .. })
+        ));
+        assert!(
+            task.bind_question_delivery(
+                T3::prepare_notice(
+                    "alpha-planner".into(),
+                    format!("notice-{id}"),
+                    "Accept merge"
+                )
+                .unwrap()
+            )
+        );
+        seed_task(&registry.service, &task).await;
+        let row = registry.service.task(id).await.unwrap();
+        registry
+            .service
+            .observe_commands(&row, &forge)
+            .await
+            .unwrap();
+    }
+    let (worker, worker_key, _) = reservation("callback-worker", Entry::Brief, &head);
+    let (reviewer, reviewer_key, _) = reservation("callback-reviewer", Entry::ReviewEntry, &head);
+    seed_task(&registry.service, &worker).await;
+    seed_task(&registry.service, &reviewer).await;
+    let path = "/v1/tasks/same-project-answer/commands";
+    let answer = json!({"answer":{"accept":{"head":head, "reason":"Accepted the observed merge"}}});
+    for key in [worker_key.as_bytes(), reviewer_key.as_bytes(), &[0; 32]] {
+        assert_eq!(
+            post_as(&registry.api, path, key, &answer).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let unverified = registry
+        .inline_command(
+            "unknown-caller",
+            caller_request(
+                &registry.api,
+                Method::POST,
+                path,
+                "unknown-caller",
+                answer.clone(),
+            ),
+        )
+        .await;
+    assert_eq!(unverified.status(), StatusCode::FORBIDDEN);
+    for (actor, task) in [
+        ("alpha-planner", "same-project-answer"),
+        ("beta-planner", "cross-project-answer"),
+    ] {
+        let response = caller_request(
+            &registry.api,
+            Method::POST,
+            &format!("/v1/tasks/{task}/commands"),
+            actor,
+            answer.clone(),
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{actor}: {}",
+            json_body(response).await
+        );
+    }
+}

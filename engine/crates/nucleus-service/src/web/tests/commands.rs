@@ -242,7 +242,8 @@ async fn acp_credentials_are_scoped_and_rotation_closes_the_old_stream() {
 
 #[tokio::test]
 async fn admission_commits_when_t3_is_unreachable() {
-    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, service, _planner_host) =
+        enrolled_fixture(GitHub::new("unused-forge-fixture").expect("client")).await;
     let service = Arc::new(service);
     let api = router(
         Arc::clone(&service),
@@ -752,7 +753,8 @@ async fn next_and_owner_commands_agree_on_code_recovery() {
 
 #[tokio::test]
 async fn next_and_commands_share_acceptance_authority_and_forge_requirements() {
-    let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, mut service, _planner_host) =
+        enrolled_fixture(GitHub::new("unused-forge-fixture").expect("client")).await;
     let head = service.fixture().start.clone();
     seed_held_acceptance(&service, &head).await;
     let (forge, readable, _published, reads, server) = serve_merged_forge(&head).await;
@@ -1105,7 +1107,8 @@ async fn queued_external_merge_acceptance_bypasses_saturation() {
 
 #[tokio::test]
 async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, mut service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").unwrap()).await;
     let head = service.fixture().start.clone();
     let (forge, readable, server) = switchable_open_forge(&head).await;
     service.forge = forge;

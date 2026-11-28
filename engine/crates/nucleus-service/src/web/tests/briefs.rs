@@ -65,7 +65,8 @@ async fn assert_stale_browser_amend(api: &Router, browser: &str, version: u64) {
 
 #[tokio::test]
 async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
-    let (home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (home, service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").expect("client")).await;
     let service = Arc::new(service);
     let assets = home.path().join("board");
     std::fs::create_dir(&assets).expect("assets directory");
@@ -197,14 +198,15 @@ async fn a_live_brief_can_be_amended_with_its_existing_scope() {
 
 #[tokio::test]
 async fn promotion_checks_the_final_brief_without_limiting_lane_documents() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service, _planner_host) =
+        enrolled_fixture(GitHub::new("fixture").expect("client")).await;
     let service = Arc::new(service);
     let api = router(
         Arc::clone(&service),
         [planner_controller(PLANNER_KEY, "planner")],
     );
     let exact = brief_with_bytes(MAX_BRIEF_BYTES);
-    let items = "/v1/planning/local-fixture/items";
+    let items = "/v1/planning/fixture-product/items";
     let raw = "é".repeat(MAX_BRIEF_BYTES / 2);
     let added = post_as(
         &api,
@@ -235,7 +237,7 @@ async fn promotion_checks_the_final_brief_without_limiting_lane_documents() {
     assert_eq!(
         state
             .store
-            .item("local-fixture", id)
+            .item("fixture-product", id)
             .unwrap()
             .unwrap()
             .state,
@@ -264,7 +266,7 @@ async fn promotion_checks_the_final_brief_without_limiting_lane_documents() {
     assert_eq!(json_body(response).await["number"], 1);
 
     let lane = super::planning::put_as(
-        &api, "/v1/planning/local-fixture/lanes/evidence", &PLANNER_KEY,
+        &api, "/v1/planning/fixture-product/lanes/evidence", &PLANNER_KEY,
         &json!({"version":0,"title":"Evidence","aim":"Keep the source material","document":format!("{exact}x")}),
     ).await;
     assert_eq!(lane.status(), StatusCode::OK);
