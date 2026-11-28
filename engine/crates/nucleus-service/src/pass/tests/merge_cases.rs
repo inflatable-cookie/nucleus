@@ -1087,76 +1087,152 @@ async fn up_to_date_base_merge_gate_checks_compare_and_passes_pre_merge_check() 
         task
     };
 
-    // 1. Opted-in project with head behind/diverged from base returns to worker
+    let mut checks = forge_checks(&head);
+    checks["data"]["repository"]["pullRequest"]["baseRefOid"] = json!(base_sha);
+
+    // 1. Opted-in project with head behind or diverged from base returns to worker
     //    with the named pre-merge check and skips the merge write.
-    let behind_task = seed_merge_task(&service, "behind-opted-in");
+    for (id, status) in [
+        ("behind-opted-in", "behind"),
+        ("diverged-opted-in", "diverged"),
+    ] {
+        let task = seed_merge_task(&service, id);
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .create_with_facts(
+                &task,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
+        let mut pull = forge_pull(&head);
+        pull["head"]["ref"] = json!(format!("ns-{id}"));
+        pull["base"]["sha"] = json!(base_sha);
+        let compares = Arc::new(AtomicUsize::new(0));
+        let puts = Arc::new(AtomicUsize::new(0));
+        let (c_count, p_count) = (Arc::clone(&compares), Arc::clone(&puts));
+        let checks_wire = checks.clone();
+        let (forge, server) = serve_forge(
+            Router::new()
+                .route(
+                    &format!("/repos/{REPOSITORY}/pulls/1"),
+                    get(move || async move { Json(pull) }),
+                )
+                .route("/graphql", post(move || async move { Json(checks_wire) }))
+                .route(
+                    &format!("/repos/{REPOSITORY}/compare/{base_sha}...{head}"),
+                    get(move || async move {
+                        c_count.fetch_add(1, Ordering::Relaxed);
+                        Json(json!({"status": status}))
+                    }),
+                )
+                .route(
+                    &format!("/repos/{REPOSITORY}/pulls/1/merge"),
+                    put(move || async move {
+                        p_count.fetch_add(1, Ordering::Relaxed);
+                        StatusCode::FORBIDDEN
+                    }),
+                ),
+        )
+        .await;
+        service.forge = forge;
+        let row = service.task(id).await.unwrap();
+        assert_eq!(
+            service
+                .advance(&row, &service.host.fixture_pass())
+                .await
+                .unwrap(),
+            Action::Advance(Phase::Working),
+            "expected worker return for compare status {status}"
+        );
+        assert_eq!(compares.load(Ordering::Relaxed), 1);
+        assert_eq!(puts.load(Ordering::Relaxed), 0);
+        let returned = service.task(id).await.unwrap();
+        assert_eq!(returned.task.phase(), Phase::Working);
+        let instruction = returned
+            .task
+            .work_instruction()
+            .expect("base-moved worker instruction");
+        assert!(
+            instruction.contains("The base moved")
+                && instruction.contains("effigy farmyard/host:check")
+                && instruction.contains("report its result"),
+            "unexpected base-moved instruction for {status}: {instruction}"
+        );
+        server.abort();
+    }
+
+    // 1b. Unavailable or malformed compare never permits a merge PUT and is never
+    //     mistaken for base-moved evidence: the task stays in Merging and returns an error.
+    let error_task = seed_merge_task(&service, "compare-error-opted-in");
     service
         .state
         .lock()
         .await
         .store
         .create_with_facts(
-            &behind_task,
+            &error_task,
             &event("fixture"),
             nucleus_store::TaskAdmissionFacts::default(),
         )
         .unwrap();
-    let mut pull = forge_pull(&head);
-    pull["head"]["ref"] = json!("ns-behind-opted-in");
-    pull["base"]["sha"] = json!(base_sha);
-    let mut checks = forge_checks(&head);
-    checks["data"]["repository"]["pullRequest"]["baseRefOid"] = json!(base_sha);
-    let compares = Arc::new(AtomicUsize::new(0));
-    let puts = Arc::new(AtomicUsize::new(0));
-    let (c_count, p_count) = (Arc::clone(&compares), Arc::clone(&puts));
-    let (pull_wire, checks_wire) = (pull.clone(), checks.clone());
-    let (forge, server) = serve_forge(
-        Router::new()
-            .route(
-                &format!("/repos/{REPOSITORY}/pulls/1"),
-                get(move || async move { Json(pull_wire) }),
-            )
-            .route("/graphql", post(move || async move { Json(checks_wire) }))
-            .route(
-                &format!("/repos/{REPOSITORY}/compare/{base_sha}...{head}"),
-                get(move || async move {
-                    c_count.fetch_add(1, Ordering::Relaxed);
-                    Json(json!({"status": "diverged"}))
-                }),
-            )
-            .route(
-                &format!("/repos/{REPOSITORY}/pulls/1/merge"),
-                put(move || async move {
-                    p_count.fetch_add(1, Ordering::Relaxed);
-                    StatusCode::FORBIDDEN
-                }),
-            ),
-    )
-    .await;
-    service.forge = forge;
-    let row = service.task("behind-opted-in").await.unwrap();
-    assert_eq!(
-        service
-            .advance(&row, &service.host.fixture_pass())
-            .await
-            .unwrap(),
-        Action::Advance(Phase::Working)
-    );
-    assert_eq!(compares.load(Ordering::Relaxed), 1);
-    assert_eq!(puts.load(Ordering::Relaxed), 0);
-    let returned = service.task("behind-opted-in").await.unwrap();
-    assert_eq!(returned.task.phase(), Phase::Working);
-    let instruction = returned
-        .task
-        .work_instruction()
-        .expect("base-moved worker instruction");
-    assert!(
-        instruction.contains("The base moved")
-            && instruction.contains("effigy farmyard/host:check")
-            && instruction.contains("report its result"),
-        "unexpected base-moved instruction: {instruction}"
-    );
-    server.abort();
+    for (http_status, body) in [
+        (StatusCode::OK, json!({"status": "unexpected"})),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"message": "unavailable"}),
+        ),
+    ] {
+        service.forge_until.store(0, Ordering::Relaxed);
+        let mut pull = forge_pull(&head);
+        pull["head"]["ref"] = json!("ns-compare-error-opted-in");
+        pull["base"]["sha"] = json!(base_sha);
+        let compares = Arc::new(AtomicUsize::new(0));
+        let puts = Arc::new(AtomicUsize::new(0));
+        let (c_count, p_count) = (Arc::clone(&compares), Arc::clone(&puts));
+        let checks_wire = checks.clone();
+        let (forge, server) = serve_forge(
+            Router::new()
+                .route(
+                    &format!("/repos/{REPOSITORY}/pulls/1"),
+                    get(move || async move { Json(pull) }),
+                )
+                .route("/graphql", post(move || async move { Json(checks_wire) }))
+                .route(
+                    &format!("/repos/{REPOSITORY}/compare/{base_sha}...{head}"),
+                    get(move || async move {
+                        c_count.fetch_add(1, Ordering::Relaxed);
+                        (http_status, Json(body))
+                    }),
+                )
+                .route(
+                    &format!("/repos/{REPOSITORY}/pulls/1/merge"),
+                    put(move || async move {
+                        p_count.fetch_add(1, Ordering::Relaxed);
+                        StatusCode::FORBIDDEN
+                    }),
+                ),
+        )
+        .await;
+        service.forge = forge;
+        let row = service.task("compare-error-opted-in").await.unwrap();
+        let outcome = service.advance(&row, &service.host.fixture_pass()).await;
+        assert!(
+            matches!(outcome, Err(ServiceError::Forge(_))),
+            "expected forge error for compare reply {http_status}, got {outcome:?}"
+        );
+        assert_eq!(compares.load(Ordering::Relaxed), 1);
+        assert_eq!(puts.load(Ordering::Relaxed), 0);
+        let preserved = service.task("compare-error-opted-in").await.unwrap();
+        assert_eq!(preserved.task.phase(), Phase::Merging);
+        assert!(preserved.task.work_instruction().is_none());
+        assert_eq!(preserved.task.verdict(), row.task.verdict());
+        server.abort();
+    }
+    service.forge_until.store(0, Ordering::Relaxed);
 
     // 2. Same opted-in project with head containing base merges.
     let up_to_date_task = seed_merge_task(&service, "ahead-opted-in");
