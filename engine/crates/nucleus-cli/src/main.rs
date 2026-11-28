@@ -1,6 +1,7 @@
 mod ensure;
 mod planning;
 mod serve_log;
+mod supervise;
 mod t3_setup;
 
 use std::{
@@ -10,7 +11,7 @@ use std::{
     fs::File,
     future::Future,
     io::{self, Read},
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     os::fd::AsFd,
     path::{Path, PathBuf},
     sync::Arc,
@@ -43,15 +44,16 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const MAX_INPUT: u64 = 64 * 1024;
 const REPORT_RETRY_DELAY: Duration = Duration::from_millis(500);
+const DEFAULT_ENDPOINT: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4319);
 const CONTROL_KEY: &str = "NUCLEUS_ENGINE_CONTROL_KEY";
 const T3_CALLER_KEY: &str = "NUCLEUS_ENGINE_T3_CALLER_KEY";
 
 #[derive(Parser)]
 #[command(name = "nucleus", about = "Run the Nucleus task engine")]
 struct Cli {
-    /// The local engine API address for task commands.
-    #[arg(long, default_value = "127.0.0.1:4319", global = true)]
-    endpoint: SocketAddr,
+    /// The local engine API address for task commands [default: 127.0.0.1:4319].
+    #[arg(long, global = true)]
+    endpoint: Option<SocketAddr>,
     #[command(subcommand)]
     action: Action,
 }
@@ -83,6 +85,9 @@ enum Action {
         /// Directory containing the built standalone board.
         #[arg(long)]
         board_assets: Option<PathBuf>,
+        /// Run the engine in this process, under the parent that records its exit.
+        #[arg(long, hide = true)]
+        supervised: bool,
     },
     #[command(flatten)]
     Planning(planning::Action),
@@ -298,10 +303,14 @@ enum Placement {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Cli { endpoint, action } = Cli::parse();
+    let Cli {
+        endpoint: named,
+        action,
+    } = Cli::parse();
+    let endpoint = named.unwrap_or(DEFAULT_ENDPOINT);
     match action {
         Action::Acp { ensure_launcher } => {
-            if let Err(error) = nucleus_acp::run(endpoint, ensure_launcher).await {
+            if let Err(error) = nucleus_acp::run(named, ensure_launcher).await {
                 // Runtime shutdown can wait indefinitely for Tokio's blocking stdin read.
                 eprintln!("Error: {error:?}");
                 std::process::exit(1);
@@ -312,10 +321,16 @@ async fn main() -> Result<()> {
         Action::Configure(args) => configure(&args),
         Action::Serve {
             home,
+            supervised: false,
+            ..
+        } => supervise::run(home.as_deref()).await,
+        Action::Serve {
+            home,
             acp_provider,
             t3,
             actor,
             board_assets,
+            supervised: true,
         } => {
             std::panic::set_hook(Box::new(|info| {
                 serve_log::line(format_args!(
@@ -482,6 +497,14 @@ async fn serve(
             None => router_with_t3_callers(Arc::clone(&service), controllers, Some(t3_caller_key)),
         };
         let tcp = TcpListener::bind(endpoint).await?;
+        let install = settings.clone();
+        // Off the startup path, so it cannot delay readiness.
+        tokio::task::spawn_blocking(move || match install.configured_storage() {
+            Ok(storage) => t3_setup::refresh_launcher(&storage, endpoint),
+            Err(error) => serve_log::line(format_args!(
+                "Could not check the installed launchers: {error}"
+            )),
+        });
         let watch = Arc::clone(&service);
         let watcher = tokio::spawn(async move { watch.watch_host().await });
         let result = serve_http(tcp, api, schedule(service), signals, started).await;
