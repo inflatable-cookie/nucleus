@@ -17,7 +17,7 @@ use crate::{
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MissingReceipt {
     Fresh,
-    LegacyContinuation,
+    RevokedContinuation,
     Queue,
 }
 

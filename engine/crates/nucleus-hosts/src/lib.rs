@@ -50,13 +50,12 @@ pub use inbox::{
 pub use launch::{
     Binding, Dispatch, ModelOption, RoleProfile, RunRequest, child_origin_instance,
     launch_diagnostic, launch_provider_instance, retained_worker_continuation,
-    unpinned_worker_continuation,
 };
 use launch::{Method, Wire, delegated_child, message_id};
 use nucleus_core::{Host, Launch, LaunchInputs, RetainedThread, Role, Run, RunState, Task};
 pub use parenting::{
     ArchiveWrite, DoneArchive, FrozenParentWrite, HoldCheckpoint, ParentRun, ParentSendError,
-    ParentShell, ParentTurn, ParentWrite, QuietCheckout, is_pinned_parent_hold, parent_thread,
+    ParentShell, ParentTurn, ParentWrite, QuietCheckout, parent_thread,
 };
 /// A link within the same T3 environment as the task thread.
 #[must_use]
@@ -189,7 +188,6 @@ pub struct ReplayAuthorization {
     prior_send: Option<u64>,
     revoked: bool,
     unarchive_fence: Option<ThreadFence>,
-    reflect_admission: bool,
     queued_continuation: bool,
 }
 
@@ -205,11 +203,6 @@ impl ReplayAuthorization {
     #[must_use]
     pub const fn binding(&self) -> &Binding {
         &self.wire.binding
-    }
-
-    #[must_use]
-    pub const fn reflect_admission(&self) -> bool {
-        self.reflect_admission
     }
 
     #[must_use]
@@ -1032,7 +1025,7 @@ impl TaskHost for T3Pass<'_> {
             ),
             Launch::Continue { thread } => (
                 Dispatch::Continue {
-                    profile: Some(request.profile.clone()),
+                    profile: request.profile.clone(),
                 },
                 thread.clone(),
             ),
@@ -1089,15 +1082,13 @@ impl TaskHost for T3Pass<'_> {
                 routing: None,
             });
         }
-        if state == RunState::ReadyToSend && !queued_continuation(run, &wire) {
-            if worker_continuation(run, &wire) && run.last_send_at_ms().is_some() {
-                return Err(HostError::Uncertain);
-            }
-            if let Some(remaining) = role_reply_wait(run, now_ms) {
-                return Err(HostError::RoleReplyPending {
-                    until: tokio::time::Instant::now() + remaining,
-                });
-            }
+        if state == RunState::ReadyToSend
+            && !queued_continuation(run, &wire)
+            && let Some(remaining) = role_reply_wait(run, now_ms)
+        {
+            return Err(HostError::RoleReplyPending {
+                until: tokio::time::Instant::now() + remaining,
+            });
         }
         let background_pending =
             if let Some(view) = thread.as_ref().filter(|_| state == RunState::Ended) {
@@ -1166,7 +1157,7 @@ impl TaskHost for T3Pass<'_> {
         if !queued && (worker || role_reply_wait(run, clock_ms()?).is_some()) {
             return Err(HostError::Uncertain);
         }
-        let reflect_admission = if !queued && let Some(parent) = &wire.parent {
+        if !queued && let Some(parent) = &wire.parent {
             let projection = self
                 .host
                 .thread(&wire.binding, parent)
@@ -1177,10 +1168,7 @@ impl TaskHost for T3Pass<'_> {
             {
                 return Err(HostError::Uncertain);
             }
-            !run.revoked() && continuation && !projection.archived() && !projection.deleted()
-        } else {
-            false
-        };
+        }
         let policy = if queued {
             ThreadRead::Observation
         } else {
@@ -1217,11 +1205,9 @@ impl TaskHost for T3Pass<'_> {
         } else {
             None
         };
-        // The unarchive fence already proves native quiet. Legacy sends also check local writers.
+        // The unarchive fence already proves native quiet. A revoked replay also checks local writers.
         let unchecked_thread = thread.as_ref().filter(|_| unarchive_fence.is_none());
-        if (run.revoked() || (continuation && !queued))
-            && !self.quiet(&wire.binding, id, unchecked_thread).await?
-        {
+        if run.revoked() && !self.quiet(&wire.binding, id, unchecked_thread).await? {
             return Err(HostError::WorkspaceBusy);
         }
         Ok(ReplayAuthorization {
@@ -1232,7 +1218,6 @@ impl TaskHost for T3Pass<'_> {
             wire,
             prior_send: run.last_send_at_ms(),
             revoked: run.revoked(),
-            reflect_admission,
             queued_continuation: queued,
         })
     }
@@ -1491,15 +1476,15 @@ fn worker_continuation(run: &Run, wire: &Wire) -> bool {
 }
 
 fn queued_continuation(run: &Run, wire: &Wire) -> bool {
-    !run.revoked() && wire.method == Method::Continue && wire.pinned
+    !run.revoked() && wire.method == Method::Continue
 }
 
 fn missing_receipt(run: &Run, wire: &Wire) -> MissingReceipt {
     if queued_continuation(run, wire) || worker_continuation(run, wire) {
-        // An older worker wire may be observed, but can never be authorized to send.
+        // A revoked worker is observed on the same terms. It is never authorized to send.
         MissingReceipt::Queue
     } else if wire.method == Method::Continue {
-        MissingReceipt::LegacyContinuation
+        MissingReceipt::RevokedContinuation
     } else {
         MissingReceipt::Fresh
     }
@@ -1632,7 +1617,6 @@ mod tests {
             branch: "fixture-branch".into(),
         };
         let wire = |method| Wire {
-            pinned: false,
             binding: binding.clone(),
             parent: None,
             method,

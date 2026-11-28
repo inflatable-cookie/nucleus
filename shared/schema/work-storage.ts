@@ -41,8 +41,6 @@ const backupSummary = z.object({
 export const workStorageStateSchema = z
   .object({
     workRoot: z.string().min(1),
-    /** The pinned volume identity, or null when this install is not pinned. */
-    workVolumeId: z.string().min(1).nullable(),
     worktreesRoot: z.string().min(1),
     backupRoot: z.string().min(1),
     projectQaRoot: z.string().min(1).optional(),
@@ -101,7 +99,6 @@ export type WorkStorageState = z.infer<typeof workStorageStateSchema>;
 export const workStorageInputSchema = z
   .object({
     workRoot: z.string().min(1).nullable().optional(),
-    workVolumeId: z.string().min(1).nullable().optional(),
     worktreesRoot: z.string().min(1).nullable().optional(),
     backupRoot: z.string().min(1).nullable().optional(),
     projectQaRoot: z.string().min(1).nullable().optional(),

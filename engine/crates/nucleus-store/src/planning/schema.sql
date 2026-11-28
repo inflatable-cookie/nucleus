@@ -49,3 +49,16 @@ CREATE TABLE planning_task_sources (
   UNIQUE (project, item_id),
   FOREIGN KEY (project, item_id) REFERENCES planning_items(project, id)
 ) STRICT;
+
+-- Planning writes have a revision independent of the retained history payloads.
+CREATE TABLE planning_record_clocks (
+    project TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, version INTEGER NOT NULL UNIQUE,
+    PRIMARY KEY(project,kind,id)
+) STRICT;
+CREATE TRIGGER planning_clock_write AFTER INSERT ON planning_history BEGIN
+    INSERT INTO planning_record_clocks VALUES
+        (new.project,new.kind,new.id,new.at_ms,new.at_ms,new.sequence)
+    ON CONFLICT(project,kind,id) DO UPDATE SET
+        updated_at=excluded.updated_at, version=excluded.version;
+END;

@@ -8,7 +8,7 @@ use std::{
 };
 
 use rustix::fs::{Mode, OFlags, fstat, mkdirat, open, openat};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::settings::StorageError;
 
@@ -16,80 +16,6 @@ const DIRECTORY: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
     .union(OFlags::NOFOLLOW)
     .union(OFlags::CLOEXEC);
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PinnedVolume {
-    pub mount: PathBuf,
-    pub volume_id: String,
-}
-
-impl PinnedVolume {
-    /// Read the mounted volume under an existing path for explicit configuration.
-    ///
-    /// # Errors
-    /// Returns an error if the native volume ID cannot be read.
-    pub fn detect(path: &Path) -> Result<Self, StorageError> {
-        Self::detect_using(path, None)
-    }
-
-    pub(crate) fn detect_using(path: &Path, scratch: Option<&Path>) -> Result<Self, StorageError> {
-        let mut mount = path.canonicalize()?;
-        let device = mount.metadata()?.dev();
-        while let Some(parent) = mount.parent() {
-            if parent.metadata()?.dev() != device {
-                break;
-            }
-            mount = parent.to_path_buf();
-        }
-        detect_volume(&mount, scratch)
-    }
-
-    pub(crate) fn dir(
-        &self,
-        path: PathBuf,
-        scratch: &Path,
-    ) -> Result<StorageDirectory, StorageError> {
-        relative(&self.mount, &path)?;
-        Ok(StorageDirectory {
-            root: DirectoryRoot::Pinned {
-                volume: self.clone(),
-                scratch: scratch.into(),
-            },
-            path,
-            pin: None,
-        })
-    }
-
-    pub(crate) fn open_mount(&self, scratch: Option<&Path>) -> Result<OwnedFd, StorageError> {
-        if self.volume_id.is_empty() || !self.mount.is_absolute() {
-            return Err(StorageError::VolumeUnavailable);
-        }
-        let canonical = self.mount.canonicalize().map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                StorageError::MissingVolume
-            } else {
-                StorageError::VolumeUnavailable
-            }
-        })?;
-        if canonical != self.mount {
-            return Err(StorageError::VolumeUnavailable);
-        }
-        let fd = open(&self.mount, DIRECTORY, Mode::empty())?;
-        let reported = Self::detect_using(&self.mount, scratch)?;
-        if reported.mount != self.mount || !reported.volume_id.eq_ignore_ascii_case(&self.volume_id)
-        {
-            return Err(StorageError::VolumeUnavailable);
-        }
-        let current = open(&self.mount, DIRECTORY, Mode::empty())?;
-        let opened = fstat(&fd)?;
-        let mounted = fstat(&current)?;
-        if (opened.st_dev, opened.st_ino) != (mounted.st_dev, mounted.st_ino) {
-            return Err(StorageError::VolumeUnavailable);
-        }
-        Ok(fd)
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct StorageDirectory {
@@ -101,10 +27,6 @@ pub struct StorageDirectory {
 #[derive(Debug, Clone)]
 enum DirectoryRoot {
     Native,
-    Pinned {
-        volume: PinnedVolume,
-        scratch: PathBuf,
-    },
     Barge {
         class_root: PathBuf,
         anchor: Arc<Mutex<Anchor>>,
@@ -135,9 +57,7 @@ impl Anchor {
 
     fn hold(path: &Path, directory: OwnedFd) -> Result<Arc<Mutex<Self>>, StorageError> {
         // Without a volume ID a remounted directory stays unavailable until restart.
-        let volume_id = PinnedVolume::detect(path)
-            .ok()
-            .map(|volume| volume.volume_id);
+        let volume_id = volume_id(path).ok();
         let anchor = Self::new(directory.into(), volume_id)?;
         Ok(Arc::new(Mutex::new(anchor)))
     }
@@ -146,19 +66,16 @@ impl Anchor {
     fn admit(anchor: &Mutex<Self>, path: &Path, current: OwnedFd) -> Result<OwnedFd, StorageError> {
         let current = File::from(current);
         let found = current.metadata()?;
-        let (device, inode, volume_id) = {
+        let (device, inode, known) = {
             let held = anchor.lock().unwrap_or_else(PoisonError::into_inner);
             (held.device, held.inode, held.volume_id.clone())
         };
         if (found.dev(), found.ino()) != (device, inode) {
             // Another directory at this path is never adopted.
-            let expected = volume_id
+            let expected = known
                 .filter(|_| found.ino() == inode)
                 .ok_or(StorageError::VolumeUnavailable)?;
-            if !PinnedVolume::detect(path)?
-                .volume_id
-                .eq_ignore_ascii_case(&expected)
-            {
+            if !volume_id(path)?.eq_ignore_ascii_case(&expected) {
                 return Err(StorageError::VolumeUnavailable);
             }
             let adopted = Self::new(current.try_clone()?, Some(expected))?;
@@ -214,7 +131,7 @@ impl StorageDirectory {
         &self.path
     }
 
-    /// Verify that the configured directory is present on the pinned volume.
+    /// Verify that the configured directory is present beneath its root.
     ///
     /// # Errors
     /// Returns an error for an unavailable mount, missing directory, or redirect.
@@ -222,10 +139,10 @@ impl StorageDirectory {
         self.walk(&self.path, false)
     }
 
-    /// Create missing components relative to the pinned mount without following links.
+    /// Create missing components relative to the root without following links.
     ///
     /// # Errors
-    /// Returns an error if the volume or any component cannot be verified.
+    /// Returns an error if the root or any component cannot be verified.
     pub fn ensure(&self) -> Result<(), StorageError> {
         self.walk(&self.path, true)
     }
@@ -233,27 +150,15 @@ impl StorageDirectory {
     /// Create a child directory beneath this root without following links.
     ///
     /// # Errors
-    /// Returns an error on escape, link traversal, or an unavailable volume.
+    /// Returns an error on escape, link traversal, or an unavailable root.
     pub fn ensure_child(&self, child: &Path) -> Result<(), StorageError> {
         if !child
             .components()
             .all(|part| matches!(part, Component::Normal(_)))
         {
-            return Err(StorageError::OutsideVolume);
+            return Err(StorageError::OutsideRoot);
         }
         self.walk(&self.path.join(child), true)
-    }
-
-    // Verify against the already checked mount held open by the running engine.
-    // Reopening the path detects a dismount or replacement without a process.
-    pub(crate) fn verify_from_mount(&self, mount: &OwnedFd) -> Result<(), StorageError> {
-        let current = open(self.root(), DIRECTORY, Mode::empty())?;
-        let expected = fstat(mount)?;
-        let found = fstat(&current)?;
-        if (expected.st_dev, expected.st_ino) != (found.st_dev, found.st_ino) {
-            return Err(StorageError::VolumeUnavailable);
-        }
-        self.walk_from(current, &self.path, false).map(drop)
     }
 
     fn walk(&self, path: &Path, create: bool) -> Result<(), StorageError> {
@@ -271,7 +176,6 @@ impl StorageDirectory {
     fn open_root(&self) -> Result<OwnedFd, StorageError> {
         match &self.root {
             DirectoryRoot::Native => Ok(open(self.root(), DIRECTORY, Mode::empty())?),
-            DirectoryRoot::Pinned { volume, scratch } => volume.open_mount(Some(scratch)),
             DirectoryRoot::Barge { class_root, anchor } => {
                 let current = open(class_root, DIRECTORY, Mode::empty()).map_err(|error| {
                     if error == rustix::io::Errno::NOENT {
@@ -288,7 +192,6 @@ impl StorageDirectory {
     fn root(&self) -> &Path {
         match &self.root {
             DirectoryRoot::Native => Path::new("/"),
-            DirectoryRoot::Pinned { volume, .. } => &volume.mount,
             DirectoryRoot::Barge { class_root, .. } => class_root,
         }
     }
@@ -302,7 +205,7 @@ impl StorageDirectory {
         let device = fstat(&directory)?.st_dev;
         for component in relative(self.root(), path)?.components() {
             let Component::Normal(name) = component else {
-                return Err(StorageError::OutsideVolume);
+                return Err(StorageError::OutsideRoot);
             };
             directory = match openat(&directory, name, DIRECTORY, Mode::empty()) {
                 Err(rustix::io::Errno::NOENT) if create => {
@@ -315,49 +218,48 @@ impl StorageDirectory {
                 answer => answer?,
             };
             if !matches!(self.root, DirectoryRoot::Native) && fstat(&directory)?.st_dev != device {
-                return Err(StorageError::OutsideVolume);
+                return Err(StorageError::OutsideRoot);
             }
         }
         Ok(directory)
     }
 }
 
-fn relative<'a>(mount: &Path, path: &'a Path) -> Result<&'a Path, StorageError> {
+fn relative<'a>(root: &Path, path: &'a Path) -> Result<&'a Path, StorageError> {
     let path = path
-        .strip_prefix(mount)
-        .map_err(|_| StorageError::OutsideVolume)?;
+        .strip_prefix(root)
+        .map_err(|_| StorageError::OutsideRoot)?;
     if !path
         .components()
         .all(|part| matches!(part, Component::Normal(_)))
     {
-        return Err(StorageError::OutsideVolume);
+        return Err(StorageError::OutsideRoot);
     }
     Ok(path)
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn volume_probe(executable: &str, scratch: Option<&Path>) -> Command {
-    let mut command = Command::new(executable);
-    if let Some(scratch) = scratch {
-        command.envs(["TMPDIR", "TMP", "TEMP"].map(|name| (name, scratch)));
-    }
-    command
-}
-
+/// The identity of the writable volume holding `path`, as the system reports it.
 #[cfg(target_os = "macos")]
-fn detect_volume(path: &Path, scratch: Option<&Path>) -> Result<PinnedVolume, StorageError> {
+fn volume_id(path: &Path) -> Result<String, StorageError> {
     #[derive(Deserialize)]
     struct Info {
-        #[serde(rename = "MountPoint")]
-        mount: PathBuf,
         #[serde(rename = "VolumeUUID")]
         volume_id: String,
         #[serde(rename = "WritableVolume")]
         writable: bool,
     }
-    let result = volume_probe("/usr/sbin/diskutil", scratch)
+    // `diskutil` reads a mount point, so climb to the one holding the path.
+    let mut mount = path.canonicalize()?;
+    let device = mount.metadata()?.dev();
+    while let Some(parent) = mount.parent() {
+        if parent.metadata()?.dev() != device {
+            break;
+        }
+        mount = parent.to_path_buf();
+    }
+    let result = Command::new("/usr/sbin/diskutil")
         .args(["info", "-plist"])
-        .arg(path)
+        .arg(mount)
         .output()?;
     if !result.status.success() {
         return Err(StorageError::VolumeUnavailable);
@@ -367,50 +269,40 @@ fn detect_volume(path: &Path, scratch: Option<&Path>) -> Result<PinnedVolume, St
     if !info.writable || info.volume_id.is_empty() {
         return Err(StorageError::VolumeUnavailable);
     }
-    Ok(PinnedVolume {
-        mount: info.mount,
-        volume_id: info.volume_id,
-    })
+    Ok(info.volume_id)
 }
 
 #[cfg(target_os = "linux")]
-fn detect_volume(path: &Path, scratch: Option<&Path>) -> Result<PinnedVolume, StorageError> {
+fn volume_id(path: &Path) -> Result<String, StorageError> {
     #[derive(Deserialize)]
     struct ResultSet {
         filesystems: Vec<Filesystem>,
     }
     #[derive(Deserialize)]
     struct Filesystem {
-        target: PathBuf,
         uuid: Option<String>,
         options: String,
     }
-    let result = volume_probe("findmnt", scratch)
-        .args(["--json", "--output", "TARGET,UUID,OPTIONS", "--target"])
-        .arg(path)
+    let result = Command::new("findmnt")
+        .args(["--json", "--output", "UUID,OPTIONS", "--target"])
+        .arg(path.canonicalize()?)
         .output()?;
     if !result.status.success() {
         return Err(StorageError::VolumeUnavailable);
     }
     let mut parsed: ResultSet =
         serde_json::from_slice(&result.stdout).map_err(|_| StorageError::VolumeUnavailable)?;
-    let info = parsed
+    parsed
         .filesystems
         .pop()
         .filter(|fs| fs.options.split(',').any(|option| option == "rw"))
-        .ok_or(StorageError::VolumeUnavailable)?;
-    let volume_id = info
-        .uuid
+        .and_then(|fs| fs.uuid)
         .filter(|uuid| !uuid.is_empty())
-        .ok_or(StorageError::VolumeUnavailable)?;
-    Ok(PinnedVolume {
-        mount: info.target,
-        volume_id,
-    })
+        .ok_or(StorageError::VolumeUnavailable)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn detect_volume(_: &Path, _: Option<&Path>) -> Result<PinnedVolume, StorageError> {
+fn volume_id(_: &Path) -> Result<String, StorageError> {
     Err(StorageError::VolumeUnavailable)
 }
 

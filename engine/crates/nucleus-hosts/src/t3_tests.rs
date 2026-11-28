@@ -577,12 +577,7 @@ fn reserve_with_parent(
     };
     let _ = task.reconcile(&observation);
     let instance = task.next_launch_instance().expect("instance");
-    let profile = RoleProfile {
-        instance_id: "fixture-provider".into(),
-        model: "fixture-model".into(),
-        runtime_mode: "full-access".into(),
-        options: Vec::new(),
-    };
+    let profile = continuation_profile();
     let title = "fixture".into();
     let parent_thread = parent.as_ref().map(|parent| parent.thread.clone());
     let (dispatch, thread) = if let Some(parent) = parent {
@@ -1018,7 +1013,6 @@ async fn a_hold_uses_the_shell_and_rechecks_binding_and_turn_at_the_wire() {
     let first = prepare(None);
     let stale = prepare(None);
     let command = first.command_id().unwrap().to_owned();
-    assert!(crate::is_pinned_parent_hold(&command));
     row["providerInstanceId"] = json!("other-provider");
     host.rpc
         .fixture_shell(&json!({"kind":"thread.updated","sequence":17,"thread":row}));
@@ -1648,7 +1642,9 @@ async fn next_review_dispatches_to_a_settled_thread_with_an_operator_snooze() {
     let inputs = RunRequest {
         parent: None,
         binding,
-        dispatch: Dispatch::Continue { profile: None },
+        dispatch: Dispatch::Continue {
+            profile: continuation_profile(),
+        },
         text: "Fresh review".into(),
     }
     .inputs(&instance, THREAD.into(), 2)
@@ -1692,7 +1688,19 @@ async fn next_review_dispatches_to_a_settled_thread_with_an_operator_snooze() {
     assert_eq!(message["messageId"], format!("{instance}-message"));
 }
 
-fn reserved_worker_continuation(binding: &Binding, pinned: bool) -> (Task, String) {
+fn continuation_profile() -> RoleProfile {
+    RoleProfile {
+        instance_id: "fixture-provider".into(),
+        model: "fixture-model".into(),
+        runtime_mode: "full-access".into(),
+        options: Vec::new(),
+    }
+}
+
+fn reserved_worker_continuation(
+    binding: &Binding,
+    stored: impl FnOnce(&mut Value),
+) -> (Task, String) {
     let (mut task, mut observation, original) = reserve_entry(binding.clone(), Entry::Brief);
     task.record_send(&original, 2).unwrap();
     task.command(
@@ -1714,30 +1722,19 @@ fn reserved_worker_continuation(binding: &Binding, pinned: bool) -> (Task, Strin
         thread: THREAD.into(),
         state: RetainedThread::Queueable,
     });
-    let profile = RoleProfile {
-        instance_id: "fixture-provider".into(),
-        model: "fixture-model".into(),
-        runtime_mode: "full-access".into(),
-        options: Vec::new(),
-    };
     let mut inputs = RunRequest {
         parent: None,
         binding: binding.clone(),
         dispatch: Dispatch::Continue {
-            profile: Some(profile),
+            profile: continuation_profile(),
         },
         text: "Retained worker".into(),
     }
     .inputs(&instance, THREAD.into(), 3)
     .unwrap();
-    if !pinned {
-        let mut legacy: Value = serde_json::from_str(&inputs.input).unwrap();
-        legacy["payload"]
-            .as_object_mut()
-            .unwrap()
-            .remove("modelSelection");
-        inputs.input = legacy.to_string();
-    }
+    let mut wire: Value = serde_json::from_str(&inputs.input).unwrap();
+    stored(&mut wire);
+    inputs.input = wire.to_string();
     task.reserve_launch(&observation, inputs, &[7; 32]).unwrap();
     (task, instance)
 }
@@ -1746,7 +1743,7 @@ fn reserved_worker_continuation(binding: &Binding, pinned: bool) -> (Task, Strin
 async fn pinned_worker_queues_while_busy_and_settled_without_workspace_custody() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
-    let (task, instance) = reserved_worker_continuation(&binding, true);
+    let (task, instance) = reserved_worker_continuation(&binding, |_| {});
     assert!(crate::retained_worker_continuation(task.run().unwrap()));
     let mut busy = snapshot(&binding, "other-message", "running", false);
     busy["projection"]["thread"]["providerInstanceId"] = json!("alternate-provider");
@@ -1859,12 +1856,7 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
         binding: binding.clone(),
         parent: Some(parent.clone()),
         dispatch: Dispatch::Continue {
-            profile: Some(RoleProfile {
-                instance_id: "fixture-provider".into(),
-                model: "fixture-model".into(),
-                runtime_mode: "full-access".into(),
-                options: Vec::new(),
-            }),
+            profile: continuation_profile(),
         },
         text: "Review the current head".into(),
     }
@@ -1920,58 +1912,46 @@ async fn pinned_reviewer_can_replay_a_queued_send_without_idle_coverage() {
     assert_eq!(wire["dispatchMode"]["type"], "queue_after_active");
 }
 
+/// Continuations saved before they pinned a provider and model carried neither
+/// the payload selection nor the wire's copy.
 #[tokio::test]
-async fn old_worker_wire_observes_a_delivered_mismatch_but_never_replays_it() {
+async fn a_stored_continuation_without_a_model_selection_is_refused_before_any_host_call() {
     let checkout = checkout_fixture();
     let binding = binding(checkout.path());
-    let (mut task, instance) = reserved_worker_continuation(&binding, false);
-    task.record_send(&instance, 4).unwrap();
-    let mut absent = snapshot(&binding, "other-message", "running", false);
-    absent["hasMoreHistory"] = json!(true);
-    absent["historyCursor"] = json!("older-work");
-    let mut delivered = snapshot(&binding, &instance, "running", false);
-    delivered["projection"]["runs"][0]["startedAt"] = json!("2026-11-24T17:11:15Z");
-    delivered["projection"]["runs"][0]["providerInstanceId"] = json!("observed-provider");
-    delivered["projection"]["runs"][0]["modelSelection"] =
-        json!({"instanceId":"observed-provider","model":"observed-model"});
-    let (host, native) = server(vec![
-        ("orchestration.subscribeThread", Response::Snapshot(absent)),
-        (
-            "orchestration.subscribeThread",
-            Response::Snapshot(delivered),
-        ),
-    ])
-    .await;
-    let pass = host.pass(checkout.path());
-    let run = task.run().unwrap();
-    assert!(crate::unpinned_worker_continuation(run));
-    assert!(matches!(
-        pass.observe_run(run, crate::LATE_REPLY_MS + 5).await,
-        Err(HostError::Uncertain)
-    ));
-    assert!(matches!(
-        pass.authorize_send(run).await,
-        Err(HostError::Uncertain)
-    ));
-    let observed = pass
-        .observe_run(run, crate::LATE_REPLY_MS + 5)
-        .await
-        .unwrap();
-    assert_eq!(
-        observed.host,
-        Host::Current {
-            instance,
-            state: RunState::Running
-        }
-    );
-    assert_eq!(
-        observed.routing,
-        Some(crate::RunRouting {
-            provider: "observed-provider".into(),
-            model: "observed-model".into()
-        })
-    );
-    assert_eq!(native.await.unwrap().len(), 2);
+    for keep_wire_copy in [false, true] {
+        let (mut task, instance) = reserved_worker_continuation(&binding, |wire| {
+            wire["payload"]
+                .as_object_mut()
+                .unwrap()
+                .remove("modelSelection");
+            if !keep_wire_copy {
+                wire.as_object_mut().unwrap().remove("selection");
+            }
+        });
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let host = T3::new(&format!("http://{address}"), "fixture-key").unwrap();
+        let pass = host.pass(checkout.path());
+        let run = task.run().unwrap();
+        assert!(!crate::retained_worker_continuation(run));
+        assert!(matches!(
+            crate::launch_provider_instance(run),
+            Err(HostError::Binding)
+        ));
+        assert!(matches!(
+            pass.authorize_send(run).await,
+            Err(HostError::Binding)
+        ));
+        task.record_send(&instance, 4).unwrap();
+        assert!(matches!(
+            pass.observe_run(task.run().unwrap(), crate::LATE_REPLY_MS + 5)
+                .await,
+            Err(HostError::Binding)
+        ));
+        let contacted =
+            tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept()).await;
+        assert!(contacted.is_err(), "no host call");
+    }
 }
 
 fn replay_script(

@@ -1147,7 +1147,6 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     reviewerAccountId: null as string | null,
     workerAccountId: null as string | null,
     canSignIn: false,
-    canImportReviewer: false,
   };
   let githubFlow: "starting" | "waiting" | "confirm" | "failed" = "starting";
   let githubFlowCount = 0;
@@ -1331,12 +1330,6 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
         assert.deepEqual(body, {});
         githubFlowCount += 1;
         githubFlow = "starting";
-        return Response.json(githubFlowView());
-      }
-      if (method === "POST" && route === "/import-reviewer") {
-        assert.deepEqual(body, { organization: "fixture-org" });
-        githubFlowCount += 1;
-        githubFlow = "confirm";
         return Response.json(githubFlowView());
       }
       if (method === "PUT" && route === "/reviewer") {
@@ -1814,7 +1807,6 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await eventually(() => Boolean(selector("Reviewer, Installed gh")), "the default reviewer uses Installed gh");
   assert.match(text(), /GitHub sign-in is unavailable/);
   assert.equal(selector("Sign in"), null);
-  assert.equal(selector("Import existing reviewer"), null);
   await click("Reviewer help");
   await eventually(() => selector("Reviewer help text")?.textContent?.includes("where the Nucleus Agents GitHub App is installed") === true,
     "reviewer help explains the account and app-installation access requirement");
@@ -1824,7 +1816,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     await click("Storage");
     await click("GitHub");
   };
-  githubSettings = { ...githubSettings, canSignIn: true, canImportReviewer: true };
+  githubSettings = { ...githubSettings, canSignIn: true };
   await refreshGitHub();
   await click("Sign in");
   await eventually(() => text().includes("Starting GitHub sign-in"), "sign-in shows progress before the code arrives");
@@ -1868,7 +1860,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   await click("Reconnect");
   await eventually(() => githubFlowCount === 4, "reconnect starts a new sign-in");
   await click("Cancel");
-  await eventually(() => Boolean(selector("Import existing reviewer")), "cancel returns to accounts");
+  await eventually(() => Boolean(selector("Reconnect")), "cancel returns to accounts");
 
   githubSettings = { ...githubSettings, accounts: [{ ...reviewer, presence: "unavailable" }] };
   emit("settings");
@@ -1877,19 +1869,12 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   assert.ok(selector("Reconnect"), "unavailable credentials offer an explicit reconnect");
   assert.equal(selector("Reviewer, Installed gh"), null, "unavailable credentials never select Installed gh");
 
-  await click("Import existing reviewer");
-  await eventually(() => Boolean(selector("Organization")), "legacy import asks for an organization");
-  assert.equal(githubCalls.filter(({ route }) => route === "/import-reviewer").length, 0,
-    "opening the import form does not look up a legacy item");
-  const organization = dom.window.document.querySelector<HTMLInputElement>('input[aria-label="Organization"]');
-  assert.ok(organization);
-  Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set?.call(organization, "fixture-org");
-  organization.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-  await eventually(() => selector("Look up reviewer")?.getAttribute("aria-disabled") !== "true", "organization enables lookup");
-  await click("Look up reviewer");
-  await eventually(() => text().includes("Use @fixture-reviewer for reviews?"), "legacy import shows the verified login before saving");
+  await click("Reconnect");
+  await eventually(() => githubFlowCount === 5, "reconnect starts another sign-in");
+  githubFlow = "confirm";
+  await eventually(() => text().includes("Use @fixture-reviewer for reviews?"), "reconnect shows the verified login before saving");
   await click("Use account");
-  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")), "confirmed import reconnects the reviewer");
+  await eventually(() => Boolean(selector("Reviewer, @fixture-reviewer, Saved sign-in")), "confirmed sign-in reconnects the reviewer");
   assert.ok(githubCalls.every(({ body }) => !JSON.stringify(body)?.includes("fixture-unexpected-secret")));
 
   invalidGitHubResponse = true;
@@ -1921,7 +1906,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
   finishSignOut();
   await eventually(() => Boolean(selector("Reviewer, Installed gh")), "sign-out clears the reviewer selection");
   assert.equal(githubSettings.accounts.length, 0);
-  t.diagnostic("GitHub Settings covered default and configured reviewers, device sign-in, cancel, expiry, reconnect, import, explicit sign-out and public fields.");
+  t.diagnostic("GitHub Settings covered default and configured reviewers, device sign-in, cancel, expiry, reconnect, explicit sign-out and public fields.");
 
   await click("Profiles");
   await eventually(() => Boolean(selector("Fixture worker, all roles: 49 of 49 recent assignments")), "profile usage renders");
