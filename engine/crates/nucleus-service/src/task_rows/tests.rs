@@ -264,7 +264,7 @@ impl Fixture {
         }).await;
         host.use_held_shell();
         service.host = host;
-        service.set_fixture_acp_provider(Some(PROVIDER));
+        service.set_fixture_acp_provider(PROVIDER);
         Self {
             service: Arc::new(service),
             native,

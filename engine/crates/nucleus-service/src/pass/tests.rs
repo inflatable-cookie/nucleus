@@ -317,7 +317,7 @@ async fn exercise_terminal_orphan_cleanup(
     dispatch: Option<nucleus_store::DispatchSettings>,
 ) {
     let (home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
-    service.set_fixture_acp_provider(Some("fixture"));
+    service.set_fixture_acp_provider("fixture");
     service.state.lock().await.settings.dispatch = dispatch;
     let (terminal, scratch) = if in_scratch {
         let (row, scratch) = settled_cleanup_task(&service, home.path(), legacy).await;
@@ -545,7 +545,7 @@ async fn terminal_cleanup_leaves_a_shared_service_running_in_trash() {
     service.forge = forge;
     let (native, _archive) = empty_archive_fixture(1).await;
     service.host = crate::tests::verified_native_fixture(native, home.path());
-    service.set_fixture_acp_provider(Some("fixture"));
+    service.set_fixture_acp_provider("fixture");
     let terminal = cancelled_cleanup_task(&service).await;
     let id = &terminal.task.identity().id;
     let work = service.worktrees();
@@ -637,7 +637,7 @@ async fn retirement_requires_running_dispatch_quiet_shell_and_published_git_head
     let head = service.fixture().start.clone();
     let (forge, _server) = publish_checkout_forge(head.clone()).await;
     service.forge = forge;
-    service.set_fixture_acp_provider(Some("fixture"));
+    service.set_fixture_acp_provider("fixture");
     let row = cancelled_cleanup_task(&service).await;
     let work = service.worktrees();
     let checkout = work
@@ -804,7 +804,6 @@ async fn task_add_pins_worker_lane_text_and_resolves_brief_prerequisites() {
         &checkout,
         observation.clone(),
         Role::Worker,
-        Launch::Create,
         &service.host.fixture_pass(),
     ))
     .await
@@ -816,7 +815,6 @@ async fn task_add_pins_worker_lane_text_and_resolves_brief_prerequisites() {
             &checkout,
             observation,
             Role::Worker,
-            Launch::Create,
             &service.host.fixture_pass(),
         ))
         .await
@@ -916,28 +914,15 @@ async fn scheduler_reservations_share_a_catalog_and_charge_the_selected_group() 
         let checkout = worktrees
             .checkout(&service.fixture().checkout, REPOSITORY, id)
             .expect("checkout");
-        let first = Box::pin(service.reserve(
-            &row,
-            &checkout,
-            observation.clone(),
-            Role::Worker,
-            Launch::Create,
-            &pass,
-        ))
-        .await
-        .expect("start parent");
+        let first =
+            Box::pin(service.reserve(&row, &checkout, observation.clone(), Role::Worker, &pass))
+                .await
+                .expect("start parent");
         if first == Action::Wait(WaitReason::Starting) {
             crate::profiles::tests::publish_parent_shell(&service).await;
-            Box::pin(service.reserve(
-                &row,
-                &checkout,
-                observation,
-                Role::Worker,
-                Launch::Create,
-                &pass,
-            ))
-            .await
-            .expect("reserve configured worker");
+            Box::pin(service.reserve(&row, &checkout, observation, Role::Worker, &pass))
+                .await
+                .expect("reserve configured worker");
         }
         let frozen = service.task(id).await.expect("frozen row");
         let launch = frozen.task.run().expect("run").launch();
@@ -1372,7 +1357,12 @@ fn frozen_review(service: &Service, checkout: &Checkout<'_>, head: &Head) -> (Ta
         binding: service.binding(checkout).expect("binding"),
         dispatch: Dispatch::Create {
             title: "Review fixture".into(),
-            profile: service.fixture().reviewer.clone(),
+            profile: nucleus_hosts::RoleProfile {
+                instance_id: "provider".into(),
+                model: "fixture".into(),
+                runtime_mode: "auto".into(),
+                options: Vec::new(),
+            },
         },
         text: "Review the fixture".into(),
     }
@@ -1631,4 +1621,116 @@ async fn seed_reserved_role_launch(
         )
         .unwrap();
     (service.task(id).await.unwrap(), thread)
+}
+
+#[tokio::test]
+async fn unconfigured_profiles_hold_admission_and_refuse_a_later_launch() {
+    let (_home, service) = fixture(GitHub::new("unused-fixture").expect("forge"));
+    let head = service.fixture().start;
+    let (shape, _, _) = reservation("unprofiled", Entry::Brief, &head);
+    let queued = Task::new(shape.identity().clone(), "Fixture".into(), None);
+    {
+        let mut state = service.state.lock().await;
+        state.settings.profiles = None;
+        state
+            .store
+            .create_with_facts(
+                &queued,
+                &event("fixture"),
+                nucleus_store::TaskAdmissionFacts::default(),
+            )
+            .unwrap();
+    }
+    let outcomes = service.pass().await.expect("queued pass");
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [crate::PassOutcome {
+                result: Ok(Action::Wait(WaitReason::Capacity)),
+                ..
+            }]
+        ),
+        "{:?}",
+        outcomes
+            .iter()
+            .map(|outcome| &outcome.result)
+            .collect::<Vec<_>>()
+    );
+    let row = service.task("unprofiled").await.unwrap();
+    assert_eq!((&row.task, row.version), (&queued, 1));
+
+    let observation = Observation {
+        host: Observed::Unknown,
+        forge: Observed::Known(Forge::Absent),
+        workspace: Observed::Known(Workspace::Absent),
+    };
+    let mut working = row.task.clone();
+    assert_eq!(
+        working.reconcile(&observation),
+        Action::Advance(Phase::Working)
+    );
+    let working = service
+        .save(&row, working, &event("advanced"))
+        .await
+        .unwrap();
+    let worktrees = service.worktrees();
+    let checkout = worktrees
+        .checkout(&service.fixture().checkout, REPOSITORY, "unprofiled")
+        .unwrap();
+    let refused = Box::pin(service.reserve(
+        &working,
+        &checkout,
+        observation,
+        Role::Worker,
+        &service.host.fixture_pass(),
+    ))
+    .await;
+    assert!(
+        matches!(refused, Err(ServiceError::ProfileConfiguration)),
+        "{refused:?}"
+    );
+    assert_eq!(service.task("unprofiled").await.unwrap(), working);
+    assert!(!checkout.path().exists());
+    assert!(service.host.host_calls().is_empty());
+}
+
+#[tokio::test]
+async fn a_cancelled_code_task_is_scanned_and_closed_out() {
+    let (_home, service) = fixture(GitHub::new("unused-fixture").expect("forge"));
+    let row = cancelled_cleanup_task(&service).await;
+    assert_eq!(row.task.phase(), Phase::Cancelled);
+    assert!(row.task.report_task().is_none());
+    let id = &row.task.identity().id;
+    assert_eq!(
+        service
+            .state
+            .lock()
+            .await
+            .store
+            .archive_due_ids(None, 8)
+            .unwrap(),
+        std::slice::from_ref(id)
+    );
+    service
+        .host
+        .fixture_held_shell(&json!({"kind":"snapshot","snapshot":{
+            "snapshotSequence":1,
+            "projects":[{"id":"local-fixture","workspaceRoot":service.fixture().checkout}],
+            "threads":[],"archivedThreads":[]
+        }}));
+    let outcomes = service.pass().await.expect("closeout pass");
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [crate::PassOutcome {
+                result: Ok(Action::Nothing),
+                ..
+            }]
+        ),
+        "{:?}",
+        outcomes
+            .iter()
+            .map(|outcome| &outcome.result)
+            .collect::<Vec<_>>()
+    );
 }

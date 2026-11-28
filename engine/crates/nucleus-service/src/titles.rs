@@ -442,9 +442,6 @@ impl Service {
         number: Option<i64>,
         timing: TitleTiming,
     ) -> bool {
-        if self.acp_provider().is_none() {
-            return false;
-        }
         let id = &task.identity().id;
         let path = nucleus_work::checkout_path(
             self.storage.work().path(),
@@ -543,9 +540,8 @@ impl Service {
     }
 
     pub(super) async fn watch_titles(&self) {
-        // Planner notices can need snooze restoration without an ACP provider.
         let provider = self.acp_provider();
-        if provider.is_some() {
+        {
             let mut state = self.state.lock().await;
             match state.store.tasks_without_titles() {
                 Ok(rows) => {
@@ -561,12 +557,8 @@ impl Service {
         }
         loop {
             self.host.wait_for_requests().await;
-            let threads =
-                provider.map_or_else(Vec::new, |provider| self.host.title_threads(provider));
-            let next = match provider {
-                Some(provider) => self.title_work(provider, &threads).await,
-                None => Ok(None),
-            };
+            let threads = self.host.title_threads(provider);
+            let next = self.title_work(provider, &threads).await;
             let checked_stability = next.is_ok();
             let wait = match next {
                 Ok(Some(receipt)) => {
@@ -574,10 +566,7 @@ impl Service {
                     if receipt.retry_at > now {
                         Some(Duration::from_millis(receipt.retry_at.abs_diff(now)))
                     } else {
-                        if let Err(error) = self
-                            .apply_title(provider.unwrap_or_default(), &receipt, now)
-                            .await
-                        {
+                        if let Err(error) = self.apply_title(provider, &receipt, now).await {
                             service_log!("{}: {error}", receipt.thread);
                         }
                         // The next due candidate can run before this title retries.
@@ -590,10 +579,7 @@ impl Service {
                     Some(Duration::from_secs(5))
                 }
             };
-            let row_wait = match self
-                .reconcile_task_rows(provider.unwrap_or_default(), &threads)
-                .await
-            {
+            let row_wait = match self.reconcile_task_rows(provider, &threads).await {
                 Ok(wait) => wait,
                 Err(error) => {
                     service_log!("{error}");
@@ -715,7 +701,7 @@ impl Service {
             state.title_candidates.remove(INBOX_THREAD);
             return Ok(None);
         };
-        let decisions = crate::native_inbox::pending(state, self)?.len();
+        let decisions = crate::native_inbox::pending(state)?.len();
         let running = if decisions == 0 {
             self.working_row_count(state)?
         } else {
@@ -1175,7 +1161,7 @@ mod tests {
     #[tokio::test]
     async fn a_transient_wait_does_not_replace_an_unpublished_phase() {
         let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
-        service.set_fixture_acp_provider(Some("fixture-acp"));
+        service.set_fixture_acp_provider("fixture-acp");
         let mut task = task();
         let id = task.identity().id.clone();
         let thread = nucleus_hosts::parent_thread(&nucleus_work::checkout_path(
@@ -1285,7 +1271,7 @@ mod tests {
 
         let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
         let provider = "fixture-acp";
-        service.set_fixture_acp_provider(Some(provider));
+        service.set_fixture_acp_provider(provider);
         service.native_inbox = Some(crate::native_inbox::NativeInbox::open(&service).unwrap());
         let root = service.native_inbox.as_ref().unwrap().root.clone();
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -1468,7 +1454,7 @@ mod tests {
         })
         .await;
         service.host = host;
-        service.set_fixture_acp_provider(Some("fixture-acp"));
+        service.set_fixture_acp_provider("fixture-acp");
         {
             let mut state = service.state.lock().await;
             state
@@ -1611,7 +1597,7 @@ mod tests {
             "fixture-acp",
         );
         service.host = host;
-        service.set_fixture_acp_provider(Some("fixture-acp"));
+        service.set_fixture_acp_provider("fixture-acp");
         {
             let mut state = service.state.lock().await;
             state

@@ -49,7 +49,7 @@ impl Service {
         self.resolve_reference(
             state,
             value,
-            default_repository.or_else(|| self.reference_repository(state, scope).ok()),
+            default_repository.or_else(|| reference_repository(state, scope).ok()),
             |identity| scope.task(state, identity).is_ok(),
         )
     }
@@ -94,23 +94,19 @@ impl Service {
         }
         selected.ok_or(ServiceError::TaskReferenceMissing)
     }
+}
 
-    pub(super) fn reference_repository<'a>(
-        &'a self,
-        state: &'a State,
-        scope: &ControllerScope,
-    ) -> Result<&'a str, ServiceError> {
-        if let Some(fixture) = &self.project {
-            return Ok(&fixture.repository);
-        }
-        if let Some(project) = scope
-            .actor()
-            .and_then(|actor| state.live_planner_project(actor))
-            .and_then(|id| state.settings.projects.as_ref()?.projects.get(id))
-            && let [repository] = project.repositories.as_slice()
-        {
-            return Ok(&repository.origin);
-        }
-        Err(ServiceError::TaskReferenceNeedsRepository)
+fn reference_repository<'a>(
+    state: &'a State,
+    scope: &ControllerScope,
+) -> Result<&'a str, ServiceError> {
+    if let Some(project) = scope
+        .actor()
+        .and_then(|actor| state.live_planner_project(actor))
+        .and_then(|id| state.settings.projects.as_ref()?.projects.get(id))
+        && let [repository] = project.repositories.as_slice()
+    {
+        return Ok(&repository.origin);
     }
+    Err(ServiceError::TaskReferenceNeedsRepository)
 }

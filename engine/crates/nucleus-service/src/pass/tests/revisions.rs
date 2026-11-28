@@ -121,22 +121,15 @@ async fn revision(summary: &str, kind: Revision) {
         thread: "thread:revision".into(),
         state: RetainedThread::Queueable,
     });
-    let Action::Launch { role, via } = decide(&row.task, &observation) else {
+    let Action::Launch { role, .. } = decide(&row.task, &observation) else {
         panic!("expected the retained worker to resume");
     };
-    let first = Box::pin(service.reserve(
-        &row,
-        &checkout,
-        observation.clone(),
-        role,
-        via.clone(),
-        &host,
-    ))
-    .await
-    .unwrap();
+    let first = Box::pin(service.reserve(&row, &checkout, observation.clone(), role, &host))
+        .await
+        .unwrap();
     if first == Action::Wait(WaitReason::Starting) {
         crate::profiles::tests::publish_parent_shell(&service).await;
-        Box::pin(service.reserve(&row, &checkout, observation.clone(), role, via, &host))
+        Box::pin(service.reserve(&row, &checkout, observation.clone(), role, &host))
             .await
             .unwrap();
     }
@@ -266,7 +259,7 @@ async fn reviewer_prompt(
         thread: "thread:reviewer".into(),
         state: RetainedThread::Queueable,
     });
-    let Action::Launch { role, via } = decide(&row.task, &observation) else {
+    let Action::Launch { role, .. } = decide(&row.task, &observation) else {
         panic!("expected a new reviewer round");
     };
     assert_eq!(role, Role::Reviewer);
@@ -275,7 +268,6 @@ async fn reviewer_prompt(
         checkout,
         observation.clone(),
         role,
-        via.clone(),
         &service.host.fixture_pass(),
     ))
     .await
@@ -287,7 +279,6 @@ async fn reviewer_prompt(
             checkout,
             observation,
             role,
-            via,
             &service.host.fixture_pass(),
         ))
         .await

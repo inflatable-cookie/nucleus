@@ -520,10 +520,7 @@ async fn report_only_archive_retains_dirty_or_unpublished_source() {
     let host = &fixture.service.host;
     {
         let state = fixture.service.state.lock().await;
-        assert_eq!(
-            state.store.archive_due_ids(None, 10, false).unwrap(),
-            [TASK]
-        );
+        assert_eq!(state.store.archive_due_ids(None, 10).unwrap(), [TASK]);
     }
     let archive_read = "orchestration.getArchivedShellSnapshot";
     host.fixture_held_shell(&json!({"kind":"snapshot","snapshot":{

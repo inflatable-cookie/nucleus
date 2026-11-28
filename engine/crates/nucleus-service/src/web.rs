@@ -234,9 +234,7 @@ fn routes(
 ) -> Router {
     let carriers = controllers
         .into_iter()
-        .filter(|controller| {
-            service.project.is_some() || matches!(controller.authority, Authority::Operator { .. })
-        })
+        .filter(|controller| matches!(controller.authority, Authority::Operator { .. }))
         .map(|controller| ControllerEntry {
             controller,
             scope: ControllerScope::default(),
@@ -546,7 +544,6 @@ fn request_controller(
     let actor = actor.to_str().ok()?;
     let key = api.t3_caller_key?;
     if callers.next().is_some()
-        || api.service.project.is_some()
         || actor.is_empty()
         || actor.len() > 240
         || actor.trim() != actor
@@ -671,9 +668,9 @@ async fn authorize_task(
         });
         caller.scope
     } else {
-        // Pilot readers are task-scoped independently of the current
-        // controller roster. Registry readers also prove the issuing controller.
-        let scope = if api.service.project.is_some() || digest == [0; 32] {
+        // The task parent's reader has no issuing controller. Every other
+        // reader also proves the controller which issued it.
+        let scope = if digest == [0; 32] {
             ControllerScope::default()
         } else {
             session_controller(&api, &session)
@@ -814,8 +811,7 @@ async fn detail(
         (None, false)
     };
     // The native host supports a plan that is updated across role turns.
-    let plan_scope_id =
-        (credential.is_some() && api.service.acp_provider().is_some()).then_some("task-lifecycle");
+    let plan_scope_id = credential.is_some().then_some("task-lifecycle");
     Ok(Json(Detail {
         created_at_ms: summary.card.created_at_ms,
         summary,

@@ -382,16 +382,16 @@ async fn opted_in_completion_survives_restart_and_retries_once_to_the_claimed_pl
     registry.service.notify_completion(&row).await.unwrap();
     assert_eq!(registry.reads.load(Ordering::Relaxed), reads);
     assert_eq!(registry.notices.lock().unwrap().sends.len(), 2);
-    assert!(
+    assert_eq!(
         registry
             .service
             .state
             .lock()
             .await
             .store
-            .archive_due_ids(None, 32, false)
-            .unwrap()
-            .is_empty()
+            .completion_notice("notice")
+            .unwrap(),
+        None
     );
 }
 

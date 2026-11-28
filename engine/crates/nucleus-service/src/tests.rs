@@ -199,6 +199,93 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     registry_fixture(forge)
 }
 
+/// The registered checkout, read as test values.
+#[derive(Clone)]
+pub(super) struct Registered {
+    pub repository: String,
+    pub checkout: PathBuf,
+    pub base: String,
+    pub start: Head,
+    pub host_project: String,
+}
+
+impl Service {
+    pub(super) fn fixture(&self) -> Registered {
+        let projects = self
+            .settings
+            .read::<Projects>()
+            .expect("registered projects")
+            .value;
+        let repository = projects
+            .projects
+            .values()
+            .flat_map(|project| project.repositories.iter())
+            .next()
+            .expect("one registered repository");
+        Registered {
+            repository: repository.origin.clone(),
+            checkout: repository.path.clone(),
+            base: repository.base.clone(),
+            start: git(&repository.path, &["rev-parse", "HEAD"])
+                .parse()
+                .expect("registered base head"),
+            host_project: repository
+                .host_project
+                .clone()
+                .expect("registered T3 project"),
+        }
+    }
+
+    pub(super) fn set_fixture_acp_provider(&mut self, provider: &str) {
+        self.acp_provider = provider.into();
+    }
+
+    pub(super) fn binding(&self, checkout: &Checkout<'_>) -> Result<Binding, ServiceError> {
+        Ok(Binding {
+            project_id: self.fixture().host_project,
+            worktree_path: checkout
+                .path()
+                .to_str()
+                .ok_or(ServiceError::Project)?
+                .into(),
+            branch: checkout.branch().into(),
+        })
+    }
+
+    pub(super) async fn check_project(&self) -> Result<(), ServiceError> {
+        let project = self.fixture();
+        let identity = Identity {
+            id: "fixture-binding".into(),
+            reference: String::new(),
+            repository: project.repository,
+            base: project.base,
+            entry: Entry::Brief,
+            origin_thread: None,
+        };
+        let route = self.project_for(&identity).await?;
+        self.check_project_route(&identity, &route).await
+    }
+
+    pub(super) async fn admit_to(
+        &self,
+        repository: Option<&str>,
+        id: String,
+        reference: String,
+        brief: String,
+        caller: &Authority,
+    ) -> Result<TaskRow, ServiceError> {
+        self.admit_in_scope(
+            repository,
+            id,
+            reference,
+            brief,
+            caller,
+            &ControllerScope::default(),
+        )
+        .await
+    }
+}
+
 pub(super) fn create_fixture_commit(repository: &Path, message: &str) {
     git(
         repository,
@@ -1090,10 +1177,6 @@ pub(super) fn assert_scheduled_wait(
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one fixture trace covers a complete lifecycle"
-)]
 async fn interrupted_initialization_recovers_on_the_new_base_before_launch() {
     let (forge, forge_server) = serve_forge(Router::new().route(
         &format!("/repos/{REPOSITORY}/pulls"),
@@ -1148,14 +1231,7 @@ async fn interrupted_initialization_recovers_on_the_new_base_before_launch() {
             )
             .unwrap();
         let now = Instant::now();
-        schedule
-            .seed(
-                store,
-                now,
-                service.acp_provider().is_some(),
-                capacity_waiters,
-            )
-            .unwrap();
+        schedule.seed(store, now, capacity_waiters).unwrap();
         assert_eq!(schedule.due("partial"), Some(now));
     }
     let pass_started = Instant::now();
@@ -1323,7 +1399,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
         heavy_slots: 1,
         ..nucleus_store::DispatchSettings::default()
     });
-    service.set_fixture_acp_provider(Some("fixture-acp"));
+    service.set_fixture_acp_provider("fixture-acp");
     let project = service.fixture().clone();
     let shell = json!({"projects":[{
         "id":project.host_project, "workspaceRoot":project.checkout

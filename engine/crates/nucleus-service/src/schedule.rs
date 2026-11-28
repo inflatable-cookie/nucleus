@@ -288,7 +288,6 @@ impl Schedule {
         &mut self,
         store: &Store,
         now: Instant,
-        parenting: bool,
         capacity_waiters: &mut CapacityWaiters,
     ) -> Result<bool, ServiceError> {
         if now < self.scan_at {
@@ -304,8 +303,7 @@ impl Schedule {
             store.slot_candidates()?
         };
         let ids = store.active_ids(self.cursor.as_deref(), SCAN_PAGE)?;
-        let archival =
-            store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE, parenting)?;
+        let archival = store.archive_due_ids(self.archive_cursor.as_deref(), SCAN_PAGE)?;
         let more = ids.len() == SCAN_PAGE as usize;
         let more_archival = archival.len() == SCAN_PAGE as usize;
         self.cursor = ids.last().filter(|_| more).map(|seed| seed.id.clone());
@@ -504,16 +502,12 @@ mod tests {
             .unwrap();
         let active = store.active_ids(None, SCAN_PAGE).unwrap();
         assert_eq!(active.len(), SCAN_PAGE as usize);
-        assert!(store.archive_due_ids(None, SCAN_PAGE, true).is_err());
+        assert!(store.archive_due_ids(None, SCAN_PAGE).is_err());
 
         let mut schedule = Schedule::new();
         let now = schedule.next();
         let mut capacity_waiters = BTreeSet::new();
-        assert!(
-            schedule
-                .seed(&store, now, true, &mut capacity_waiters)
-                .is_err()
-        );
+        assert!(schedule.seed(&store, now, &mut capacity_waiters).is_err());
         assert_eq!(schedule.depth(), 0);
         assert!(capacity_waiters.is_empty());
         assert_eq!(schedule.next(), now);
@@ -524,9 +518,7 @@ mod tests {
                 [],
             )
             .unwrap();
-        schedule
-            .seed(&store, now, true, &mut capacity_waiters)
-            .unwrap();
+        schedule.seed(&store, now, &mut capacity_waiters).unwrap();
         let first_page = active.len();
         for seed in active {
             assert_eq!(

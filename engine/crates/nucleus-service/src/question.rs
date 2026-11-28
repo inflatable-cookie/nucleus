@@ -310,7 +310,7 @@ mod tests {
                 native_fixture(move |request| snapshot_reply(request, strongest, &checkout)).await;
             service.host = host;
             register_planners(&service, &[strongest]).await;
-            service.set_fixture_acp_provider(Some("fixture-acp"));
+            service.set_fixture_acp_provider("fixture-acp");
             let task = Task::new(
                 Identity {
                     id: "notice".into(),
@@ -416,7 +416,7 @@ mod tests {
     async fn a_notice_cannot_send_or_unsettle_outside_the_task_project() {
         let (_home, mut service) =
             crate::tests::fixture(GitHub::new("unused-test-forge").expect("forge"));
-        service.set_fixture_acp_provider(Some("fixture-acp"));
+        service.set_fixture_acp_provider("fixture-acp");
         let checkout = service.fixture().checkout.clone();
         let (host, server) =
             native_fixture(move |request| snapshot_reply(request, "outside", &checkout)).await;

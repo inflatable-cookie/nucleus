@@ -706,21 +706,16 @@ impl Store {
         &self,
         after: Option<&str>,
         limit: u32,
-        parenting: bool,
     ) -> Result<Vec<String>, StoreError> {
         let mut query = self.connection.prepare_cached(
             "SELECT id FROM tasks WHERE id > ?1 AND phase IN ('done','cancelled') AND run IS NULL
-             AND (?3 OR (phase='done' AND report_task IS NOT NULL))
              AND NOT EXISTS (SELECT 1 FROM events e WHERE e.task_id = tasks.id AND e.kind = 'project_removed')
              UNION SELECT n.task_id FROM completion_notices n JOIN tasks t ON t.id=n.task_id
              WHERE n.task_id > ?1 AND n.retry IS NOT NULL AND t.phase IN ('done','cancelled') AND t.run IS NULL
              AND NOT EXISTS (SELECT 1 FROM events e WHERE e.task_id = t.id AND e.kind = 'project_removed')
              ORDER BY 1 LIMIT ?2",
         )?;
-        let rows = query.query_map(
-            params![after.unwrap_or_default(), limit, parenting],
-            |row| row.get(0),
-        )?;
+        let rows = query.query_map(params![after.unwrap_or_default(), limit], |row| row.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

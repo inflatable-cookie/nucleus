@@ -207,11 +207,6 @@ impl ProfileCatalog {
         Ok(Self(providers))
     }
 
-    #[must_use]
-    pub fn supports(&self, profile: &RoleProfile) -> bool {
-        self.0.iter().any(|provider| available(provider, profile))
-    }
-
     /// A skill this exact provider instance advertises as available to its agents.
     #[must_use]
     pub fn discovered_skill(&self, instance: &str, name: &str) -> Option<&Path> {

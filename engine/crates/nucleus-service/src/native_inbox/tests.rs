@@ -64,7 +64,7 @@ async fn legacy_process_decisions_are_closed_as_superseded_without_a_census() {
         .unwrap();
     assert!(recorded.answer.is_some());
     for _ in 0..2 {
-        supersede_process_decisions(store, settings, service.project.as_ref()).unwrap();
+        supersede_process_decisions(store, settings).unwrap();
     }
     let history = store
         .planning_history(
@@ -88,7 +88,7 @@ async fn legacy_process_decisions_are_closed_as_superseded_without_a_census() {
         history[1].snapshot["note"],
         "Checkout retirement now follows Dispatch, T3, and Git."
     );
-    let open = pending(&state, &service).unwrap();
+    let open = pending(&state).unwrap();
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].id, "ordinary");
     assert!(
@@ -691,7 +691,7 @@ async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
 #[tokio::test]
 async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answer() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
-    service.set_fixture_acp_provider(Some(PROVIDER));
+    service.set_fixture_acp_provider(PROVIDER);
     service.native_inbox = Some(NativeInbox::open(&service).unwrap());
     let inbox = service.native_inbox.as_ref().unwrap();
     let root = inbox.root.clone();

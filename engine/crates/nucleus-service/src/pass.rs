@@ -282,23 +282,14 @@ impl Service {
         host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
         let task = &row.task;
-        let parenting = self.acp_provider().is_some();
-        if !task.phase().is_terminal()
-            || task.hold().is_some()
-            || (!parenting && task.report_task().is_none())
-        {
+        if !task.phase().is_terminal() || task.hold().is_some() {
             return Ok(Action::Nothing);
         }
         let identity = task.identity();
         let _fence = self.effect(row).await?;
         let _projects = self.project_writes.read().await;
         let route = self.project_for(identity).await?;
-        let step = if parenting {
-            self.prepare_terminal_archive(task, &route)?
-        } else {
-            DoneArchive::Finished
-        };
-        match step {
+        match self.prepare_terminal_archive(task, &route)? {
             DoneArchive::Finished => {}
             DoneArchive::Wait(cause) => return Err(ServiceError::ArchiveEvidence(cause)),
             DoneArchive::Write(write) => {
@@ -619,30 +610,14 @@ impl Service {
                 {
                     return Ok(Action::Wait(WaitReason::Capacity));
                 }
-                let state = self.state.lock().await;
-                if !self.initial_dispatch_allowed(&state, identity)? {
+                let mut state = self.state.lock().await;
+                if !self.initial_dispatch_allowed(&state, identity)?
+                    || state.settings.profiles.is_none()
+                {
                     return Ok(Action::Wait(WaitReason::Capacity));
                 }
-                let configured = state.settings.profiles.is_some();
-                drop(state);
-                if !configured {
-                    let Some(fixture) = self.project.as_ref() else {
-                        return Ok(Action::Wait(WaitReason::Capacity));
-                    };
-                    let catalog = host.profile_catalog().await?;
-                    if ![&fixture.worker, &fixture.reviewer]
-                        .into_iter()
-                        .all(|profile| catalog.supports(profile))
-                    {
-                        return Err(HostError::Configuration.into());
-                    }
-                }
-                let mut state = self.state.lock().await;
                 if state.store.dependency_blocked(&identity.id)? {
                     return Ok(Action::Wait(WaitReason::Prerequisite));
-                }
-                if !self.initial_dispatch_allowed(&state, identity)? {
-                    return Ok(Action::Wait(WaitReason::Capacity));
                 }
                 let mut admitted = task.clone();
                 admitted.reconcile(&observation);
@@ -666,9 +641,8 @@ impl Service {
                 via: Launch::SendPrepared,
                 ..
             } => self.send_prepared(row, &checkout, observation, host).await,
-            Action::Launch { role, via } => {
-                self.reserve(row, &checkout, observation, role, via, host)
-                    .await
+            Action::Launch { role, .. } => {
+                self.reserve(row, &checkout, observation, role, host).await
             }
             Action::RemindReport => {
                 self.reserve_report_reminder(row, &checkout, &observation)
@@ -834,19 +808,6 @@ impl Service {
         )?)
     }
 
-    #[cfg(test)]
-    pub(super) fn binding(&self, checkout: &Checkout<'_>) -> Result<Binding, ServiceError> {
-        Ok(Binding {
-            project_id: self.fixture().host_project.clone(),
-            worktree_path: checkout
-                .path()
-                .to_str()
-                .ok_or(ServiceError::Project)?
-                .into(),
-            branch: checkout.branch().into(),
-        })
-    }
-
     async fn allocate_checkout(
         &self,
         task: &Task,
@@ -904,8 +865,6 @@ impl Service {
         } else {
             let start = if let Some(report) = task.report_task() {
                 report.planning_base.clone()
-            } else if let Some(project) = &self.project {
-                project.start.clone()
             } else if identity.entry == nucleus_core::Entry::Brief {
                 self.published_start(identity, checkout).await?
             } else {
@@ -1134,7 +1093,6 @@ impl Service {
         checkout: &Checkout<'_>,
         mut observation: Observation,
         role: Role,
-        via: Launch,
         host: &impl TaskHost,
     ) -> Result<Action, ServiceError> {
         let _fence = self.effect(row).await?;
@@ -1144,16 +1102,14 @@ impl Service {
         let task = &row.task;
         let identity = task.identity();
         let route = self.project_for(identity).await?;
-        let selection = match self.select_launch(task, &observation, role, host).await? {
-            LaunchSelection::Fixture => None,
-            LaunchSelection::Profile(selected) => Some(selected),
+        let selected = match self.select_launch(task, &observation, role, host).await? {
+            LaunchSelection::Profile(selected) => selected,
             LaunchSelection::Paused => return Ok(Action::Wait(WaitReason::Capacity)),
         };
         if let Some(wait) = self.gate_allowance(row).await? {
             return Ok(wait);
         }
-        let selection = selection.as_deref();
-        let via = selection.map_or(via, |selected| selected.intent.via().clone());
+        let via = selected.intent.via().clone();
         if role == Role::Worker && observation.workspace == Observed::Known(Workspace::Absent) {
             let Some(workspace) = self.allocate_checkout(task, checkout, None).await? else {
                 return Ok(Action::Wait(WaitReason::Capacity));
@@ -1171,21 +1127,18 @@ impl Service {
             _ => None,
         };
         let (ticket_path, scratch) = self.launch_paths(checkout, &instance)?;
-        let profile = self.launch_profile(role, selection)?;
-        let discovered_skill = if selection.is_some() {
-            host.profile_catalog()
-                .await?
-                .discovered_skill(&profile.instance_id, "nucleus")
-        } else {
-            None
-        };
+        let profile = &selected.native;
+        let discovered_skill = host
+            .profile_catalog()
+            .await?
+            .discovered_skill(&profile.instance_id, "nucleus");
         let (lanes, dependencies) = self.prompt_context(row, &route).await?;
         let description = self.revision_description(task, checkout, role, pr).await;
         let assignment = Prompt {
             row,
             role,
             via: &via,
-            replaced_thread: selection.and_then(|selected| selected.intent.replaced_thread()),
+            replaced_thread: selected.intent.replaced_thread(),
             instance: &instance,
             checkout: checkout.path(),
             scratch: &scratch,
@@ -1195,7 +1148,7 @@ impl Service {
             pr_description: description.as_deref(),
             discovered_skill,
             model: &profile.model,
-            shared_model: selection.and_then(|selected| selected.intent.shared_model()),
+            shared_model: selected.intent.shared_model(),
             lanes: &lanes,
             dependencies: &dependencies,
             command: &self.report_command,
@@ -1217,7 +1170,7 @@ impl Service {
         let mut inputs = host.prepare_launch(LaunchRequest {
             binding,
             parent,
-            reuse_parent: continuing_worker && self.acp_provider().is_some(),
+            reuse_parent: continuing_worker,
             title: crate::titles::child_title(task, row.number, role),
             profile,
             via: &via,
@@ -1226,10 +1179,9 @@ impl Service {
             text: assignment.text,
         })?;
         inputs.scratch = Some(scratch);
-        let (updated, credential) =
-            freeze_launch(task, &observation, inputs, selection, &profile.instance_id)?;
+        let (updated, credential) = freeze_launch(task, &observation, inputs, &selected)?;
         let prompt = (lanes, assignment.size);
-        self.persist_reservation(row, &updated, credential, selection, (via, prompt))
+        self.persist_reservation(row, &updated, credential, &selected, (via, prompt))
             .await
     }
 
@@ -1323,9 +1275,6 @@ impl Service {
     }
 
     pub(super) async fn reconcile_live_parent(&self, row: &TaskRow) -> Result<(), ServiceError> {
-        let Some(provider) = self.acp_provider() else {
-            return Ok(());
-        };
         let task = &row.task;
         let identity = task.identity();
         let path = nucleus_work::checkout_path(
@@ -1350,7 +1299,7 @@ impl Service {
         let worktrees = self.worktrees();
         let checkout = worktrees.registered(&route.checkout, &identity.repository, &identity.id)?;
         let binding = self.checkout_binding(identity, &route, &checkout)?;
-        self.reconcile_parent_hold(row, &checkout, &binding, provider, false)
+        self.reconcile_parent_hold(row, &checkout, &binding, false)
             .await?;
         Ok(())
     }
@@ -1362,14 +1311,14 @@ impl Service {
         binding: &Binding,
         continuing_worker: bool,
     ) -> Result<ControlFlow<WaitReason, Option<ParentRun>>, ServiceError> {
-        let Some(provider) = self.acp_provider().filter(|_| !continuing_worker) else {
+        if continuing_worker {
             return Ok(ControlFlow::Continue(None));
-        };
+        }
         if !self.launch_capacity(row.task.identity(), false).await? {
             return Ok(ControlFlow::Break(WaitReason::Capacity));
         }
         match self
-            .reconcile_parent_hold(row, checkout, binding, provider, true)
+            .reconcile_parent_hold(row, checkout, binding, true)
             .await?
         {
             Some(parent) => Ok(ControlFlow::Continue(Some(parent))),
@@ -1382,9 +1331,9 @@ impl Service {
         row: &TaskRow,
         checkout: &Checkout<'_>,
         binding: &Binding,
-        provider: &str,
         preparing_launch: bool,
     ) -> Result<Option<ParentRun>, ServiceError> {
+        let provider = self.acp_provider();
         let task = &row.task;
         let id = &task.identity().id;
         let now = now_ms();
@@ -1570,7 +1519,7 @@ impl Service {
         row: &TaskRow,
         updated: &Task,
         credential: CallbackCredential,
-        selection: Option<&SelectedLaunch>,
+        selected: &SelectedLaunch,
         (via, prompt): (Launch, (LaneContext, PromptSize)),
     ) -> Result<Action, ServiceError> {
         let run = updated.run().ok_or(ServiceError::Input)?;
@@ -1588,38 +1537,35 @@ impl Service {
         if !pins.is_empty() {
             detail.insert("laneDocumentPins".into(), serde_json::json!(pins));
         }
-        if let Some(selected) = selection {
-            let intent = &selected.intent;
-            if let Some(ceiling) = intent.step_up_from() {
-                detail.insert(
-                    "profileStepUp".into(),
-                    serde_json::json!({
-                        "ordinaryCeiling": ceiling,
-                        "selectedCapability": intent.profile().capability,
-                        "reason": "Every eligible profile within the ordinary ceiling is paused."
-                    }),
-                );
-            }
-            if let Some(worker) = intent.critical_fallback_worker() {
-                let receipt = CriticalReviewFallback {
-                    at_ms: run.launch().started_at,
-                    run_instance: run.launch().instance.clone(),
-                    worker_profile_id: worker.into(),
-                    reviewer_profile_id: intent.profile().id.clone(),
-                    reason: "The selected reviewer is below the worker's capability bracket."
-                        .into(),
-                };
-                detail.insert("criticalReviewFallback".into(), serde_json::json!(receipt));
-            }
-            if let Some(message) = intent.shared_model() {
-                detail.insert(
-                    "sharedModel".into(),
-                    serde_json::json!({
-                        "runInstance": intent.instance(),
-                        "message": message
-                    }),
-                );
-            }
+        let intent = &selected.intent;
+        if let Some(ceiling) = intent.step_up_from() {
+            detail.insert(
+                "profileStepUp".into(),
+                serde_json::json!({
+                    "ordinaryCeiling": ceiling,
+                    "selectedCapability": intent.profile().capability,
+                    "reason": "Every eligible profile within the ordinary ceiling is paused."
+                }),
+            );
+        }
+        if let Some(worker) = intent.critical_fallback_worker() {
+            let receipt = CriticalReviewFallback {
+                at_ms: run.launch().started_at,
+                run_instance: run.launch().instance.clone(),
+                worker_profile_id: worker.into(),
+                reviewer_profile_id: intent.profile().id.clone(),
+                reason: "The selected reviewer is below the worker's capability bracket.".into(),
+            };
+            detail.insert("criticalReviewFallback".into(), serde_json::json!(receipt));
+        }
+        if let Some(message) = intent.shared_model() {
+            detail.insert(
+                "sharedModel".into(),
+                serde_json::json!({
+                    "runInstance": intent.instance(),
+                    "message": message
+                }),
+            );
         }
         if !detail.is_empty() {
             audit.detail = serde_json::Value::Object(detail).to_string();
@@ -1628,20 +1574,12 @@ impl Service {
             let mut state = self.state.lock().await;
             if state.store.dependency_blocked(&row.task.identity().id)? {
                 Ok(Action::Wait(WaitReason::Prerequisite))
-            } else if selection.map_or(state.settings.profiles.is_none(), |selected| {
-                selected.is_current(&state)
-            }) {
-                self.commit(
-                    &mut state,
-                    row,
-                    updated,
-                    &audit,
-                    selection.map(|selected| selected.group.as_str()),
-                )
-                .map(|_| Action::Launch {
-                    role: run.launch().role,
-                    via,
-                })
+            } else if selected.is_current(&state) {
+                self.commit(&mut state, row, updated, &audit, Some(&selected.group))
+                    .map(|_| Action::Launch {
+                        role: run.launch().role,
+                        via,
+                    })
             } else {
                 Ok(Action::Wait(WaitReason::Capacity))
             }
@@ -1860,9 +1798,7 @@ impl Service {
     ) -> Result<(), ServiceError> {
         let target = authorization.target();
         self.host.check_notice_target(authorization)?;
-        let root = if self.project.is_some() {
-            (target.project_id == route.host_project).then(|| route.checkout.clone())
-        } else if identity.origin_thread.as_deref() == Some(&target.thread) {
+        let root = if identity.origin_thread.as_deref() == Some(&target.thread) {
             // The task's origin is an exact thread address, even in a scratch folder.
             return Ok(());
         } else {
@@ -2521,19 +2457,17 @@ fn freeze_launch(
     task: &Task,
     observation: &Observation,
     inputs: LaunchInputs,
-    selection: Option<&SelectedLaunch>,
-    fallback_group: &str,
+    selected: &SelectedLaunch,
 ) -> Result<(Task, CallbackCredential), ServiceError> {
     let mut seed = [0; 32];
     getrandom::fill(&mut seed).map_err(|_| ServiceError::Ticket)?;
     let mut updated = task.clone();
-    let group = selection.map_or(fallback_group, |selected| &selected.group);
     let credential = updated.reserve_grouped_launch(
         observation,
         inputs,
         &seed,
-        selection.map(|selected| selected.intent.clone()),
-        group.into(),
+        Some(selected.intent.clone()),
+        selected.group.clone(),
     )?;
     Ok((updated, credential))
 }
