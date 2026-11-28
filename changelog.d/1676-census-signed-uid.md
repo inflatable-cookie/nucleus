@@ -1,0 +1,1 @@
+- Terminal cleanup no longer fails its process census when a system process runs under a uid outside the user range, such as the `-2` uid that some daemons report.

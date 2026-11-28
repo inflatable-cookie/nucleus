@@ -14,7 +14,7 @@ use rustix::process::{Pid, Signal, kill_process};
 use serde::Serialize;
 use std::io;
 
-use super::{HostError, Inventory, MAX_PROBE_OUTPUT, read_listing, verify_roots};
+use super::{HostError, Inventory, MAX_PROBE_OUTPUT, parse_uid, read_listing, verify_roots};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct OrphanProcess {
@@ -441,9 +441,7 @@ async fn process_identities(
         if command.is_empty() {
             return Err(HostError::Protocol);
         }
-        if uid.parse::<u32>().ok() == Some(rustix::process::geteuid().as_raw())
-            && !status.starts_with('Z')
-        {
+        if parse_uid(uid)? == rustix::process::geteuid().as_raw() && !status.starts_with('Z') {
             result.insert(
                 pid,
                 OrphanProcess {
