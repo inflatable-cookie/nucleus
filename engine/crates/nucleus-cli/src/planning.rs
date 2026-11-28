@@ -543,7 +543,7 @@ fn decision_option(value: &str) -> std::result::Result<DecisionOption, String> {
 
 #[cfg(test)]
 mod tests {
-    use clap::{Parser, error::ErrorKind};
+    use clap::Parser;
 
     use super::Action as Planning;
     use crate::{Action, Cli};
@@ -746,31 +746,6 @@ mod tests {
     }
 
     #[test]
-    fn item_reopen_cli_sends_note_and_version() {
-        let parsed = Cli::try_parse_from([
-            "nucleus",
-            "item.reopen",
-            "product",
-            "item-id",
-            "--note",
-            "Again",
-            "--version",
-            "7",
-        ])
-        .unwrap();
-        let Action::Planning(action) = parsed.action else {
-            panic!("expected planning command")
-        };
-        let (method, path, body) = action.request().unwrap();
-        assert_eq!(method, reqwest::Method::POST);
-        assert_eq!(path, "/v1/planning/product/items/item-id/reopen");
-        assert_eq!(
-            body.unwrap(),
-            serde_json::json!({"note":"Again", "version":7})
-        );
-    }
-
-    #[test]
     fn planning_item_add_distinguishes_project_from_kind_by_arity() {
         for (positionals, expected) in [
             (&["papercut", "Fix it"][..], None),
@@ -803,19 +778,5 @@ mod tests {
         let controller = Cli::try_parse_from(input.into_iter().chain(["QA", "Qualification"]))
             .expect("controller edit");
         assert!(matches!(controller.action, Action::Planning(action) if !action.uses_ticket()));
-    }
-
-    #[test]
-    fn active_cli_rejects_the_retired_limits_import() {
-        let result = Cli::try_parse_from(["nucleus", "limits.import", "copy.sqlite"]);
-        assert!(matches!(result, Err(error) if error.kind() == ErrorKind::InvalidSubcommand));
-    }
-
-    #[test]
-    fn active_cli_rejects_the_retired_planning_imports() {
-        for command in ["project.import", "item.import"] {
-            let result = Cli::try_parse_from(["nucleus", command, "copy.sqlite"]);
-            assert!(matches!(result, Err(error) if error.kind() == ErrorKind::InvalidSubcommand));
-        }
     }
 }

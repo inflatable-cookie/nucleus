@@ -1,3 +1,4 @@
+use crate::tests::registry_fixture;
 use nucleus_core::profiles::{BriefPolicy, Complexity};
 
 use super::*;
@@ -165,7 +166,7 @@ async fn task_add_and_explicit_amend_check_decoded_brief_bytes() {
 
 #[tokio::test]
 async fn a_live_brief_can_be_amended_with_its_existing_scope() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, service) = registry_fixture(GitHub::new("fixture").unwrap());
     let service = Arc::new(service);
     let api = settings_api(&service);
     let (legacy, _, _) = reservation("legacy-scope", Entry::Brief, &service.fixture().start);

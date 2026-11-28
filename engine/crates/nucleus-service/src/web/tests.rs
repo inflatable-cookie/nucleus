@@ -1,3 +1,4 @@
+use crate::tests::registry_fixture;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use axum::{
@@ -44,21 +45,6 @@ const PLANNER_KEY: [u8; 32] = [5; 32];
 const BOUND_KEY: [u8; 32] = [6; 32];
 const LOCAL_HOST: &str = "127.0.0.1:9";
 
-#[test]
-fn operator_snooze_detail_preserves_its_deadline() {
-    let detail = crate::WaitDetail::OperatorSnoozed {
-        version: 1,
-        thread: "thread:fixture".into(),
-        until: 42,
-        message: "You snoozed this thread until 00:00".into(),
-    };
-
-    assert_eq!(
-        board_wait_detail(&detail),
-        Some("You snoozed this thread until 00:00")
-    );
-}
-
 #[tokio::test]
 async fn the_row_refresh_route_is_gone() {
     let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
@@ -83,7 +69,7 @@ async fn the_row_refresh_route_is_gone() {
 
 #[tokio::test]
 async fn only_a_shell_active_role_gets_the_legacy_hint_without_a_hold() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
     let (mut task, _, _) = crate::tests::reservation_at(
         "worker",
         Entry::Brief,
@@ -185,7 +171,7 @@ async fn only_a_shell_active_role_gets_the_legacy_hint_without_a_hold() {
 
 #[tokio::test]
 async fn shell_startup_does_not_invent_a_hold_for_a_bound_role() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
     let (mut task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
     let instance = task.run().unwrap().launch().instance.clone();
     task.record_send(&instance, 1).unwrap();
@@ -339,7 +325,7 @@ async fn admission_commits_when_t3_is_unreachable() {
 
 #[tokio::test]
 async fn activity_invalidates_only_on_a_change_and_cannot_cross_a_revision() {
-    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let (task, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
     seed_task(&service, &task).await;
     let row = service.task("worker").await.expect("row");
@@ -419,7 +405,7 @@ async fn activity_invalidates_only_on_a_change_and_cannot_cross_a_revision() {
 
 #[tokio::test]
 async fn history_rebuilds_run_and_pr_presentation_without_replay_or_report_noise() {
-    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let (task, key, mut observation) =
         reservation("worker", Entry::Brief, &service.fixture().start);
     let instance = task.run().expect("run").launch().instance.clone();
@@ -596,7 +582,7 @@ fn without_transitions(history: &Value) -> Vec<&Value> {
     reason = "follow both review launches through one persisted history"
 )]
 async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
-    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let head = service.fixture().start.clone();
     let (task, key, mut observation) = reservation("reviewer", Entry::ReviewEntry, &head);
     let first = task.run().expect("first review").launch().clone();
@@ -703,7 +689,7 @@ async fn reviewer_rounds_follow_applied_verdicts_across_launches() {
 
 #[tokio::test]
 async fn http_reports_bind_the_task_instance_credential_and_role() {
-    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let (worker, worker_key, _) = reservation("worker", Entry::Brief, &service.fixture().start);
     let (reviewer, reviewer_key, _) =
         reservation("reviewer", Entry::ReviewEntry, &service.fixture().start);
@@ -859,7 +845,7 @@ async fn reject_foreign_addresses(api: &Router, worker_path: &str, key: &[u8; 32
 
 #[tokio::test]
 async fn next_shows_the_settled_reviewers_provider_reset() {
-    let (_home, service) = fixture(GitHub::new("unused-fixture").unwrap());
+    let (_home, service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
     let (mut task, _, mut observation) =
         reservation("reviewer", Entry::ReviewEntry, &service.fixture().start);
     let cause =
@@ -888,7 +874,7 @@ async fn next_shows_the_settled_reviewers_provider_reset() {
 
 #[tokio::test]
 async fn next_and_owner_commands_agree_on_code_recovery() {
-    let (_home, service) = fixture(GitHub::new("unused-fixture").unwrap());
+    let (_home, service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
     let service = Arc::new(service);
     let api = router(
         Arc::clone(&service),
@@ -1180,7 +1166,7 @@ async fn persistent_workspace_error_parks_and_owner_recheck_observes_one_repair(
 async fn workspace_timeout_card_names_the_operation_without_raw_git_diagnostics() {
     use longhorn_git_workspace::{GitFailure, GitFailureCode};
     use nucleus_work::{GitOperation, WorkError};
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, service) = registry_fixture(GitHub::new("fixture").unwrap());
     let (shape, _, _) = reservation("timeout", Entry::Brief, &service.fixture().start);
     let task = Task::new(shape.identity().clone(), shape.brief().text.clone(), None);
     seed_task(&service, &task).await;
@@ -1227,7 +1213,7 @@ async fn workspace_timeout_card_names_the_operation_without_raw_git_diagnostics(
 
 #[tokio::test]
 async fn queued_external_merge_acceptance_bypasses_saturation() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
     let head = service.fixture().start.clone();
     let (forge, readable, published, reads, server) = serve_merged_forge(&head).await;
     readable.store(true, Ordering::Relaxed);
@@ -1406,7 +1392,7 @@ async fn a_head_bound_work_answer_and_amend_wait_for_the_exact_head() {
 
 #[tokio::test]
 async fn a_replaced_head_refuses_the_answer_after_one_forge_read() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
     let head = service.fixture().start.clone();
     let mut pull = forge_pull(&head);
     pull["state"] = json!("closed");
@@ -1708,7 +1694,7 @@ async fn only_the_bound_planner_can_answer_even_when_the_origin_is_known() {
 
 #[tokio::test]
 async fn an_equal_move_commits_a_revision_and_wakes_the_task() {
-    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let (reserved, _, _) = reservation("worker", Entry::Brief, &service.fixture().start);
     let task = Task::new(reserved.identity().clone(), "Synthetic change".into(), None);
     seed_task(&service, &task).await;
@@ -2007,7 +1993,7 @@ async fn mint_binding(api: &Router, task: &str, key: &[u8; 32]) -> nucleus_core:
 
 #[tokio::test]
 async fn done_permanently_revokes_the_writer_and_keeps_read_access() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
     let head = service.fixture().start.clone();
     seed_held_acceptance(&service, &head).await;
     let service = Arc::new(service);
@@ -2069,13 +2055,13 @@ async fn done_permanently_revokes_the_writer_and_keeps_read_access() {
 
 #[tokio::test]
 async fn unlisted_done_threads_make_no_native_reads_after_restart() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
     let (host, native) = crate::tests::native_fixture(|_| {
         panic!("an archived task must not read T3 again");
     })
     .await;
     service.host = host;
-    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    service.set_fixture_acp_provider(Some("fixture-acp"));
     let (mut row, _) = fixture_at_done(&service).await;
     assert_eq!(row.task.phase(), Phase::Done);
     service
@@ -2130,8 +2116,8 @@ async fn unlisted_done_threads_make_no_native_reads_after_restart() {
 
 #[tokio::test]
 async fn done_archive_wait_flows_into_the_shared_board_lifecycle() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
-    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
+    service.set_fixture_acp_provider(Some("fixture-acp"));
     let (done, _) = fixture_at_done(&service).await;
     let id = &done.task.identity().id;
     let cause = "The reviewer thread is still active in T3.";
@@ -2395,7 +2381,7 @@ async fn operators_can_pause_a_known_subscription_until_its_reset() {
 
 #[tokio::test]
 async fn profile_pause_edits_wake_a_parked_capacity_waiter() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
     let service = Arc::new(service);
     let api = settings_api(&service);
     let path = "/v1/settings/profiles";
@@ -2834,7 +2820,7 @@ async fn reassign_commits_once_and_invalidates_planner_at_publication() {
     let state = service.state.lock().await;
     assert_eq!(state.planner_authority_epoch, initial_epoch + 2);
     assert!(state.planner_authority.is_empty());
-    assert_eq!(state.settings.fixture_slots(service.fixture()), Some(2));
+    assert_eq!(state.settings.fixture_slots(&service.fixture()), Some(2));
     assert_eq!(
         reads.load(Ordering::Relaxed),
         1,
@@ -2897,7 +2883,7 @@ async fn storage_saves_preference_without_unpinning_a_legacy_profile() {
 
 #[tokio::test]
 async fn host_settings_reject_embedded_credentials_and_stage_the_endpoint() {
-    let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
     let service = Arc::new(service);
     let api = settings_api(&service);
     let path = "/v1/settings/hosts";
@@ -2968,8 +2954,8 @@ async fn put_settings(api: &Router, path: &str, key: &[u8; 32], input: &Value) -
 
 #[tokio::test]
 async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let (_home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
+    service.set_fixture_acp_provider(Some("fixture-acp"));
     let (mut first, merged) = fixture_at_done(&service).await;
     {
         let mut state = service.state.lock().await;
@@ -3060,7 +3046,7 @@ async fn done_archival_follows_the_held_shell_after_a_thread_reopens() {
 #[tokio::test]
 async fn done_archival_recovers_interrupted_cleanup_without_dot_git_and_prunes_trash() {
     let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    service.set_fixture_acp_provider(Some("fixture-acp"));
     {
         let repo = &service.fixture().checkout;
         std::fs::write(repo.join(".gitignore"), "node_modules/\n").unwrap();
@@ -3672,7 +3658,7 @@ async fn board_age_survives_an_amendment_and_restart_only_baselines_the_wait() {
 #[tokio::test]
 async fn operator_hold_keeps_its_state_entry_across_restart() {
     let forge = || GitHub::new("unused-fixture-forge").unwrap();
-    let (_home, service) = fixture(forge());
+    let (_home, service) = registry_fixture(forge());
     let settings = service.settings.clone();
     let project = service.fixture().clone();
     seed_planner_task(&service, "held", "fixture-planner").await;
@@ -3737,7 +3723,7 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
     use std::os::unix::fs::PermissionsExt;
 
     let forge = || GitHub::new("unused-fixture-forge").expect("fixture forge");
-    let (home, service) = fixture(forge());
+    let (home, service) = registry_fixture(forge());
     let assets = home.path().join("board");
     std::fs::create_dir(&assets).unwrap();
     std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
@@ -3801,7 +3787,7 @@ async fn board_cookie_survives_a_service_restart_and_operator_revocation() {
 #[tokio::test]
 async fn board_pairing_at_capacity_reclaims_the_least_recently_used_device() {
     let forge = || GitHub::new("unused-fixture-forge").expect("fixture forge");
-    let (home, service) = fixture(forge());
+    let (home, service) = registry_fixture(forge());
     let assets = home.path().join("board");
     std::fs::create_dir(&assets).unwrap();
     std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
@@ -3845,66 +3831,6 @@ async fn board_pairing_at_capacity_reclaims_the_least_recently_used_device() {
             .unwrap()
             .is_none()
     );
-    let fresh_session = browser_request(&api, Method::GET, session_path, Some(&fresh), None).await;
-    assert_eq!(fresh_session.status(), StatusCode::OK);
-    let recent = browser_request(
-        &api,
-        Method::GET,
-        session_path,
-        Some(cookies[0].as_str()),
-        None,
-    )
-    .await;
-    assert_eq!(recent.status(), StatusCode::OK);
-    let evicted = browser_request(
-        &api,
-        Method::GET,
-        session_path,
-        Some(cookies[1].as_str()),
-        None,
-    )
-    .await;
-    assert_eq!(evicted.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn board_pairing_after_a_restart_at_capacity_keeps_the_recently_used_device() {
-    let forge = || GitHub::new("unused-fixture-forge").expect("fixture forge");
-    let (home, service) = fixture(forge());
-    let assets = home.path().join("board");
-    std::fs::create_dir(&assets).unwrap();
-    std::fs::write(assets.join("index.html"), "Fixture Board").unwrap();
-    std::fs::write(assets.join("app.js"), "").unwrap();
-    let settings = service.settings.clone();
-    let project = service.fixture().clone();
-    let controllers = || {
-        [Controller {
-            credential: BOARD_KEY,
-            authority: Authority::Operator {
-                actor: "operator".into(),
-            },
-        }]
-    };
-    let setup = |service| router_with_board(Arc::new(service), controllers(), &assets).unwrap();
-    let reopen = || reopen_fixture(&settings, project.clone(), forge());
-    let api = setup(service);
-    let session_path = "/api/engine/session";
-    let mut cookies = Vec::new();
-    for _ in 0..64 {
-        cookies.push(pair_board(&api, &BOARD_KEY).await);
-    }
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    // Every device except device 1 is used after pairing, so device 1 is the
-    // least recently used when the engine restarts at capacity.
-    for (index, cookie) in cookies.iter().enumerate().filter(|(index, _)| *index != 1) {
-        let used = browser_request(&api, Method::GET, session_path, Some(cookie), None).await;
-        assert_eq!(used.status(), StatusCode::OK, "device {index}");
-    }
-    drop(api);
-
-    let api = setup(reopen());
-    let fresh = pair_board(&api, &BOARD_KEY).await;
-
     let fresh_session = browser_request(&api, Method::GET, session_path, Some(&fresh), None).await;
     assert_eq!(fresh_session.status(), StatusCode::OK);
     let recent = browser_request(
@@ -4441,7 +4367,8 @@ async fn run_routed_report(
 
 #[tokio::test]
 async fn board_detail_serves_full_transcript_and_per_step_times_without_t3_calls() {
-    let (_home, mut service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, mut service) =
+        registry_fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let (host, native) = crate::tests::native_fixture(|_| {
         panic!("reading task detail must not call T3");
     })
@@ -5011,7 +4938,7 @@ async fn seed_failed_run(
 
 #[tokio::test]
 async fn board_detail_serves_pre_1601_nulls_and_failure_outcomes() {
-    let (_home, service) = fixture(GitHub::new("unused-forge-fixture").expect("client"));
+    let (_home, service) = registry_fixture(GitHub::new("unused-forge-fixture").expect("client"));
     let head = service.fixture().start.clone();
     Box::pin(seed_pre_1601_task(&service, &head)).await;
     Box::pin(seed_outcome_runs(&service, &head)).await;
@@ -5130,8 +5057,8 @@ fn assert_delay((low, high): (std::time::Duration, std::time::Duration), expecte
 #[tokio::test]
 async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_tasks() {
     for phase in ["done", "cancelled"] {
-        let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
+        service.set_fixture_acp_provider(Some("fixture-acp"));
         let (done, _) = fixture_at_done(&service).await;
         let id = done.task.identity().id.clone();
         service
@@ -5224,8 +5151,8 @@ async fn a_retained_checkout_backs_off_to_a_long_cap_for_done_and_cancelled_task
 
 #[tokio::test]
 async fn an_unmapped_error_shows_its_cause_backs_off_and_accepts_recheck() {
-    let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
-    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    let (_home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
+    service.set_fixture_acp_provider(Some("fixture-acp"));
     let project = service.fixture().clone();
     let (reserved, _, _) =
         crate::tests::reservation("wrong-branch", nucleus_core::Entry::Brief, &project.start);

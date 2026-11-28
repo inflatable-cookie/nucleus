@@ -1,5 +1,6 @@
 use std::{
-    path::Path,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
     process::Command as Process,
     sync::{
         Arc,
@@ -20,13 +21,18 @@ use nucleus_hosts::{
     Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
     SendOutcome, StopProgress, TaskHost,
 };
-use nucleus_store::{AllowanceObservation, PinnedVolume, Store, StoreError};
+use nucleus_store::{
+    AllowanceObservation, PinnedVolume, Profiles, ProjectSettings, Projects, RepositorySettings,
+    Store, StoreError,
+};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 use super::*;
 
 pub(super) const REPOSITORY: &str = "inflatable-cookie/nucleus-fixture";
+pub(super) const REGISTERED_PROJECT: &str = "fixture-product";
+const HOST_PROJECT: &str = "local-fixture";
 const PR: &str = "https://github.com/inflatable-cookie/nucleus-fixture/pull/1";
 
 pub(super) fn author_declaration() -> AuthorDeclaration {
@@ -58,12 +64,84 @@ pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     fixture_with_volume(forge, None)
 }
 
-pub(super) fn fixture_with_volume(
-    forge: GitHub,
-    work_volume: Option<&PinnedVolume>,
-) -> (tempfile::TempDir, Service) {
+/// The production registry over one checkout: Projects settings register it, and
+/// the T3 shell reports its project, so the scheduler runs the registry branches.
+pub(super) fn registry_fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     let home = tempfile::tempdir().expect("fixture volume directory");
     let root = home.path().canonicalize().expect("portable root");
+    let checkout = fixture_checkout(&root);
+    let settings = SettingsFile::open(&root).expect("portable settings");
+    settings
+        .configure(&settings.read().expect("fixture settings"), |current| {
+            current.enabled = true;
+        })
+        .expect("enable fixture");
+    let revision = settings
+        .read::<Projects>()
+        .expect("project settings")
+        .revision;
+    settings
+        .edit(&revision, |projects: &mut Projects| {
+            projects.projects = BTreeMap::from([(
+                REGISTERED_PROJECT.into(),
+                ProjectSettings {
+                    planner_claim: None,
+                    claimed_planner_threads: Vec::new(),
+                    name: "Fixture".into(),
+                    archived: false,
+                    repositories: vec![RepositorySettings {
+                        origin: REPOSITORY.into(),
+                        path: checkout.clone(),
+                        base: "main".into(),
+                        host_project: Some(HOST_PROJECT.into()),
+                        host_project_title: Some("Fixture".into()),
+                        planner_threads: Vec::new(),
+                    }],
+                },
+            )]);
+            Ok(())
+        })
+        .expect("register fixture project");
+    // The registry launches from named profiles; this one is the fixture's
+    // single role profile.
+    let revision = settings
+        .read::<Profiles>()
+        .expect("profile settings")
+        .revision;
+    settings
+        .edit(&revision, |value: &mut Profiles| {
+            *value = serde_json::from_value(json!({"profiles": [{
+                "name": "Fixture",
+                "providerInstanceId": "provider",
+                "selection": {"id": "fixture", "provider": "codex", "model": "fixture"}
+            }]}))
+            .expect("fixture profile");
+            Ok(())
+        })
+        .expect("register fixture profile");
+    let host = T3::new("http://127.0.0.1:9", "unused-fixture-key")
+        .expect("no native host for the service fixture");
+    host.fixture_project_shell(
+        &json!({
+            "projects": [{"id": HOST_PROJECT, "workspaceRoot": checkout, "title": "Fixture"}],
+            "threads": []
+        }),
+        "fixture-acp",
+    );
+    let service = Service::open_projects(
+        settings.lock_profile().expect("fixture profile"),
+        "fixture-acp".into(),
+        host,
+        forge,
+        "127.0.0.1:9".parse().expect("callback"),
+        std::env::current_exe().expect("test binary"),
+    )
+    .expect("registry service");
+    (home, service)
+}
+
+/// A repository whose origin is the fixture repository, with one base commit.
+fn fixture_checkout(root: &Path) -> PathBuf {
     let checkout = root.join("repo");
     std::fs::create_dir(&checkout).expect("project");
     git(&checkout, &["init", "-b", "main"]);
@@ -77,6 +155,16 @@ pub(super) fn fixture_with_volume(
             &format!("https://github.com/{REPOSITORY}.git"),
         ],
     );
+    checkout
+}
+
+pub(super) fn fixture_with_volume(
+    forge: GitHub,
+    work_volume: Option<&PinnedVolume>,
+) -> (tempfile::TempDir, Service) {
+    let home = tempfile::tempdir().expect("fixture volume directory");
+    let root = home.path().canonicalize().expect("portable root");
+    let checkout = fixture_checkout(&root);
     let start = git(&checkout, &["rev-parse", "HEAD"])
         .parse()
         .expect("base head");
@@ -502,7 +590,11 @@ impl TaskHost for Due {
         Err(HostError::Uncertain)
     }
 
-    async fn send(&self, _: RunDispatch) -> Result<SendOutcome, HostError> {
+    async fn send(
+        &self,
+        _: RunDispatch,
+        _: impl FnMut(nucleus_hosts::SnoozeUpdate) -> Result<(), HostError> + Send,
+    ) -> Result<SendOutcome, HostError> {
         unreachable!("fixture probes the decision before the send marker")
     }
 
@@ -1224,7 +1316,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     ))
     .await;
     let (home, mut service) = fixture(forge);
-    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    service.set_fixture_acp_provider(Some("fixture-acp"));
     let project = service.fixture().clone();
     let shell = json!({"projects":[{
         "id":project.host_project, "workspaceRoot":project.checkout
@@ -1626,7 +1718,7 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
     })
     .await;
     service.host = host;
-    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    service.set_fixture_acp_provider(Some("fixture-acp"));
     service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
         heavy_slots: 1,
         normal_slots: 0,
@@ -1954,7 +2046,7 @@ async fn recorded_role_send_time_does_not_extend_an_observation_outage() {
 #[tokio::test]
 async fn done_archive_keeps_its_cause_and_respects_host_deferral() {
     let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
-    service.fixture_mut().acp_provider = Some("fixture-acp".into());
+    service.set_fixture_acp_provider(Some("fixture-acp"));
     let (task, _, _) = reservation("archive", Entry::Brief, &service.fixture().start);
     let task = Task::new(task.identity().clone(), "Fixture".into(), None);
     let mut snapshot = serde_json::to_value(task).unwrap();

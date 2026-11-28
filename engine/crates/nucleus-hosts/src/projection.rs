@@ -9,10 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::{
-    Binding, HostError, ProviderLimit, RowObservation, task_row::ThreadVisibility,
-    thread_snapshots::ShellCustody,
-};
+use crate::{Binding, HostError, ProviderLimit, thread_snapshots::ShellCustody};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MissingReceipt {
@@ -103,10 +100,7 @@ struct Thread {
     lineage: Option<Lineage>,
     provider_instance_id: Option<String>,
     active_provider_thread_id: Option<String>,
-    last_snooze_wake_at: Option<String>,
     model_selection: Option<Value>,
-    #[serde(flatten)]
-    visibility: ThreadVisibility,
 }
 
 #[derive(Deserialize)]
@@ -471,25 +465,6 @@ impl Projection {
         self.runs
             .iter()
             .any(|run| run.user_message_id.as_deref() == Some(message_id))
-    }
-
-    pub(crate) fn last_snooze_wake_ms(&self) -> Option<u64> {
-        crate::task_row::timestamp_ms(self.thread.last_snooze_wake_at.as_deref()?).ok()
-    }
-
-    pub(crate) fn has_delivery(&self, message_id: &str) -> bool {
-        let (message, run) = self.delivery(message_id);
-        message.is_some() || run.is_some()
-    }
-
-    pub(crate) fn row_observation(&self) -> Result<Option<RowObservation>, HostError> {
-        if self.archived() || self.thread.deleted_at.is_some() {
-            return Ok(None);
-        }
-        Ok(Some(RowObservation {
-            sequence: self.sequence(),
-            visibility: self.thread.visibility.read()?,
-        }))
     }
 
     pub(crate) const fn archived(&self) -> bool {

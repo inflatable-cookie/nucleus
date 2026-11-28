@@ -1756,10 +1756,6 @@ impl Service {
         Ok(action)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "keep admission, intent and send in order"
-    )]
     async fn send(
         &self,
         row: &TaskRow,
@@ -1802,18 +1798,8 @@ impl Service {
             self.recheck_effect(row, WaitReason::HostUnknown).await;
             return Ok(SendAttempt::Deferred);
         }
-        let parent = authorization.parent_row().zip(self.acp_provider());
-        if let Some((parent, _)) = parent {
-            self.check_parent_snooze(row, authorization.binding(), parent)
-                .await?;
-        }
-        let queued_parent = authorization.queued_parent().map(str::to_owned);
-        let owned_parent_snoozes = if let Some(thread) = queued_parent.as_deref() {
-            self.owned_delivery_snoozes(row, thread).await?
-        } else {
-            Vec::new()
-        };
         let archive = permit.superseded;
+        let reflect_admission = authorization.reflect_admission();
         self.storage.database().verify()?;
         let (mut sent, dispatch) = {
             let mut state = self.state.lock().await;
@@ -1827,8 +1813,7 @@ impl Service {
                 return Ok(SendAttempt::Deferred);
             }
             let mut task = task.clone();
-            let mut dispatch = authorization.record(&mut task)?;
-            dispatch.allow_owned_parent_snoozes(owned_parent_snoozes);
+            let dispatch = authorization.record(&mut task)?;
             let version = self.commit(&mut state, row, &task, &event("host_send"), None)?;
             (
                 TaskRow {
@@ -1839,31 +1824,22 @@ impl Service {
                 dispatch,
             )
         };
-        if let Some((_, provider)) = parent
+        if reflect_admission
+            && let Some(provider) = self.acp_provider()
             && run.last_send_at_ms().is_none()
             && let Err(error) = self.reflect_role_admission(&sent, checkout, provider).await
         {
             service_log!("{}: {error}", task.identity().id);
         }
-        let result = match host.send(dispatch).await? {
+        let mut journal = self.delivery_snooze_journal(Some(&task.identity().id));
+        let result = host.send(dispatch, |update| journal.record(update)).await;
+        journal.settle().await;
+        let result = match result? {
             SendOutcome::NotSent(error) => {
                 let mut audit = event("host_send_not_sent");
                 audit.detail = serde_json::json!({"command":run.launch().instance}).to_string();
-                let restored = self.save(&sent, row.task.clone(), &audit).await?;
-                let (thread, until) = match error {
-                    HostError::OperatorSnoozed { until } => (run.launch().thread.clone(), until),
-                    HostError::RetainedParentSnoozed { until } => {
-                        (queued_parent.ok_or(ServiceError::Input)?, until)
-                    }
-                    error => return Err(error.into()),
-                };
-                self.schedule_result(
-                    &restored,
-                    &Err(ServiceError::OperatorSnoozed { thread, until }),
-                    crate::schedule::Priority::Effect,
-                )
-                .await?;
-                return Ok(SendAttempt::Deferred);
+                self.save(&sent, row.task.clone(), &audit).await?;
+                return Err(error.into());
             }
             outcome => outcome,
         };
@@ -2746,7 +2722,8 @@ mod tests {
     use super::*;
     use crate::tests::{
         Due, REPOSITORY, archived_checkout_rows, code_task_at_merge, empty_archive_fixture,
-        fixture, forge_checks, forge_fixture, forge_pull, native_fixture, reservation, serve_forge,
+        fixture, forge_checks, forge_fixture, forge_pull, native_fixture, registry_fixture,
+        reservation, serve_forge,
     };
 
     async fn cancelled_cleanup_task(service: &Service) -> TaskRow {
@@ -3035,8 +3012,8 @@ mod tests {
         host_tree: bool,
         dispatch: Option<nucleus_store::DispatchSettings>,
     ) {
-        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.fixture_mut().acp_provider = Some("fixture".into());
+        let (home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
+        service.set_fixture_acp_provider(Some("fixture"));
         service.state.lock().await.settings.dispatch = dispatch;
         let (terminal, scratch) = if in_scratch {
             let (row, scratch) = settled_cleanup_task(&service, home.path(), legacy).await;
@@ -3258,13 +3235,13 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_cleanup_leaves_a_shared_service_running_in_trash() {
-        let (home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let (home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
         let head = service.fixture().start.clone();
         let (forge, _server) = publish_checkout_forge(head).await;
         service.forge = forge;
         let (native, _archive) = empty_archive_fixture(1).await;
         service.host = crate::tests::verified_native_fixture(native, home.path());
-        service.fixture_mut().acp_provider = Some("fixture".into());
+        service.set_fixture_acp_provider(Some("fixture"));
         let terminal = cancelled_cleanup_task(&service).await;
         let id = &terminal.task.identity().id;
         let work = service.worktrees();
@@ -3350,13 +3327,13 @@ mod tests {
 
     #[tokio::test]
     async fn retirement_requires_running_dispatch_quiet_shell_and_published_git_head() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
         let (native, _archive) = empty_archive_fixture(1).await;
         service.host = native.with_quiet_fixture_processes();
         let head = service.fixture().start.clone();
         let (forge, _server) = publish_checkout_forge(head.clone()).await;
         service.forge = forge;
-        service.fixture_mut().acp_provider = Some("fixture".into());
+        service.set_fixture_acp_provider(Some("fixture"));
         let row = cancelled_cleanup_task(&service).await;
         let work = service.worktrees();
         let checkout = work
@@ -3632,7 +3609,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_running_review_waits_for_its_deadline_without_reading_the_forge() {
-        let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+        let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").expect("client"));
         let head = service.fixture().start.clone();
         let (forge, forge_reads, forge_server) = forge_fixture(&head).await;
         service.forge = forge;
@@ -3828,7 +3805,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_edit_during_native_authorization_cannot_send_the_review() {
-        let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+        let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").expect("client"));
         let head = service.fixture().start.clone();
         let (forge, reads, forge_server) = forge_fixture(&head).await;
         service.forge = forge;
@@ -3904,7 +3881,8 @@ mod tests {
     #[tokio::test]
     async fn an_interrupt_requires_the_current_fixture_project_root() {
         for retargeted in [false, true] {
-            let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            let (_home, mut service) =
+                registry_fixture(GitHub::new("unused-fixture").expect("client"));
             let head = service.fixture().start.clone();
             let git = service.git.clone();
             let worktrees = crate::Worktrees::new(
@@ -4146,6 +4124,15 @@ mod tests {
                     native_accepted.lock().unwrap().push(payload["messageId"].clone());
                     return serde_json::Value::Null;
                 }
+                Some("server.getConfig") => {
+                    return json!({"_tag": "Exit", "requestId": id, "exit": {
+                        "_tag": "Success", "value": {
+                            "environment": {"orchestrationProtocolVersion": 2},
+                            "providers": [{"instanceId": "provider", "enabled": true,
+                                "status": "ready", "models": [{"slug": "fixture"}]}]
+                        }
+                    }});
+                }
                 _ => panic!("unexpected native request {request}"),
             };
             let mut snapshot = snapshot;
@@ -4218,7 +4205,7 @@ mod tests {
             Action::Wait(WaitReason::Running)
         );
         // The rest of this fixture models the no-ACP path; the probe above was the ACP case.
-        service.fixture_mut().acp_provider = None;
+        service.set_fixture_acp_provider(None);
 
         crate::tests::git(&owned, &["reset", "--hard", new_head.as_str()]);
         published.store(true, Ordering::Relaxed);
@@ -4264,7 +4251,7 @@ mod tests {
 
     #[tokio::test]
     async fn stopped_dispatch_waits_then_merges_the_approved_head() {
-        let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+        let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
         let head = service.fixture().start.clone();
         let (task, _) = code_task_at_merge("worker", &head);
         service
@@ -4343,7 +4330,8 @@ mod tests {
     #[tokio::test]
     async fn merge_writes_wait_until_the_forge_confirms_the_next_fact() {
         for status in [StatusCode::CONFLICT, StatusCode::METHOD_NOT_ALLOWED] {
-            let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            let (_home, mut service) =
+                registry_fixture(GitHub::new("unused-fixture").expect("client"));
             let head = service.fixture().start.clone();
             let new_head: Head = "b".repeat(40).parse().expect("changed head");
             let next = Arc::new(AtomicBool::new(false));
@@ -4422,7 +4410,7 @@ mod tests {
     #[tokio::test]
     async fn external_merge_at_the_refused_head_requires_verified_source_acceptance() {
         for merged_during_readback in [false, true] {
-            let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+            let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
             let head = service.fixture().start.clone();
             let (task, _) = code_task_at_merge("worker", &head);
             service
@@ -4571,7 +4559,7 @@ mod tests {
 
     #[test]
     fn forge_transport_backoff_is_capped_and_a_success_resets_it() {
-        let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+        let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
         let failure = ForgeError::Status(StatusCode::BAD_GATEWAY);
         for delay in [30, 60, 120, 240, 240] {
             record_forge_failure(&service, &failure);
@@ -4639,7 +4627,8 @@ mod tests {
             (true, false, false, true),
             (true, true, true, true),
         ] {
-            let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("client"));
+            let (_home, mut service) =
+                registry_fixture(GitHub::new("unused-fixture").expect("client"));
             let head = service.fixture().start.clone();
             let latest = if changed_head {
                 "b".repeat(40).parse().expect("new head")
@@ -4755,7 +4744,7 @@ mod tests {
 
     #[tokio::test]
     async fn merge_gate_uses_only_github_required_checks() {
-        let (_home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+        let (_home, mut service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
         let project = service.fixture().clone();
         let head = project.start.clone();
 
@@ -4888,11 +4877,12 @@ mod tests {
         async fn send(
             &self,
             dispatch: nucleus_hosts::RunDispatch,
+            record_snooze: impl FnMut(nucleus_hosts::SnoozeUpdate) -> Result<(), HostError> + Send,
         ) -> Result<SendOutcome, HostError> {
             self.reject_tickets
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             self.host.fixture_disconnect();
-            self.pass.send(dispatch).await
+            self.pass.send(dispatch, record_snooze).await
         }
 
         async fn write_control(&self, dispatch: ControlDispatch) -> Result<(), HostError> {

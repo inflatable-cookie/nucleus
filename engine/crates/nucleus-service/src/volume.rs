@@ -279,12 +279,12 @@ impl Service {
 
 #[cfg(test)]
 mod tests {
+    use crate::tests::registry_fixture;
     use std::sync::mpsc;
 
     use nucleus_forge::GitHub;
 
     use super::*;
-    use crate::tests::fixture;
 
     const OWNER: &str = "task";
     const SOON: Duration = Duration::from_secs(5);
@@ -298,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_hung_read_never_holds_its_owner_and_may_not_mutate_later() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
         service.volume.check = Duration::from_millis(500);
         let (read, hung) = mpsc::channel::<()>();
         let (outcome, admitted) = mpsc::channel();
@@ -316,7 +316,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_stuck_mutation_holds_its_owner_until_it_ends_whatever_the_roots_do() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
         service.volume.check = Duration::from_millis(500);
         let (mutation, hung) = mpsc::channel::<()>();
         let (outcome, admitted) = mpsc::channel();
@@ -371,7 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn past_the_limit_hung_calls_take_turns_and_never_stop_progress() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
         service.volume.check = Duration::from_millis(10);
         service.volume.spacing = Duration::from_hours(1);
         let mut hung = Vec::new();

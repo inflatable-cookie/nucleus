@@ -47,7 +47,7 @@ pub use settings_domains::{
     DispatchMode, DispatchSettings, Hosts, NamedProfile, PlannerClaim, PlannerModel, Profiles,
     ProjectSettings, Projects, RepositorySettings, T3Settings,
 };
-pub use task_rows::{RowSnooze, SnoozeOutcome, StoredParentSnooze};
+pub use task_rows::{RowSnooze, SnoozeOutcome, StoredDeliverySnooze};
 pub use tells::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };
@@ -345,7 +345,7 @@ impl Store {
         usage::prepare_pauses(tx)?;
         tx.execute(LEGACY_PROJECT_IMPORT_JOURNAL, [])?;
         tx.execute(titles::INBOX_SCHEMA, [])?;
-        tx.execute_batch(task_rows::SCHEMA)?;
+        task_rows::prepare(tx)?;
         tx.execute(inbox::COMMAND_RECEIPTS, [])?;
         tx.execute_batch(allowance::SCHEMA)?;
         tx.execute(planning::decisions::USAGE_PERMISSION_INDEX, [])?;

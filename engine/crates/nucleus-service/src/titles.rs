@@ -543,10 +543,9 @@ impl Service {
     }
 
     pub(super) async fn watch_titles(&self) {
-        let Some(provider) = self.acp_provider() else {
-            return;
-        };
-        {
+        // Planner notices can need snooze restoration without an ACP provider.
+        let provider = self.acp_provider();
+        if provider.is_some() {
             let mut state = self.state.lock().await;
             match state.store.tasks_without_titles() {
                 Ok(rows) => {
@@ -562,8 +561,12 @@ impl Service {
         }
         loop {
             self.host.wait_for_requests().await;
-            let threads = self.host.title_threads(provider);
-            let next = self.title_work(provider, &threads).await;
+            let threads =
+                provider.map_or_else(Vec::new, |provider| self.host.title_threads(provider));
+            let next = match provider {
+                Some(provider) => self.title_work(provider, &threads).await,
+                None => Ok(None),
+            };
             let checked_stability = next.is_ok();
             let wait = match next {
                 Ok(Some(receipt)) => {
@@ -571,7 +574,10 @@ impl Service {
                     if receipt.retry_at > now {
                         Some(Duration::from_millis(receipt.retry_at.abs_diff(now)))
                     } else {
-                        if let Err(error) = self.apply_title(provider, &receipt, now).await {
+                        if let Err(error) = self
+                            .apply_title(provider.unwrap_or_default(), &receipt, now)
+                            .await
+                        {
                             service_log!("{}: {error}", receipt.thread);
                         }
                         // The next due candidate can run before this title retries.
@@ -584,7 +590,10 @@ impl Service {
                     Some(Duration::from_secs(5))
                 }
             };
-            let row_wait = match self.reconcile_task_rows(provider, &threads).await {
+            let row_wait = match self
+                .reconcile_task_rows(provider.unwrap_or_default(), &threads)
+                .await
+            {
                 Ok(wait) => wait,
                 Err(error) => {
                     service_log!("{error}");
@@ -903,6 +912,7 @@ impl Service {
 
 #[cfg(test)]
 mod tests {
+    use crate::tests::registry_fixture;
     use std::sync::{Arc, Mutex};
 
     use nucleus_core::{Authority, Command, Entry, Identity};
@@ -992,7 +1002,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_weight_slot_wait_keeps_the_capacity_title() {
-        let (_home, service) = fixture(GitHub::new("fixture").expect("client"));
+        let (_home, service) = registry_fixture(GitHub::new("fixture").expect("client"));
         let task = task();
         let id = task.identity().id.clone();
         let label = "Waiting for a heavy slot (5/5)";
@@ -1200,8 +1210,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_transient_wait_does_not_replace_an_unpublished_phase() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").unwrap());
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").unwrap());
+        service.set_fixture_acp_provider(Some("fixture-acp"));
         let mut task = task();
         let id = task.identity().id.clone();
         let thread = nucleus_hosts::parent_thread(&nucleus_work::checkout_path(
@@ -1311,7 +1321,7 @@ mod tests {
 
         let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
         let provider = "fixture-acp";
-        service.fixture_mut().acp_provider = Some(provider.into());
+        service.set_fixture_acp_provider(Some(provider));
         service.native_inbox = Some(crate::native_inbox::NativeInbox::open(&service).unwrap());
         let root = service.native_inbox.as_ref().unwrap().root.clone();
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -1439,7 +1449,7 @@ mod tests {
         reason = "keep the live shell and title receipt round trip in one fixture"
     )]
     async fn native_title_changes_once_and_idle_reconciliation_makes_no_writes() {
-        let (_home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+        let (_home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
         let task = task();
         let mut subject = Task::new(
             Identity {
@@ -1493,7 +1503,7 @@ mod tests {
         })
         .await;
         service.host = host;
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        service.set_fixture_acp_provider(Some("fixture-acp"));
         {
             let mut state = service.state.lock().await;
             state
@@ -1597,7 +1607,7 @@ mod tests {
         String,
         serde_json::Value,
     ) {
-        let (home, mut service) = fixture(GitHub::new("fixture").expect("client"));
+        let (home, mut service) = registry_fixture(GitHub::new("fixture").expect("client"));
         let task = task();
         let subject = Task::new(
             Identity {
@@ -1636,7 +1646,7 @@ mod tests {
             "fixture-acp",
         );
         service.host = host;
-        service.fixture_mut().acp_provider = Some("fixture-acp".into());
+        service.set_fixture_acp_provider(Some("fixture-acp"));
         {
             let mut state = service.state.lock().await;
             state

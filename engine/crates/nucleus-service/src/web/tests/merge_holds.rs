@@ -1,3 +1,4 @@
+use crate::tests::registry_fixture;
 use axum::routing::put;
 
 use super::*;
@@ -11,7 +12,7 @@ const ID: &str = "candidate";
 
 #[tokio::test]
 async fn admission_names_bad_merge_hold_and_unknown_queue_keys() {
-    let (_home, service) = fixture(GitHub::new("fixture").unwrap());
+    let (_home, service) = registry_fixture(GitHub::new("fixture").unwrap());
     let api = settings_api(&Arc::new(service));
     for (queue, error) in [
         ("  mergeHold: true\n", "requires a queue.mergeHoldReason"),

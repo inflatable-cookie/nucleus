@@ -1,3 +1,4 @@
+use crate::tests::registry_fixture;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -18,7 +19,7 @@ use tokio::{net::TcpListener, sync::Notify, task::JoinHandle};
 use super::*;
 use crate::{
     github_accounts::GitHubAccounts,
-    tests::{REPOSITORY, fixture, forge_checks, forge_pull, reservation},
+    tests::{REPOSITORY, forge_checks, forge_pull, reservation},
 };
 
 const TASK: &str = "reviewer";
@@ -183,7 +184,7 @@ async fn read_review(
 async fn create_service(
     remote: &Arc<ForgeFixture>,
 ) -> (tempfile::TempDir, Service, JoinHandle<()>) {
-    let (home, mut service) = fixture(GitHub::new("unused-fixture").unwrap());
+    let (home, mut service) = registry_fixture(GitHub::new("unused-fixture").unwrap());
     let head = service.fixture().start.clone();
     let mut pull = forge_pull(&head);
     pull["user"] = json!({"id": remote.author, "login": "author"});
@@ -772,7 +773,7 @@ async fn changed_review_authority_invalidates_publication_wait_with_same_label()
             nucleus_store::TaskAdmissionFacts::default(),
         )
         .unwrap();
-    let (_other_home, other) = fixture(GitHub::new("fixture").unwrap());
+    let (_other_home, other) = registry_fixture(GitHub::new("fixture").unwrap());
     other
         .state
         .lock()

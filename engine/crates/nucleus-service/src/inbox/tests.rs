@@ -1,3 +1,4 @@
+use crate::tests::registry_fixture;
 use std::sync::{Arc, Mutex};
 
 use nucleus_core::{
@@ -9,7 +10,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::{
     native_inbox::NativeInbox,
-    tests::{fixture, native_fixture},
+    tests::{REGISTERED_PROJECT, fixture, native_fixture},
 };
 
 async fn seed(service: &Service, id: &str) -> (TaskRow, Observed<Forge>) {
@@ -55,7 +56,7 @@ async fn seed(service: &Service, id: &str) -> (TaskRow, Observed<Forge>) {
 
 #[tokio::test]
 async fn acceptance_waits_for_evidence_of_the_exact_external_merge() {
-    let (_home, service) = fixture(GitHub::new("unused").unwrap());
+    let (_home, service) = registry_fixture(GitHub::new("unused").unwrap());
     let (row, forge) = seed(&service, "accepted").await;
     for observe in [false, true] {
         if observe {
@@ -92,7 +93,7 @@ fn store_legacy_binding(service: &Service, row: &TaskRow) {
 
 #[tokio::test]
 async fn a_legacy_binding_row_does_not_fence_the_native_offer() {
-    let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
+    let (_home, mut service) = registry_fixture(GitHub::new("unused").unwrap());
     let (row, _) = seed(&service, "handoff").await;
     store_legacy_binding(&service, &row);
     service.native_inbox = Some(NativeInbox::open(&service).unwrap());
@@ -102,7 +103,11 @@ async fn a_legacy_binding_row_does_not_fence_the_native_offer() {
     );
     let state = service.state.lock().await;
     assert_eq!(
-        state.store.decisions("local-fixture", true).unwrap().len(),
+        state
+            .store
+            .decisions(REGISTERED_PROJECT, true)
+            .unwrap()
+            .len(),
         1
     );
 }

@@ -519,7 +519,7 @@ impl Service {
             return Ok(());
         }
         saved?;
-        let next = match self.host.send_notice(dispatch).await? {
+        let next = match self.send_notice_preserving_snooze(None, dispatch).await? {
             NoticeOutcome::Accepted => {
                 self.record_assess_outcome(row, None).await?;
                 TellState::Accepted(attempt)

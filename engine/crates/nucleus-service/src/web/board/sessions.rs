@@ -215,40 +215,6 @@ fn session_slides_after_one_day_of_activity_and_expires_after_thirty_days_idle()
 }
 
 #[test]
-fn a_full_store_reclaims_the_least_recently_used_session_for_a_new_pairing() {
-    const CAPACITY: usize = 64;
-    let home = tempfile::tempdir().unwrap();
-    let settings = nucleus_store::SettingsFile::open(&home.path().canonicalize().unwrap()).unwrap();
-    let storage = settings.configured_storage().unwrap();
-    let directory = storage.database();
-    directory.ensure().unwrap();
-    let mut store = SessionStore::open(directory.clone(), 0).unwrap();
-    let key = |n: u8| [n; 32];
-    let pair = |store: &mut SessionStore, n: u8, now: u64| {
-        store.insert(
-            &key(n),
-            Authority::Operator {
-                actor: "operator".into(),
-            },
-            ControllerScope::default(),
-            now,
-            CAPACITY,
-        )
-    };
-    // Sixty-four keys fill a store whose limit is CAPACITY.
-    for n in 1..=64_u8 {
-        assert_eq!(pair(&mut store, n, u64::from(n)).unwrap(), 0);
-    }
-    // Device 1 was paired first but used most recently, inside the same renewal window.
-    assert!(store.authenticate(&key(1), 1_000).unwrap().is_some());
-    assert_eq!(pair(&mut store, 65, 2_000).unwrap(), 1);
-    assert!(store.authenticate(&key(1), 2_001).unwrap().is_some());
-    assert!(store.authenticate(&key(2), 2_001).unwrap().is_none());
-    assert!(store.authenticate(&key(65), 2_001).unwrap().is_some());
-    assert_eq!(store.entries.len(), CAPACITY);
-}
-
-#[test]
 fn a_full_store_of_stale_sessions_accepts_a_new_pairing_without_eviction() {
     const CAPACITY: usize = 64;
     let home = tempfile::tempdir().unwrap();

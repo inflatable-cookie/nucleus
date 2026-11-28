@@ -4,10 +4,10 @@ use serde_json::{Value, json, value::RawValue};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
-    HostError, T3, clock_ms, dispatch_rejected,
+    DeliverySnooze, HostError, SnoozeUpdate, T3, clock_ms, dispatch_rejected,
     launch::message_id,
     rpc::{CallError, Read, Reply, ThreadFence, ThreadObservation, ThreadReply},
-    task_row::ThreadVisibility,
+    task_row::same_except_snooze,
     thread_snapshots::ThreadRead,
 };
 
@@ -157,8 +157,6 @@ struct NoticeThread {
     #[serde(flatten)]
     planner: PlannerIdentity,
     worktree_path: Option<String>,
-    #[serde(flatten)]
-    visibility: ThreadVisibility,
 }
 
 struct NoticeSnapshot {
@@ -246,10 +244,22 @@ impl T3 {
         &self,
         authorization: &NoticeAuthorization,
     ) -> Result<(), HostError> {
-        self.rpc
-            .same_thread(&authorization.target.thread, &authorization.fence)
-            .then_some(())
-            .ok_or(HostError::Binding)
+        let thread = &authorization.target.thread;
+        let fence = &authorization.fence;
+        self.rpc.with_shell(|shell| {
+            let current = self.rpc.fence_at(thread, shell);
+            if ((shell.is_some() || !self.rpc.uses_held_shell()) && fence.matches(&current))
+                || fence
+                    .row
+                    .as_deref()
+                    .zip(current.row.as_deref())
+                    .is_some_and(|(before, after)| same_except_snooze(before, after))
+            {
+                Ok(())
+            } else {
+                Err(HostError::Binding)
+            }
+        })
     }
 
     /// Freeze a queued planner notification under one native command ID.
@@ -380,7 +390,6 @@ impl T3 {
         delivery: &QuestionDelivery,
         allow_child: bool,
     ) -> Result<NoticeObservation, HostError> {
-        let now_ms = clock_ms()?;
         let payload = frozen_payload(delivery)?;
         let id = &delivery.thread;
         let ThreadObservation { reply, fence } =
@@ -395,11 +404,7 @@ impl T3 {
             return Err(HostError::Binding);
         }
         let state = snapshot.state(delivery)?;
-        let visibility = snapshot.thread.visibility.read()?;
-        if state != NoticeState::Absent
-            || delivery.last_send_at_ms.is_some()
-            || visibility.snoozed_until_ms.is_some_and(|end| end > now_ms)
-        {
+        if state != NoticeState::Absent || delivery.last_send_at_ms.is_some() {
             return Ok(NoticeObservation {
                 state,
                 authorization: None,
@@ -410,7 +415,6 @@ impl T3 {
                 NoticeThread::deserialize(row.as_ref()).map_err(|_| HostError::Protocol)?;
             if !snapshot.thread.planner.same_role(&current.planner)
                 || snapshot.thread.worktree_path != current.worktree_path
-                || current.visibility.read()? != visibility
             {
                 return Err(HostError::Binding);
             }
@@ -436,9 +440,13 @@ impl T3 {
     ///
     /// # Errors
     /// Returns an error on deferral, changed recipient evidence or an uncertain reply.
-    pub async fn send_notice(&self, dispatch: NoticeDispatch) -> Result<NoticeOutcome, HostError> {
+    pub async fn send_notice(
+        &self,
+        dispatch: NoticeDispatch,
+        mut record_snooze: impl FnMut(SnoozeUpdate) -> Result<(), HostError> + Send,
+    ) -> Result<NoticeOutcome, HostError> {
         let authorization = &dispatch.authorization;
-        match self
+        let reply = self
             .rpc
             .call_write(
                 "orchestration.dispatchCommand",
@@ -449,15 +457,27 @@ impl T3 {
                         .map_err(|_| HostError::Deferred {
                             until: tokio::time::Instant::now(),
                         })?;
+                    if let Some(update) = self.capture_snooze(
+                        &authorization.target.thread,
+                        &authorization.command,
+                        &message_id(&authorization.command),
+                    )? {
+                        record_snooze(update)?;
+                    }
                     Ok(true)
                 },
             )
-            .await
-        {
+            .await;
+        let refused = matches!(&reply, Ok(Reply::Failure(cause)) if dispatch_rejected(cause, &authorization.command));
+        DeliverySnooze::after_send(
+            Some(authorization.command.clone()),
+            reply.as_ref().ok().and_then(DeliverySnooze::sequence),
+            refused,
+            record_snooze,
+        );
+        match reply {
             Ok(Reply::Value(_)) => Ok(NoticeOutcome::Accepted),
-            Ok(Reply::Failure(cause)) if dispatch_rejected(&cause, &authorization.command) => {
-                Ok(NoticeOutcome::Rejected)
-            }
+            Ok(Reply::Failure(_)) if refused => Ok(NoticeOutcome::Rejected),
             Ok(Reply::Failure(_)) => Err(HostError::Uncertain),
             Err(CallError::NotSent(error)) => Ok(NoticeOutcome::NotSent(error)),
             Err(CallError::Unknown(error)) => Err(error),
