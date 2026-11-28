@@ -541,7 +541,8 @@ impl GitHub {
         self.observe_with_checks(target, false).await
     }
 
-    /// Read the check names GitHub marks required for a task due to merge.
+    /// Read the check rollup for a task due to merge (required checks, or all
+    /// reported checks when none are marked required).
     ///
     /// # Errors
     /// Returns the same evidence and transport errors as [`Self::observe`].

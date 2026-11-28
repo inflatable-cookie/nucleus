@@ -1,0 +1,1 @@
+When a pull request reports no GitHub-required checks, Nucleus now gates the merge on every check reported at the exact approved head, waiting on pending checks and returning the task to the worker on failures while still merging pull requests with no reported checks.

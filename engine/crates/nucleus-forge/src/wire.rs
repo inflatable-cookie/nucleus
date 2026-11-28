@@ -131,14 +131,18 @@ enum NamedCheck {
 }
 
 impl NamedCheck {
-    fn required_result(&self) -> Option<(&str, CheckResult)> {
+    const fn is_required(&self) -> bool {
+        match self {
+            Self::CheckRun { required, .. } | Self::StatusContext { required, .. } => *required,
+        }
+    }
+
+    fn result(&self) -> (&str, CheckResult) {
         use CheckResult::{Failed, Passed, Pending, Unknown};
         match self {
             Self::CheckRun {
-                name,
-                conclusion,
-                required: true,
-            } => Some((
+                name, conclusion, ..
+            } => (
                 name,
                 match conclusion.as_deref() {
                     Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => Passed,
@@ -149,12 +153,8 @@ impl NamedCheck {
                     None => Pending,
                     Some(_) => Unknown,
                 },
-            )),
-            Self::StatusContext {
-                context,
-                state,
-                required: true,
-            } => Some((
+            ),
+            Self::StatusContext { context, state, .. } => (
                 context,
                 match state.as_str() {
                     "SUCCESS" => Passed,
@@ -162,8 +162,7 @@ impl NamedCheck {
                     "EXPECTED" | "PENDING" => Pending,
                     _ => Unknown,
                 },
-            )),
-            _ => None,
+            ),
         }
     }
 }
@@ -321,12 +320,19 @@ impl Checks {
                 CheckState::Ready
             };
         };
+        let incomplete =
+            contexts.page_info.has_next_page || contexts.nodes.iter().any(Option::is_none);
+        let any_required = contexts.nodes.iter().flatten().any(NamedCheck::is_required);
+        if !any_required && incomplete {
+            return CheckState::Unknown;
+        }
         let mut results = BTreeMap::new();
         for (name, result) in contexts
             .nodes
             .iter()
             .flatten()
-            .filter_map(NamedCheck::required_result)
+            .filter(|check| !any_required || check.is_required())
+            .map(NamedCheck::result)
         {
             if name.trim().is_empty() {
                 return CheckState::Unknown;
@@ -344,8 +350,7 @@ impl Checks {
         if !failures.is_empty() {
             return CheckState::FailedRequired(failures);
         }
-        if contexts.page_info.has_next_page
-            || contexts.nodes.iter().any(Option::is_none)
+        if incomplete
             || results
                 .values()
                 .any(|result| *result == CheckResult::Unknown)
