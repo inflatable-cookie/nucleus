@@ -195,7 +195,12 @@ pub struct DecisionOption {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecisionAnswerInput {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub option_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub based_on_option_id: Option<String>,
     pub note: Option<String>,
 }
 

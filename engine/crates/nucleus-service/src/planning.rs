@@ -741,8 +741,18 @@ fn decision_answer_text(
         .join(" ");
     let question = truncate_chars(&collapsed, MAX_QUESTION_CHARS);
     let answered_at = format_utc_minute(answered_at_ms);
+    let answer = input.answer.as_deref().map_or_else(
+        || format!("{label} ({option_id})"),
+        |answer| {
+            let mut text = answer.trim().to_owned();
+            if let Some(origin) = &input.based_on_option_id {
+                let _ = write!(text, " (based on {origin})");
+            }
+            text
+        },
+    );
     let mut text = format!(
-        "Decision {} answered at {answered_at}\n\nQuestion: {question}\nAnswer: {label} ({option_id})",
+        "Decision {} answered at {answered_at}\n\nQuestion: {question}\nAnswer: {answer}",
         decision.id
     );
     if let Some(note) = trimmed_note(input.note.as_deref()) {

@@ -17,6 +17,7 @@
   "test/contracts-boundaries.test.ts",
   "test/date-time-dst.test.ts",
   "test/date-time-field.test.ts",
+  "test/decision-dialog-ui.test.ts",
   "test/decision-pill.test.ts",
   "test/decision-read.test.ts",
   "test/dropdown-select.test.ts",

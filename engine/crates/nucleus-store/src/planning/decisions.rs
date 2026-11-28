@@ -223,12 +223,19 @@ impl Store {
         if decision.withdrawn || (decision.task.is_some() && decision.answer.is_some()) {
             return Err(StoreError::PlanningConflict);
         }
-        if !decision
-            .input
-            .options
-            .iter()
-            .any(|option| option.id == input.option_id)
-        {
+        let valid_option = |id: &str| decision.input.options.iter().any(|option| option.id == id);
+        let free_text = input.answer.as_deref().map(str::trim);
+        let valid = match free_text {
+            Some(text) => {
+                !text.is_empty()
+                    && text.encode_utf16().count() <= 48_000
+                    && input.option_id.is_empty()
+                    && decision.task.is_none()
+                    && input.based_on_option_id.as_deref().is_none_or(valid_option)
+            }
+            None => valid_option(&input.option_id) && input.based_on_option_id.is_none(),
+        };
+        if !valid {
             return Err(StoreError::PlanningInput);
         }
         if let Some(target) = &decision.task {
@@ -236,6 +243,8 @@ impl Store {
         }
         let same_answer = decision.answer.as_ref().is_some_and(|existing| {
             existing.input.option_id == input.option_id
+                && existing.input.answer == input.answer
+                && existing.input.based_on_option_id == input.based_on_option_id
                 && trimmed_note(existing.input.note.as_deref())
                     == trimmed_note(input.note.as_deref())
         });
