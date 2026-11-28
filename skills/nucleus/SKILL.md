@@ -5,9 +5,10 @@ description: Use Nucleus to manage a project plan, lanes, leads, papercuts and o
 
 ## Planning and tasks
 
-Use the installed `nucleus` from the current T3 planner thread. Planning commands
-with an optional project default to that thread's verified project. On first
-contact, retry if the engine asks you to let it finish verifying the checkout.
+Use the installed `nucleus` from a verified T3 thread. Planning commands
+default to that thread's project when it has one. Name the target for work in
+another project or from a scratch thread. On first contact, retry if the
+engine is still verifying the thread.
 Use `nucleus <command> --help` for exact arguments. `nucleus ui` prints a
 one-use board link for the current authority. A plan or decision records
 intent. Dispatch, scope changes and outward actions require their own authority.
@@ -27,8 +28,9 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   if it is stale, already done or no longer wanted; otherwise write or update
   the brief and dispatch it (`nucleus item.edit [PROJECT] ID TITLE` on stdin,
   then `nucleus item.promote [PROJECT] ID [--complexity LEVEL]`).
-- Send an approved brief on stdin to `nucleus task.add [PROJECT]`. Direct
-  admission through `task.add` or `admit` requires `queue.complexity` in the
+- Send an approved brief on stdin to `nucleus task.add [PROJECT]`. For a sweep
+  from a scratch thread, run `nucleus task.add PROJECT` with each project's brief.
+  Direct admission through `task.add` or `admit` requires `queue.complexity` in the
   brief front matter. This example uses medium.
 
   ```markdown
@@ -42,7 +44,7 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   State the change and its acceptance checks.
   ```
 
-  Completion notices arrive by default: the dispatching planner gets one queued notice when the task reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` on admission or amend to turn them off.
+  Completion notices arrive by default: the dispatching thread gets one queued notice when the task reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` on admission or amend to turn them off.
   Set `queue.priority: promoted` under `queue` at admission only to dispatch ahead of normal tasks when slots free (brief amendments cannot change `queue.priority`; use `promote` or `demote` instead).
   Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
   To put a task on a specific or stronger model, add a profile request under
@@ -98,15 +100,15 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   and repeat `--option` for each choice. Keep the context, consequences and
   recommendation with the question. `decision.list --pending` reads open
   decisions. Inbox requests and operator decisions belong to the operator.
-  A verified planner can send an informational notice with `tell PROJECT TEXT`
-  or `tell all TEXT`. Run `nucleus planner.claim` to receive project messages
-  here. Replacing a claim notifies the previous planner.
-  A delivered message starts `From <project>`, which names the sender's project,
-  so a reply needn't name itself. It ends with a `Reply:` line such as
+  Any verified thread can send an informational notice with `tell PROJECT TEXT`
+  or `tell all TEXT`. Run `nucleus planner.claim` from the project's checkout
+  to receive its messages. Replacing a claim notifies the previous planner.
+  A delivered message names the sender's project (or “no project”) and thread. It ends with a `Reply:` line such as
   `nucleus reply r6e39f1a 'your message'`. Run that command with your text, or
   `nucleus reply r6e39f1a -` to read the text from stdin. Only the thread that
   received the message can use its handle, and only for seven days. The reply
-  reaches the sender, or the sender's project planner if the sender is gone.
+  reaches the exact sender. If the sender is gone and had a project, the reply
+  goes to that project's planner.
   Older `nucleus tell '{"to":{"reply":"nreply_…"}}' TEXT` replies still work.
 
 ## Run protocol

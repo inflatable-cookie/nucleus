@@ -166,16 +166,29 @@ impl RuntimeSettings {
             })
     }
 
+    pub(crate) fn require_active_project(&self, id: &str) -> Result<(), ServiceError> {
+        if self
+            .projects
+            .as_ref()
+            .and_then(|registry| registry.projects.get(id))
+            .is_some_and(|project| project.archived)
+        {
+            return Err(ServiceError::TellArchivedProject(id.into()));
+        }
+        Ok(())
+    }
+
     pub(crate) fn repository(
         &self,
         project_id: &str,
         origin: &str,
     ) -> Result<&RepositorySettings, ServiceError> {
-        self.project_for_origin(origin)
-            .filter(|(id, project, repo)| {
-                *id == project_id && !project.archived && repo.host_project.is_some()
-            })
-            .map(|(_, _, repo)| repo)
+        let (id, _, repo) = self
+            .project_for_origin(origin)
+            .ok_or_else(|| ServiceError::TellUnknownProject(origin.into()))?;
+        self.require_active_project(id)?;
+        (id == project_id && repo.host_project.is_some())
+            .then_some(repo)
             .ok_or(ServiceError::Project)
     }
 

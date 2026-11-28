@@ -5,9 +5,7 @@ use std::{
 };
 
 use nucleus_core::QuestionDelivery;
-use nucleus_hosts::{
-    HostError, NoticeAuthorization, NoticeOutcome, NoticeState, PlannerIdentity, T3,
-};
+use nucleus_hosts::{NoticeAuthorization, NoticeOutcome, NoticeState, PlannerIdentity, T3};
 use nucleus_store::{
     StoredTell, TellDelivery, TellDispatch, TellProject, TellRows, TellState, TellSubmission,
 };
@@ -16,10 +14,11 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ControllerScope, Service, ServiceError, State, enrollment::EnrolledPlanner, now_ms,
-    planning::new_id, web::ProjectMatchError,
+    planning::new_id,
 };
 
 const MAX_TEXT_CHARS: usize = 4000;
+const NO_PROJECT: &str = "no project";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,7 +67,7 @@ impl From<StoredTell> for TellResponse {
 }
 
 struct PlannedTell {
-    planner: EnrolledPlanner,
+    thread: String,
     ids: Vec<String>,
     text: String,
     handle: String,
@@ -111,7 +110,7 @@ impl From<TellDelivery> for TellReceipt {
 
 impl Service {
     /// Queue information for project planners and return the durable receipts.
-    /// Both admission and receipt lookup use the cached caller binding.
+    /// Both admission and receipt lookup require a verified calling thread.
     pub(crate) async fn tell(
         &self,
         caller: &ControllerScope,
@@ -127,7 +126,11 @@ impl Service {
         caller: &ControllerScope,
         input: &TellRequest,
     ) -> Result<TellResponse, ServiceError> {
-        let actor = caller.actor().ok_or(ServiceError::TellPlannerRequired)?;
+        let actor = caller
+            .actor()
+            .ok_or(ServiceError::PlannerEnrollmentRefused(
+                "Sending messages requires a verified T3 thread.",
+            ))?;
         let text = input.text.trim();
         if text.is_empty() || text.encode_utf16().count() > MAX_TEXT_CHARS {
             return Err(ServiceError::TellInput);
@@ -148,13 +151,11 @@ impl Service {
         }
         self.storage.database().verify()?;
         let mut state = self.state.lock().await;
-        let from = match state.live_planner_project(actor) {
-            Some(project) => project.to_owned(),
-            None if state.settings.planner_route(actor).is_some() => {
-                return Err(self.request_enrollment(&mut state, actor));
-            }
-            None => return Err(ServiceError::TellPlannerRequired),
-        };
+        self.require_controller(&mut state, actor)?;
+        let from = state
+            .live_planner_project(actor)
+            .unwrap_or(NO_PROJECT)
+            .to_owned();
         let now = tell_clock();
         let direct_route = if let TellTarget::Reply { reply } = &input.to {
             let (project, thread) = state
@@ -248,12 +249,21 @@ impl Service {
     }
 
     pub(crate) async fn claim_planner(&self, scope: &ControllerScope) -> Result<(), ServiceError> {
-        let actor = scope.actor().ok_or(ServiceError::TellPlannerRequired)?;
+        let no_project = || {
+            ServiceError::PlannerEnrollmentRefused(
+                "Claiming project mail requires a verified planner in that project.",
+            )
+        };
+        let actor = scope.actor().ok_or_else(no_project)?;
         let (_write, mut state, project) = scope
             .with_enrollment(|| async {
                 let write = self.project_writes.write().await;
                 let mut state = self.state.lock().await;
-                let project = self.planning_planner_project(&mut state, actor, None)?;
+                self.require_controller(&mut state, actor)?;
+                let project = state
+                    .live_planner_project(actor)
+                    .ok_or_else(no_project)?
+                    .to_owned();
                 Ok((write, state, project))
             })
             .await?;
@@ -435,17 +445,11 @@ impl Service {
     }
 
     async fn resolve_tell(&self, row: &TellDelivery) -> Result<Option<PlannedTell>, ServiceError> {
-        let candidates = if let Some(target) = &row.direct {
+        if let Some(thread) = &row.direct {
             let state = self.state.lock().await;
-            if state
-                .settings
-                .planner_route(target)
-                .is_none_or(|(project, _)| project != row.to_project)
-            {
-                return Ok(None);
-            }
-            vec![target.clone()]
-        } else {
+            return Self::plan_tell(&state, row, thread).map(Some);
+        }
+        let candidates = {
             let state = self.state.lock().await;
             let mut choices = state.planner_candidates_for(&row.to_project);
             choices.sort_by_key(|thread| {
@@ -462,24 +466,14 @@ impl Service {
             }
         }
         let state = self.state.lock().await;
-        // Losing the in-memory proof while a binding still exists requires another observation.
-        if let Some(thread) = &row.direct
-            && state
-                .settings
-                .planner_route(thread)
-                .is_some_and(|(id, _)| id == row.to_project)
-            && target_planner(&state, row).is_none()
-        {
-            return Err(HostError::Uncertain.into());
-        }
         target_planner(&state, row)
-            .map(|proof| Self::plan_tell(&state, row, proof))
+            .map(|proof| Self::plan_tell(&state, row, &proof.identity.id))
             .transpose()
     }
 
     async fn send_tell(&self, row: &TellDelivery) -> Result<(), ServiceError> {
         let Some(PlannedTell {
-            planner,
+            thread,
             ids,
             text,
             handle,
@@ -494,29 +488,9 @@ impl Service {
             return self.save_tell(rows, TellDispatch::Advance(prior)).await;
         }
 
-        let EnrolledPlanner {
-            identity,
-            verified_at,
-            ..
-        } = planner;
-        let mut attempt = T3::prepare_notice(identity.id.clone(), new_id("tell-notice")?, &text)?;
+        let mut attempt = T3::prepare_notice(thread, new_id("tell-notice")?, &text)?;
         let observed = self.host.observe_notice(&attempt).await?;
-        if observed.state == NoticeState::Gone
-            || observed
-                .authorization
-                .as_ref()
-                .is_some_and(|permit| !permit.matches_planner(&identity))
-        {
-            let mut state = self.state.lock().await;
-            if state
-                .enrolled_planners
-                .get(&identity.id)
-                .is_some_and(|proof| proof.verified_at == verified_at)
-            {
-                state.enrolled_planners.remove(&identity.id);
-                self.planner_routes_changed(&mut state);
-            }
-            drop(state);
+        if observed.state == NoticeState::Gone {
             return self.unavailable_tell(row).await;
         }
         let Some(authorization) = observed.authorization else {
@@ -553,7 +527,10 @@ impl Service {
     }
 
     async fn unavailable_tell(&self, row: &TellDelivery) -> Result<(), ServiceError> {
-        if row.direct.is_some() && !row.request_key.starts_with("claim-") {
+        if row.direct.is_some()
+            && row.to_project != NO_PROJECT
+            && !row.request_key.starts_with("claim-")
+        {
             self.storage.database().verify()?;
             self.state.lock().await.store.fallback_reply(&row.id)?;
             return Ok(());
@@ -708,7 +685,7 @@ impl Service {
     fn plan_tell(
         state: &State,
         row: &TellDelivery,
-        planner: &EnrolledPlanner,
+        thread: &str,
     ) -> Result<PlannedTell, ServiceError> {
         let batch = state.store.tell_batch(&row.request_key)?;
         let (groups, _) = group_by_thread(
@@ -721,13 +698,13 @@ impl Service {
                 .map(|target| {
                     (
                         target,
-                        target_planner(state, target).map(|proof| proof.identity.id.as_str()),
+                        target.direct.as_deref().or_else(|| {
+                            target_planner(state, target).map(|proof| proof.identity.id.as_str())
+                        }),
                     )
                 }),
         );
-        let members = groups
-            .get(planner.identity.id.as_str())
-            .ok_or(ServiceError::Input)?;
+        let members = groups.get(thread).ok_or(ServiceError::Input)?;
         let names = members
             .iter()
             .map(|target| project_name(state, &target.to_project))
@@ -735,14 +712,13 @@ impl Service {
         let ids = members.iter().map(|target| target.id.clone()).collect();
         let prior = batch
             .iter()
-            .find(|target| target.state.thread() == Some(planner.identity.id.as_str()))
+            .find(|target| target.state.thread() == Some(thread))
             .map(|target| target.state.clone());
         let handle = new_reply_handle(state)?;
         let unclaimed: Vec<&str> = members
             .iter()
             .filter(|member| {
-                member.direct.is_none()
-                    && claimed_thread(state, &member.to_project) != Some(&planner.identity.id)
+                member.direct.is_none() && claimed_thread(state, &member.to_project) != Some(thread)
             })
             .map(|member| project_name(state, &member.to_project))
             .collect();
@@ -756,7 +732,11 @@ impl Service {
             row.text.clone()
         } else {
             notice_text(
-                project_name(state, &row.from_project),
+                &format!(
+                    "{} ({})",
+                    project_name(state, &row.from_project),
+                    row.sender
+                ),
                 &names,
                 &row.text,
                 &handle,
@@ -766,7 +746,7 @@ impl Service {
         };
         Ok(PlannedTell {
             handle,
-            planner: planner.clone(),
+            thread: thread.into(),
             ids,
             text,
             prior,
@@ -819,21 +799,17 @@ impl Service {
         authorization: &NoticeAuthorization,
     ) -> Result<bool, ServiceError> {
         let target = authorization.target();
+        if let Some(thread) = &row.direct {
+            return Ok(target.thread == *thread);
+        }
         let root = {
             let state = self.state.lock().await;
-            let Some((project, repo)) = state.live_planner_route(&target.thread) else {
+            let Some((_, repo)) = state.live_planner_route(&target.thread) else {
                 return Ok(false);
             };
-            if (matches!(row.state, TellState::Pending)
-                && target_planner(&state, row)
-                    .is_none_or(|planner| planner.identity.id != target.thread))
-                || target.thread == row.sender
-                || project != row.to_project
+            if target_planner(&state, row)
+                .is_none_or(|proof| !authorization.matches_planner(&proof.identity))
                 || repo.host_project.as_deref() != Some(target.project_id.as_str())
-                || !state
-                    .enrolled_planners
-                    .get(&target.thread)
-                    .is_some_and(|proof| authorization.matches_planner(&proof.identity))
                 || !self
                     .host
                     .cached_project(&target.project_id)
@@ -897,12 +873,6 @@ fn tell_rows(row: &TellDelivery) -> TellRows<'_> {
 }
 
 fn target_planner<'a>(state: &'a State, row: &TellDelivery) -> Option<&'a EnrolledPlanner> {
-    if let Some(thread) = &row.direct {
-        return state
-            .enrolled_planners
-            .get(thread)
-            .filter(|_| state.live_planner_project(thread) == Some(&row.to_project));
-    }
     tell_planner(
         state,
         &row.to_project,
@@ -998,9 +968,7 @@ fn notice_text(
     };
     let mut fallbacks = Vec::new();
     if let Some(project) = gone {
-        fallbacks.push(format!(
-            "Fallback: the sender (a planner of {project}) is gone."
-        ));
+        fallbacks.push(format!("Fallback: the sender from {project} is gone."));
     }
     if !unclaimed.is_empty() {
         let verb = if unclaimed.len() == 1 { "has" } else { "have" };
@@ -1032,15 +1000,12 @@ fn tell_projects<'a>(
     state: &'a State,
     selectors: Option<BTreeSet<&str>>,
 ) -> Result<BTreeSet<&'a str>, ServiceError> {
-    let registry = state
-        .settings
-        .projects
-        .as_ref()
-        .ok_or(ServiceError::TellPlannerRequired)?;
     let Some(selectors) = selectors else {
-        return Ok(registry
+        return Ok(state
+            .settings
             .projects
             .iter()
+            .flat_map(|registry| &registry.projects)
             .filter(|(_, project)| !project.archived)
             .map(|(id, _)| id.as_str())
             .collect());
@@ -1048,20 +1013,8 @@ fn tell_projects<'a>(
     selectors
         .into_iter()
         .map(|name| {
-            let project = state
-                .settings
-                .match_planning_project(None, name)
-                .map_err(|error| match error {
-                    ProjectMatchError::Unknown => ServiceError::TellUnknownProject(name.into()),
-                    ProjectMatchError::Ambiguous => ServiceError::TellAmbiguousProject(name.into()),
-                })?;
-            if registry
-                .projects
-                .get(project)
-                .is_some_and(|project| project.archived)
-            {
-                return Err(ServiceError::TellArchivedProject(project.into()));
-            }
+            let project = state.settings.resolve_planning_project(None, name)?;
+            state.settings.require_active_project(project)?;
             Ok(project)
         })
         .collect()
@@ -1139,7 +1092,7 @@ mod tests {
             Some("Sample Beta"),
         );
         assert!(text.contains(
-            "\n\nFallback: the sender (a planner of Sample Beta) is gone.\n\nReply: nucleus reply r0123abcd 'your message'"
+            "\n\nFallback: the sender from Sample Beta is gone.\n\nReply: nucleus reply r0123abcd 'your message'"
         ));
     }
 
@@ -1154,7 +1107,7 @@ mod tests {
             Some("Sample Beta"),
         );
         assert!(text.contains(
-            "Fallback: the sender (a planner of Sample Beta) is gone.\nFallback: Sample Alpha has no claimed planner;"
+            "Fallback: the sender from Sample Beta is gone.\nFallback: Sample Alpha has no claimed planner;"
         ));
         assert!(text.ends_with("pass it on.\n\nReply: nucleus reply r0123abcd 'your message'"));
         assert!(!text.contains("Information only"));

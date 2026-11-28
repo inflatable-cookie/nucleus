@@ -928,16 +928,16 @@ impl Store {
     /// Returns an error if task identities or their retained roles cannot be read.
     pub fn routing_provenance(
         &self,
-        repository: &str,
+        repository: Option<&str>,
         candidates: &[&str],
     ) -> Result<BTreeMap<String, ThreadProvenance>, StoreError> {
         let mut query = self.connection.prepare_cached(
             "WITH provenance(thread, is_task_role) AS (
-               SELECT origin_thread, 0 FROM tasks WHERE repository = ?1
+               SELECT origin_thread, 0 FROM tasks WHERE (?1 IS NULL OR repository = ?1)
                UNION ALL
-               SELECT json_extract(threads, '$.worker'), 1 FROM tasks WHERE repository = ?1
+               SELECT json_extract(threads, '$.worker'), 1 FROM tasks WHERE (?1 IS NULL OR repository = ?1)
                UNION ALL
-               SELECT json_extract(threads, '$.reviewer'), 1 FROM tasks WHERE repository = ?1
+               SELECT json_extract(threads, '$.reviewer'), 1 FROM tasks WHERE (?1 IS NULL OR repository = ?1)
              )
              SELECT thread, max(is_task_role)
                FROM provenance JOIN json_each(?2) AS candidate ON candidate.value = thread
