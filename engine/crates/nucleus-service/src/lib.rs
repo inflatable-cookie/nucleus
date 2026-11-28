@@ -621,7 +621,7 @@ impl Service {
         for _ in 0..PASS_BATCH {
             let next = match first.take() {
                 Some(first) => Some(first),
-                None => self.state.lock().await.take_ready(Instant::now(), &visited),
+                None => self.take_ready(&mut *self.state.lock().await, Instant::now(), &visited),
             };
             let Some(task) = next else {
                 break;
@@ -970,7 +970,13 @@ impl Service {
         id: &str,
         weight: TaskWeight,
     ) -> Result<Option<SlotBlock>, ServiceError> {
-        let limits = state.settings.dispatch.as_ref().map_or_else(
+        Ok(self
+            .slot_limits(state)
+            .blocks(state.store.occupied_slots(id)?, weight))
+    }
+
+    fn slot_limits(&self, state: &State) -> Slots {
+        state.settings.dispatch.as_ref().map_or_else(
             || {
                 self.project.as_ref().map_or_else(
                     || nucleus_store::DispatchSettings::default().slots(),
@@ -984,8 +990,7 @@ impl Service {
                 )
             },
             nucleus_store::DispatchSettings::slots,
-        );
-        Ok(limits.blocks(state.store.occupied_slots(id)?, weight))
+        )
     }
 
     /// The label of a task which only its weight cap keeps from launching.
@@ -1213,7 +1218,7 @@ impl Service {
                 let ready = if housekeeping {
                     None
                 } else {
-                    state.take_ready(now, &BTreeSet::new())
+                    self.take_ready(&mut state, now, &BTreeSet::new())
                 };
                 (ready, state.schedule.next(), housekeeping)
             };
@@ -1436,7 +1441,7 @@ impl Service {
         }
         let prior_wait = state.wait_reason(id);
         let changed = state.observe_wait_detail(&row.task, wait, detail)?;
-        if owner_action && prior_wait != wait {
+        if (owner_action || prior_wait == Some(WaitReason::Capacity)) && prior_wait != wait {
             self.wake_capacity(&mut state, now);
             self.wake.notify_one();
         }
@@ -2012,7 +2017,7 @@ impl Service {
         state.forge_requested.remove(id);
         state.activity.remove(id);
         let reweighed = prior.task.brief() != task.brief() && prior.task.weight() != task.weight();
-        if occupied_slot(&prior.task) && (!occupied_slot(task) || reweighed) {
+        if occupied_slot(&prior.task) != occupied_slot(task) || (occupied_slot(task) && reweighed) {
             self.wake_capacity(state, Instant::now());
         }
         if (prior.task.queue_priority() != task.queue_priority() || reweighed)
@@ -2575,16 +2580,6 @@ impl State {
         }
     }
 
-    fn take_ready(&mut self, now: Instant, visited: &BTreeSet<String>) -> Option<DueTask> {
-        self.schedule.take_ready(
-            now,
-            visited,
-            self.capacity_waiters
-                .iter()
-                .map(|(_, _, _, id)| id.as_str()),
-        )
-    }
-
     fn command_observation(&self, row: &TaskRow) -> Observation {
         let forge = self
             .observed_forge
@@ -2608,28 +2603,88 @@ fn occupied_slot(task: &Task) -> bool {
 }
 
 impl Service {
-    fn wake_capacity(&self, state: &mut State, now: Instant) {
-        let candidate = state
+    fn take_ready(
+        &self,
+        state: &mut State,
+        now: Instant,
+        visited: &BTreeSet<String>,
+    ) -> Option<DueTask> {
+        let (priority, id) = state.schedule.pick_ready(now, visited, |priority, id| {
+            // Capacity wakes should compete with other ready waiters. Keep
+            // precedence for effects which do not need a slot.
+            let effect_only = priority == Priority::Effect
+                && !state
+                    .capacity_waiters
+                    .iter()
+                    .any(|(_, _, _, waiting)| waiting == id);
+            let ready = |candidate: &str, effect_only: bool| {
+                state
+                    .schedule
+                    .capacity_ready(candidate, now)
+                    .filter(|ready| !effect_only || *ready == Priority::Effect)
+            };
+            self.capacity_candidate(state, |id| ready(id, effect_only))
+                .or_else(|| {
+                    // When no due waiter fits, keep the order for wait rechecks.
+                    state.capacity_waiters.iter().find_map(|(_, _, _, id)| {
+                        ready(id, priority == Priority::Effect).map(|ready| (ready, id.as_str()))
+                    })
+                })
+        })?;
+        Some(state.schedule.take(priority, id))
+    }
+
+    fn capacity_candidate<'a, T>(
+        &self,
+        state: &'a State,
+        eligible: impl Fn(&str) -> Option<T>,
+    ) -> Option<(T, &'a str)> {
+        let mut candidates = state
             .capacity_waiters
             .iter()
-            .map(|(_, _, _, id)| id)
-            .find(|id| {
-                !state.group_waits.contains_key(*id)
-                    && state.store.row(id).ok().flatten().is_some_and(|row| {
-                        state.dispatch_mode().allows_launch(row.task.first_launch())
-                            && row.task.hold().is_none()
-                            && row.task.question().is_none()
-                            && !state.store.dependency_blocked(id).unwrap_or(true)
-                            && !state.has_open_usage_decision(&row.task).unwrap_or(true)
-                            && self
-                                .project_capacity(state, row.task.identity(), false)
-                                .unwrap_or(false)
-                            && self
-                                .slot_block(state, id, row.task.weight())
-                                .is_ok_and(|block| block.is_none())
-                    })
+            .filter_map(|waiter| eligible(&waiter.3).map(|ready| (waiter, ready)))
+            .peekable();
+        candidates.peek()?;
+        let limits = self.slot_limits(state);
+        let occupied = state.store.occupied_slots("").ok()?;
+        if occupied.total >= limits.total {
+            return None;
+        }
+        let mut project_counts = BTreeMap::new();
+        candidates
+            .filter_map(|(&(weight, priority, admission, ref id), ready)| {
+                if state.group_waits.contains_key(id) {
+                    return None;
+                }
+                let task = state.store.row(id).ok().flatten()?.task;
+                if occupied_slot(&task)
+                    || limits.blocks(occupied, task.weight()).is_some()
+                    || !state.dispatch_mode().allows_launch(task.first_launch())
+                    || task.hold().is_some()
+                    || task.question().is_some()
+                    || state.store.dependency_blocked(id).unwrap_or(true)
+                    || state.has_open_usage_decision(&task).unwrap_or(true)
+                {
+                    return None;
+                }
+                let project = self.resolve_project(state, task.identity()).ok()?;
+                let limit = project.slots?;
+                let running = (*project_counts.entry(project.project_id).or_insert_with(|| {
+                    state
+                        .store
+                        .occupied_project_slots("", &project.repositories)
+                        .ok()
+                }))?;
+                (running < limit).then_some(((priority, running, weight, admission, id), ready))
             })
-            .cloned();
+            .min_by_key(|(rank, _)| *rank)
+            .map(|((_, _, _, _, id), ready)| (ready, id.as_str()))
+    }
+
+    fn wake_capacity(&self, state: &mut State, now: Instant) {
+        let candidate = self
+            .capacity_candidate(state, |_| Some(()))
+            .map(|((), id)| id.to_owned());
         if let Some(id) = candidate
             && !state.schedule.effect_ready(&id, now)
         {
