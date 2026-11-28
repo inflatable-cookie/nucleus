@@ -26,7 +26,7 @@ async fn legacy_process_decisions_are_closed_as_superseded_without_a_census() {
     let State {
         store, settings, ..
     } = &mut *state;
-    let project = &service.fixture().host_project;
+    let project = "fixture-product";
     let input = DecisionInput {
         question: "Fixture decision".into(),
         options: vec![
@@ -510,7 +510,13 @@ async fn low_usage_permission_survives_task_edits_and_preserves_independent_hold
     }
     for id in ["approved", "declined", "amended"] {
         service
-            .admit(id.into(), id.into(), brief.into(), &planner)
+            .admit_to(
+                Some(crate::tests::REPOSITORY),
+                id.into(),
+                id.into(),
+                brief.into(),
+                &planner,
+            )
             .await
             .unwrap();
     }
@@ -579,7 +585,13 @@ async fn low_usage_permission_survives_task_edits_and_preserves_independent_hold
     );
     drop(state);
     service
-        .admit("earlier".into(), "earlier".into(), brief.into(), &planner)
+        .admit_to(
+            Some(crate::tests::REPOSITORY),
+            "earlier".into(),
+            "earlier".into(),
+            brief.into(),
+            &planner,
+        )
         .await
         .unwrap();
     let mut state = service.state.lock().await;
@@ -601,7 +613,7 @@ async fn answer_low_usage_permissions(service: &Service, credential: &[u8; 32]) 
             .answer_inbox(
                 credential,
                 InboxAnswer {
-                    field: inbox_field("local-fixture", &format!("usage-permission-{id}")),
+                    field: inbox_field("fixture-product", &format!("usage-permission-{id}")),
                     option_id: option.into(),
                 },
             )
@@ -675,7 +687,7 @@ async fn the_inbox_projects_the_configured_hosts_entire_planning_registry() {
 #[tokio::test]
 async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answer() {
     let (_home, mut service) = fixture(GitHub::new("unused").unwrap());
-    service.project.as_mut().unwrap().acp_provider = Some(PROVIDER.into());
+    service.set_fixture_acp_provider(Some(PROVIDER));
     service.native_inbox = Some(NativeInbox::open(&service).unwrap());
     let inbox = service.native_inbox.as_ref().unwrap();
     let root = inbox.root.clone();
@@ -699,7 +711,7 @@ async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answ
     };
     let decision = service
         .add_decision(
-            "local-fixture",
+            "fixture-product",
             DecisionInput {
                 question: "Continue the fixture?".into(),
                 options: vec![
@@ -760,7 +772,7 @@ async fn rust_inbox_installs_beside_the_legacy_pin_and_forms_use_the_shared_answ
     let snapshot = service.inbox_snapshot(&key).await.unwrap();
     assert!(snapshot.pending.is_empty());
     let [record]: [Decision; 1] = service
-        .decisions("local-fixture", false)
+        .decisions("fixture-product", false)
         .await
         .unwrap()
         .try_into()
@@ -1053,6 +1065,7 @@ impl DecisionNoticeFixture {
         );
         let settings = legacy.settings.clone();
         drop(legacy);
+        crate::tests::clear_fixture_projects(&settings);
 
         let sends = Arc::new(Mutex::new(Vec::<Value>::new()));
         let lost_next = Arc::new(AtomicBool::new(false));

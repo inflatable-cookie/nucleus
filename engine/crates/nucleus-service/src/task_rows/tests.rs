@@ -359,7 +359,6 @@ impl Fixture {
     fn restart(&mut self) {
         let service = &self.service;
         let settings = service.settings.clone();
-        let project = service.fixture().clone();
         let callback = service.callback;
         let report_command = service.report_command.clone();
         let visibility_time = service
@@ -371,9 +370,9 @@ impl Fixture {
         let old = std::mem::replace(&mut self.service, Arc::new(placeholder.1));
         drop(old);
         self.service = Arc::new(
-            Service::open(
-                &settings,
-                project,
+            Service::open_projects(
+                settings.lock_profile().unwrap(),
+                "fixture-acp".into(),
                 host,
                 GitHub::new("fixture").unwrap(),
                 callback,

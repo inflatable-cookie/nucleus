@@ -18,8 +18,8 @@ use nucleus_core::{
     Observation, Observed, PullRequest, Role, Run, Workspace,
 };
 use nucleus_hosts::{
-    Binding, ControlDispatch, ReplayAuthorization, RoleProfile, RunDispatch, RunObservation,
-    SendOutcome, StopProgress, TaskHost,
+    Binding, ControlDispatch, ReplayAuthorization, RunDispatch, RunObservation, SendOutcome,
+    StopProgress, TaskHost,
 };
 use nucleus_store::{EngineSettings, Profiles, ProjectSettings, Projects, RepositorySettings};
 use serde_json::{Value, json};
@@ -119,6 +119,16 @@ pub(super) fn registry_fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
     (home, service)
 }
 
+pub(super) fn clear_fixture_projects(settings: &SettingsFile) {
+    let revision = settings.read::<Projects>().unwrap().revision;
+    settings
+        .edit(&revision, |projects: &mut Projects| {
+            *projects = Projects::default();
+            Ok(())
+        })
+        .unwrap();
+}
+
 /// A repository whose origin is the fixture repository, with one base commit.
 fn fixture_checkout(root: &Path) -> PathBuf {
     let checkout = root.join("repo");
@@ -131,55 +141,33 @@ fn fixture_checkout(root: &Path) -> PathBuf {
             "remote",
             "add",
             "origin",
-            &format!("https://github.com/{REPOSITORY}.git"),
+            &format!("git@github.com:{REPOSITORY}.git"),
         ],
     );
+    let remote = root.join("remote.git");
+    git(
+        root,
+        &[
+            "clone",
+            "--bare",
+            checkout.to_str().unwrap(),
+            remote.to_str().unwrap(),
+        ],
+    );
+    let ssh = root.join("fixture-ssh");
+    std::fs::write(&ssh, "#!/bin/sh\ncase \"$2\" in\n  git-upload-pack*) exec git-upload-pack \"$(dirname \"$0\")/remote.git\" ;;\n  git-receive-pack*) exec git-receive-pack \"$(dirname \"$0\")/remote.git\" ;;\n  *) exit 1 ;;\nesac\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+    git(
+        &checkout,
+        &["config", "core.sshCommand", ssh.to_str().unwrap()],
+    );
+    git(&checkout, &["config", "ssh.variant", "simple"]);
     checkout
 }
 
 pub(super) fn fixture(forge: GitHub) -> (tempfile::TempDir, Service) {
-    let home = tempfile::tempdir().expect("fixture volume directory");
-    let root = home.path().canonicalize().expect("portable root");
-    let checkout = fixture_checkout(&root);
-    let start = git(&checkout, &["rev-parse", "HEAD"])
-        .parse()
-        .expect("base head");
-    let settings = SettingsFile::open(&root).expect("portable settings");
-    settings
-        .save(&EngineSettings {
-            enabled: true,
-            ..EngineSettings::default()
-        })
-        .expect("enable fixture");
-    let profile = RoleProfile {
-        instance_id: "provider".into(),
-        model: "fixture".into(),
-        runtime_mode: "auto".into(),
-        options: Vec::new(),
-    };
-    let project = Project {
-        repository: REPOSITORY.into(),
-        checkout,
-        base: "main".into(),
-        start,
-        host_project: "local-fixture".into(),
-        worker: profile.clone(),
-        reviewer: profile,
-        acp_provider: None,
-        launch_budget: LaunchBudget { slots: 1 },
-    };
-    let host = T3::new("http://127.0.0.1:9", "unused-fixture-key")
-        .expect("no native host for the service fixture");
-    let service = Service::open(
-        &settings,
-        project,
-        host,
-        forge,
-        "127.0.0.1:9".parse().expect("callback"),
-        std::env::current_exe().expect("test binary"),
-    )
-    .expect("scoped service");
-    (home, service)
+    registry_fixture(forge)
 }
 
 pub(super) fn create_fixture_commit(repository: &Path, message: &str) {
@@ -1037,7 +1025,7 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
         get(|| async { Json(Vec::<Value>::new()) }),
     ))
     .await;
-    let (_home, mut service) = fixture(forge);
+    let (_home, service) = fixture(forge);
     let repo = service.fixture().checkout.clone();
     let old_head = service.fixture().start.clone();
     let worktrees = service.worktrees();
@@ -1060,7 +1048,7 @@ async fn interrupted_initialization_recovers_on_the_new_base_without_t3() {
     create_fixture_commit(&repo, "Advance the base");
     let new_head: Head = git(&repo, &["rev-parse", "HEAD"]).parse().unwrap();
     assert_ne!(old_head, new_head);
-    service.fixture_mut().start = new_head.clone();
+    git(&repo, &["push", "origin", "main"]);
 
     let (mut task, _, mut observation) = reservation("partial", Entry::Brief, &old_head);
     observation.host = Observed::Known(Host::Current {
@@ -1441,9 +1429,9 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     let forge = std::mem::replace(&mut service.forge, GitHub::new("fixture").unwrap());
     drop(service);
     let settings = SettingsFile::open(&home.path().canonicalize().unwrap()).unwrap();
-    let mut service = Service::open(
-        &settings,
-        project,
+    let mut service = Service::open_projects(
+        settings.lock_profile().unwrap(),
+        "fixture-acp".into(),
         host,
         forge,
         "127.0.0.1:9".parse().unwrap(),

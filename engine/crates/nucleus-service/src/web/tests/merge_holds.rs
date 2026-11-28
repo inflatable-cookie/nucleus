@@ -48,7 +48,8 @@ async fn a_held_brief_waits_for_release_then_publishes_the_reviewed_head() {
     let (forge, writes, server) = merge_forge(repo, &base, &head, &merge, &tip).await;
     service.forge = forge;
     service
-        .admit(
+        .admit_to(
+            Some(crate::tests::REPOSITORY),
             ID.into(),
             ID.into(),
             BRIEF.into(),

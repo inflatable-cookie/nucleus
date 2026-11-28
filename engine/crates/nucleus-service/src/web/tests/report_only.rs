@@ -11,7 +11,8 @@ use super::{
 use crate::tests::{archive_snapshot_reply, archived_checkout_rows, git, native_fixture};
 
 const TASK: &str = "report-cutover";
-const PROJECT: &str = "local-fixture";
+const PROJECT: &str = "fixture-product";
+const HOST_PROJECT: &str = "local-fixture";
 const WORKER: &str = "worker-report";
 const PLANNER: &str = "planner-report";
 const BRIEF: &str = "---\ntitle: Milestone QA\nqueue:\n  complexity: low\n  lanes: [qa, notes]\n  reportOnly: true\n  reportLane: qa\n---\nQualify the pinned commit.";
@@ -756,7 +757,7 @@ impl ReportFixture {
     fn archived_threads(&self, task: &Task) -> Vec<Value> {
         archived_checkout_rows(
             &Binding {
-                project_id: PROJECT.into(),
+                project_id: HOST_PROJECT.into(),
                 worktree_path: self.checkout.to_str().unwrap().into(),
                 branch: format!("ns-{TASK}"),
             },
@@ -765,7 +766,7 @@ impl ReportFixture {
     }
 
     fn idle_worker(&self) -> Value {
-        json!({"id":WORKER,"projectId":PROJECT,"worktreePath":self.checkout,
+        json!({"id":WORKER,"projectId":HOST_PROJECT,"worktreePath":self.checkout,
             "branch":format!("ns-{TASK}"),"status":"completed","latestRunId":"native-run",
             "activeRunId":null,"pendingRuntimeRequest":null})
     }
@@ -806,10 +807,10 @@ impl ReportFixture {
         let notices = Arc::new(Mutex::new(NoticeFixture::default()));
         let deliveries = Arc::clone(&notices);
         let (host, host_server) = native_fixture(move |request| {
-            let planner = json!({"id":PLANNER,"projectId":PROJECT,"updatedAt":"2026-11-23T18:10:00Z"});
+            let planner = json!({"id":PLANNER,"projectId":HOST_PROJECT,"updatedAt":"2026-11-23T18:10:00Z"});
             let snapshot = match request["tag"].as_str() {
                 Some("orchestration.subscribeShell") => json!({"kind":"snapshot","snapshot":{
-                    "projects":[{"id":PROJECT,"workspaceRoot":root}], "threads":[planner],
+                    "projects":[{"id":HOST_PROJECT,"workspaceRoot":root}], "threads":[planner],
                 }}),
                 Some("orchestration.subscribeThread") if request["payload"]["threadId"] == PLANNER => {
                     json!({"kind":"snapshot","snapshotSequence":1,"projection":{
@@ -819,7 +820,7 @@ impl ReportFixture {
                 Some("orchestration.subscribeThread") => {
                     assert_eq!(request["payload"]["threadId"], WORKER);
                     json!({"kind":"snapshot","snapshotSequence":1,"projection":{
-                    "thread":{"id":WORKER,"projectId":PROJECT,"worktreePath":path,"branch":format!("ns-{TASK}")},
+                    "thread":{"id":WORKER,"projectId":HOST_PROJECT,"worktreePath":path,"branch":format!("ns-{TASK}")},
                     "runs":[],"messages":[],"runtimeRequests":[],"providerThreads":[],"turnItems":[],"subagents":[]
                     }})
                 }

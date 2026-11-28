@@ -633,7 +633,8 @@ async fn launch_three(service: &Service, native: &Mutex<NativeRuns>) -> Vec<Stri
     let mut threads = Vec::new();
     for id in IDS {
         service
-            .admit(
+            .admit_to(
+                Some(crate::tests::REPOSITORY),
                 id.into(),
                 id.into(),
                 "---\nqueue:\n  complexity: medium\n---\nFixture café".into(),
@@ -861,7 +862,8 @@ async fn a_stored_subscription_pause_reserves_the_next_tier_and_records_the_reas
         );
     }
     service
-        .admit(
+        .admit_to(
+            Some(crate::tests::REPOSITORY),
             id.into(),
             id.into(),
             "---\nqueue: {complexity: low}\n---\nFix a typo.".into(),

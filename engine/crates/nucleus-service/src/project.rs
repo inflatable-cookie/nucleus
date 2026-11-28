@@ -237,11 +237,6 @@ impl Service {
     }
 
     #[cfg(test)]
-    pub(super) fn fixture_mut(&mut self) -> &mut Project {
-        self.project.as_mut().expect("fixture project")
-    }
-
-    #[cfg(test)]
     pub(super) async fn check_project(&self) -> Result<(), ServiceError> {
         let project = self.fixture();
         let identity = Identity {
@@ -625,26 +620,15 @@ mod tests {
     #[tokio::test]
     async fn native_write_gate_requires_the_explicit_project_at_its_registered_checkout() {
         let (_home, mut service) = fixture(GitHub::new("unused-fixture").expect("forge"));
-        service.fixture_mut().repository = "example/greeter".into();
-        service.fixture_mut().host_project = "greeter-project".into();
         service.set_fixture_acp_provider(Some("fixture-acp"));
         let root = service.fixture().checkout.clone();
-        git(
-            &root,
-            &[
-                "remote",
-                "set-url",
-                "origin",
-                "https://github.com/example/greeter.git",
-            ],
-        );
         let retargeted = Arc::new(AtomicBool::new(false));
         let moved = Arc::clone(&retargeted);
         let (host, server) = native_fixture(move |request| {
             assert_eq!(request["tag"], "orchestration.subscribeShell");
             let registered = if moved.load(Ordering::Relaxed) { Path::new("/other/checkout") } else { &root };
             json!({"_tag":"Chunk","requestId":request["id"],"values":[
-                {"kind":"snapshot","snapshot":{"projects":[{"id":"greeter-project","workspaceRoot":registered}]}},
+                {"kind":"snapshot","snapshot":{"projects":[{"id":"local-fixture","workspaceRoot":registered}]}},
                 {"kind":"synchronized"},
             ]})
         }).await;
