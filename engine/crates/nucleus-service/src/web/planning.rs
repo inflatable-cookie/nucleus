@@ -828,21 +828,33 @@ async fn add_decision(
     Ok((StatusCode::CREATED, Json(decision)))
 }
 
+#[derive(Deserialize)]
+struct DecisionAnswerRequest {
+    #[serde(flatten)]
+    input: DecisionAnswerInput,
+    relayed: Option<String>,
+}
+
 async fn answer_decision(
     State(api): State<Api>,
     ProjectSelector { project }: ProjectSelector,
     Path(RecordPath { id }): Path<RecordPath>,
     Extension(caller): Extension<Authority>,
-    input: Result<Json<DecisionAnswerInput>, JsonRejection>,
+    Extension(scope): Extension<ControllerScope>,
+    input: Result<Json<DecisionAnswerRequest>, JsonRejection>,
 ) -> Result<Json<Decision>, ApiError> {
-    let input = body(input)?;
-    // Operators use an explicit project for decisions.
+    let DecisionAnswerRequest { input, relayed } = body(input)?;
     let project = project.ok_or(ServiceError::Project)?;
-    Ok(Json(
+    let decision = if let Some(quote) = relayed {
+        api.service
+            .relay_decision_answer(&project, &id, input, quote, &scope)
+            .await?
+    } else {
         api.service
             .answer_decision(&project, &id, input, &caller)
-            .await?,
-    ))
+            .await?
+    };
+    Ok(Json(decision))
 }
 
 async fn history(
