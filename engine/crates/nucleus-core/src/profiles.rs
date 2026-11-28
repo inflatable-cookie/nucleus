@@ -2,6 +2,7 @@
 
 mod brief;
 mod launch;
+mod slots;
 
 use std::cmp::Ordering;
 
@@ -13,6 +14,7 @@ pub use launch::{
     LaunchPolicy, ProfileLaunch, ProfileLaunchError, decide_profile_launch, decide_weighted_launch,
     pending_complexity_reselection,
 };
+pub use slots::{SlotBlock, Slots, TaskWeight};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

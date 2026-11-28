@@ -1110,9 +1110,7 @@ async fn interrupted_checkout_with_a_sent_worker_is_preserved() {
             .unwrap();
     }
     let row = service.task("sent").await.unwrap();
-    let result = service
-        .advance_due_task(&row, &service.host.fixture_pass())
-        .await;
+    let result = Box::pin(service.advance_due_task(&row, &service.host.fixture_pass())).await;
     assert!(matches!(
         result,
         Err(ServiceError::Workspace(
@@ -1298,9 +1296,8 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
     }
     if lose_launch_reply {
         // Run the normal task decision when an already scheduled recheck becomes due.
-        let result = service
-            .advance_due_task(&preparing, &service.host.fixture_pass())
-            .await;
+        let result =
+            Box::pin(service.advance_due_task(&preparing, &service.host.fixture_pass())).await;
         assert!(matches!(result, Ok(Action::Wait(WaitReason::Capacity))));
         service
             .schedule_result(&preparing, &result, Priority::Effect)
@@ -1336,7 +1333,7 @@ async fn exercise_queue_parent(lose_launch_reply: bool) {
                 .await
                 .capacity_waiters
                 .iter()
-                .map(|(_, _, id)| id.as_str())
+                .map(|(_, _, _, id)| id.as_str())
                 .collect::<Vec<_>>(),
             [oldest, newest[0], newest[1]]
         );
@@ -1535,7 +1532,9 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
     service.host = host;
     service.fixture_mut().acp_provider = Some("fixture-acp".into());
     service.state.lock().await.settings.dispatch = Some(nucleus_store::DispatchSettings {
-        global_slots: 1,
+        heavy_slots: 1,
+        normal_slots: 0,
+        light_slots: 0,
         project_default_slots: 1,
         ..nucleus_store::DispatchSettings::default()
     });
@@ -1567,7 +1566,7 @@ async fn full_checkout_budget_does_not_peek_at_t3() {
     let queued = Task::new(shape.identity().clone(), "Fixture".into(), None);
     {
         let mut state = service.state.lock().await;
-        assert_eq!(state.store.occupied_slots("").unwrap(), 0);
+        assert_eq!(state.store.occupied_slots("").unwrap().total(), 0);
         state.store.create(&queued, &event("fixture")).unwrap();
     }
     for _ in 0..2 {

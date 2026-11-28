@@ -2589,11 +2589,18 @@ fn occupy_slot(task: &mut Task, head: &nucleus_core::Head) {
     task.record_send(&instance, 1).expect("occupy slot");
 }
 
+/// Hold `total` slots in the heavy count, which every weight may use.
+fn set_global_slots(value: &mut Value, total: u32) {
+    value["heavySlots"] = json!(total);
+    value["normalSlots"] = json!(0);
+    value["lightSlots"] = json!(0);
+}
+
 async fn assert_project_slots(registry: &Registry, beta: &Task) {
     let setting = "/v1/settings/dispatch";
     let dispatch = json_body(get_as(&registry.api, setting, &BOARD_KEY).await).await;
     let mut value = dispatch["value"].clone();
-    value["globalSlots"] = json!(2);
+    set_global_slots(&mut value, 2);
     value["projectDefaultSlots"] = json!(1);
     assert_eq!(
         put_settings(
@@ -2645,7 +2652,7 @@ async fn assert_project_slots(registry: &Registry, beta: &Task) {
     ] {
         let current = json_body(get_as(&registry.api, setting, &BOARD_KEY).await).await;
         let mut value = current["value"].clone();
-        value["globalSlots"] = json!(global);
+        set_global_slots(&mut value, global);
         value["projectSlotOverrides"] = overrides;
         assert_eq!(
             put_settings(
@@ -3582,7 +3589,7 @@ async fn setup_promoted_queue_fixture(head: &Head) -> Registry {
     let setting = "/v1/settings/dispatch";
     let dispatch = json_body(get_as(&registry.api, setting, &BOARD_KEY).await).await;
     let mut value = dispatch["value"].clone();
-    value["globalSlots"] = json!(2);
+    set_global_slots(&mut value, 2);
     value["projectDefaultSlots"] = json!(1);
     assert_eq!(
         put_settings(
@@ -3832,7 +3839,12 @@ async fn verify_released_and_unparked_keep_original_order(registry: &Registry) {
         .schedule
         .park("beta-done-prereq");
 
-    let waiters: Vec<(nucleus_core::QueuePriority, i64, String)> = registry
+    let waiters: Vec<(
+        nucleus_core::profiles::TaskWeight,
+        nucleus_core::QueuePriority,
+        i64,
+        String,
+    )> = registry
         .service
         .state
         .lock()
@@ -3843,8 +3855,8 @@ async fn verify_released_and_unparked_keep_original_order(registry: &Registry) {
         .collect();
     let beta_waiters: Vec<_> = waiters
         .iter()
-        .filter(|(_, _, id)| id.starts_with("beta-"))
-        .map(|(priority, order, id)| (*priority, *order, id.as_str()))
+        .filter(|(_, _, _, id)| id.starts_with("beta-"))
+        .map(|(_, priority, order, id)| (*priority, *order, id.as_str()))
         .collect();
     assert_eq!(
         beta_waiters,

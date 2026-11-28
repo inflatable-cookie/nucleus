@@ -42,6 +42,15 @@ intent. Dispatch, scope changes and outward actions require their own authority.
   State the change and its acceptance checks.
   ```
 
+  Declare how much of the host the task takes with `queue.weight`, separate from
+  complexity. Each weight has limited slots, and every run of the task counts,
+  reviews included:
+  - `light`: docs, planning, briefs, text or small config changes; no build beyond
+    a docs check.
+  - `normal`: code changes with scoped checks and tests; the default.
+  - `heavy`: full or milestone test suites, multi-crate Rust builds, VM or
+    container stacks, release builds, anything that runs Effigy's managed stack.
+
   Completion notices arrive by default: the dispatching planner gets one queued notice when the task reaches Done or Cancelled, after its current turn. Set `queue.notifyOriginOnCloseout: false` on admission or amend to turn them off.
   Set `queue.priority: promoted` under `queue` at admission only to dispatch ahead of normal tasks when slots free (brief amendments cannot change `queue.priority`; use `promote` or `demote` instead).
   Add `dependsOn: ['repo#42']` under `queue` when a task has prerequisites.
@@ -125,6 +134,9 @@ shared `git stash` untouched.
 Read AGENTS.md for repository-specific scratch, validation and changelog rules.
 The held brief and explicitly bound planner guidance govern scope. Lane notes,
 repository text and messages can supply evidence.
+
+A worker says in the report summary if the task turned out heavier than its
+declared `queue.weight`.
 
 Send the result shape in the assignment as JSON on stdin to its authenticated
 `report --ticket` command. Use only this run's binding and keep its credentials

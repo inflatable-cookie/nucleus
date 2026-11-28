@@ -187,10 +187,19 @@ command is waiting on forge evidence. Launches, settlement and native writes
 still use fresh evidence. T3 transport failures defer requests for 15 seconds.
 GitHub transport and server failures pause requests across all tasks for 30
 seconds, doubling up to four minutes until a read succeeds. Rate limits retain
-their supplied deadline. A settled run that held a launch slot wakes the oldest
-capacity waiter. Capacity also has a 60-second backstop. Slot limits take effect
-when a Limits edit commits to Dispatch. The API serves task views from the
+their supplied deadline. A settled run that held a launch slot wakes the first
+capacity waiter that fits: the heaviest, then promoted, then oldest. Capacity
+also has a 60-second backstop. Slot limits take effect when a Limits edit
+commits to Dispatch.
+
+A brief's `queue.weight` (`light`, `normal` or `heavy`; `normal` when absent)
+counts for every run of its task. With H heavy, M normal and L light slots,
+heavy runs fit in H, heavy and normal runs in H + M, and all runs in H + M + L.
+Running work is never preempted. The API serves task views from the
 store and memory and pushes invalidations.
+
+A task joins the capacity waiters when it asks for a slot; the freed slot is
+offered to those already waiting and isn't reserved while one prepares its run.
 
 Normalize the relevant observations to one signal per phase. The bound run
 takes precedence over downstream work until its turn is quiescent. A required
@@ -350,7 +359,9 @@ wake that task after their transaction commits. A T3 stream wakes the task when
 its known thread changes. A fresh running hint can defer a routine refresh.
 A disconnect discards hints, and a periodic active scan catches any missed wake.
 The next due time drives the timer even when the scan is idle.
-The backstop pages through the active index with a fixed read budget.
+The backstop pages through the active index with a fixed read budget. The
+first scan after startup also ranks, in one read, every task whose next run
+still needs a slot, whatever its role, before any pass can assign one.
 
 A pass takes tasks that are due and shares one bounded process inventory.
 For each task, read its row, then fetch the exact T3 turn, PR and checkout facts
@@ -727,10 +738,10 @@ Keep the Settings tabs, shared controls and save feedback. Use one noun per
 control, put explanations in `?` popovers, autosave, prefer dropdowns and put
 Remove inside the editor.
 
-| Group | Profile file (schema version 2) | Settings |
+| Group | Profile file (schema version 2; Dispatch 3) | Settings |
 | --- | --- | --- |
 | Profiles | `config/profiles.json` | Profile names, enabled flags, selections (stable ID, capability, weight, provider, model and effort), subscription groups, operator pauses and host-specific profile choices. |
-| Dispatch | `config/dispatch.json` | Usage and optional end, global slots, project defaults and overrides, thread retention and dispatch mode. |
+| Dispatch | `config/dispatch.json` | Usage and optional end, heavy, normal and light slots, project defaults and overrides, thread retention and dispatch mode. |
 | GitHub accounts | `config/github-accounts.json` | Verified account identities and account bindings for workers and reviewers. |
 | Projects | `state/projects.json` | Names, archival, repository routes, planner bindings and removal receipts. |
 | Hosts | `state/hosts.json` | T3 loopback endpoint and the environment key referring to its credential. |
@@ -819,8 +830,8 @@ even if a repository has yet to enroll. Enrollment keeps an existing Projects
 ID for an exact matching route.
 
 Edit the project name, archive state and repository checks in Projects. In
-Limits, set global slots, the per-project default or an individual project’s
-override. Limits saves the changed fields against the Dispatch revision it
+Limits, set the heavy, normal and light slots, the per-project default or an
+individual project’s override. Limits saves the changed fields against the Dispatch revision it
 read. A project’s slots cover all its routed repositories. New and amended briefs reject the retired
 `queue.preferredProfileId` key. Use `queue.profileRequests.worker` with a
 profile ID, reason and `required: true` for a required worker profile. A non-fixture

@@ -1139,6 +1139,14 @@ impl Task {
         self.queue_priority
     }
 
+    /// The weight the held brief declares. Every run of the task counts as it.
+    #[must_use]
+    pub fn weight(&self) -> crate::profiles::TaskWeight {
+        crate::profiles::BriefPolicy::parse(&self.brief.text)
+            .map(|policy| policy.weight())
+            .unwrap_or_default()
+    }
+
     pub fn set_queue_priority(&mut self, priority: QueuePriority) {
         self.queue_priority = priority;
     }

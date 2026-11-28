@@ -532,7 +532,7 @@ test("the paired Board tracks Rust task changes and uses the next command contra
       const snapshot = (value: unknown) => ({ configured: true, revision: "1", value });
       json({
         profiles: { ...snapshot({ profiles: [], pausedGroups: [] }), effectiveGroups: {} },
-        dispatch: snapshot({ usage: "normal", usageUntilMs: null, globalSlots: 4, projectDefaultSlots: 4,
+        dispatch: snapshot({ usage: "normal", usageUntilMs: null, heavySlots: 4, normalSlots: 0, lightSlots: 0, projectDefaultSlots: 4,
           projectSlotOverrides: {}, mode: "running" }),
         projects: { settings: snapshot({ projects: {} }), resolvedPlanners: {} },
         hosts: { settings: snapshot({ t3: null }), active: { endpoint: "", status: "reachable" } },
@@ -1122,7 +1122,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
     lifecycle: { ...task("held-task", "queued").lifecycle, admittedAtMs: now - 3 * 3_600_000 - 60_000 },
   };
   let dispatch = {
-    usage: "normal", usageUntilMs: null, globalSlots: 2, projectDefaultSlots: 2,
+    usage: "normal", usageUntilMs: null, heavySlots: 2, normalSlots: 0, lightSlots: 0, projectDefaultSlots: 2,
     projectSlotOverrides: {},
     mode: "running",
   };
@@ -1180,7 +1180,7 @@ test("the standalone bundle is the shared web board on the Rust routes and refre
       }],
       pausedGroups,
     }, "profiles-1"), effectiveGroups: { "fixture-worker": "fixture team" } }),
-    dispatch: () => snap(dispatch, "dispatch-" + dispatch.globalSlots),
+    dispatch: () => snap(dispatch, "dispatch-" + dispatch.heavySlots),
     projects: () => ({
       settings: snap({ projects: projectRemoved ? {} : { fixture: fixtureProject() } },
         projectRemoved ? "projects-removed" : "projects-1"),
