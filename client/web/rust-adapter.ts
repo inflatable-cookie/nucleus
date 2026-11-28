@@ -121,7 +121,7 @@ function capacityValues(
   ) as Record<keyof typeof capacityBounds, number>;
   return {
     ...fallback,
-    globalLimit: dispatch.globalSlots,
+    globalLimit: dispatch.heavySlots + dispatch.normalSlots + dispatch.lightSlots,
     projectLimit: dispatch.projectDefaultSlots,
     hostCallLimit: 1,
     operatorDefaultHostKind: DEFAULT_HOST_KIND,
@@ -365,7 +365,12 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
     },
     "queue.capacity-state": async () => {
       const dispatch = await rust.domain(dispatchSnapshot, "dispatch");
-      return { revision: dispatch.revision, effective: capacityValues(dispatch.value), changes: [] };
+      const { heavySlots, normalSlots, lightSlots } = dispatch.value;
+      return {
+        revision: dispatch.revision,
+        effective: { ...capacityValues(dispatch.value), heavySlots, normalSlots, lightSlots },
+        changes: [],
+      };
     },
     "queue.capacity": async (input: api.CapacityInput) => {
       if (!("revision" in input)) throw new Error("Refresh Limits before saving.");
@@ -374,7 +379,9 @@ export function createRustAdapter(rust: RustApi = createRustApi()) {
         throw new Error("Dispatch limits changed. Review the current values and edit again.");
       await rust.saveDomain(dispatchSnapshot, "dispatch", input.revision, {
         ...current.value,
-        globalSlots: input.globalLimit ?? current.value.globalSlots,
+        heavySlots: input.heavySlots ?? current.value.heavySlots,
+        normalSlots: input.normalSlots ?? current.value.normalSlots,
+        lightSlots: input.lightSlots ?? current.value.lightSlots,
         projectDefaultSlots: input.projectLimit ?? current.value.projectDefaultSlots,
       });
       return { ok: true };

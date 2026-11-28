@@ -5,7 +5,7 @@ use std::{
 };
 
 use longhorn_config::{DomainIssue, StorageClass};
-use nucleus_core::profiles::{Profile, UsageLevel};
+use nucleus_core::profiles::{Profile, Slots, UsageLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::{Host, Url};
@@ -93,7 +93,10 @@ impl SettingsValue for Profiles {
 pub struct DispatchSettings {
     pub usage: UsageLevel,
     pub usage_until_ms: Option<u64>,
-    pub global_slots: u32,
+    /// The three slot counts. Their sum is the global slot count (ruling 63).
+    pub heavy_slots: u32,
+    pub normal_slots: u32,
+    pub light_slots: u32,
     #[serde(default = "default_project_slots")]
     pub project_default_slots: u32,
     #[serde(default)]
@@ -151,7 +154,9 @@ impl Default for DispatchSettings {
         Self {
             usage: UsageLevel::Normal,
             usage_until_ms: None,
-            global_slots: 32,
+            heavy_slots: 5,
+            normal_slots: 22,
+            light_slots: 5,
             project_default_slots: default_project_slots(),
             project_slot_overrides: BTreeMap::new(),
             thread_retention_days: default_thread_retention_days(),
@@ -162,6 +167,16 @@ impl Default for DispatchSettings {
 }
 
 impl DispatchSettings {
+    /// The slot limits per task weight.
+    #[must_use]
+    pub const fn slots(&self) -> Slots {
+        Slots {
+            heavy: self.heavy_slots,
+            normal: self.normal_slots,
+            light: self.light_slots,
+        }
+    }
+
     /// Resolve the limit in force for a registered project.
     #[must_use]
     pub fn project_slots(&self, project_key: &str) -> u32 {
@@ -184,9 +199,18 @@ impl SettingsValue for DispatchSettings {
     const ID: &'static str = "nucleus.engine.dispatch";
     const FILE: &'static str = "dispatch.json";
     const CLASS: StorageClass = StorageClass::UserConfig;
+    const VERSION: u32 = 3;
 
     fn validate(&self) -> Result<(), DomainIssue> {
-        check(self.global_slots > 0, "dispatch", "use positive slots")?;
+        let total = self
+            .heavy_slots
+            .checked_add(self.normal_slots)
+            .and_then(|slots| slots.checked_add(self.light_slots));
+        check(
+            total.is_some_and(|total| total > 0),
+            "dispatch",
+            "use positive slots",
+        )?;
         check(
             (1..=32).contains(&self.project_default_slots)
                 && self
@@ -491,12 +515,14 @@ mod dispatch_mode_tests {
     #[test]
     fn a_saved_domain_without_a_mode_reads_as_running() {
         let saved: DispatchSettings = serde_json::from_value(serde_json::json!({
-            "usage": "normal", "usageUntilMs": null, "globalSlots": 2
+            "usage": "normal", "usageUntilMs": null,
+            "heavySlots": 1, "normalSlots": 1, "lightSlots": 0
         }))
         .expect("dispatch settings");
         assert_eq!(saved.mode, DispatchMode::Running);
         let stopped: DispatchSettings = serde_json::from_value(serde_json::json!({
-            "usage": "normal", "usageUntilMs": null, "globalSlots": 2, "mode": "stopped"
+            "usage": "normal", "usageUntilMs": null,
+            "heavySlots": 1, "normalSlots": 1, "lightSlots": 0, "mode": "stopped"
         }))
         .expect("dispatch settings");
         assert_eq!(stopped.mode, DispatchMode::Stopped);

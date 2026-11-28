@@ -101,7 +101,8 @@ const capacityAuthorityState = (
   overrides: Record<string, unknown> = {},
 ): CapacityView =>
   ({
-    effective: CAPACITY_VALUES,
+    effective: { ...CAPACITY_VALUES, heavySlots: 5, normalSlots: 22, lightSlots: 5 },
+    revision: "limits-0",
     changes: [],
     ...overrides,
   }) as CapacityView;
@@ -412,8 +413,8 @@ test("the bundled dark Settings screen adds a project override from the picker a
     ui.press("Dispatch limits");
     await settle(() => Boolean(ui.query("Remove the Project-D override")));
     assert.equal(
-      ui.get("Global dispatch limit (slots, 1–64)").props.value,
-      "32",
+      ui.get("Heavy dispatch limit (slots, 0–4294967295)").props.value,
+      "5",
       "the task slots are writable again, seeded from the state in force",
     );
     assert.equal(
@@ -658,7 +659,8 @@ const saved = (ui: {
 
 async function mountRevisionedLimits() {
   const bundle = await loadBundle();
-  let effective = { ...CAPACITY_VALUES, globalLimit: 96 };
+  const slots = { heavySlots: 5, normalSlots: 86, lightSlots: 5 };
+  let effective = { ...CAPACITY_VALUES, ...slots, globalLimit: 96 };
   const writes: unknown[] = [];
   const revision = () => `limits-${writes.length}`;
   const invoke = async (method: string, input: unknown) => {
@@ -710,7 +712,7 @@ async function mountRevisionedLimits() {
   await settle(() => ui.text().includes("Profiles"));
   ui.press("Dispatch limits");
   await settle(
-    () => ui.query("Global dispatch limit (slots, 1–4294967295)") !== undefined,
+    () => ui.query("Heavy dispatch limit (slots, 0–4294967295)") !== undefined,
   );
   return {
     ui,
@@ -724,10 +726,10 @@ async function mountRevisionedLimits() {
 
 test("dark bundled Limits saves the edited slot at its displayed revision", async () => {
   const { ui, writes, close } = await mountRevisionedLimits();
-  const global = "Global dispatch limit (slots, 1–4294967295)";
+  const heavy = "Heavy dispatch limit (slots, 0–4294967295)";
   const project = "Per project dispatch limit (slots, 1–32)";
   try {
-    assert.equal(ui.get(global).props.value, "96");
+    assert.equal(ui.get(heavy).props.value, "5");
     assert.equal(ui.get(project).props.value, "5");
     assert.equal(ui.query("Advanced limits"), undefined);
     assert.equal(ui.query("Task slots save status"), undefined);
@@ -735,10 +737,10 @@ test("dark bundled Limits saves the edited slot at its displayed revision", asyn
     ui.type(project, "6");
     await waitFor(() => saved(ui));
     assert.deepEqual(writes, [{ revision: "limits-0", projectLimit: 6 }]);
-    assert.equal(ui.get(global).props.value, "96");
-    ui.type(global, "21");
+    assert.equal(ui.get(heavy).props.value, "5");
+    ui.type(heavy, "21");
     await waitFor(() => writes.length === 2 && saved(ui));
-    assert.deepEqual(writes[1], { revision: "limits-1", globalLimit: 21 });
+    assert.deepEqual(writes[1], { revision: "limits-1", heavySlots: 21 });
     assert.equal(ui.get(project).props.value, "6");
     assert.equal(ui.query("View change history"), undefined);
     assert.ok(ui.text().includes("Project overrides"));
